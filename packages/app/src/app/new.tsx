@@ -1,6 +1,6 @@
 import type { NavigationProp } from "@react-navigation/native";
 import { useLocalSearchParams, useNavigation } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import {
   ComposerEditingScope,
@@ -46,18 +46,18 @@ export default function NewWorkspaceRoute() {
     { serverId, sourceDirectory, displayName, projectId },
     draftId,
   );
-  const publishedPlacementKey = useRef<string | null>(null);
   const [routeIdentity, setRouteIdentity] = useState({
     placementKey: routePlacementKey,
+    publishedPlacementKey: null as string | null,
     generation: 0,
     context: { serverId, sourceDirectory, displayName, projectId },
   });
   if (routeIdentity.placementKey !== routePlacementKey) {
     // Our URL mirror preserves the draft; a new navigation owns a new selection context.
-    const isPlacementMirror = publishedPlacementKey.current === routePlacementKey;
-    publishedPlacementKey.current = null;
+    const isPlacementMirror = routeIdentity.publishedPlacementKey === routePlacementKey;
     setRouteIdentity({
       placementKey: routePlacementKey,
+      publishedPlacementKey: null,
       generation: routeIdentity.generation + (isPlacementMirror ? 0 : 1),
       context: isPlacementMirror
         ? routeIdentity.context
@@ -68,7 +68,7 @@ export default function NewWorkspaceRoute() {
     (placement: NewWorkspacePlacement) => {
       const nextPlacementKey = placementKey(placement, draftId);
       if (nextPlacementKey === routePlacementKey) return;
-      publishedPlacementKey.current = nextPlacementKey;
+      setRouteIdentity((current) => ({ ...current, publishedPlacementKey: nextPlacementKey }));
       navigation.setParams({
         serverId: placement.serverId,
         dir: placement.sourceDirectory,

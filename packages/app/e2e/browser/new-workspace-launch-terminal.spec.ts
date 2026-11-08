@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
+import { reloadPreservingHostRegistry } from "../support/helpers/hosts";
+import { projectPlacementViewKey } from "../support/helpers/project-view-key";
+import { getServerId } from "../support/helpers/server-id";
 import { gotoAppShell } from "../support/helpers/app";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
@@ -183,6 +186,102 @@ test.describe("New workspace: launching a terminal", () => {
     } finally {
       await client.close();
       await otherProject.cleanup();
+    }
+  });
+
+  test("explicit draft retries preserve placement identity after reload", async ({ page }) => {
+    test.setTimeout(90_000);
+    const otherProject = await seedWorkspace({ repoPrefix: "explicit-draft-retry-" });
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, workspace);
+      const draftUrl = new URL(page.url());
+      draftUrl.searchParams.set("draftId", `explicit-retry-${workspace.workspaceId}`);
+      await page.goto(draftUrl.toString());
+      await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
+      await page.getByTestId("workspace-create-isolation-trigger").click();
+      await page.getByTestId("workspace-create-isolation-worktree").click();
+      await selectLaunchOption(page, MISSING_PROFILE.id);
+      await submitTerminalLaunch(page);
+      await expect(
+        page.getByText(/paseo-e2e-missing-terminal.*command not found/).first(),
+      ).toBeVisible();
+      await selectNewWorkspaceProject(page, otherProject);
+      // B has not submitted yet; reload must not reuse A's request key.
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get("projectId"))
+        .toBe(otherProject.projectId);
+      await reloadPreservingHostRegistry(page);
+      await expectNewWorkspaceProjectSelected(page, otherProject.projectDisplayName);
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await fillTerminalPrompt(page, "retry the explicit draft after reload");
+      await submitTerminalLaunch(page);
+      await expectWorkspaceOpensWithTerminalTab(page);
+      await expectTerminalOutputContains(page, "captured: retry the explicit draft after reload");
+      const workspaceId = decodeWorkspaceIdFromPathSegment(
+        new URL(page.url()).pathname.split("/").at(-1)!,
+      );
+      expect(workspaceId).not.toBe(otherProject.workspaceId);
+      const created = (await client.fetchWorkspaces()).entries.find(
+        (entry) => entry.id === workspaceId,
+      );
+      expect(created?.projectId).toBe(otherProject.projectId);
+    } finally {
+      await client.close();
+      await otherProject.cleanup();
+    }
+  });
+
+  test("clone registration preserves the cached workspace for a terminal retry", async ({
+    page,
+  }) => {
+    const originUrl = "https://github.com/getpaseo/terminal-retry-fixture.git";
+    const selected = await seedWorkspace({
+      repoPrefix: "terminal-grouping-primary-",
+      repo: { originUrl },
+    });
+    let duplicate: SeededWorkspace | undefined;
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, selected);
+      await selectLaunchOption(page, MISSING_PROFILE.id);
+      await submitTerminalLaunch(page);
+      await expect(
+        page.getByText(/paseo-e2e-missing-terminal.*command not found/).first(),
+      ).toBeVisible();
+      const cachedWorkspace = (await client.fetchWorkspaces()).entries.find(
+        (entry) => entry.projectId === selected.projectId && entry.id !== selected.workspaceId,
+      );
+      expect(cachedWorkspace).toBeDefined();
+      duplicate = await seedWorkspace({
+        repoPrefix: "terminal-grouping-clone-",
+        repo: { originUrl },
+      });
+      await expect(
+        page.getByTestId(
+          `sidebar-project-row-${projectPlacementViewKey(getServerId(), selected.projectId)}`,
+        ),
+      ).toBeVisible();
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await fillTerminalPrompt(page, "retry the same checkout after adding a clone");
+      await submitTerminalLaunch(page);
+      await expectWorkspaceOpensWithTerminalTab(page);
+      await expectTerminalOutputContains(
+        page,
+        "captured: retry the same checkout after adding a clone",
+      );
+      const workspaceId = decodeWorkspaceIdFromPathSegment(
+        new URL(page.url()).pathname.split("/").at(-1)!,
+      );
+      expect(workspaceId).toBe(cachedWorkspace!.id);
+    } finally {
+      await client.close();
+      await duplicate?.cleanup();
+      await selected.cleanup();
     }
   });
 

@@ -11,7 +11,6 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
@@ -300,7 +299,6 @@ interface WorkspaceCreationResult {
 
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
-  worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
   project: HostProjectListItem;
@@ -334,7 +332,6 @@ async function createMultiplicityWorkspace(input: {
           kind: "worktree",
           cwd: input.sourceDirectory,
           projectId,
-          worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
         }
       : {
@@ -872,35 +869,32 @@ function useNewWorkspaceInitialContext({
 
 interface NewWorkspaceCreationState {
   placementKey: string;
-  identity: { draftId: string; worktreeSlug: string };
   result: WorkspaceCreationResult | { workspace: null };
 }
 
 function useNewWorkspaceCreationState(input: {
   serverId: string;
-  project: { viewKey: string } | null;
+  project: HostProjectListItem | null;
   sourceDirectory: string | null;
   draftId?: string;
 }) {
-  const placementKey = JSON.stringify([
-    input.serverId,
-    input.project?.viewKey ?? null,
-    input.sourceDirectory,
-  ]);
+  const projectId = input.project ? getHostProjectId(input.project, input.serverId) : null;
+  const placementKey = JSON.stringify([input.serverId, projectId, input.sourceDirectory]);
+  const [draftId] = useState(() => input.draftId ?? generateDraftId());
+  // Editing identity survives placement changes; provisioning identity belongs to its destination.
+  const creationIdentity = useMemo(
+    () => ({
+      draftId,
+      idempotencyKey: JSON.stringify([draftId, input.serverId, projectId]),
+    }),
+    [draftId, input.serverId, projectId],
+  );
   const [state, setState] = useState<NewWorkspaceCreationState>(() => ({
     placementKey,
-    identity: { draftId: input.draftId ?? generateDraftId(), worktreeSlug: createNameId() },
     result: { workspace: null },
   }));
   if (state.placementKey !== placementKey) {
-    // A failed launch may already have created a workspace under the previous target.
-    setState({
-      placementKey,
-      identity: state.result.workspace
-        ? { draftId: generateDraftId(), worktreeSlug: createNameId() }
-        : state.identity,
-      result: { workspace: null },
-    });
+    setState({ placementKey, result: { workspace: null } });
   }
   const setCreationResult = useCallback(
     (result: WorkspaceCreationResult) => {
@@ -910,7 +904,7 @@ function useNewWorkspaceCreationState(input: {
     },
     [placementKey],
   );
-  return { creationIdentity: state.identity, creationResult: state.result, setCreationResult };
+  return { creationIdentity, creationResult: state.result, setCreationResult };
 }
 
 export function NewWorkspaceScreen({
@@ -1332,8 +1326,7 @@ export function NewWorkspaceScreen({
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
-        idempotencyKey: creationIdentity.draftId,
-        worktreeSlug: creationIdentity.worktreeSlug,
+        idempotencyKey: creationIdentity.idempotencyKey,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
         project: selectedProject,
