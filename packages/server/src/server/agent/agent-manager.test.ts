@@ -11240,6 +11240,25 @@ test("idle runtime cleanup reaps a settled error runtime on the same clock", asy
     { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
   ]);
   expect(manager.getAgent(agent.id)).toBeNull();
+
+  // The reap releases the process, not the outcome: the stored record still reports the failure
+  // and its attention, so the list does not turn a failed agent into a closed one.
+  const reaped = await storage.get(agent.id);
+  expect(reaped).toMatchObject({
+    lastStatus: "error",
+    lastError: "Provider turn failed.",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+
+  const resumed = await ensureAgentLoaded(agent.id, {
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  expect(resumed.id).toBe(agent.id);
+  await manager.runAgent(agent.id, "Continue after the failure");
+  expect(manager.getAgent(agent.id)?.lifecycle).not.toBe("closed");
 });
 
 test("idle agents remain resident until an explicit lifecycle action closes them", async () => {
