@@ -4094,18 +4094,19 @@ export class AgentManager {
   ): void {
     const existingItems = this.timelineStore.getItems(agentId);
     for (const entry of buildImportedTimelineRows(entries)) {
+      const item = entry.item;
       if (
-        entry.item.type === "notification" &&
+        item.type === "notification" &&
         existingItems.some(
-          (item) =>
-            item.type === "notification" &&
-            item.level === entry.item.level &&
-            item.message === entry.item.message,
+          (existing) =>
+            existing.type === "notification" &&
+            existing.level === item.level &&
+            existing.message === item.message,
         )
       ) {
         continue;
       }
-      this.recordTimeline(agentId, entry.item, { timestamp: entry.timestamp });
+      this.recordTimeline(agentId, item, { timestamp: entry.timestamp });
     }
   }
 

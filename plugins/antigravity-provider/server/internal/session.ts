@@ -47,19 +47,31 @@ interface SessionOptions {
   emit(event: ProviderEvent): void;
 }
 
+interface SavedContextUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  usedTokens: number;
+}
+
+const transcriptLineSchema = z.object({
+  step_index: z.number().optional(),
+  type: z.string().optional(),
+  content: z.string().optional(),
+  created_at: z.string().optional(),
+  input_tokens: z.number().optional(),
+  cache_read_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+});
+
 function extractUserText(content: string): string {
   const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(content);
   return (match ? match[1] : content).trim();
 }
 
-function replayHistoryFromTranscript(
-  conversationId: string | null,
-  sessionId: string,
-  emit: (event: ProviderEvent) => void,
-): void {
-  if (!conversationId) return;
-  const file = path.join(
-    os.homedir(),
+function resolveTranscriptPath(conversationId: string, homeDir: string): string {
+  return path.join(
+    homeDir,
     ".gemini",
     "antigravity-cli",
     "brain",
@@ -68,34 +80,53 @@ function replayHistoryFromTranscript(
     "logs",
     "transcript.jsonl",
   );
-  if (!fs.existsSync(file)) return;
-  let content = "";
+}
+
+function readTranscriptContent(conversationId: string | null, homeDir: string): string | null {
+  if (!conversationId) return null;
   try {
-    content = fs.readFileSync(file, "utf8");
-  } catch {
-    return;
+    return fs.readFileSync(resolveTranscriptPath(conversationId, homeDir), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
+}
+
+function replayHistoryFromTranscript(options: {
+  conversationId: string | null;
+  sessionId: string;
+  homeDir: string;
+  emit: (event: ProviderEvent) => void;
+}): void {
+  const { conversationId, sessionId, homeDir, emit } = options;
+  const content = readTranscriptContent(conversationId, homeDir);
+  if (!content) return;
 
   const lines = content.trim().split("\n");
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (!line) continue;
-    let obj: Record<string, unknown>;
+    let raw: unknown;
     try {
-      obj = JSON.parse(line);
+      raw = JSON.parse(line);
     } catch {
       continue;
     }
+    const parsed = transcriptLineSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const obj = parsed.data;
+    const stepKey = obj.step_index ?? index;
     if (obj.type === "USER_INPUT" && typeof obj.content === "string") {
       const text = extractUserText(obj.content);
       if (!text) continue;
       emit({
         type: "timeline.item",
         sessionId,
-        timestamp: typeof obj.created_at === "string" ? obj.created_at : undefined,
+        timestamp: obj.created_at,
         item: {
           type: "user_message",
-          id: `user-${obj.step_index}`,
-          messageId: `user-${obj.step_index}`,
+          id: `user-${stepKey}`,
+          messageId: `user-${stepKey}`,
           text,
         },
       });
@@ -107,11 +138,11 @@ function replayHistoryFromTranscript(
       emit({
         type: "timeline.item",
         sessionId,
-        timestamp: typeof obj.created_at === "string" ? obj.created_at : undefined,
+        timestamp: obj.created_at,
         item: {
           type: "assistant_message",
-          id: `assistant-${obj.step_index}`,
-          messageId: `assistant-${obj.step_index}`,
+          id: `assistant-${stepKey}`,
+          messageId: `assistant-${stepKey}`,
           text: obj.content,
         },
       });
@@ -119,44 +150,28 @@ function replayHistoryFromTranscript(
   }
 }
 
-function readLastContextUsage(conversationId: string | null): {
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  usedTokens: number;
-} | null {
-  if (!conversationId) return null;
-  const file = path.join(
-    os.homedir(),
-    ".gemini",
-    "antigravity-cli",
-    "brain",
-    conversationId,
-    ".system_generated",
-    "logs",
-    "transcript.jsonl",
-  );
-  if (!fs.existsSync(file)) return null;
-  let content = "";
-  try {
-    content = fs.readFileSync(file, "utf8");
-  } catch {
-    return null;
-  }
+function readLastContextUsage(
+  conversationId: string | null,
+  homeDir: string,
+): SavedContextUsage | null {
+  const content = readTranscriptContent(conversationId, homeDir);
+  if (!content) return null;
 
   const lines = content.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    let obj: Record<string, unknown>;
+    let raw: unknown;
     try {
-      obj = JSON.parse(lines[i]);
+      raw = JSON.parse(lines[i]);
     } catch {
       continue;
     }
+    const parsed = transcriptLineSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const obj = parsed.data;
     if (typeof obj.input_tokens === "number") {
       const inputTokens = obj.input_tokens;
-      const cachedInputTokens =
-        typeof obj.cache_read_tokens === "number" ? obj.cache_read_tokens : 0;
-      const outputTokens = typeof obj.output_tokens === "number" ? obj.output_tokens : 0;
+      const cachedInputTokens = obj.cache_read_tokens ?? 0;
+      const outputTokens = obj.output_tokens ?? 0;
       return {
         inputTokens,
         cachedInputTokens,
@@ -201,11 +216,18 @@ export class Session {
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
 
+    const homeDir =
+      this.config.env?.HOME ?? this.options.launch?.env?.HOME ?? process.env.HOME ?? os.homedir();
     if (this.options.history === "replay") {
-      replayHistoryFromTranscript(this.conversationId, this.options.id, (e) => this.emit(e));
+      replayHistoryFromTranscript({
+        conversationId: this.conversationId,
+        sessionId: this.options.id,
+        homeDir,
+        emit: (e) => this.emit(e),
+      });
     }
 
-    const lastUsage = readLastContextUsage(this.conversationId);
+    const lastUsage = readLastContextUsage(this.conversationId, homeDir);
     const currentModelId = this.config.model;
     const catalogModel = currentModelId
       ? this.options.catalog().models.find((m) => m.id === currentModelId)

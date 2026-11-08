@@ -956,6 +956,7 @@ interface PendingChild {
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
   private readonly runtime: ProviderRuntime;
+  private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
@@ -963,6 +964,7 @@ class PluginAgentClient implements AgentClient {
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.runtimeSettings = runtimeSettings;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1134,7 +1136,10 @@ class PluginAgentClient implements AgentClient {
         });
       },
       bind,
-      input.launchContext?.env ?? {},
+      createProviderEnv({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [config.env],
+      }),
     );
     bind(bridge);
     return session;
@@ -1645,13 +1650,6 @@ class PluginAgentSession implements AgentSession {
   ): AgentStreamEvent[] {
     if (event.notice.dismissed) return [];
     const message = [event.notice.title, event.notice.description].filter(Boolean).join("\n");
-    const alreadyExists = this.history
-      .read(this.provider)
-      .some(
-        (e) =>
-          e.type === "timeline" && e.item.type === "notification" && e.item.message === message,
-      );
-    if (alreadyExists) return [];
     return [
       {
         type: "timeline",
