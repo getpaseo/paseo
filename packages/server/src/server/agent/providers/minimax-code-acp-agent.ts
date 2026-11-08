@@ -36,6 +36,17 @@ const MINIMAX_CODE_DELEGATION_GET_METHOD = "mcode/session/delegation/get";
 const MINIMAX_CODE_DELEGATION_UPDATE_NOTIFICATION = "mcode/session/delegation_update";
 
 /**
+ * How long a row waits when the provider reports a child as finished before
+ * it started.
+ *
+ * The recorded traces show the provider publishing a child as finished at the
+ * moment it created it, and taking it back 113ms and 115ms later. The wait
+ * covers that with room to spare, and it stays short enough that a child that
+ * really finished is shown without a delay a user notices.
+ */
+const MINIMAX_CODE_DELEGATION_CONFIRMATION_MS = 500;
+
+/**
  * The handshake request that asks a MiniMax Code provider for its extension
  * notifications.
  *
@@ -152,7 +163,10 @@ function readMiniMaxCodeMembers(tree: unknown): MiniMaxCodeDelegationMember[] | 
 /**
  * Turns a delegation tree into the rows the track shows.
  */
-function readMiniMaxCodeRows(tree: unknown): ACPDelegationRow[] | null {
+function readMiniMaxCodeRows(
+  tree: unknown,
+  knownMemberIds?: ReadonlySet<string>,
+): ACPDelegationRow[] | null {
   const members = readMiniMaxCodeMembers(tree);
   if (!members) {
     return null;
@@ -181,6 +195,13 @@ function readMiniMaxCodeRows(tree: unknown): ACPDelegationRow[] | null {
     if (member.updatedAtMs !== null) {
       row.timestamp = new Date(member.updatedAtMs).toISOString();
     }
+    if (knownMemberIds && status === "completed" && !knownMemberIds.has(member.sessionId)) {
+      // The provider publishes a child it has not started yet as finished, and
+      // takes it back a moment later. The row waits for that, so the track
+      // never shows a child as finished before it began. A child the session
+      // already showed is a child that ran, so its finish is shown at once.
+      row.deferMs = MINIMAX_CODE_DELEGATION_CONFIRMATION_MS;
+    }
     rows.push(row);
   }
   return rows;
@@ -202,8 +223,12 @@ export const MINIMAX_CODE_DELEGATION_EXTENSION: ACPDelegationExtension = {
   parseReadResult(result) {
     return readMiniMaxCodeRows(result);
   },
-  parseUpdate(params) {
-    return readMiniMaxCodeRows(params.snapshot);
+  parseUpdate(params, context) {
+    // A tree the session reads is the state of the world: a child that is
+    // finished there is finished, and a resumed session shows it at once.
+    // Only a tree the provider publishes while the session runs can report a
+    // child that is not started yet.
+    return readMiniMaxCodeRows(params.snapshot, context.knownMemberIds);
   },
 };
 

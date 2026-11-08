@@ -506,6 +506,22 @@ export interface ACPDelegationRow {
   status: ProviderSubagentStatus;
   parentSubagentId: string | null;
   timestamp?: string;
+  /**
+   * How long the row waits before it is published, in milliseconds.
+   *
+   * A provider that reports a child as finished before it started needs the
+   * row to wait: the provider takes the child back a moment later. The wait
+   * is bounded, so a child that really finished is shown.
+   */
+  deferMs?: number;
+}
+
+/**
+ * What the session knows about the tree when a provider publishes one.
+ */
+export interface ACPDelegationContext {
+  /** The members the session already shows. */
+  knownMemberIds: ReadonlySet<string>;
 }
 
 /**
@@ -530,8 +546,16 @@ export interface ACPDelegationExtension {
   }): Promise<unknown>;
   /** Turns the answer of the read method into the rows it holds. */
   parseReadResult(result: unknown): ACPDelegationRow[] | null;
-  /** Turns a published update into the rows it holds. */
-  parseUpdate(params: Record<string, unknown>): ACPDelegationRow[] | null;
+  /**
+   * Turns a published update into the rows it holds.
+   *
+   * The context says which members the session already shows, so an
+   * extension can tell a member it has not seen before from one it knows.
+   */
+  parseUpdate(
+    params: Record<string, unknown>,
+    context: ACPDelegationContext,
+  ): ACPDelegationRow[] | null;
 }
 
 /**
@@ -1856,6 +1880,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // The rows the session published, so a tree that no longer holds a member
   // removes its row.
   private readonly publishedDelegationIds = new Set<string>();
+  // The rows that wait before they are published, so a provider that reports
+  // a child as finished before it started does not show it as finished.
+  private readonly pendingDelegationRows = new Map<
+    string,
+    { row: ACPDelegationRow; timer: ReturnType<typeof setTimeout> }
+  >();
   // The delegation tree is read while the session initializes, before the
   // agent manager subscribes to the session. The rows wait here until a
   // subscriber arrives.
@@ -2735,6 +2765,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
 
     this.cancelPendingPermissions();
+    this.clearPendingDelegationRows();
 
     if (this.connection && this.sessionId) {
       try {
@@ -2953,6 +2984,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.delegationSignature = signature;
     const rowIds = new Set(rows.map((row) => row.id));
+    const keptMemberIds = new Set<string>();
     for (const id of this.publishedDelegationIds) {
       if (!rowIds.has(id)) {
         // The tree no longer shows the member: it is gone, or the provider
@@ -2964,25 +2996,89 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           provider: this.provider,
           event: { type: "remove", id },
         });
+        continue;
       }
+      keptMemberIds.add(id);
     }
     this.publishedDelegationIds.clear();
-    for (const row of rows) {
-      this.publishedDelegationIds.add(row.id);
-      this.pushEvent({
-        type: "provider_subagent",
-        provider: this.provider,
-        event: {
-          type: "upsert",
-          id: row.id,
-          title: row.title,
-          description: row.description,
-          status: row.status,
-          parentSubagentId: row.parentSubagentId,
-          ...(row.timestamp ? { timestamp: row.timestamp } : {}),
-        },
-      });
+    for (const id of keptMemberIds) {
+      this.publishedDelegationIds.add(id);
     }
+    // A row that waits is not shown yet. A row that waits for a member the
+    // tree no longer holds is dropped with the tree.
+    const droppedMemberIds: string[] = [];
+    for (const id of this.pendingDelegationRows.keys()) {
+      if (!rowIds.has(id)) {
+        droppedMemberIds.push(id);
+      }
+    }
+    for (const id of droppedMemberIds) {
+      this.cancelPendingDelegationRow(id);
+    }
+    for (const row of rows) {
+      this.cancelPendingDelegationRow(row.id);
+      if (row.deferMs !== undefined) {
+        this.holdDelegationRow(row);
+        continue;
+      }
+      this.publishDelegationRow(row);
+    }
+  }
+
+  /**
+   * Publishes one row of a delegation tree.
+   */
+  private publishDelegationRow(row: ACPDelegationRow): void {
+    this.publishedDelegationIds.add(row.id);
+    this.pushEvent({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        status: row.status,
+        parentSubagentId: row.parentSubagentId,
+        ...(row.timestamp ? { timestamp: row.timestamp } : {}),
+      },
+    });
+  }
+
+  /**
+   * Holds a row back until the provider has had time to correct it.
+   *
+   * The row is published when the wait is over, unless a newer row for the
+   * same member arrives first.
+   */
+  private holdDelegationRow(row: ACPDelegationRow): void {
+    const timer = setTimeout(() => {
+      this.pendingDelegationRows.delete(row.id);
+      this.publishDelegationRow(row);
+    }, row.deferMs);
+    this.pendingDelegationRows.set(row.id, { row, timer });
+  }
+
+  /**
+   * Drops a row that waited, because a newer row took its place.
+   */
+  private cancelPendingDelegationRow(id: string): void {
+    const pending = this.pendingDelegationRows.get(id);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingDelegationRows.delete(id);
+  }
+
+  /**
+   * Drops every row that waited. A closed session shows nothing more.
+   */
+  private clearPendingDelegationRows(): void {
+    for (const pending of this.pendingDelegationRows.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingDelegationRows.clear();
   }
 
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
@@ -3005,7 +3101,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       // A provider may publish the tree of another session to the same client.
       // Only the tree of this session belongs to it.
       if (sessionId === null || sessionId === this.sessionId) {
-        const rows = extension.parseUpdate(params);
+        const rows = extension.parseUpdate(params, {
+          knownMemberIds: new Set(this.publishedDelegationIds),
+        });
         if (rows) {
           // A published tree is newer than a read that is still in flight, so
           // the read is dropped when it answers. A tree that cannot be read

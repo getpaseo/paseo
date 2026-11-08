@@ -67,6 +67,7 @@ const member = (sessionId, parentSessionId, agentName, task, status, createdAtMs
   updatedAtMs,
 });
 
+const scenario = process.env.ACP_DELEGATION_SCENARIO ?? "tree";
 const tree = {
   schemaVersion: 1,
   rootSessionId: "root-session",
@@ -80,6 +81,11 @@ const tree = {
     member("stopped-session", "root-session", "worker", "Stop the search", "stopped", 7000, 7500),
   ],
 };
+// A child the provider publishes as finished at the moment it creates it.
+const lateMember = member("late-session", "root-session", "worker", "Start late", "completed", 8000, 8000);
+const lateRunning = member("late-session", "root-session", "worker", "Start late", "running", 8000, 8200);
+const withLate = { ...tree, members: [...tree.members, lateMember] };
+const withLateRunning = { ...tree, members: [...tree.members, lateRunning] };
 
 new AgentSideConnection(
   (connection) => ({
@@ -108,6 +114,37 @@ new AgentSideConnection(
       return { snapshot: tree };
     },
     async prompt() {
+      if (scenario === "confirm") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: withLate,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: withLateRunning,
+        });
+        return { stopReason: "end_turn" };
+      }
+      if (scenario === "confirm-only") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: withLate,
+        });
+        return { stopReason: "end_turn" };
+      }
+      if (scenario === "confirm-slow") {
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: withLate,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        await connection.extNotification("mcode/session/delegation_update", {
+          sessionId: "minimax-session",
+          snapshot: withLateRunning,
+        });
+        return { stopReason: "end_turn" };
+      }
       await connection.extNotification("mcode/session/delegation_update", {
         sessionId: "minimax-session",
         snapshot: tree,
@@ -140,7 +177,7 @@ describe("MiniMaxCodeACPAgentClient", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  function createClient() {
+  function createClient(options: { scenario?: string } = {}) {
     return new MiniMaxCodeACPAgentClient({
       logger: createTestLogger(),
       command: [process.execPath, agentScript],
@@ -150,6 +187,7 @@ describe("MiniMaxCodeACPAgentClient", () => {
           createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
         ).href,
         ACP_TEST_LOG: logPath,
+        ACP_DELEGATION_SCENARIO: options.scenario ?? "tree",
       },
     });
   }
@@ -298,6 +336,9 @@ describe("MiniMaxCodeACPAgentClient", () => {
     expect(capabilities?._meta).toBeUndefined();
   });
 
+  function rowsFor(events: AgentStreamEvent[], id: string): Array<Record<string, unknown>> {
+    return delegationRows(events).filter((row) => row.id === id);
+  }
   test("publishes the tree the provider reports", async () => {
     const client = createClient();
     session = await client.createSession({ provider: "acp", cwd: dir });
@@ -347,6 +388,112 @@ describe("MiniMaxCodeACPAgentClient", () => {
     ]);
   });
 
+  test("waits before it shows a child the provider reports as finished before it started", async () => {
+    const client = createClient({ scenario: "confirm-only" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+
+    // The provider published the child as finished at the moment it
+    // created it. The row waits: the track must not show a child as
+    // finished before it began.
+    expect(rowsFor(events, "late-session")).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    // A child that really finished is shown once the wait is over.
+    expect(rowsFor(events, "late-session")).toEqual([
+      {
+        id: "late-session",
+        title: "worker",
+        description: "Start late",
+        status: "completed",
+        parentSubagentId: null,
+      },
+    ]);
+  });
+
+  test("shows the running status the provider takes the child back with", async () => {
+    const client = createClient({ scenario: "confirm" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The provider took the child back while the row waited, so the row
+    // shows the child running and never showed it as finished.
+    expect(rowsFor(events, "late-session")).toEqual([
+      {
+        id: "late-session",
+        title: "worker",
+        description: "Start late",
+        status: "running",
+        parentSubagentId: null,
+      },
+    ]);
+  });
+
+  test("ends with the running status when the child starts slowly", async () => {
+    const client = createClient({ scenario: "confirm-slow" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    // The wait is bounded, so a child that starts after it is shown as
+    // finished first and as running afterwards. The state it ends in is the
+    // state the provider reports.
+    expect(rowsFor(events, "late-session").map((row) => row.status)).toEqual([
+      "completed",
+      "running",
+    ]);
+  });
+
+  test("drops the waiting row when the session closes", async () => {
+    const client = createClient({ scenario: "confirm-only" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await session.close();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    // A closed session shows nothing more, so the row that waited is
+    // dropped with it.
+    expect(rowsFor(events, "late-session")).toEqual([]);
+  });
+
+  test("shows a child of a resumed session as finished at once", async () => {
+    const client = createClient();
+
+    session = await client.resumeSession(
+      { provider: "acp", sessionId: "minimax-session", metadata: { cwd: dir } },
+      undefined,
+      undefined,
+      { purpose: "interactive" },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // A tree the session reads is the state of the world: a child that
+    // finished before the session resumed is shown as finished at once.
+    expect(rowsFor(events, "instant-session")).toEqual([
+      {
+        id: "instant-session",
+        title: "worker",
+        description: "Finish in a moment",
+        status: "completed",
+        parentSubagentId: null,
+      },
+    ]);
+  });
   test("shows the tree of a resumed session", async () => {
     const client = createClient();
 
