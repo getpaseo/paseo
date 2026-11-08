@@ -2401,6 +2401,29 @@ export const fr: TranslationResources = {
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      instructionsTitle: "Instructions personnalisées",
+      instructionsInfo:
+        "Instructions personnalisées injectées dans les prompts IA que Paseo utilise pour générer des métadonnées. Les instructions dans le paseo.json d'un projet ont la priorité",
+      prompts: {
+        default: "Par défaut",
+        resetToDefault: "Rétablir par défaut",
+        save: "Enregistrer",
+        title: "Titres d'espace de travail",
+        titleHint: "Affiché dans la barre latérale et les en-têtes de fenêtre",
+        titlePlaceholder:
+          "Libellé d'action concret : opération demandée + cible concrète, 80 caractères max",
+        branchName: "Noms de branche",
+        branchNameHint: "Slug Git pour les nouveaux worktrees",
+        branchNamePlaceholder:
+          "Un slug court préservant l'opération, la cible et l'identifiant explicite",
+        commitMessage: "Messages de commit",
+        commitMessageHint: "Message suggéré lors de la validation des modifications",
+        commitMessagePlaceholder: "Concis, impératif, sans point final",
+        pullRequest: "Pull requests",
+        pullRequestHint: "Titre et corps de brouillon lors de l'ouverture d'une PR",
+        pullRequestPlaceholder:
+          "Titre clair et descriptif ; corps expliquant ce qui a changé et pourquoi",
+      },
     },
     voice: {
       offline: "Connectez-vous à cet hôte pour configurer la voix.",

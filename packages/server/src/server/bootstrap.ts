@@ -476,6 +476,10 @@ export interface PaseoDaemonConfig {
       model?: string;
       thinkingOptionId?: string;
     }>;
+    title?: { instructions?: string } | null;
+    branchName?: { instructions?: string } | null;
+    commitMessage?: { instructions?: string } | null;
+    pullRequest?: { instructions?: string } | null;
   };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
@@ -574,6 +578,19 @@ function resolveReloadEnv(config: PaseoDaemonConfig): NodeJS.ProcessEnv {
   return config.configReload?.env ?? process.env;
 }
 
+function createInitialMetadataGeneration(
+  config: ResolvedDaemonSettings,
+): MutableDaemonConfig["metadataGeneration"] {
+  const meta = config.metadataGeneration;
+  return {
+    providers: meta?.providers ?? [],
+    title: meta?.title,
+    branchName: meta?.branchName,
+    commitMessage: meta?.commitMessage,
+    pullRequest: meta?.pullRequest,
+  };
+}
+
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -594,9 +611,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
-    metadataGeneration: {
-      providers: config.metadataGeneration?.providers ?? [],
-    },
+    metadataGeneration: createInitialMetadataGeneration(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,

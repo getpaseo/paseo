@@ -65,6 +65,23 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 设置界面只替换第一项，并保留自定义列表的其余部分。直接编辑文件后，请重启 daemon。
 
+## 自定义指令 {#custom-instructions}
+
+你可以在 **设置 → 主机 → 元数据** 中为每类元数据全局自定义指令，或直接在 `~/.paseo/config.json` 的 `agents.metadataGeneration` 中配置它们。仓库 `paseo.json` 中的指令优先于此处的全局默认设置。
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "title": { "instructions": "Keep titles to a few words, no leading verb." },
+      "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
+      "commitMessage": { "instructions": "Follow Conventional Commits." },
+      "pullRequest": { "instructions": "Include a Testing section in the body." }
+    }
+  }
+}
+```
+
 ## 按项目设置指令 {#per-project-instructions}
 
 你可以在仓库根目录的 `paseo.json` 文件中，按仓库调整每类元数据的措辞。Paseo 从基础分支已提交的版本中读取它，方式与读取 worktree 配置相同。

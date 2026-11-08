@@ -2385,6 +2385,29 @@ export const ptBR: TranslationResources = {
       modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+      instructionsTitle: "Instruções personalizadas",
+      instructionsInfo:
+        "Instruções personalizadas injetadas nos prompts de IA que o Paseo usa para gerar metadados. Instruções no paseo.json de um projeto têm precedência",
+      prompts: {
+        default: "Padrão",
+        resetToDefault: "Redefinir para o padrão",
+        save: "Salvar",
+        title: "Títulos de espaço de trabalho",
+        titleHint: "Exibido na barra lateral e cabeçalhos de janela",
+        titlePlaceholder:
+          "Rótulo de tarefa acionável: operação solicitada + destino concreto, máx. 80 caracteres",
+        branchName: "Nomes de ramificação",
+        branchNameHint: "Slug de ref Git para novos worktrees",
+        branchNamePlaceholder:
+          "Um slug curto preservando a operação, destino e identificador explícito",
+        commitMessage: "Mensagens de commit",
+        commitMessageHint: "Mensagem sugerida ao confirmar alterações",
+        commitMessagePlaceholder: "Conciso, modo imperativo, sem ponto final",
+        pullRequest: "Pull requests",
+        pullRequestHint: "Rascunho de título e corpo ao abrir um PR",
+        pullRequestPlaceholder:
+          "Título claro e descritivo; corpo explicando o que mudou e o porquê",
+      },
     },
     voice: {
       offline: "Conecte-se a este host para configurar a voz.",

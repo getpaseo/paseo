@@ -95,9 +95,10 @@ interface PromptForDiffInput {
 export function createGitMetadataGenerator(deps: {
   workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
+  readDaemonConfig?: () => StructuredGenerationDaemonConfig | null;
   logger: GitMetadataLogger;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation, logger } = deps;
+  const { workspaceGitService, generation, readDaemonConfig, logger } = deps;
 
   async function generateOrFallback<T>(
     request: StructuredTextGenerationRequest<T>,
@@ -129,6 +130,7 @@ export function createGitMetadataGenerator(deps: {
     return buildMetadataPrompt({
       cwd: input.cwd,
       workspaceGitService,
+      daemonConfig: readDaemonConfig?.() ?? null,
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [

@@ -184,9 +184,19 @@ const MutableStructuredGenerationProviderSchema = z
   })
   .passthrough();
 
+export const MutableMetadataGenerationPromptEntrySchema = z
+  .object({
+    instructions: z.string().trim().min(1).optional(),
+  })
+  .passthrough();
+
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    title: MutableMetadataGenerationPromptEntrySchema.nullable().optional(),
+    branchName: MutableMetadataGenerationPromptEntrySchema.nullable().optional(),
+    commitMessage: MutableMetadataGenerationPromptEntrySchema.nullable().optional(),
+    pullRequest: MutableMetadataGenerationPromptEntrySchema.nullable().optional(),
   })
   .passthrough();
 

@@ -910,6 +910,57 @@ describe("DaemonConfigStore", () => {
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
+  test("patch persists metadata generation prompt instructions into config.json", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        metadataGeneration: { providers: [] },
+      },
+      undefined,
+    );
+
+    const next = await store.patch({
+      metadataGeneration: {
+        title: { instructions: "Use Chinese task titles" },
+        branchName: { instructions: "feat/<name>" },
+      },
+    });
+
+    expect(next.metadataGeneration.title).toEqual({ instructions: "Use Chinese task titles" });
+    expect(next.metadataGeneration.branchName).toEqual({ instructions: "feat/<name>" });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration?.title).toEqual({
+      instructions: "Use Chinese task titles",
+    });
+    expect(persisted.agents?.metadataGeneration?.branchName).toEqual({
+      instructions: "feat/<name>",
+    });
+
+    // Clearing one prompt instruction restores default
+    const updated = await store.patch({
+      metadataGeneration: {
+        title: null,
+      },
+    });
+
+    expect(updated.metadataGeneration.title).toBeNull();
+    const persistedAfterClear = loadPersistedConfig(paseoHome);
+    expect(persistedAfterClear.agents?.metadataGeneration?.title).toBeUndefined();
+    expect(persistedAfterClear.agents?.metadataGeneration?.branchName).toEqual({
+      instructions: "feat/<name>",
+    });
+  });
+
   test("patch persists the host idle runtime cleanup opt-out for the next daemon start", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

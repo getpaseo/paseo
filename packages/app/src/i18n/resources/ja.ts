@@ -2374,6 +2374,27 @@ export const ja: TranslationResources = {
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+      instructionsTitle: "カスタム指示",
+      instructionsInfo:
+        "Paseo がメタデータ生成に使用する AI プロンプトに注入されるカスタム指示。プロジェクトの paseo.json の設定が優先されます",
+      prompts: {
+        default: "デフォルト",
+        resetToDefault: "デフォルトに戻す",
+        save: "保存",
+        title: "ワークスペースのタイトル",
+        titleHint: "サイドバーやウィンドウヘッダーに表示されるタイトル",
+        titlePlaceholder:
+          "実行可能なタスクラベル：操作 + 対象、最大80文字（例：PR #2638 のリファクタリング）",
+        branchName: "ブランチ名",
+        branchNameHint: "新しい worktree に使用する Git ブランチ名",
+        branchNamePlaceholder: "操作、対象、識別子を保持した短いスラッグ",
+        commitMessage: "コミットメッセージ",
+        commitMessageHint: "変更コミット時に提案されるメッセージ",
+        commitMessagePlaceholder: "簡潔で命令形、末尾のピリオドなし",
+        pullRequest: "プルリクエスト",
+        pullRequestHint: "PR 作成時の下書きタイトルと本文",
+        pullRequestPlaceholder: "明確なタイトルと変更内容・理由を説明する本文",
+      },
     },
     voice: {
       offline: "音声を設定するには、このホストに接続してください。",
