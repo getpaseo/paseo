@@ -690,6 +690,7 @@ export interface AgentSession {
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
+  /** Returns an ID unique across the agent lifetime, including resumed sessions and daemon restarts. */
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;

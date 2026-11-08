@@ -1345,6 +1345,30 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("keeps turn identities distinct across resumed session objects", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const handle = {
+      provider: "claude" as const,
+      sessionId: "saved-session",
+      metadata: { cwd: process.cwd() },
+    };
+    const first = await client.resumeSession(handle);
+    const firstTurn = await first.startTurn("first");
+    await first.close();
+    const resumed = await client.resumeSession(handle);
+    try {
+      const nextTurn = await resumed.startTurn("second");
+      expect(nextTurn.turnId).not.toBe(firstTurn.turnId);
+    } finally {
+      await resumed.close();
+    }
+  });
+
   test("disables Claude hooks for internal agents only", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

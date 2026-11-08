@@ -1359,7 +1359,7 @@ describe("Codex app-server provider", () => {
     const firstSession = await createProviderWithFakeAppServer(beforeRestart).createSession(
       createConfig({ thinkingOptionId: undefined }),
     );
-    await firstSession.startTurn("first turn");
+    const firstTurn = await firstSession.startTurn("first turn");
     await expect(beforeRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
     const saved = waitForNextEvent(firstSession, "thread_started");
     beforeRestart.startsTurn({ threadId: "thread-1" });
@@ -1378,7 +1378,8 @@ describe("Codex app-server provider", () => {
       await expect(resumed.getRuntimeInfo()).resolves.toMatchObject({
         thinkingOptionId: "medium",
       });
-      await resumed.startTurn("turn after restart");
+      const resumedTurn = await resumed.startTurn("turn after restart");
+      expect(resumedTurn.turnId).not.toBe(firstTurn.turnId);
       await expect(afterRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
       beforeRestart.assertNoErrors();
       afterRestart.assertNoErrors();
@@ -4853,6 +4854,7 @@ describe("Codex app-server provider", () => {
     );
 
     try {
+      const started = waitForNextEvent(session, "turn_started");
       const resultPromise = session.run("Delegate the investigation.");
       await appServer.waitForTurnStart();
       const child = waitForProviderSubagent(session, "legacy-only-child-thread");
@@ -4870,7 +4872,7 @@ describe("Codex app-server provider", () => {
       await expect(child).resolves.toMatchObject({
         type: "provider_subagent",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: (await started).turnId,
         event: {
           type: "upsert",
           id: "legacy-only-child-thread",
@@ -4880,7 +4882,7 @@ describe("Codex app-server provider", () => {
       await expect(spawn).resolves.toMatchObject({
         type: "timeline",
         provider: "codex",
-        turnId: "codex-turn-0",
+        turnId: (await started).turnId,
         item: {
           type: "tool_call",
           callId: "spawn-legacy-only-child",
