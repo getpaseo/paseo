@@ -1,3 +1,4 @@
+import { codexUserImages } from "../conversation-images.js";
 import { CodexBackgroundInventory } from "./codex/background-inventory.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
@@ -1850,6 +1851,7 @@ function mapCodexThreadUserMessageItem(
     return null;
   }
   const text = extractUserText(normalizedItem.content) ?? "";
+  const imageSources = codexUserImages(normalizedItem.content);
   const messageId = nonEmptyString(normalizedItem.id);
   const clientMessageId = nonEmptyString(
     normalizedItem.clientId ?? normalizedItem.client_id ?? normalizedItem.clientUserMessageId,
@@ -1857,6 +1859,7 @@ function mapCodexThreadUserMessageItem(
   return {
     type: "user_message",
     text,
+    ...(imageSources.length ? { imageSources } : {}),
     ...(messageId ? { messageId } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
   };

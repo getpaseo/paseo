@@ -82,6 +82,7 @@ import {
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
+import { ConversationImageStore, inlineUserImages } from "./conversation-images.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -354,6 +355,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  conversationImages?: ConversationImageStore;
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
@@ -743,20 +745,6 @@ function buildExplicitTimelineSeedForRegister(
   };
 }
 
-function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
-  const rows: AgentTimelineRow[] = [];
-  for (const entry of entries) {
-    for (const item of projectAgentMessages(entry.item)) {
-      rows.push({
-        seq: rows.length + 1,
-        timestamp: entry.timestamp ?? new Date().toISOString(),
-        item: limitAgentTimelineItemContent(item),
-      });
-    }
-  }
-  return rows;
-}
-
 function resolveImportedAgentTitle(
   config: AgentSessionConfig,
   timelineRows: readonly AgentTimelineRow[],
@@ -872,8 +860,10 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private readonly conversationImages?: ConversationImageStore;
 
   constructor(options: AgentManagerOptions) {
+    this.conversationImages = options.conversationImages;
     this.pluginLifecycle = options.pluginLifecycle;
     this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
@@ -1367,6 +1357,98 @@ export class AgentManager {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
+  private async buildImportedTimelineRows(
+    agentId: string,
+    entries: readonly ImportedTimelineEntry[],
+  ): Promise<AgentTimelineRow[]> {
+    const rows: AgentTimelineRow[] = [];
+    for (const entry of entries) {
+      // Retain native image sources before projection or content limiting can discard them.
+      const normalized = await this.normalizeUserImages(agentId, entry.item);
+      for (const item of projectAgentMessages(normalized)) {
+        rows.push({
+          seq: rows.length + 1,
+          timestamp: entry.timestamp ?? new Date().toISOString(),
+          item: limitAgentTimelineItemContent(item),
+        });
+      }
+    }
+    return rows;
+  }
+
+  private async normalizeStreamImages(
+    agentId: string,
+    event: AgentStreamEvent,
+  ): Promise<AgentStreamEvent> {
+    if (event.type === "timeline")
+      return { ...event, item: await this.normalizeUserImages(agentId, event.item) };
+    return event.type === "provider_subagent"
+      ? this.normalizeProviderSubagentImages(agentId, event)
+      : event;
+  }
+
+  private async normalizeProviderSubagentImages(
+    agentId: string,
+    event: Extract<AgentStreamEvent, { type: "provider_subagent" }>,
+  ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>> {
+    if (event.event.type !== "timeline") return event;
+    const identityScope = JSON.stringify([agentId, event.event.id]);
+    return {
+      ...event,
+      event: {
+        ...event.event,
+        item: await this.normalizeUserImages(identityScope, event.event.item),
+      },
+    };
+  }
+
+  private async normalizeUserImages(
+    agentId: string,
+    item: AgentTimelineItem,
+  ): Promise<AgentTimelineItem> {
+    if (item.type !== "user_message") return item;
+    const { imageSources: _imageSources, ...message } = item;
+    if (!this.conversationImages) return message;
+    try {
+      return await this.conversationImages.normalize(agentId, item);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Unable to retain user images");
+      const images =
+        item.images ??
+        item.imageSources?.map((source) => ({
+          kind: "unavailable" as const,
+          mimeType: source.mimeType,
+        }));
+      return images?.length ? { ...message, images } : message;
+    }
+  }
+
+  private async bindUserImageIdentity(
+    agentId: string,
+    messageId: string,
+    images: Extract<AgentTimelineItem, { type: "user_message" }>["images"],
+  ): Promise<void> {
+    if (!images?.length) return;
+    try {
+      await this.conversationImages?.bind(agentId, [messageId], images);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId, messageId }, "Unable to retain user image identity");
+    }
+  }
+
+  async readTimelineImage(agentId: string, imageId: string) {
+    const rows = await this.getTimelineRows(agentId);
+    const image =
+      rows
+        .flatMap((row) => (row.item.type === "user_message" ? (row.item.images ?? []) : []))
+        .filter((candidate) => candidate.kind === "stored")
+        .find((candidate) => candidate.id === imageId) ??
+      this.providerSubagents.findImage(agentId, imageId);
+    if (!image || !this.conversationImages)
+      throw new Error("Image is not in this agent's timeline");
+    return { image, bytes: await this.conversationImages.read(imageId) };
+  }
+
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
@@ -1714,7 +1796,7 @@ export class AgentManager {
         }),
         { resolveDefaultModel: false },
       );
-      const timelineRows = buildImportedTimelineRows(imported.timeline);
+      const timelineRows = await this.buildImportedTimelineRows(resolvedAgentId, imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
@@ -1728,7 +1810,8 @@ export class AgentManager {
         initialTitle,
         publishWhenReady: true,
       });
-      for (const event of imported.providerSubagentEvents ?? []) {
+      for (const rawEvent of imported.providerSubagentEvents ?? []) {
+        const event = await this.normalizeProviderSubagentImages(agent.id, rawEvent);
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
       }
@@ -2801,7 +2884,13 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
+      const recording = this.recordSubmittedPrompt(
+        agent,
+        prompt,
+        options.clientMessageId,
+        "accepted",
+      );
+      if (recording) await recording;
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2878,6 +2967,17 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      if (this.conversationImages && options?.clientMessageId && Array.isArray(prompt)) {
+        const imageSources = inlineUserImages(prompt);
+        if (imageSources.length)
+          await this.normalizeUserImages(agent.id, {
+            type: "user_message",
+            text: submittedPromptText(prompt),
+            imageSources,
+          });
+        if (pendingRun.settled)
+          throw new Error(`Agent ${agentId} run was canceled before its turn started`);
+      }
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -2900,9 +3000,16 @@ export class AgentManager {
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
         if (options?.clientMessageId) {
-          this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-            messageId: options.clientMessageId,
-          });
+          const recording = this.recordSubmittedPrompt(
+            agent,
+            prompt,
+            options.clientMessageId,
+            "rejected",
+            {
+              messageId: options.clientMessageId,
+            },
+          );
+          if (recording) await recording;
         }
         await this.handleStreamEvent(agent, {
           type: "turn_failed",
@@ -2967,6 +3074,9 @@ export class AgentManager {
   ): AsyncGenerator<AgentStreamEvent> {
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options);
+    if (Array.isArray(prompt) && prompt.some((block) => block.type === "image")) {
+      options = { ...options, clientMessageId: options?.clientMessageId ?? randomUUID() };
+    }
     const existingAgent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(existingAgent.session))
       return this.streamAfterHistoryLoad(agentId, prompt, options);
@@ -3020,7 +3130,6 @@ export class AgentManager {
         agent.pendingReplacement = false;
       }
       const turnStartedAt = new Date();
-      this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.attention = { requiresAttention: false };
@@ -3043,15 +3152,23 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
-          messageId: options.clientMessageId,
-          turnId,
-          providerMessageId:
-            stagedSubmittedPromptEcho?.item.type === "user_message"
-              ? stagedSubmittedPromptEcho.item.messageId
-              : undefined,
-        });
+        const recording = this.recordSubmittedPrompt(
+          agent,
+          prompt,
+          options.clientMessageId,
+          "accepted",
+          {
+            messageId: options.clientMessageId,
+            turnId,
+            providerMessageId:
+              stagedSubmittedPromptEcho?.item.type === "user_message"
+                ? stagedSubmittedPromptEcho.item.messageId
+                : undefined,
+          },
+        );
+        if (recording) await recording;
       }
+      this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
         const isAcceptedTurnStart =
           stagedEvent.type === "turn_started" && getAgentStreamEventTurnId(stagedEvent) === turnId;
@@ -3202,6 +3319,9 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
   ): Promise<SteerResult> {
+    if (Array.isArray(prompt) && prompt.some((block) => block.type === "image")) {
+      options = { ...options, clientMessageId: options?.clientMessageId ?? randomUUID() };
+    }
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId || !agent.session.steerActiveTurn) {
@@ -3236,6 +3356,9 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
+    if (Array.isArray(prompt) && prompt.some((block) => block.type === "image")) {
+      options = { ...options, clientMessageId: options?.clientMessageId ?? randomUUID() };
+    }
     // A turn that is still starting has no id to steer yet. Replacing it would drop its
     // prompt, so wait until it is accepted (or fails) and steer the turn it became.
     await this.runs.waitForForegroundStart(agentId);
@@ -3368,11 +3491,12 @@ export class AgentManager {
     if (!clientMessageId) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
+    const recording = this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
       messageId: clientMessageId,
       turnId: expectedTurnId,
       ...(providerMessageId ? { providerMessageId } : {}),
     });
+    if (recording) await recording;
     this.emitState(agent);
   }
 
@@ -4033,7 +4157,7 @@ export class AgentManager {
       const startupHistory: AgentStreamEvent[] = [];
       if (session.initialTimeline?.length && !managed.historyPrimed) {
         for await (const event of session.streamHistory()) {
-          startupHistory.push(limitAgentStreamEventContent(event));
+          startupHistory.push(event);
         }
       }
 
@@ -4047,7 +4171,10 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
+          for (const entry of await this.buildImportedTimelineRows(
+            managed.id,
+            session.initialTimeline,
+          )) {
             this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
           }
         }
@@ -4154,11 +4281,25 @@ export class AgentManager {
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
     const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    if (timelineSeed?.items) {
+      const items: AgentTimelineItem[] = [];
+      for (const item of timelineSeed.items) {
+        items.push(await this.normalizeUserImages(agentId, item));
+      }
+      timelineSeed.items = items;
+    }
+    if (timelineSeed?.rows) {
+      const rows: AgentTimelineRow[] = [];
+      for (const row of timelineSeed.rows) {
+        rows.push({ ...row, item: await this.normalizeUserImages(agentId, row.item) });
+      }
+      timelineSeed.rows = rows;
+    }
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
-    if (options?.timelineRows?.length) {
-      this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
+    if (explicitTimelineSeed?.rows?.length) {
+      this.enqueueDurableTimelineBulkInsert(agentId, explicitTimelineSeed.rows);
     }
     return { durableTimelineHasRows };
   }
@@ -4390,7 +4531,8 @@ export class AgentManager {
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      const normalized = await this.normalizeProviderSubagentImages(agent.id, event);
+      const update = this.providerSubagents.apply(agent.id, normalized.provider, normalized.event);
       this.dispatch({ type: "provider_subagent", event: update });
       return;
     }
@@ -4575,7 +4717,8 @@ export class AgentManager {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
+      const normalized = await this.normalizeStreamImages(agent.id, rawEvent);
+      const event = limitAgentStreamEventContent(normalized);
       if (event.type === "timeline") {
         for (const item of projectAgentMessages(event.item)) {
           historyEvents.push({ ...event, item });
@@ -4636,7 +4779,8 @@ export class AgentManager {
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
       for await (const rawEvent of history) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const normalized = await this.normalizeStreamImages(agent.id, rawEvent);
+        const event = limitAgentStreamEventContent(normalized);
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
           continue;
@@ -4733,6 +4877,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
+    if (event.type === "timeline") event = await this.normalizeStreamImages(agent.id, event);
     event = limitAgentStreamEventContent(event);
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
@@ -4984,7 +5129,7 @@ export class AgentManager {
       if (
         item.type === "user_message" &&
         item.clientMessageId &&
-        this.reconcileSubmittedPromptEcho(agent, item, event.turnId)
+        (await this.reconcileSubmittedPromptEcho(agent, item, event.turnId))
       )
         continue;
 
@@ -5250,18 +5395,39 @@ export class AgentManager {
     clientMessageId: string,
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
-  ): void {
-    const items = projectAgentMessages({
+  ): void | Promise<void> {
+    const message: AgentTimelineItem = {
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
-    });
-    for (const item of items) {
-      // Human attempts stay in history on rejection; delivery notifications require acceptance.
-      if (outcome === "rejected" && item.type !== "user_message") continue;
-      this.recordSubmittedPromptItem(agent, item, options);
+    };
+    const commit = (presentation: AgentTimelineItem): void => {
+      for (const item of projectAgentMessages(presentation)) {
+        // Human attempts stay in history on rejection; delivery notifications require acceptance.
+        if (outcome === "rejected" && item.type !== "user_message") continue;
+        this.recordSubmittedPromptItem(agent, item, options);
+      }
+    };
+    const imageSources = inlineUserImages(prompt);
+    if (!imageSources.length || !this.conversationImages) {
+      commit(message);
+      return;
     }
+    return this.normalizeUserImages(agent.id, {
+      ...message,
+      messageId: undefined,
+      imageSources,
+    }).then(async (normalized) => {
+      if (options?.providerMessageId && normalized.type === "user_message" && normalized.images) {
+        await this.bindUserImageIdentity(agent.id, options.providerMessageId, normalized.images);
+      }
+      commit({
+        ...message,
+        images: normalized.type === "user_message" ? normalized.images : undefined,
+      });
+      return;
+    });
   }
 
   private recordSubmittedPromptItem(
@@ -5280,11 +5446,11 @@ export class AgentManager {
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
   }
 
-  private reconcileSubmittedPromptEcho(
+  private async reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
     turnId?: string,
-  ): AgentTimelineRow | null {
+  ): Promise<AgentTimelineRow | null> {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
@@ -5301,6 +5467,7 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
+      await this.bindUserImageIdentity(agent.id, messageId, existing.item.images);
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,

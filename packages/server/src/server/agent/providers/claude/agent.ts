@@ -1,3 +1,4 @@
+import { claudeUserImages, type ConversationImageStore } from "../../conversation-images.js";
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import { validateProviderOptions } from "../../provider-options.js";
@@ -465,7 +466,15 @@ export interface ClaudeContentChunk {
   [key: string]: unknown;
 }
 
+class ClaudeHistoryImageCaptureRequiredError extends Error {
+  constructor() {
+    super("Configure captureUserImages on ClaudeAgentClient before replaying image history");
+    this.name = "ClaudeHistoryImageCaptureRequiredError";
+  }
+}
+
 interface ClaudeAgentClientOptions {
+  captureUserImages?: ConversationImageStore["capture"];
   discoverModels?: typeof discoverClaudeModels;
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
@@ -481,6 +490,7 @@ type ClaudeImportDescriptorResult =
   | { type: "unreadable"; error: Error };
 
 interface ClaudeAgentSessionOptions {
+  captureUserImages?: ConversationImageStore["capture"];
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
@@ -1606,6 +1616,7 @@ export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
 
+  private readonly captureUserImages?: ConversationImageStore["capture"];
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -1624,6 +1635,7 @@ export class ClaudeAgentClient implements AgentClient {
   });
 
   constructor(options: ClaudeAgentClientOptions) {
+    this.captureUserImages = options.captureUserImages;
     this.discoverModels = options.discoverModels ?? discoverClaudeModels;
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
@@ -1647,6 +1659,7 @@ export class ClaudeAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
     return new ClaudeAgentSession(claudeConfig, {
+      captureUserImages: this.captureUserImages,
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       agentId: launchContext?.agentId,
@@ -1676,6 +1689,7 @@ export class ClaudeAgentClient implements AgentClient {
     };
     const claudeConfig = this.assertConfig(mergedConfig);
     const session = new ClaudeAgentSession(claudeConfig, {
+      captureUserImages: this.captureUserImages,
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
@@ -2292,6 +2306,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
   private readonly agentId?: string;
+  private readonly captureUserImages?: ConversationImageStore["capture"];
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly persistSession?: boolean;
@@ -2413,6 +2428,7 @@ class ClaudeAgentSession implements AgentSession {
   private closed = false;
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
+    this.captureUserImages = options.captureUserImages;
     this.config = config;
     assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
     this.launchEnv = options.launchEnv;
@@ -5518,6 +5534,7 @@ class ClaudeAgentSession implements AgentSession {
         await this.ingestPersistedHistory(history.parentEntries, replay);
       });
     } catch (error) {
+      if (error instanceof ClaudeHistoryImageCaptureRequiredError) throw error;
       this.logger.warn(
         { err: error, sessionId, historyPath },
         "Failed to load Claude history from transcript",
@@ -5667,9 +5684,34 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async convertHistoryEntry(entry: ClaudeHistoryEntry): Promise<AgentTimelineItem[]> {
-    return (
-      await convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content))
-    ).map(limitAgentTimelineItemContent);
+    const items = await convertClaudeHistoryEntry(entry, (content) =>
+      this.mapBlocksToTimeline(content),
+    );
+    const retained: AgentTimelineItem[] = [];
+    for (const item of items) {
+      if (item.type !== "user_message" || !item.imageSources?.length) {
+        retained.push(limitAgentTimelineItemContent(item));
+        continue;
+      }
+      if (!this.captureUserImages) throw new ClaudeHistoryImageCaptureRequiredError();
+      const { imageSources, ...message } = item;
+      let images;
+      try {
+        // Every parent/child/workflow accumulator receives references, never encoded bytes.
+        images = await this.captureUserImages(imageSources);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, messageId: item.messageId },
+          "Unable to retain Claude history images",
+        );
+        images = imageSources.map((source) => ({
+          kind: "unavailable" as const,
+          mimeType: source.mimeType,
+        }));
+      }
+      retained.push(limitAgentTimelineItemContent({ ...message, images }));
+    }
+    return retained;
   }
 
   // Maps Claude content blocks into AgentTimelineItems.
@@ -5727,10 +5769,15 @@ class ClaudeAgentSession implements AgentSession {
       });
     }
 
-    if (textMessageType === "user_message" && userTextParts.length > 0) {
+    const imageSources = claudeUserImages(content);
+    if (
+      textMessageType === "user_message" &&
+      (userTextParts.length > 0 || imageSources.length > 0)
+    ) {
       items.unshift({
         type: "user_message",
         text: userTextParts.join("\n\n"),
+        ...(imageSources.length ? { imageSources } : {}),
       });
     }
 
@@ -6590,6 +6637,18 @@ function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
 }
 
+function userHistoryItem(content: unknown, messageId: string | null): AgentTimelineItem | null {
+  const text = extractUserMessageText(content) ?? "";
+  const imageSources = claudeUserImages(content);
+  if (!text && !imageSources.length) return null;
+  return {
+    type: "user_message",
+    text,
+    ...(imageSources.length ? { imageSources } : {}),
+    ...(messageId ? { messageId } : {}),
+  };
+}
+
 /**
  * A message steered into a running turn. Claude Code gives it no user entry: it records a
  * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
@@ -6599,10 +6658,7 @@ function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineI
   if (entry.type !== "attachment") return null;
   const attachment = toObjectRecord(entry.attachment);
   if (attachment?.type !== "queued_command" || attachment.commandMode !== "prompt") return null;
-  const text = extractUserMessageText(attachment.prompt);
-  if (!text) return null;
-  const messageId = readTrimmedString(attachment.source_uuid);
-  return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
+  return userHistoryItem(attachment.prompt, readTrimmedString(attachment.source_uuid) ?? null);
 }
 
 export async function convertClaudeHistoryEntry(
@@ -6638,14 +6694,8 @@ export async function convertClaudeHistoryEntry(
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      timeline.push({
-        type: "user_message",
-        text,
-        ...(userMessageId ? { messageId: userMessageId } : {}),
-      });
-    }
+    const item = userHistoryItem(content, userMessageId);
+    if (item) timeline.push(item);
   }
 
   if (hasToolBlock && normalizedBlocks) {

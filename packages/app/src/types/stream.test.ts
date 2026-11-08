@@ -2406,3 +2406,63 @@ it("retains agent-message provenance through live delivery and repeated history"
   expect(replay).toHaveLength(1);
   expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
 });
+
+it("renders image-only canonical messages and preserves image refs during reconciliation", () => {
+  const image = { kind: "stored", id: "a".repeat(64), mimeType: "image/png", byteSize: 1 } as const;
+  const event = {
+    type: "timeline",
+    provider: "pi",
+    item: { type: "user_message", text: "", messageId: "native-one", images: [image, image] },
+  } satisfies AgentStreamEventPayload;
+  const first = reduceStreamUpdate([], event, new Date(1));
+  expect(first).toEqual([
+    {
+      kind: "user_message",
+      id: "native-one",
+      messageId: "native-one",
+      text: "",
+      timestamp: new Date(1),
+      imageRefs: [image, image],
+    },
+  ]);
+  const second = reduceStreamUpdate(
+    first,
+    { ...event, item: { ...event.item, messageId: "native-two" } },
+    new Date(2),
+  );
+  expect(second).toHaveLength(2);
+  expect(
+    upsertUserMessage(
+      second,
+      createUserMessage({ messageId: "native-one", text: "", timestamp: new Date(1) }),
+    ),
+  ).toEqual(second);
+});
+
+it("keeps unrecoverable image-only history as an unavailable image entry", () => {
+  const images = [{ kind: "unavailable", mimeType: "image/png" }] as const;
+  const result = reduceStreamUpdate(
+    [],
+    {
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "unavailable-native",
+        images: [...images],
+      },
+    },
+    new Date(1),
+  );
+  expect(result).toEqual([
+    {
+      kind: "user_message",
+      id: "unavailable-native",
+      messageId: "unavailable-native",
+      text: "",
+      timestamp: new Date(1),
+      imageRefs: images,
+    },
+  ]);
+});

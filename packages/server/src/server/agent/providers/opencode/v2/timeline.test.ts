@@ -133,3 +133,28 @@ test.each(["delta", "snapshot"] as const)(
     expect(retainedBytesAfterStreaming(mode, chunks)).toBeLessThan(textBytes * 32);
   },
 );
+
+test("user images survive image-only OpenCode v2 snapshots separately from model text", async () => {
+  const events = await collectTimelineSnapshot(new V2Timeline(), [
+    {
+      id: "native-image",
+      type: "user",
+      text: "",
+      time: { created: 1 },
+      files: [{ data: "eA==", mime: "image/png", source: { type: "inline" } }],
+    },
+  ]);
+  expect(events).toEqual([
+    {
+      type: "timeline",
+      provider: "opencode",
+      timestamp: new Date(1).toISOString(),
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-image",
+        imageSources: [{ kind: "base64", data: "eA==", mimeType: "image/png" }],
+      },
+    },
+  ]);
+});

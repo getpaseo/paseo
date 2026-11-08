@@ -1,3 +1,4 @@
+import { inlineUserImages } from "../../conversation-images.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
@@ -106,8 +107,9 @@ export class OmpHistoryMapper {
 
   private mapUserMessage(message: Extract<OmpAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
+    const imageSources = inlineUserImages(message.content);
     this.userIndex += 1;
-    if (!text) {
+    if (!text && !imageSources.length) {
       return [];
     }
     const userEntry = this.userEntries[this.userIndex - 1];
@@ -118,6 +120,7 @@ export class OmpHistoryMapper {
         item: {
           type: "user_message",
           text,
+          ...(imageSources.length ? { imageSources } : {}),
           ...(userEntry ? { messageId: userEntry.id } : {}),
         },
       },

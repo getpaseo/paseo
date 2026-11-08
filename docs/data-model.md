@@ -57,6 +57,11 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── conversation-images/
+│   ├── {sha256}                         # Immutable user image bytes
+│   └── agents/
+│       ├── {hashed-agent-id}.json        # Legacy image bindings (read-only seed)
+│       └── {hashed-agent-id}/{sequence}.json # Atomic image binding records
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -73,6 +78,8 @@ $PASEO_HOME/
 │   └── {pluginId}/{uuid}/                # Git checkout or npm package/lockfile/dependency tree
 └── push-tokens.json                     # Expo push notification tokens
 ```
+
+Conversation image bindings use one immutable record per changed message binding, containing its native/client aliases and ordered images. Replaying records in numeric sequence preserves the latest binding without rewriting earlier messages during history import. The store publishes aliases only after their shared record is persisted; unfinished temporary files are ignored on restart. Existing per-agent manifests remain readable without migration. Image files and binding records are private (0600 files, 0700 directories). Timeline membership, not the binding history, remains the authority for serving an image.
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
@@ -170,6 +177,12 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `options`     | `AgentSelectOption[]` |
 
 ---
+
+## User image persistence
+
+`ConversationImageStore` owns user image bytes and native-message image bindings under the configured Paseo home. The store writes private files atomically. Timeline pages and client replicas carry image references, not the bytes or host paths.
+
+Native provider history still determines which messages exist. Image bindings enrich surviving native message IDs, so loading a binding cannot restore a message removed by rewind. Image reads also require current parent or child timeline membership. Agent deletion does not currently collect shared image files; automatic collection must not infer reachability from a partially loaded agent registry.
 
 ## Runtime-only Terminal Sessions
 

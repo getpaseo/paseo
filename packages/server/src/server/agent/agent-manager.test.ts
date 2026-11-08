@@ -1,3 +1,4 @@
+import { ConversationImageStore } from "./conversation-images.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -13519,3 +13520,266 @@ test("turns keep distinct identities across an idle runtime collection and resum
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("submitted image-only history retains duplicate images by native identity without changing model input", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-image-history-"));
+  const images = new ConversationImageStore(workdir);
+  const prompts: AgentPromptInput[] = [];
+  const history: AgentStreamEvent[] = [];
+  class ImageSession extends TestAgentSession {
+    override async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions) {
+      prompts.push(prompt);
+      const turnId = `turn-${prompts.length}`;
+      const item: AgentTimelineItem = {
+        type: "user_message",
+        text: "",
+        messageId: `native-${prompts.length}`,
+        clientMessageId: options?.clientMessageId,
+      };
+      history.push({
+        type: "timeline",
+        provider: this.provider,
+        item: { ...item, clientMessageId: undefined },
+      });
+      this.pushEvent({ type: "timeline", provider: this.provider, turnId, item });
+      setTimeout(
+        () => this.pushEvent({ type: "turn_completed", provider: this.provider, turnId }),
+        0,
+      );
+      return { turnId };
+    }
+    override async *streamHistory() {
+      yield* history;
+    }
+  }
+  class ImageClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new ImageSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ImageClient() },
+    conversationImages: images,
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const image = {
+    type: "image",
+    data: Buffer.from("image bytes").toString("base64"),
+    mimeType: "image/png",
+  } as const;
+  const prompt = [image, image];
+  await manager.runAgent(agent.id, prompt);
+  await manager.runAgent(agent.id, prompt);
+  expect(prompts).toEqual([prompt, prompt]);
+  const messages = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+  expect(messages).toHaveLength(2);
+  expect(messages.map((item) => item.images?.length)).toEqual([2, 2]);
+  const reference = messages[0]?.images?.[0];
+  if (!reference || reference.kind !== "stored") throw new Error("Expected image reference");
+  const imageId = reference.id;
+  expect((await manager.readTimelineImage(agent.id, imageId)).bytes.toString()).toBe("image bytes");
+  await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+  expect(
+    manager
+      .getTimeline(agent.id)
+      .filter((item) => item.type === "user_message")
+      .map((item) => item.images),
+  ).toEqual(messages.map((item) => item.images));
+  const failedBinding = vi
+    .spyOn(images, "bind")
+    .mockRejectedValue(new Error("Image store is read-only"));
+  try {
+    await manager.runAgent(agent.id, prompt);
+    expect(prompts).toEqual([prompt, prompt, prompt]);
+    expect(
+      manager.getTimeline(agent.id).findLast((item) => item.type === "user_message")?.images,
+    ).toEqual([
+      { kind: "unavailable", mimeType: "image/png" },
+      { kind: "unavailable", mimeType: "image/png" },
+    ]);
+  } finally {
+    failedBinding.mockRestore();
+  }
+  history.splice(0, history.length, {
+    type: "timeline",
+    provider: "codex",
+    item: { type: "user_message", text: "", messageId: "unrelated-native" },
+  });
+  await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+  expect(manager.getTimeline(agent.id)).toEqual([
+    { type: "user_message", text: "", messageId: "unrelated-native" },
+  ]);
+  await expect(manager.readTimelineImage(agent.id, imageId)).rejects.toThrow(
+    "not in this agent's timeline",
+  );
+});
+
+test("provider-child image sources stay private and reads expire with child membership", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-child-images-"));
+  let session: TestAgentSession | undefined;
+  class ChildImageClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ChildImageClient() },
+    logger,
+    conversationImages: new ConversationImageStore(home),
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    if (!session) throw new Error("Expected provider session");
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "child" },
+    });
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "timeline",
+        id: "child",
+        item: {
+          type: "user_message",
+          text: "",
+          messageId: "native-child-image",
+          imageSources: [{ kind: "base64", mimeType: "image/png", data: "eA==" }],
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(manager.fetchProviderSubagentTimeline(agent.id, "child").rows).toHaveLength(1),
+    );
+    const item = manager.fetchProviderSubagentTimeline(agent.id, "child").rows[0]?.item;
+    expect(item).not.toHaveProperty("imageSources");
+    if (item?.type !== "user_message" || item.images?.[0]?.kind !== "stored")
+      throw new Error("Expected stored child image");
+    const imageId = item.images[0].id;
+    expect((await manager.readTimelineImage(agent.id, imageId)).bytes.toString()).toBe("x");
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "remove", id: "child" },
+    });
+    await vi.waitFor(() => expect(manager.getProviderSubagent(agent.id, "child")).toBeNull());
+    await expect(manager.readTimelineImage(agent.id, imageId)).rejects.toThrow(
+      "not in this agent's timeline",
+    );
+  } finally {
+    await manager.flush();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test.each(["parent", "child", "initialTimeline"] as const)(
+  "imported %s image-only history is normalized before publication",
+  async (ingress) => {
+    const home = mkdtempSync(join(tmpdir(), "paseo-import-images-"));
+    const imageStore = new ConversationImageStore(home);
+    const source = { kind: "base64", mimeType: "image/png", data: "aW1hZ2UgYnl0ZXM=" } as const;
+    const entries = [1, 2].map((index) => ({
+      timestamp: `2026-09-22T00:00:0${index}.000Z`,
+      item: {
+        type: "user_message" as const,
+        text: "",
+        messageId: `native-${index}`,
+        imageSources: [source, source],
+      },
+    }));
+    class ImportedImageSession extends TestAgentSession {
+      readonly initialTimeline = ingress === "initialTimeline" ? entries : [];
+    }
+    class ImportedImageClient extends TestAgentClient {
+      async importSession() {
+        const config = { provider: "codex" as const, cwd: home };
+        const session = new ImportedImageSession(config);
+        const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] =
+          ingress === "child"
+            ? [
+                {
+                  type: "provider_subagent",
+                  provider: "codex",
+                  event: { type: "upsert", id: "child" },
+                },
+                ...entries.map((entry) => ({
+                  type: "provider_subagent" as const,
+                  provider: "codex" as const,
+                  event: { type: "timeline" as const, id: "child", ...entry },
+                })),
+              ]
+            : [];
+        return {
+          session,
+          config,
+          persistence: session.describePersistence(),
+          timeline: ingress === "parent" ? entries : [],
+          providerSubagentEvents,
+        };
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new ImportedImageClient() },
+      logger,
+      conversationImages: imageStore,
+    });
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { replayState: false });
+    onTestFinished(async () => {
+      await manager.flush();
+      rmSync(home, { recursive: true, force: true });
+    });
+    const agent = await manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "native-session",
+      cwd: home,
+      workspaceId: "workspace",
+    });
+    expect(agent.historyPrimed).toBe(true);
+    const rows =
+      ingress === "child"
+        ? manager.fetchProviderSubagentTimeline(agent.id, "child").rows
+        : await manager.getTimelineRows(agent.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.timestamp)).toEqual(entries.map((entry) => entry.timestamp));
+    const restoredStore = new ConversationImageStore(home);
+    const identityScope = ingress === "child" ? JSON.stringify([agent.id, "child"]) : agent.id;
+    for (const [index, row] of rows.entries()) {
+      expect(row.item).not.toHaveProperty("imageSources");
+      if (row.item.type !== "user_message") throw new Error("Expected image-only user message");
+      expect(row.item.messageId).toBe(`native-${index + 1}`);
+      expect(row.item.text).toBe("");
+      expect(row.item.images).toHaveLength(2);
+      expect(row.item.images?.[0]).toEqual(row.item.images?.[1]);
+      const image = row.item.images?.[0];
+      if (image?.kind !== "stored") throw new Error("Expected stored imported image");
+      expect((await manager.readTimelineImage(agent.id, image.id)).bytes.toString()).toBe(
+        "image bytes",
+      );
+      const restored = await restoredStore.normalize(identityScope, {
+        type: "user_message",
+        text: "",
+        messageId: row.item.messageId,
+      });
+      expect(restored.images).toEqual(row.item.images);
+    }
+    const publishedEvents = events.map((event) =>
+      event.type === "agent_state"
+        ? { type: event.type, agent: toAgentPayload(event.agent) }
+        : event,
+    );
+    expect(JSON.stringify({ rows, events: publishedEvents })).not.toContain("imageSources");
+    expect(JSON.stringify({ rows, events: publishedEvents })).not.toContain(source.data);
+  },
+);

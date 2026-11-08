@@ -1,4 +1,5 @@
 import { AgentMessageSchema } from "./agent-message.js";
+import { TimelineImageSchema } from "./timeline-image.js";
 import {
   HostsListRequestSchema,
   HostsAddRequestSchema,
@@ -719,6 +720,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   z.object({
     type: z.literal("user_message"),
     text: z.string(),
+    images: z.array(TimelineImageSchema).optional(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
   }),
@@ -1966,6 +1968,23 @@ export const DaemonUpdateRequestMessageSchema = z.object({
 export const AgentTimelineCursorSchema = z.object({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
+});
+
+export const ReadTimelineImageRequestMessageSchema = z.object({
+  type: z.literal("agent.timeline.read_image.request"),
+  agentId: z.string(),
+  imageId: z.string(),
+  requestId: z.string(),
+});
+
+// Successful reads end with binary FileEnd; the client synthesizes the correlated response,
+// as it does for binary file_explorer reads. JSON responses report admission/read failures.
+export const ReadTimelineImageResponseMessageSchema = z.object({
+  type: z.literal("agent.timeline.read_image.response"),
+  payload: z.object({
+    requestId: z.string(),
+    error: z.string().nullable(),
+  }),
 });
 
 export const FetchAgentTimelineRequestMessageSchema = z.object({
@@ -3497,6 +3516,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RestartServerRequestMessageSchema,
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
+  ReadTimelineImageRequestMessageSchema,
   AgentTimelineSearchRequestMessageSchema,
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
@@ -7328,6 +7348,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  ReadTimelineImageResponseMessageSchema,
   AgentTimelineReplacementMessageSchema,
   AgentTimelineSearchResponseMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,

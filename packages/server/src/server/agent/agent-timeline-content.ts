@@ -125,8 +125,19 @@ function cut(value: unknown, depth: number, state: CutState): unknown {
   return value;
 }
 
-/** Returns the item itself when it fits its budget; otherwise a copy with its largest strings cut. */
+/** Bounds public content while retaining daemon-private image sources until manager capture. */
 export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTimelineItem {
+  if (item.type === "user_message" && item.imageSources) {
+    // Providers can limit history before the manager stores these bytes and strips the sources.
+    // Binary encodings must stay whole and must not consume the public text budget.
+    const { imageSources, ...message } = item;
+    const limited = limitPublicTimelineItemContent(message);
+    return limited === message ? item : { ...limited, imageSources };
+  }
+  return limitPublicTimelineItemContent(item);
+}
+
+function limitPublicTimelineItemContent<T extends AgentTimelineItem>(item: T): T {
   const budget = item.type === "tool_call" ? TOOL_CALL_BUDGET : ITEM_BUDGET;
   const size: ItemSize = { nodeCost: 0, stringLengths: [], tooDeep: false };
   measure(item, 0, size);
@@ -141,5 +152,5 @@ export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTim
     MARKER_COST * size.stringLengths.filter((length) => length > SHORT_STRING).length;
   const available = (budget * 15) / 16 - Math.min(size.nodeCost, budget / 2) - markerCost;
   const stringCap = Math.max(SHORT_STRING, findStringCap(size.stringLengths, available));
-  return cut(item, 0, { stringCap, remaining: budget }) as AgentTimelineItem;
+  return cut(item, 0, { stringCap, remaining: budget }) as T;
 }

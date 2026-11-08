@@ -1,4 +1,20 @@
-import { existsSync, rmSync, statSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  rmSync,
+  statSync,
+  readFileSync,
+  mkdtempSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import {
+  ConversationImageStore,
+  inlineUserImages,
+  codexUserImages,
+  claudeUserImages,
+} from "../conversation-images.js";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
 import { projectTimelineRows } from "../timeline-projection.js";
@@ -246,4 +262,108 @@ test("simultaneous requests for the same content share the published file", asyn
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(readFileSync(results[0].path).toString()).toBe("concurrent dedupe fixture");
+});
+
+describe("durable user images", () => {
+  test("native identities recover original bytes across restart, re-encoding, and deleted Codex input files", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "conversation-images-"));
+    try {
+      const data = Buffer.from("durable source image").toString("base64");
+      const store = new ConversationImageStore(home);
+      const source = { kind: "base64", data, mimeType: "image/png" } as const;
+      const [first, second] = await Promise.all([
+        store.capture([source, source]),
+        store.capture([source]),
+      ]);
+      expect(first).toEqual([second[0], second[0]]);
+      const image = first[0];
+      if (!image || image.kind !== "stored") throw new Error("Expected stored image");
+      await store.bind("agent", ["native-one", "native-two"], first);
+      const materialized = await materializeProviderImage({ data, mimeType: "image/png" });
+      rmSync(materialized.path);
+      const restarted = new ConversationImageStore(home);
+      const replay = await restarted.normalize("agent", {
+        type: "user_message",
+        text: "",
+        messageId: "native-one",
+        imageSources: inlineUserImages([
+          { type: "image", data: "blob:sha256:" + "a".repeat(64), mimeType: "image/png" },
+        ]),
+      });
+      expect(replay).toEqual({
+        type: "user_message",
+        text: "",
+        messageId: "native-one",
+        images: first,
+      });
+      const recoveredPath = await restarted.capture(
+        codexUserImages([{ type: "localImage", path: materialized.path }]),
+      );
+      expect(recoveredPath).toEqual(second);
+      expect(await restarted.read(image.id)).toEqual(Buffer.from("durable source image"));
+      expect(readdirSync(path.join(home, "conversation-images")).sort()).toEqual(
+        [image.id, "agents"].sort(),
+      );
+      expect(statSync(path.join(home, "conversation-images", image.id)).mode & 0o777).toBe(0o600);
+      await expect(
+        restarted.normalize("other-agent", {
+          type: "user_message",
+          text: "",
+          messageId: "native-one",
+        }),
+      ).resolves.toEqual({ type: "user_message", text: "", messageId: "native-one" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("never decodes OMP blob markers or reads arbitrary transcript paths", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "conversation-images-security-"));
+    try {
+      const store = new ConversationImageStore(home);
+      const secret = path.join(home, "secret");
+      writeFileSync(secret, "not an image");
+      expect(
+        inlineUserImages([
+          { type: "image", data: "blob:sha256:" + "a".repeat(64), mimeType: "image/png" },
+        ]),
+      ).toEqual([{ kind: "unavailable", mimeType: "image/png" }]);
+      expect(await store.capture([{ kind: "file", path: secret, mimeType: "image/png" }])).toEqual([
+        { kind: "unavailable", mimeType: "image/png" },
+      ]);
+      await expect(store.read("../secret")).rejects.toThrow();
+      const [image] = await store.capture([
+        { kind: "base64", data: "eA==", mimeType: "image/png" },
+      ]);
+      if (!image || image.kind !== "stored") throw new Error("Expected image");
+      const filename = path.join(home, "conversation-images", image.id);
+      rmSync(filename);
+      symlinkSync(secret, filename);
+      await expect(store.read(image.id)).rejects.toThrow();
+      await expect(
+        store.capture([{ kind: "base64", data: "not-base64", mimeType: "image/png" }]),
+      ).rejects.toThrow("Invalid image base64");
+      await expect(
+        store.capture([
+          {
+            kind: "base64",
+            data: "A".repeat(Math.ceil(MAX_PROVIDER_IMAGE_BYTES / 3) * 4 + 4),
+            mimeType: "image/png",
+          },
+        ]),
+      ).rejects.toThrow("Image is too large");
+      expect(
+        claudeUserImages([
+          {
+            type: "tool_result",
+            content: [
+              { type: "image", source: { type: "base64", media_type: "image/png", data: "eA==" } },
+            ],
+          },
+        ]),
+      ).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

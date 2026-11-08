@@ -1,4 +1,7 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
+import { hideDeveloperToasts } from "../support/developer-ui.mjs";
 import { expect, test as baseTest } from "../support/fixtures";
 import {
   awaitToolCall,
@@ -211,6 +214,21 @@ async function submitImageOnlyMessage(page: Page): Promise<Locator> {
   await expect(userMessage).toBeVisible();
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
   return userMessage;
+}
+
+async function expectUserImageLoaded(userMessage: Locator): Promise<void> {
+  await expect(userMessage).toBeVisible();
+  const attachment = userMessage.getByRole("button", { name: "Open image attachment" });
+  await expect(attachment).toHaveCount(1);
+  await expect(attachment).toBeVisible();
+  await expect
+    .poll(async () =>
+      attachment.evaluate((element) => {
+        const image = element.querySelector("img");
+        return image?.complete ? { width: image.naturalWidth, height: image.naturalHeight } : null;
+      }),
+    )
+    .toEqual({ width: 2, height: 2 });
 }
 
 async function expectPendingSubmission(page: Page, userMessage: Locator): Promise<void> {
@@ -904,6 +922,95 @@ async function completeDraftCreateSubmission(
 }
 
 test.describe("Agent message submission", () => {
+  for (const submission of [
+    {
+      name: "text and image",
+      prompt: "Cross-device image: emit 1 coalesced agent stream updates",
+      receiverWidth: 1280,
+    },
+    { name: "image-only", prompt: "", receiverWidth: 1280 },
+    {
+      name: "compact receiver",
+      prompt: "Cross-device compact image: emit 1 coalesced agent stream updates",
+      receiverWidth: 390,
+    },
+  ]) {
+    test(`cross-device image loads on sender, receiver, and receiver reload (${submission.name})`, async ({
+      page,
+      browser,
+    }, testInfo) => {
+      const workspace = await seedWorkspace({
+        repoPrefix: `cross-device-image-${testInfo.workerIndex}-`,
+      });
+      try {
+        const agent = await createSettledMockAgent(workspace, "Cross-device image regression");
+        const image = await createSmallAssistantPng(workspace, {
+          alt: "Cross-device user image",
+          fileName: "cross-device-user-image.png",
+          width: 2,
+          height: 2,
+        });
+        await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.id });
+        await expectComposerVisible(page);
+        await expectAgentIdle(page);
+
+        const receiverContext = await browser.newContext({
+          storageState: await page.context().storageState(),
+          viewport: { width: submission.receiverWidth, height: 960 },
+        });
+        try {
+          const receiver = await receiverContext.newPage();
+          await receiver.route(/:(6767)\b/, (route) => route.abort());
+          await receiver.routeWebSocket(/:(6767)\b/, async (ws) => {
+            await ws.close({ code: 1008, reason: "Blocked developer daemon during e2e." });
+          });
+          await hideDeveloperToasts(receiver);
+          await receiver.goto(page.url());
+          await expectComposerVisible(receiver);
+          await expectAgentIdle(receiver);
+          await expect(receiver.getByTestId("user-message")).toHaveCount(0);
+
+          await attachImageFromMenu(page, {
+            name: "cross-device-user-image.png",
+            mimeType: "image/png",
+            buffer: await readFile(path.join(workspace.repoPath, image.relativePath)),
+          });
+          await expectAttachmentPill(page, "composer-image-attachment-pill");
+          await fillComposerDraft(page, submission.prompt);
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+
+          const senderMessage = page.getByTestId("user-message");
+          const receiverMessage = receiver.getByTestId("user-message");
+          await expect(senderMessage).toHaveCount(1);
+          await expectUserImageLoaded(senderMessage);
+          await expect(senderMessage).toHaveAttribute("aria-busy", "false");
+          await expect(receiverMessage).toHaveCount(1);
+          await expectUserImageLoaded(receiverMessage);
+          await workspace.client.waitForFinish(agent.id, 30_000);
+          await expectUserImageLoaded(senderMessage);
+
+          await receiver.reload();
+          await expectComposerVisible(receiver);
+          await expect(receiverMessage).toHaveCount(1);
+          await expect(receiverMessage).toHaveAttribute("aria-busy", "false");
+          await expectUserImageLoaded(receiverMessage);
+          await testInfo.attach("sender-image-history", {
+            body: await page.screenshot(),
+            contentType: "image/png",
+          });
+          await testInfo.attach("receiver-image-history-after-reload", {
+            body: await receiver.screenshot(),
+            contentType: "image/png",
+          });
+        } finally {
+          await receiverContext.close();
+        }
+      } finally {
+        await workspace.cleanup();
+      }
+    });
+  }
+
   test("settles an immediately interrupted first prompt", async ({ page }, testInfo) => {
     const workspace = await seedWorkspace({
       repoPrefix: `submission-immediate-interrupt-${testInfo.workerIndex}-`,

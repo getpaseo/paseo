@@ -1,3 +1,5 @@
+import { DaemonClient } from "./test-utils/daemon-client.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -264,3 +266,51 @@ test("malformed chunk metadata closes the daemon socket with a protocol error", 
   source.send(new Uint8Array([0x31, 2, 0, 3, 65]));
   expect(await closed).toBe(1002);
 });
+
+test(
+  "a second client reads canonical user image bytes only through agent membership",
+  async () => {
+    daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+    const manager = daemon.daemon.agentManager;
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: daemon.paseoHome, modeId: "bypassPermissions" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const expected = Buffer.from("cross-device image bytes");
+    await manager.runAgent(
+      agent.id,
+      [{ type: "image", data: expected.toString("base64"), mimeType: "image/png" }],
+      { clientMessageId: "image-client" },
+    );
+    const reference = manager
+      .getTimeline(agent.id)
+      .flatMap((item) => (item.type === "user_message" ? (item.images ?? []) : []))[0];
+    if (!reference || reference.kind !== "stored")
+      throw new Error("Expected canonical image reference");
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.15.3",
+    });
+    try {
+      await client.connect();
+      const result = await client.readTimelineImage(agent.id, reference.id);
+      expect(Buffer.from(result.bytes)).toEqual(expected);
+      expect(result.mime).toBe("image/png");
+      await expect(client.readTimelineImage(agent.id, "../secret")).rejects.toThrow(
+        "not in this agent's timeline",
+      );
+      const other = await manager.createAgent(
+        { provider: "codex", cwd: daemon.paseoHome },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await expect(client.readTimelineImage(other.id, reference.id)).rejects.toThrow(
+        "not in this agent's timeline",
+      );
+    } finally {
+      await client.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);

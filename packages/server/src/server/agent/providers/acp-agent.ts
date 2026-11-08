@@ -1,3 +1,5 @@
+import { inlineUserImages } from "../conversation-images.js";
+import type { UserImageSource } from "../agent-sdk-types.js";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -661,6 +663,7 @@ interface PendingPermission {
 
 interface PendingUserMessage {
   text: string;
+  imageSources: UserImageSource[];
   messageId?: string;
 }
 
@@ -3201,8 +3204,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return [];
     }
 
-    const chunkText = contentBlockToText(update.content);
-    if (!chunkText) {
+    const imageSources = update.content.type === "image" ? inlineUserImages([update.content]) : [];
+    const chunkText = update.content.type === "image" ? "" : contentBlockToText(update.content);
+    if (!chunkText && !imageSources.length) {
       return [];
     }
 
@@ -3214,12 +3218,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const events = startsNewMessage ? this.flushPendingUserMessage() : [];
     this.pendingUserMessage ??= {
       text: "",
+      imageSources: [],
       ...(messageId ? { messageId } : {}),
     };
     if (!this.pendingUserMessage.messageId && messageId) {
       this.pendingUserMessage.messageId = messageId;
     }
     this.pendingUserMessage.text += chunkText;
+    this.pendingUserMessage.imageSources.push(...imageSources);
     return events;
   }
 
@@ -3233,6 +3239,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.wrapTimeline({
         type: "user_message",
         text: pending.text,
+        ...(pending.imageSources.length ? { imageSources: pending.imageSources } : {}),
         ...(pending.messageId ? { messageId: pending.messageId } : {}),
       }),
     ];

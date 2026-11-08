@@ -141,6 +141,7 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
+import { ConversationImageStore } from "./agent/conversation-images.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -985,10 +986,12 @@ export async function createPaseoDaemon(
     isDirectory: async (target) => (await stat(target).catch(() => null))?.isDirectory() ?? false,
     logger,
   });
+  const conversationImages = new ConversationImageStore(config.paseoHome);
   const agentProviderRuntime = await createAgentProviderRuntime({
     paseoHome: config.paseoHome,
     logger,
     snapshotManager: {
+      captureUserImages: conversationImages.capture.bind(conversationImages),
       refreshTimeoutMs: config.providerCatalogRefreshTimeoutMs,
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
@@ -1012,6 +1015,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    conversationImages,
     pluginLifecycle: pluginRuntime,
     pluginAgentTools: pluginRuntime,
     clients: initialAgentManagerState.clients,
