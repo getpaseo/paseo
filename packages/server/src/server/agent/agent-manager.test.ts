@@ -13600,6 +13600,27 @@ describe("agent options", () => {
     ]);
   });
 
+  test("a stored record with a malformed legacy speed still reads; opening it is what rejects it", () => {
+    const manager = new AgentManager({ clients: { codex: new OptionsClient() }, logger });
+    // An older daemon accepted any value here; this one rejects it on create and on change.
+    const record = parseStoredAgentRecord({
+      id: "agent-legacy-malformed",
+      provider: "codex",
+      cwd: "/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: "closed",
+      config: { providerOptions: { fast_mode: "false" } },
+      persistence: { provider: "codex", sessionId: "thread-2" },
+    });
+
+    const payload = buildStoredAgentPayload(record, ["codex"], (provider, own) =>
+      manager.effectiveOptionsFor(provider, own),
+    );
+
+    expect(payload.options).toEqual({ service_tier: "default", fast_mode: "false" });
+  });
+
   test("setAgentOptions hands the provider only the keys the patch sets", async () => {
     const { manager, client, storage, agentId } = await createOptionsAgent({ web_search: true });
 

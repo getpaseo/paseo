@@ -40,6 +40,14 @@ interface LegacyOptionsInput<O> {
   options: O;
 }
 
+/** A legacy option value the conversion cannot read. */
+export class MalformedLegacyOptionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MalformedLegacyOptionError";
+  }
+}
+
 export function convertLegacyOptions(
   input: LegacyOptionsInput<Record<string, unknown>>,
 ): Record<string, unknown>;
@@ -53,7 +61,7 @@ export function convertLegacyOptions(
   if (provider !== "codex" || !options || !("fast_mode" in options)) return options;
   const { fast_mode: legacy, ...rest } = options;
   if (legacy !== undefined && legacy !== null && typeof legacy !== "boolean") {
-    throw new Error("Codex fast_mode must be true, false or null");
+    throw new MalformedLegacyOptionError("Codex fast_mode must be true, false or null");
   }
   if ("service_tier" in rest || legacy === undefined) return rest;
   if (legacy === null) return { ...rest, service_tier: null };

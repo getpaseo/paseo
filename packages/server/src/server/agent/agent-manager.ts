@@ -68,6 +68,7 @@ import {
   applyProviderOptionsPatch,
   exposeFeatureValuesToHook,
   convertLegacyOptions,
+  MalformedLegacyOptionError,
   resolveAdapter,
   foldHookFeatureValues,
   type ProviderOptionsPatch,
@@ -2578,12 +2579,26 @@ export class AgentManager {
   /**
    * What an agent of this provider runs with, given its own options: the defaults under them.
    * Stored records are read through here before they are reopened, so the legacy conversion
-   * runs here too; a record converted on open passes through unchanged.
+   * runs here too; a record converted on open passes through unchanged. A legacy value the
+   * conversion cannot read stays as stored: this describes the record, and opening or changing
+   * the agent is what rejects the value.
    */
   effectiveOptionsFor(provider: AgentProvider, own: ProviderOptions | undefined): ProviderOptions {
     const client = this.clients.get(provider);
-    const converted = this.convertLegacyOptions(provider, own);
+    const converted = this.convertStoredOptions(provider, own);
     return client ? this.launchOptionsFor({ client, own: converted }) : (converted ?? {});
+  }
+
+  private convertStoredOptions(
+    provider: AgentProvider,
+    own: ProviderOptions | undefined,
+  ): ProviderOptions | undefined {
+    try {
+      return this.convertLegacyOptions(provider, own);
+    } catch (error) {
+      if (error instanceof MalformedLegacyOptionError) return own;
+      throw error;
+    }
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
