@@ -1207,3 +1207,24 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
 });
+
+it("round-trips image-only references without inline bytes or device-local attachments", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const value = timeline();
+  const image = { kind: "stored", id: "a".repeat(64), mimeType: "image/png", byteSize: 1 } as const;
+  value.items = [
+    {
+      kind: "user_message",
+      id: "native-image",
+      messageId: "native-image",
+      text: "",
+      timestamp: new Date(1),
+      timelineCursor: { epoch: "epoch-1", seq: 12 },
+      imageRefs: [image, image],
+    },
+  ];
+  writer.commitTimeline(SERVER_ID, "agent-1", value);
+  await writer.flush();
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});

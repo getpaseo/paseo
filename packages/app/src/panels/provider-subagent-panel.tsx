@@ -255,6 +255,7 @@ function ProviderSubagentPanel() {
       <View style={styles.stream}>
         <AgentStreamView
           agentId={streamId}
+          imageAgentId={target.parentAgentId}
           serverId={serverId}
           context={streamContext}
           streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}

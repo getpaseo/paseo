@@ -81,6 +81,7 @@ describe("Pi history mapper", () => {
         item: {
           type: "user_message",
           text: "read this\n\nthen answer",
+          imageSources: [{ kind: "base64", data: "base64", mimeType: "image/png" }],
         },
       },
       {
@@ -525,5 +526,44 @@ test("restores surrounding chat when native system content uses text blocks", as
   expect(events.map((event) => event.item)).toEqual([
     { type: "user_message", text: "question", messageId: "u" },
     { type: "assistant_message", text: "answer", messageId: "pi-history-assistant-1" },
+  ]);
+});
+
+test("retains repeated image-only messages and their native entry identities", async () => {
+  const image = { type: "image", data: "eA==", mimeType: "image/png" } as const;
+  const events = await collectHistory(
+    [
+      { role: "user", content: [image, image] },
+      { role: "user", content: [image] },
+    ],
+    [
+      { id: "native-one", text: "" },
+      { id: "native-two", text: "" },
+    ],
+  );
+  expect(events).toEqual([
+    {
+      type: "timeline",
+      provider: "pi",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-one",
+        imageSources: [
+          { kind: "base64", data: "eA==", mimeType: "image/png" },
+          { kind: "base64", data: "eA==", mimeType: "image/png" },
+        ],
+      },
+    },
+    {
+      type: "timeline",
+      provider: "pi",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-two",
+        imageSources: [{ kind: "base64", data: "eA==", mimeType: "image/png" }],
+      },
+    },
   ]);
 });

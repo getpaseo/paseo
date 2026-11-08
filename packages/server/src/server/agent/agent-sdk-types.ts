@@ -10,6 +10,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { TimelineImage } from "@getpaseo/protocol/timeline-image";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
@@ -397,8 +398,20 @@ export interface PluginTimelineItem {
   data: JsonValue;
 }
 
+export type UserImageSource =
+  | { kind: "base64"; data: string; mimeType: string }
+  | { kind: "file"; path: string; mimeType: string }
+  | { kind: "unavailable"; mimeType: string };
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: TimelineImage[];
+      imageSources?: UserImageSource[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

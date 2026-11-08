@@ -8214,3 +8214,36 @@ describe("legacy empty additions", () => {
     expect(item.detail.unifiedDiff).toContain("diff --git a/second.txt b/second.txt");
   });
 });
+
+test("Codex user items retain image-only local paths and data URLs under their native id", async () => {
+  const session = createSession();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await asInternals(session).handleNotification("item/started", {
+    threadId: "test-thread",
+    item: {
+      type: "userMessage",
+      id: "native-image",
+      content: [
+        { type: "localImage", path: "/tmp/paseo-attachments-input/image.png" },
+        { type: "image", url: "data:image/png;base64,eA==" },
+      ],
+    },
+  });
+  expect(events).toEqual([
+    {
+      type: "timeline",
+      provider: "codex",
+      turnId: "test-turn",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-image",
+        imageSources: [
+          { kind: "file", path: "/tmp/paseo-attachments-input/image.png", mimeType: "image/png" },
+          { kind: "base64", data: "eA==", mimeType: "image/png" },
+        ],
+      },
+    },
+  ]);
+});

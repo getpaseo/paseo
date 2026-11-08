@@ -57,6 +57,9 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── conversation-images/
+│   ├── {sha256}                         # Immutable user image bytes
+│   └── agents/{hashed-agent-id}.json    # Native-message image bindings
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -170,6 +173,12 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `options`     | `AgentSelectOption[]` |
 
 ---
+
+## User image persistence
+
+`ConversationImageStore` owns user image bytes and native-message image bindings under the configured Paseo home. The store writes private files atomically. Timeline pages and client replicas carry image references, not the bytes or host paths.
+
+Native provider history still determines which messages exist. Image bindings enrich surviving native message IDs, so loading a binding cannot restore a message removed by rewind. Image reads also require current parent or child timeline membership. Agent deletion does not currently collect shared image files; automatic collection must not infer reachability from a partially loaded agent registry.
 
 ## Runtime-only Terminal Sessions
 

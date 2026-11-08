@@ -1,4 +1,5 @@
 import type { AgentMessage } from "./agent-message.js";
+import type { TimelineImage } from "./timeline-image.js";
 import type { AgentAttachment } from "./messages.js";
 
 export type AgentProvider = string;
@@ -373,7 +374,13 @@ export interface AgentTaskItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: TimelineImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

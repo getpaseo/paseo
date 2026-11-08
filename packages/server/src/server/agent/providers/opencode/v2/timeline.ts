@@ -1,3 +1,4 @@
+import type { UserImageSource } from "../../../agent-sdk-types.js";
 import { mapOpencodeToolCall } from "../tool-call-mapper.js";
 import {
   materializeProviderImage,
@@ -93,10 +94,14 @@ export class V2Timeline {
     if (this.content.has(message.id)) return;
     this.content.set(message.id, message.text);
     const clientMessageId = message.metadata?.paseoClientMessageId;
+    const imageSources: UserImageSource[] = (message.files ?? [])
+      .filter((file) => file.mime.startsWith("image/"))
+      .map((file) => ({ kind: "base64", data: file.data, mimeType: file.mime }));
     push({
       type: "user_message",
       text: message.text,
       messageId: message.id,
+      ...(imageSources.length ? { imageSources } : {}),
       ...(this.includeClientMessageId && typeof clientMessageId === "string"
         ? { clientMessageId }
         : {}),

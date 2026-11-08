@@ -1018,6 +1018,7 @@ interface CorrelatedResponseIdentity {
 }
 
 interface PendingBinaryFileRead {
+  kind: "file" | "timeline_image";
   cwd: string;
   path: string;
   maxBytes?: number;
@@ -5483,6 +5484,30 @@ export class DaemonClient {
     return payload.directory;
   }
 
+  async readTimelineImage(agentId: string, imageId: string): Promise<FileReadResult> {
+    const requestId = this.createRequestId();
+    this.pendingBinaryFileReads.set(requestId, {
+      kind: "timeline_image",
+      cwd: agentId,
+      path: imageId,
+    });
+    try {
+      const payload = await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: { type: "agent.timeline.read_image.request", agentId, imageId },
+        responseType: "agent.timeline.read_image.response",
+      });
+      if (payload.error) throw new Error(payload.error);
+      const result = this.completedBinaryFileReads.get(requestId);
+      if (!result) throw new Error("Image transfer unavailable");
+      this.completedBinaryFileReads.delete(requestId);
+      return result;
+    } finally {
+      this.pendingBinaryFileReads.delete(requestId);
+      this.activeBinaryFileTransfers.delete(requestId);
+    }
+  }
+
   /**
    * `timeout` bounds the whole transfer, not each frame. `0` disables the timer (as
    * `workspace.create` does) for files that legitimately take longer than the default over a
@@ -5496,7 +5521,7 @@ export class DaemonClient {
     timeout?: number,
   ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
-    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
+    this.pendingBinaryFileReads.set(resolvedRequestId, { kind: "file", cwd, path, maxBytes });
     try {
       const payload = await this.requestFileExplorer(
         cwd,
@@ -7470,6 +7495,13 @@ export class DaemonClient {
       modifiedAt: transfer.modifiedAt,
       revision: transfer.revision,
     });
+    if (transfer.kind === "timeline_image") {
+      this.handleSessionMessage({
+        type: "agent.timeline.read_image.response",
+        payload: { requestId: frame.requestId, error: null },
+      });
+      return;
+    }
     this.handleSessionMessage({
       type: "file_explorer_response",
       payload: {

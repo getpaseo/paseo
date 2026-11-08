@@ -239,6 +239,8 @@ export interface AgentStreamViewHandle {
 
 export interface AgentStreamViewProps {
   agentId: string;
+  /** Image reads are authorized by the parent agent for provider child streams. */
+  imageAgentId?: string;
   serverId?: string;
   context: AgentScreenAgent;
   streamItems: StreamItem[];
@@ -338,6 +340,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   function AgentStreamView(
     {
       agentId,
+      imageAgentId = agentId,
       serverId,
       context,
       streamItems,
@@ -713,10 +716,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <UserMessage
             serverId={resolvedServerId}
             agentId={agentId}
+            imageAgentId={imageAgentId}
             messageId={item.messageId}
             message={item.text}
             sender={item.sender}
             images={item.images}
+            imageRefs={item.imageRefs}
             attachments={item.attachments}
             timestamp={item.timestamp.getTime()}
             capabilities={context.capabilities}
@@ -730,7 +735,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
+      [
+        context.capabilities,
+        agentId,
+        imageAgentId,
+        client,
+        pendingClientMessageIds,
+        resolvedServerId,
+      ],
     );
 
     const renderAssistantMessageItem = useCallback(

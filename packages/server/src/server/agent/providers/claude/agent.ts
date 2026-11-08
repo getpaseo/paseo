@@ -1,3 +1,4 @@
+import { claudeUserImages } from "../../conversation-images.js";
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import { validateProviderOptions } from "../../provider-options.js";
@@ -5727,10 +5728,15 @@ class ClaudeAgentSession implements AgentSession {
       });
     }
 
-    if (textMessageType === "user_message" && userTextParts.length > 0) {
+    const imageSources = claudeUserImages(content);
+    if (
+      textMessageType === "user_message" &&
+      (userTextParts.length > 0 || imageSources.length > 0)
+    ) {
       items.unshift({
         type: "user_message",
         text: userTextParts.join("\n\n"),
+        ...(imageSources.length ? { imageSources } : {}),
       });
     }
 
@@ -6590,6 +6596,18 @@ function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
 }
 
+function userHistoryItem(content: unknown, messageId: string | null): AgentTimelineItem | null {
+  const text = extractUserMessageText(content) ?? "";
+  const imageSources = claudeUserImages(content);
+  if (!text && !imageSources.length) return null;
+  return {
+    type: "user_message",
+    text,
+    ...(imageSources.length ? { imageSources } : {}),
+    ...(messageId ? { messageId } : {}),
+  };
+}
+
 /**
  * A message steered into a running turn. Claude Code gives it no user entry: it records a
  * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
@@ -6599,10 +6617,7 @@ function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineI
   if (entry.type !== "attachment") return null;
   const attachment = toObjectRecord(entry.attachment);
   if (attachment?.type !== "queued_command" || attachment.commandMode !== "prompt") return null;
-  const text = extractUserMessageText(attachment.prompt);
-  if (!text) return null;
-  const messageId = readTrimmedString(attachment.source_uuid);
-  return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
+  return userHistoryItem(attachment.prompt, readTrimmedString(attachment.source_uuid) ?? null);
 }
 
 export async function convertClaudeHistoryEntry(
@@ -6638,14 +6653,8 @@ export async function convertClaudeHistoryEntry(
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      timeline.push({
-        type: "user_message",
-        text,
-        ...(userMessageId ? { messageId: userMessageId } : {}),
-      });
-    }
+    const item = userHistoryItem(content, userMessageId);
+    if (item) timeline.push(item);
   }
 
   if (hasToolBlock && normalizedBlocks) {

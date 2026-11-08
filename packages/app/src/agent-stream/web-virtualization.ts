@@ -54,7 +54,7 @@ export function estimateStreamItemHeight({
 }: StreamItemHeightEstimateInput): number {
   switch (item.kind) {
     case "user_message":
-      return item.images && item.images.length > 0 ? 220 : 96;
+      return (item.images?.length ?? 0) > 0 || (item.imageRefs?.length ?? 0) > 0 ? 220 : 96;
     case "assistant_message":
       return (
         estimateAssistantMessageHeightFromCache({

@@ -1,3 +1,4 @@
+import { userImageUrl } from "../conversation-images.js";
 import { validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
@@ -1330,10 +1331,20 @@ function buildOpenCodeReplayTimelineEvents(
       .map((part) => part.text)
       .join("");
 
-    return text
+    const imageSources = parts.flatMap((part) =>
+      part.type === "file" && part.mime.startsWith("image/")
+        ? [userImageUrl(part.url, part.mime)]
+        : [],
+    );
+    return text || imageSources.length
       ? [
           buildOpenCodeReplayTimelineEvent({
-            item: { type: "user_message", text, messageId: info.id },
+            item: {
+              type: "user_message",
+              text,
+              messageId: info.id,
+              ...(imageSources.length ? { imageSources } : {}),
+            },
             message: info,
           }),
         ]

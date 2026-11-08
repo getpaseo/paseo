@@ -150,3 +150,19 @@ describe("SessionAuthorization", () => {
     expect(() => parseDaemonPermissions(["hub.execution.*"])).toThrow("Invalid daemon permission");
   });
 });
+
+test.each([
+  { permissions: ["workspace.read"] as const, allowed: true },
+  { permissions: ["hub.execute"] as const, allowed: true },
+  { permissions: ["daemon.read"] as const, allowed: false },
+  { permissions: [] as const, allowed: false },
+])("image reads share timeline authority for $permissions", ({ permissions, allowed }) => {
+  const authorization = new SessionAuthorization([...permissions]);
+  expect(authorization.allowsInbound(inboundMessage("agent.timeline.read_image.request"))).toBe(
+    allowed,
+  );
+  expect(authorization.allowsOutbound(outboundMessage("agent.timeline.read_image.response"))).toBe(
+    allowed,
+  );
+  expect(authorization.allowsInbound(inboundMessage("fetch_agent_timeline_request"))).toBe(allowed);
+});

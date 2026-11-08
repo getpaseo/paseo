@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentTimelineItemPayloadSchema,
+  ReadTimelineImageRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   AgentForkContextResponseMessageSchema,
   CreateAgentRequestMessageSchema,
@@ -451,5 +453,31 @@ describe("shared messages attachments", () => {
       refName: "head-ref",
       githubPrNumber: 42,
     });
+  });
+});
+
+it("adds optional image references without requiring images on old timeline messages", () => {
+  const legacy = { type: "user_message", text: "hello", messageId: "native" };
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  const image = { kind: "stored", id: "a".repeat(64), mimeType: "image/png", byteSize: 1 };
+  expect(
+    AgentTimelineItemPayloadSchema.parse({ ...legacy, text: "", images: [image, image] }),
+  ).toEqual({ ...legacy, text: "", images: [image, image] });
+  expect(
+    AgentTimelineItemPayloadSchema.safeParse({ ...legacy, images: [{ ...image, id: "../secret" }] })
+      .success,
+  ).toBe(false);
+  expect(
+    ReadTimelineImageRequestMessageSchema.parse({
+      type: "agent.timeline.read_image.request",
+      agentId: "agent",
+      imageId: image.id,
+      requestId: "request",
+    }),
+  ).toEqual({
+    type: "agent.timeline.read_image.request",
+    agentId: "agent",
+    imageId: image.id,
+    requestId: "request",
   });
 });

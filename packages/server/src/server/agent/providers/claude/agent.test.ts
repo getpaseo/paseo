@@ -4566,3 +4566,38 @@ describe("Claude import descriptor scheduling", () => {
     await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });
+
+test("Claude replay preserves image-only user content and native identities without tool-result images", async () => {
+  const source = { type: "base64", media_type: "image/png", data: "eA==" };
+  expect(
+    await convertClaudeHistoryEntry(
+      {
+        type: "user",
+        uuid: "native-image",
+        message: {
+          role: "user",
+          content: [
+            { type: "image", source },
+            { type: "image", source },
+            {
+              type: "tool_result",
+              tool_use_id: "tool-image",
+              content: [{ type: "image", source }],
+            },
+          ],
+        },
+      },
+      () => [],
+    ),
+  ).toEqual([
+    {
+      type: "user_message",
+      text: "",
+      messageId: "native-image",
+      imageSources: [
+        { kind: "base64", data: "eA==", mimeType: "image/png" },
+        { kind: "base64", data: "eA==", mimeType: "image/png" },
+      ],
+    },
+  ]);
+});

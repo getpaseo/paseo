@@ -1,3 +1,4 @@
+import { TimelineImageSchema } from "@getpaseo/protocol/timeline-image";
 import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
@@ -116,6 +117,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("user_message"),
+    imageRefs: z.array(TimelineImageSchema).optional(),
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
@@ -450,6 +452,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       return {
         ...base,
         kind: item.kind,
+        ...(item.imageRefs?.length ? { imageRefs: item.imageRefs } : {}),
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
@@ -543,6 +546,7 @@ function deserializeBuiltinTimelineItem(
       return {
         ...base,
         kind: item.kind,
+        ...(item.imageRefs?.length ? { imageRefs: item.imageRefs } : {}),
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
@@ -771,7 +775,11 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
 function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
-      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+      return (
+        ((item.images?.length ?? 0) === 0 ||
+          (item.imageRefs?.length ?? 0) === item.images?.length) &&
+        (item.attachments?.length ?? 0) === 0
+      );
     case "tool_call":
       return item.payload.source === "agent";
     default:

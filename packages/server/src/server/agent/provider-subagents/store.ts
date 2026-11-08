@@ -137,6 +137,20 @@ export class ProviderSubagentStore {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
+  findImage(parentAgentId: string, imageId: string) {
+    for (const child of this.list(parentAgentId)) {
+      const items = this.timelines.getItems(storeKey(parentAgentId, child.id));
+      for (const item of items) {
+        if (item.type !== "user_message") continue;
+        const image = item.images?.find(
+          (candidate) => candidate.kind === "stored" && candidate.id === imageId,
+        );
+        if (image?.kind === "stored") return image;
+      }
+    }
+    return undefined;
+  }
+
   listAll(): ProviderSubagentDescriptor[] {
     return [...this.descriptors.values()];
   }

@@ -3435,7 +3435,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "",
+          imageSources: [{ kind: "base64", data: "AA==", mimeType: "image/png" }],
+        },
         turnId: expect.any(String),
       },
     ]);
@@ -3510,7 +3514,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "",
+          imageSources: [{ kind: "base64", data: "AA==", mimeType: "image/png" }],
+        },
         turnId,
       },
       expect.objectContaining({ type: "turn_failed", turnId, error: "prompt failed" }),
@@ -3784,7 +3792,11 @@ describe("ACPAgentSession close() tree-kill", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "",
+          imageSources: [{ kind: "base64", data: "AA==", mimeType: "image/png" }],
+        },
       },
     ]);
   });
@@ -4458,7 +4470,11 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "hey[image]" },
+        item: {
+          type: "user_message",
+          text: "hey",
+          imageSources: [{ kind: "base64", data: "AA==", mimeType: "image/png" }],
+        },
       },
       {
         type: "timeline",

@@ -1296,3 +1296,43 @@ test("indexes out-of-order branches, duplicate IDs and cycles before selecting h
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("retains image-only OMP blob messages without treating blob references as base64", async () => {
+  const image = {
+    type: "image",
+    data: `blob:sha256:${"a".repeat(64)}`,
+    mimeType: "image/png",
+  } as const;
+  const events = await collectHistory(
+    [
+      { role: "user", content: [image] },
+      { role: "user", content: [image] },
+    ],
+    [
+      { id: "native-one", text: "" },
+      { id: "native-two", text: "" },
+    ],
+  );
+  expect(events).toEqual([
+    {
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-one",
+        imageSources: [{ kind: "unavailable", mimeType: "image/png" }],
+      },
+    },
+    {
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "native-two",
+        imageSources: [{ kind: "unavailable", mimeType: "image/png" }],
+      },
+    },
+  ]);
+});

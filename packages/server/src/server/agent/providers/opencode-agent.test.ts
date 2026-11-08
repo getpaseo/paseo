@@ -7054,3 +7054,36 @@ test("OpenCode v1 runtime safety retains terminals and busy sessions on its shar
     await parent.close();
   }
 });
+
+test("OpenCode v1 replays image-only user files without putting bytes in text", () => {
+  const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
+    {
+      info: {
+        id: "native-image",
+        sessionID: "session",
+        role: "user",
+        time: { created: 1 },
+        agent: "build",
+        model: { providerID: "test", modelID: "test" },
+      },
+      parts: [
+        {
+          id: "image-part",
+          sessionID: "session",
+          messageID: "native-image",
+          type: "file",
+          mime: "image/png",
+          url: "data:image/png;base64,eA==",
+        },
+      ],
+    },
+  ]);
+  expect(timeline).toEqual([
+    {
+      type: "user_message",
+      text: "",
+      messageId: "native-image",
+      imageSources: [{ kind: "base64", data: "eA==", mimeType: "image/png" }],
+    },
+  ]);
+});

@@ -57,7 +57,11 @@ import type {
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import {
+  encodeFileTransferFrame,
+  FileTransferOpcode,
+  type BinaryFrame,
+} from "@getpaseo/protocol/binary-frames/index";
 import {
   encodePluginEventFrame,
   encodePluginOutputFrame,
@@ -2987,6 +2991,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.timeline.read_image.request":
+        return this.handleReadTimelineImage(msg, source);
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
       case "agent.timeline.append.request":
@@ -8221,6 +8227,60 @@ export class Session {
       type: "fetch_agent_response",
       payload: { requestId, agent, project, error: null },
     });
+  }
+
+  private async handleReadTimelineImage(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.read_image.request" }>,
+    source?: object,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+        purpose: "history",
+      });
+      const { image, bytes } = await this.agentManager.readTimelineImage(msg.agentId, msg.imageId);
+      await this.emitBinaryReply(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileBegin,
+          requestId: msg.requestId,
+          metadata: {
+            mime: image.mimeType,
+            size: bytes.length,
+            encoding: "binary",
+            modifiedAt: new Date(0).toISOString(),
+            revision: image.id,
+          },
+        }),
+        source,
+      );
+      for (let offset = 0; offset < bytes.length; offset += 64 * 1024) {
+        await this.emitBinaryReply(
+          encodeFileTransferFrame({
+            opcode: FileTransferOpcode.FileChunk,
+            requestId: msg.requestId,
+            payload: bytes.subarray(offset, offset + 64 * 1024),
+          }),
+          source,
+        );
+      }
+      await this.emitBinaryReply(
+        encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: msg.requestId }),
+        source,
+      );
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Image unavailable";
+    }
+    if (error !== null)
+      this.emitForSource(
+        {
+          type: "agent.timeline.read_image.response",
+          payload: { requestId: msg.requestId, error },
+        },
+        source,
+      );
   }
 
   private async handleFetchAgentTimelineRequest(

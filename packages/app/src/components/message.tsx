@@ -1,3 +1,5 @@
+import type { TimelineImage } from "@getpaseo/protocol/timeline-image";
+import { useTimelineImages } from "@/attachments/use-timeline-images";
 import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -95,9 +97,11 @@ interface UserMessageProps {
   sender?: AgentMessage["sender"];
   serverId?: string;
   agentId?: string;
+  imageAgentId?: string;
   messageId?: string;
   message: string;
   images?: UserMessageImageAttachment[];
+  imageRefs?: TimelineImage[];
   attachments?: AgentAttachment[];
   timestamp: number;
   capabilities?: AgentCapabilityFlags;
@@ -388,15 +392,54 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+interface CanonicalUserImagesProps extends Pick<
+  UserMessageProps,
+  "client" | "serverId" | "agentId" | "imageAgentId"
+> {
+  images: TimelineImage[];
+  onOpen: (image: UserMessageImageAttachment) => void;
+}
+
+function CanonicalUserImages({
+  images,
+  onOpen,
+  agentId,
+  imageAgentId = agentId,
+  ...connection
+}: CanonicalUserImagesProps) {
+  const { t } = useTranslation();
+  const acquisitions = useTimelineImages({ ...connection, agentId: imageAgentId, images });
+  return acquisitions.map(({ result, key, unavailable }) =>
+    result.data ? (
+      <UserMessageImagePill
+        key={key}
+        image={result.data}
+        onOpen={onOpen}
+        accessibilityLabel={t("composer.attachments.openImage")}
+      />
+    ) : (
+      <AttachmentFrame key={key}>
+        {result.isError || unavailable ? (
+          <Text>{t("message.attachments.imageUnavailable")}</Text>
+        ) : (
+          <LoadingSpinner size="small" color="#a1a1aa" />
+        )}
+      </AttachmentFrame>
+    ),
+  );
+}
+
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
 export const UserMessage = memo(function UserMessage({
   sender,
   serverId,
   agentId,
+  imageAgentId,
   messageId,
   message,
   images = [],
+  imageRefs = [],
   attachments = [],
   timestamp,
   capabilities,
@@ -417,7 +460,8 @@ export const UserMessage = memo(function UserMessage({
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
+  const canonicalImages = images.length ? [] : imageRefs;
+  const hasImages = images.length + imageRefs.length > 0;
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
@@ -483,6 +527,14 @@ export const UserMessage = memo(function UserMessage({
           <MessagePreview>
             {hasImages ? (
               <View style={imagePreviewContainerStyle}>
+                <CanonicalUserImages
+                  images={canonicalImages}
+                  onOpen={setLightboxMetadata}
+                  client={client}
+                  serverId={serverId}
+                  agentId={agentId}
+                  imageAgentId={imageAgentId}
+                />
                 {images.map((image) => (
                   <UserMessageImagePill
                     key={image.id}
