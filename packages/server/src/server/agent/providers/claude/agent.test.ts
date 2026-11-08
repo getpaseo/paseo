@@ -3488,6 +3488,86 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("keeps the last request context when empty iterations totals several requests", async () => {
+    // Real Claude Code 2.1.310 sums both requests even with iterations: [].
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 100,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 20,
+        }),
+        createMessageDeltaEvent(10),
+        createMessageStartEvent({
+          input_tokens: 200,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 40,
+        }),
+        createMessageDeltaEvent(15),
+        createSuccessResult({
+          usage: {
+            input_tokens: 300,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 60,
+            output_tokens: 25,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+    try {
+      const result = await session.run("read a file and reply");
+      expect(result.usage?.contextWindowUsedTokens).toBe(255);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("replays reported final-only input counts on a later result", async () => {
+    // The result is reported data; the SDK stream frames reconstruct the
+    // report's zero-input condition. The external proxy is not exercised here.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(4_790),
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 61_489,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 266_816,
+            output_tokens: 4_790,
+            iterations: [],
+          },
+          modelUsage: {
+            "glm-5.2": { contextWindow: 1_000_000 },
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await session.run("turn 1");
+      const secondTurn = await session.run("turn 2");
+
+      expect(secondTurn.usage?.contextWindowUsedTokens).toBe(333_095);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("message_start stream events emit usage_updated with per-request usage", async () => {
     const session = await createSessionForTurns([
       [createInitMessage(), createMessageStartEvent(), createSuccessResult()],
