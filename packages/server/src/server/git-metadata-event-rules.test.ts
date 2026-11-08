@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   classifyGitMetadataPath,
+  affectsGitDiffInterpretation,
   GIT_METADATA_EVENT_RULES,
   getPrunedGitMetadataPaths,
 } from "./git-metadata-event-rules.js";
@@ -46,4 +47,17 @@ describe("Git metadata event rules", () => {
   ] as const)("classifies %s metadata path %s", (scope, path, expected) => {
     expect(classifyGitMetadataPath(scope, path)).toEqual(expected);
   });
+});
+
+test.each([
+  ["worktree", "config.worktree", true],
+  ["common", "config.worktree", false],
+  ["common", "config", true],
+  ["common", "info/attributes", true],
+  ["worktree", "info/attributes", false],
+  ["common", "refs/heads/main", false],
+  ["worktree", "index", false],
+  ["common", "config.lock", false],
+] as const)("diff interpretation dependency %s/%s is %s", (scope, path, expected) => {
+  expect(affectsGitDiffInterpretation(scope, path)).toBe(expected);
 });

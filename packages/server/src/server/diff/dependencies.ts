@@ -1,4 +1,8 @@
-import { classifyGitMetadataPath, type GitMetadataScope } from "../git-metadata-event-rules.js";
+import {
+  affectsGitDiffInterpretation,
+  classifyGitMetadataPath,
+  type GitMetadataScope,
+} from "../git-metadata-event-rules.js";
 import { resolve } from "node:path";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
@@ -18,7 +22,7 @@ export class DiffDependencyObserver {
     input: DiffDependencies,
     changed: () => void,
   ): Promise<() => Promise<void>> {
-    if (input.refs.length === 0 && !input.index && !input.worktree) return async () => {};
+    const hasMutableEndpoints = input.refs.length > 0 || input.index || input.worktree;
     let polling: ReturnType<typeof setInterval> | null = null;
     const subscriptions: FileObserverSubscription[] = [];
     let workingTree: Awaited<ReturnType<WorkspaceGitService["requestWorkingTreeWatch"]>> | null =
@@ -50,6 +54,8 @@ export class DiffDependencyObserver {
             }
             const affectsInput = events.some((event) => {
               const path = event.path.slice(root.length + 1).replaceAll("\\", "/");
+              if (scopes.some((scope) => affectsGitDiffInterpretation(scope, path))) return true;
+              if (!hasMutableEndpoints) return false;
               if (path === "index") return input.index;
               return scopes.some((scope) => classifyGitMetadataPath(scope, path).kind !== "ignore");
             });

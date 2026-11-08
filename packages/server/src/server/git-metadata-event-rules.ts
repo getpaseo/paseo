@@ -5,6 +5,7 @@ type GitMetadataEventRule = {
   scope: GitMetadataScope | "both";
   path: string;
   prune?: true;
+  diffInput?: true;
 } & (
   | { match: "exact" | "prefix" | "suffix"; route: "ignore" }
   | { match: "exact" | "prefix" | "suffix"; route: "owner" | "all"; refreshBase: boolean }
@@ -36,6 +37,7 @@ export const GIT_METADATA_EVENT_RULES = [
   },
   {
     id: "worktree-config",
+    diffInput: true,
     scope: "worktree",
     match: "exact",
     path: "config.worktree",
@@ -106,6 +108,7 @@ export const GIT_METADATA_EVENT_RULES = [
   },
   {
     id: "shared-config",
+    diffInput: true,
     scope: "common",
     match: "exact",
     path: "config",
@@ -114,6 +117,7 @@ export const GIT_METADATA_EVENT_RULES = [
   },
   {
     id: "shared-attributes",
+    diffInput: true,
     scope: "common",
     match: "exact",
     path: "info/attributes",
@@ -166,11 +170,7 @@ export function classifyGitMetadataPath(
   inputPath: string,
 ): GitMetadataEffect {
   const path = inputPath.replaceAll("\\", "/");
-  const rule = GIT_METADATA_EVENT_RULES.find(
-    (candidate) =>
-      (candidate.scope === "both" || candidate.scope === scope) &&
-      matchesGitMetadataPath(candidate.match, candidate.path, path),
-  );
+  const rule = findGitMetadataRule(scope, path);
   if (!rule || rule.route === "ignore") return { kind: "ignore" };
   if (rule.route === "owner" || rule.route === "all") {
     return { kind: rule.route, refreshBase: rule.refreshBase };
@@ -180,6 +180,19 @@ export function classifyGitMetadataPath(
     namespace: rule.route === "local-ref" ? "local" : "remote",
     ref: path.slice(rule.path.length),
   };
+}
+
+export function affectsGitDiffInterpretation(scope: GitMetadataScope, inputPath: string): boolean {
+  const rule = findGitMetadataRule(scope, inputPath.replaceAll("\\", "/"));
+  return rule !== undefined && "diffInput" in rule && rule.diffInput;
+}
+
+function findGitMetadataRule(scope: GitMetadataScope, path: string) {
+  return GIT_METADATA_EVENT_RULES.find(
+    (candidate) =>
+      (candidate.scope === "both" || candidate.scope === scope) &&
+      matchesGitMetadataPath(candidate.match, candidate.path, path),
+  );
 }
 
 function matchesGitMetadataPath(

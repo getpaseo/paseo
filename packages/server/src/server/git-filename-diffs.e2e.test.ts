@@ -175,15 +175,21 @@ test("checkout refresh from a subdirectory updates a pinned streamed comparison"
       const initial = states.at(-1);
       if (initial?.phase !== "ready") throw new Error("Expected initial diff");
       expect(initial.files[0]).toMatchObject({ path: "file.txt", status: "ok" });
-      writeFileSync(join(cwd, ".git", "info", "attributes"), "file.txt -diff\n");
       expect(await client.checkoutRefresh(workspace)).toMatchObject({ success: true, error: null });
       await expect
         .poll(() => states.at(-1)?.revision, { timeout: 15000 })
         .toBeGreaterThan(initial.revision);
       expect(states.at(-1)).toMatchObject({
         phase: "ready",
-        files: [{ path: "file.txt", status: "binary", hunks: [] }],
+        files: [{ path: "file.txt", status: "ok" }],
       });
+      writeFileSync(join(cwd, ".git", "info", "attributes"), "file.txt -diff\n");
+      await expect
+        .poll(() => states.at(-1), { timeout: 15000 })
+        .toMatchObject({
+          phase: "ready",
+          files: [{ path: "file.txt", status: "binary", hunks: [] }],
+        });
     } finally {
       unsubscribe();
       await observation.release();
