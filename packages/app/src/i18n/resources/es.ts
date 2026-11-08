@@ -1255,6 +1255,7 @@ export const es: TranslationResources = {
       },
       show: {
         label: "Mostrar",
+        agent: "Agente",
         branch: "Rama",
         project: "Proyecto",
         host: "Host",

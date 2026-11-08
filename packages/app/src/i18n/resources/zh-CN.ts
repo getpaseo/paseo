@@ -1211,6 +1211,7 @@ export const zhCN: TranslationResources = {
       },
       show: {
         label: "显示",
+        agent: "智能体",
         branch: "分支",
         project: "项目",
         host: "主机",

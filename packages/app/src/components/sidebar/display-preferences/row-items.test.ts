@@ -8,6 +8,7 @@ import {
 describe("parseSidebarRowItems", () => {
   it("shows operational metadata but hides identity badges by default", () => {
     expect(DEFAULT_SIDEBAR_ROW_ITEMS).toEqual({
+      agent: true,
       branch: false,
       project: false,
       host: true,
