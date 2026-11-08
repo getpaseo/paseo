@@ -18,8 +18,12 @@ export function SidebarToastRegion({ active, children }: { active: boolean; chil
 
   useEffect(() => {
     activeRef.current = active;
-    // A toast must not outlive its visibility: its dismissal is what ends an archive's undo.
-    return active ? dismiss : undefined;
+    return () => {
+      // An archive holds on to this API, so a failure that lands later needs a host on screen.
+      activeRef.current = false;
+      // A toast must not outlive its visibility: its dismissal is what ends an archive's undo.
+      dismiss();
+    };
   }, [active, dismiss]);
 
   const api = useMemo<ToastApi>(() => {
