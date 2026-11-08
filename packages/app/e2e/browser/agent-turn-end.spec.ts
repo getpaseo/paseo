@@ -276,3 +276,52 @@ test("footer timing fits the chat column and swapping labels keeps controls in p
   await expectFooterWithinWidth(page, 300);
   await expectFooterWithinWidth(page, 880);
 });
+
+async function visibleFooterLeftEdges(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const viewport = Array.from(
+      document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
+    ).find((candidate) => candidate.checkVisibility());
+    return Array.from(viewport?.querySelectorAll('[data-testid="turn-footer"]') ?? [])
+      .filter((footer) => footer.checkVisibility())
+      .map((footer) => Math.round(footer.getBoundingClientRect().left));
+  });
+}
+
+async function expectFootersInOneColumn(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const edges = await visibleFooterLeftEdges(page);
+      return edges.length >= 2 && new Set(edges).size === 1 ? "one column" : edges;
+    })
+    .toBe("one column");
+}
+
+test("keeps the latest turn's footer in the chat column while it runs and after it ends", async ({
+  page,
+  agent,
+}) => {
+  // Wider than the chat's max width, so the column is centered with space on both sides.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, agent);
+  await expectAgentIdle(page);
+
+  gate.holdNextAgentStreamEvent("turn_completed");
+  gate.holdNextAgentUpdate(agent.agentId, "idle");
+  gate.setServerMessageSuppressed("agent_update", true);
+  await submitMessage(page, "emit 1 coalesced agent stream updates");
+  await Promise.all([
+    gate.waitForHeldAgentStreamEvent("turn_completed"),
+    gate.waitForHeldAgentUpdate(agent.agentId, "idle"),
+  ]);
+  await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+  await expectFootersInOneColumn(page);
+
+  gate.releaseHeldAgentStreamEvent("turn_completed");
+  gate.releaseHeldAgentUpdate(agent.agentId, "idle");
+  gate.setServerMessageSuppressed("agent_update", false);
+  await expectAgentIdle(page);
+  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expectFootersInOneColumn(page);
+});

@@ -82,6 +82,8 @@ const initialFillStyle: CSSProperties = {
   pointerEvents: "none",
 };
 
+// Rows and the live auxiliary (turn footer, pending permissions) center their content with
+// `alignSelf`, which only applies inside a flex container.
 const streamRowStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -1362,7 +1364,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
               ...mountedRows,
             ]}
           </div>
-          <div ref={auxiliaryRef}>{liveAuxiliary}</div>
+          <div ref={auxiliaryRef} style={streamRowStyle}>
+            {liveAuxiliary}
+          </div>
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>
