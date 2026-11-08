@@ -5112,7 +5112,7 @@ const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(pro
 const scenario = process.env.ACP_DELEGATION_SCENARIO ?? "tree";
 const log = (entry) => appendFileSync(process.env.ACP_TEST_LOG, JSON.stringify(entry) + "\\n");
 
-const member = (id, title, status) => ({ id, title, status });
+const member = (id, title, status, description) => ({ id, title, status, description });
 const firstTree = { members: [member("child", "Read the failing test", "running")] };
 const secondTree = {
   members: [
@@ -5136,6 +5136,11 @@ const heldTree = {
 const malformedTree = {
   members: [member("child", "Read the failing test", "running"), { title: "No session id" }],
 };
+// Two trees that read the same when the fields of a row are joined with a
+// separator: the title of the first one holds the separator that the second
+// one holds at the end of its description.
+const colonTree = { members: [member("child", "part:one", "running")] };
+const colonSplitTree = { members: [member("child", "part", "running", "one:")] };
 
 new AgentSideConnection(
   (connection) => ({
@@ -5187,11 +5192,25 @@ new AgentSideConnection(
         await new Promise((resolve) => setTimeout(resolve, 100));
         return firstTree;
       }
+      if (scenario === "colon") {
+        return colonTree;
+      }
       return scenario === "tree" || scenario === "other-session" || scenario === "malformed"
         ? firstTree
         : secondTree;
     },
     async prompt() {
+      if (scenario === "colon") {
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...colonTree,
+        });
+        await connection.extNotification("test/delegation_update", {
+          sessionId: "delegation-session",
+          ...colonSplitTree,
+        });
+        return { stopReason: "end_turn" };
+      }
       if (scenario === "update") {
         await connection.extNotification("test/delegation_update", {
           sessionId: "delegation-session",
@@ -5254,7 +5273,12 @@ function readTestDelegationRows(payload: unknown): ACPDelegationRow[] | null {
     if (!member || typeof member !== "object") {
       return null;
     }
-    const entry = member as { id?: unknown; title?: unknown; status?: unknown };
+    const entry = member as {
+      id?: unknown;
+      title?: unknown;
+      description?: unknown;
+      status?: unknown;
+    };
     if (typeof entry.id !== "string") {
       return null;
     }
@@ -5266,7 +5290,7 @@ function readTestDelegationRows(payload: unknown): ACPDelegationRow[] | null {
     rows.push({
       id: entry.id,
       title: typeof entry.title === "string" ? entry.title : null,
-      description: null,
+      description: typeof entry.description === "string" ? entry.description : null,
       status: entry.status,
       parentSubagentId: null,
     });
@@ -5389,6 +5413,37 @@ describe("ACP delegation extension", () => {
       { type: "upsert", id: "other", title: "Summarize", status: "running" },
       { type: "remove", id: "other", title: undefined, status: undefined },
       { type: "upsert", id: "child", title: "Read the failing test", status: "completed" },
+    ]);
+  });
+
+  test("publishes a tree whose fields hold the separator of the tree before it", async () => {
+    const client = createClient({ scenario: "colon" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The title of the first tree holds the separator that the second tree
+    // splits between the title and the description. The two trees read the
+    // same when the fields are joined, so the second one was taken for a
+    // repeat of the first and never reached the track.
+    const rows = events
+      .filter((event) => event.type === "provider_subagent")
+      .map((event) => {
+        const input = (event as { event: Record<string, unknown> }).event;
+        return {
+          type: input.type,
+          id: input.id,
+          title: input.title,
+          description: input.description,
+          status: input.status,
+        };
+      });
+    expect(rows).toEqual([
+      { type: "upsert", id: "child", title: "part:one", description: null, status: "running" },
+      { type: "upsert", id: "child", title: "part", description: "one:", status: "running" },
     ]);
   });
 

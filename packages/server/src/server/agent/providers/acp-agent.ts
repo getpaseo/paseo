@@ -188,20 +188,25 @@ function isACPError(value: unknown): value is ACPError {
 }
 
 /**
- * The signature of a published delegation row.
+ * The signature of a published delegation tree.
  *
  * It covers every field the track shows, so a tree that changes what the user
  * reads is published again. A row that only changed its timestamp reads the
  * same, so it is not.
+ *
+ * The fields are encoded one by one, so a value that contains a separator
+ * cannot be read as two fields: two different trees never share a signature.
  */
-function delegationRowSignature(row: ACPDelegationRow): string {
-  return [
-    row.id,
-    row.status,
-    row.title ?? "",
-    row.description ?? "",
-    row.parentSubagentId ?? "",
-  ].join(":");
+function delegationTreeSignature(rows: ACPDelegationRow[]): string {
+  return JSON.stringify(
+    rows.map((row) => [
+      row.id,
+      row.status,
+      row.title ?? "",
+      row.description ?? "",
+      row.parentSubagentId ?? "",
+    ]),
+  );
 }
 
 function isACPInvalidParams(error: unknown): boolean {
@@ -2980,7 +2985,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!rows) {
       return;
     }
-    const signature = rows.map(delegationRowSignature).join("|");
+    const signature = delegationTreeSignature(rows);
     if (signature === this.delegationSignature) {
       // The provider repeats a tree it already sent. Republishing it would
       // only redraw the same rows.
