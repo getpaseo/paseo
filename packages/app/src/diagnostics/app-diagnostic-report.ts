@@ -45,7 +45,7 @@ export function formatHostRuntimeSection(input: {
         ? describeConnectionKind(snapshot.activeConnection.type)
         : "none",
     },
-    { label: "Last online", value: snapshot?.lastOnlineAt ?? "never" },
+    { label: "Last online", value: snapshot?.lastOnlineAt ?? "unknown" },
     { label: "Last error", value: snapshot?.lastError ?? "none" },
     {
       label: "Agent directory",
