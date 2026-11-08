@@ -93,11 +93,19 @@ vi.mock("lucide-react-native", () => {
 
 vi.mock("@/components/zoomable-viewport/image", () => ({
   ZoomableImage: (props: Record<string, unknown>) => {
-    const actions = props.actions as Array<{
-      label: string;
-      onPress: () => void;
-      testID?: string;
-    }>;
+    const leadingActions =
+      (props.leadingActions as Array<{
+        label: string;
+        onPress: () => void;
+        testID?: string;
+      }>) ?? [];
+    const actions =
+      (props.actions as Array<{
+        label: string;
+        onPress: () => void;
+        testID?: string;
+      }>) ?? [];
+    const allActions = [...leadingActions, ...actions];
     return React.createElement(
       "div",
       {
@@ -105,7 +113,7 @@ vi.mock("@/components/zoomable-viewport/image", () => ({
         "data-source": props.uri,
         role: "img",
       },
-      actions.map((action) =>
+      allActions.map((action) =>
         React.createElement(
           "button",
           {
@@ -134,8 +142,18 @@ vi.mock("@/attachments/use-attachment-preview-url", () => ({
     useAttachmentPreviewUrlMock(metadata),
 }));
 
+const saveImageMock = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
 vi.mock("@/hooks/use-save-image", () => ({
-  useSaveImage: () => vi.fn(),
+  useSaveImage: () => saveImageMock,
+}));
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({
+    show: vi.fn(),
+    copied: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 let root: Root | null = null;
@@ -253,12 +271,19 @@ describe("AttachmentLightbox", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders a download button as a leading action", () => {
+  it("renders a download button as a leading action and saves the image when clicked", async () => {
+    saveImageMock.mockClear();
     render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} />);
 
-    const downloadButton = document.querySelector(
+    const downloadButton = document.querySelector<HTMLButtonElement>(
       '[aria-label="Download image"][data-testid="attachment-lightbox-download"]',
     );
     expect(downloadButton).not.toBeNull();
+
+    await act(async () => {
+      downloadButton?.click();
+    });
+
+    expect(saveImageMock).toHaveBeenCalledWith("blob:preview");
   });
 });

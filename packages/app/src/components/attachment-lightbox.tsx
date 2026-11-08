@@ -16,6 +16,7 @@ import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
 import { useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { useSaveImage } from "@/hooks/use-save-image";
+import { useToast } from "@/contexts/toast-context";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -36,7 +37,9 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   const url = source?.type === "uri" ? source.uri : attachmentUrl;
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const modalLayer = useGlobalOverlayLayer("modal", source !== null);
+  const toast = useToast();
   const saveImage = useSaveImage();
 
   useEffect(() => {
@@ -60,18 +63,29 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     onKeyDown: handleOverlayKeyDown,
   });
 
+  const handleDownload = useCallback(async () => {
+    if (!url || isSaving) return;
+    setIsSaving(true);
+    try {
+      await saveImage(url);
+    } catch (error) {
+      console.warn("[AttachmentLightbox] Failed to save image:", error);
+      toast.error(t("message.attachments.downloadFailed"));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [isSaving, saveImage, t, toast, url]);
+
   const leadingActions = useMemo(
     () => [
       {
         icon: Download,
         label: t("message.attachments.downloadImage"),
-        onPress: () => {
-          if (url) void saveImage(url);
-        },
+        onPress: handleDownload,
         testID: "attachment-lightbox-download",
       },
     ],
-    [saveImage, t, url],
+    [handleDownload, t],
   );
 
   const actions = useMemo(
