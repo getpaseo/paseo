@@ -35,6 +35,7 @@ describe("Git metadata event rules", () => {
     ["common", "packed-refs", { kind: "all", refreshBase: true }],
     ["common", "reftable/tables.list", { kind: "all", refreshBase: true }],
     ["common", "config", { kind: "all", refreshBase: true }],
+    ["common", "info/attributes", { kind: "all", refreshBase: false }],
     ["common", "worktrees/new/index", { kind: "ignore" }],
     ["common", "hooks/pre-commit", { kind: "ignore" }],
     ["common", "logs/refs/heads/main", { kind: "ignore" }],

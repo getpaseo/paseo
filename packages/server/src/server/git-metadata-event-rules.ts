@@ -113,6 +113,14 @@ export const GIT_METADATA_EVENT_RULES = [
     refreshBase: true,
   },
   {
+    id: "shared-attributes",
+    scope: "common",
+    match: "exact",
+    path: "info/attributes",
+    route: "all",
+    refreshBase: false,
+  },
+  {
     id: "worktree-administration",
     scope: "common",
     match: "prefix",

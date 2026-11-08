@@ -708,3 +708,100 @@ test("explicit refresh resolves subdirectories without refreshing a nested repos
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test.each(["main", "linked"] as const)(
+  "%s checkout observes worktree configuration and shared attributes",
+  async (checkout) => {
+    const { resolve } = await import("node:path");
+    const { readFile } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "diff-interpretation-watch-"));
+    let cwd = join(root, "repo");
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(at) {
+        return { repoRoot: at, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    try {
+      await mkdir(cwd);
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      const lines = Array.from(
+        { length: 20 },
+        (_, index) => `export const value${index} = ${index};`,
+      );
+      await writeFile(join(cwd, "a.ts"), lines.join("\n") + "\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      lines[10] = "export const value10 = 999;";
+      await writeFile(join(cwd, "a.ts"), lines.join("\n") + "\n");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "edit");
+      git("config", "extensions.worktreeConfig", "true");
+      if (checkout === "linked") {
+        const linked = join(root, "linked");
+        git("worktree", "add", "-b", "side", linked);
+        cwd = linked;
+      }
+      git("config", "--worktree", "diff.context", "3");
+      const configPath = resolve(cwd, git("rev-parse", "--git-path", "config.worktree"));
+      const configText = await readFile(configPath, "utf8");
+      const subscription = await streams.subscribe(
+        { cwd, base: { kind: "rev", rev: base }, head: { kind: "rev", rev: "HEAD" } },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await subscription.start();
+      const initialFiles = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(initialFiles[0].hunks[0].lines.filter((line) => line.type === "context")).toHaveLength(
+        6,
+      );
+      const attributesPath = resolve(cwd, git("rev-parse", "--git-path", "info/attributes"));
+      frames.length = 0;
+      await writeFile(attributesPath, "a.ts -diff\n");
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 10000 })
+        .toBe(true);
+      expect(frames.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+        entries: [{ path: "a.ts", content: "binary" }],
+      });
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      frames.length = 0;
+      await writeFile(attributesPath, "");
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 10000 })
+        .toBe(true);
+      const restoredFiles = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(
+        restoredFiles[0].hunks[0].lines.filter((line) => line.type === "context"),
+      ).toHaveLength(6);
+      frames.length = 0;
+      const changedConfig = configText.replace("context = 3", "context = 0");
+      expect(changedConfig).not.toBe(configText);
+      await writeFile(configPath, changedConfig);
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 10000 })
+        .toBe(true);
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      const updatedFiles = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(updatedFiles[0].hunks[0].lines.filter((line) => line.type === "context")).toHaveLength(
+        0,
+      );
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  30000,
+);

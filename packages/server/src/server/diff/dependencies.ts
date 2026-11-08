@@ -1,4 +1,4 @@
-import { classifyGitMetadataPath } from "../git-metadata-event-rules.js";
+import { classifyGitMetadataPath, type GitMetadataScope } from "../git-metadata-event-rules.js";
 import { resolve } from "node:path";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
@@ -27,13 +27,19 @@ export class DiffDependencyObserver {
       const paths = await runGitCommand(["rev-parse", "--absolute-git-dir", "--git-common-dir"], {
         cwd: input.cwd,
       });
-      const roots = new Set(
-        paths.stdout
-          .split(/\r?\n/)
-          .filter((path) => path.length > 0)
-          .map((path) => resolve(input.cwd, path)),
-      );
-      for (const root of roots) {
+      const [gitDir, commonDir] = paths.stdout.split(/\r?\n/);
+      if (!gitDir || !commonDir) throw new Error("Git returned incomplete metadata roots");
+      const roots = new Map<string, GitMetadataScope[]>();
+      for (const [directory, scope] of [
+        [gitDir, "worktree"],
+        [commonDir, "common"],
+      ] as const) {
+        const root = resolve(input.cwd, directory);
+        const scopes = roots.get(root) ?? [];
+        scopes.push(scope);
+        roots.set(root, scopes);
+      }
+      for (const [root, scopes] of roots) {
         const subscription = await this.observer.subscribe(
           root,
           (error, events) => {
@@ -45,7 +51,7 @@ export class DiffDependencyObserver {
             const affectsInput = events.some((event) => {
               const path = event.path.slice(root.length + 1).replaceAll("\\", "/");
               if (path === "index") return input.index;
-              return classifyGitMetadataPath("common", path).kind !== "ignore";
+              return scopes.some((scope) => classifyGitMetadataPath(scope, path).kind !== "ignore");
             });
             if (affectsInput) changed();
           },
