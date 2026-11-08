@@ -2,14 +2,34 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { ConversationImageStore } from "./conversation-images.js";
 import type { TimelineImage } from "@getpaseo/protocol/timeline-image";
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const fs = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...fs, writeFile: vi.fn(fs.writeFile), rename: vi.fn(fs.rename) };
-});
+function trackWrites() {
+  const calls: Parameters<typeof writeFile>[] = [];
+  let failRename = false;
+  const writes: Pick<typeof import("node:fs/promises"), "writeFile" | "rename"> = {
+    writeFile: async (...args) => {
+      calls.push(args);
+      await writeFile(...args);
+    },
+    rename: async (...args) => {
+      if (failRename) {
+        failRename = false;
+        throw new Error("disk failure");
+      }
+      await rename(...args);
+    },
+  };
+  return {
+    calls,
+    writes,
+    failNextRename() {
+      failRename = true;
+    },
+  };
+}
 
 const homes: string[] = [];
 async function home(): Promise<string> {
@@ -25,9 +45,6 @@ async function resolve(store: ConversationImageStore, id: string) {
   return store.normalize("agent", { type: "user_message", text: "", messageId: id });
 }
 afterEach(async () => {
-  vi.restoreAllMocks();
-  vi.mocked(writeFile).mockClear();
-  vi.mocked(rename).mockClear();
   await Promise.all(
     homes.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -35,28 +52,30 @@ afterEach(async () => {
 
 test("binding history writes only the new aliases and survives restart", async () => {
   const directory = await home();
-  const store = new ConversationImageStore(directory);
+  const tracked = trackWrites();
+  const store = new ConversationImageStore(directory, tracked.writes);
   const count = 64;
   for (let index = 0; index < count; index++) {
     await store.bind("agent", [`native-${index}`, `client-${index}`], images);
   }
-  const writes = vi.mocked(writeFile).mock.calls;
+  const writes = tracked.calls;
   expect(writes).toHaveLength(count);
   const sizes = writes.map(([, bytes]) => Buffer.byteLength(String(bytes)));
   // A fixed-size message must not rewrite all previous messages' bindings.
   expect(Math.max(...sizes)).toBeLessThan(512);
   expect(sizes.reduce((total, size) => total + size, 0)).toBeLessThan(count * 512);
-  const reopened = new ConversationImageStore(directory);
+  const reopened = new ConversationImageStore(directory, tracked.writes);
   for (const id of ["native-0", "client-0", "native-63", "client-63"]) {
     expect((await resolve(reopened, id)).images).toEqual(images);
   }
-  expect(vi.mocked(writeFile).mock.calls).toHaveLength(count);
+  expect(tracked.calls).toHaveLength(count);
   expect((await resolve(reopened, "not-in-this-timeline")).images).toBeUndefined();
 });
 
 test("concurrent aliases are ordered, duplicate binds do not write, and failures do not publish", async () => {
   const directory = await home();
-  const store = new ConversationImageStore(directory);
+  const tracked = trackWrites();
+  const store = new ConversationImageStore(directory, tracked.writes);
   const replacement: TimelineImage[] = [
     { kind: "stored", id: "b".repeat(64), mimeType: "image/png", byteSize: 4 },
   ];
@@ -66,8 +85,8 @@ test("concurrent aliases are ordered, duplicate binds do not write, and failures
     store.bind("agent", ["other"], images),
   ]);
   await store.bind("agent", ["native", "client"], replacement);
-  expect(vi.mocked(writeFile).mock.calls).toHaveLength(3);
-  vi.mocked(rename).mockRejectedValueOnce(new Error("disk failure"));
+  expect(tracked.calls).toHaveLength(3);
+  tracked.failNextRename();
   await expect(store.bind("agent", ["native", "client"], images)).rejects.toThrow("disk failure");
   expect((await resolve(store, "native")).images).toEqual(replacement);
   const reopened = new ConversationImageStore(directory);

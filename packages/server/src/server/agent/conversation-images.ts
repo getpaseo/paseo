@@ -92,7 +92,13 @@ export class ConversationImageStore {
   private readonly bindings = new Map<string, Promise<BindingState>>();
   private readonly tails = new Map<string, Promise<void>>();
 
-  constructor(paseoHome: string) {
+  constructor(
+    paseoHome: string,
+    private readonly writes: Pick<typeof import("node:fs/promises"), "writeFile" | "rename"> = {
+      writeFile,
+      rename,
+    },
+  ) {
     this.root = path.join(paseoHome, "conversation-images");
   }
 
@@ -100,8 +106,8 @@ export class ConversationImageStore {
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     const temporary = `${target}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
-      await rename(temporary, target);
+      await this.writes.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+      await this.writes.rename(temporary, target);
     } finally {
       await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
