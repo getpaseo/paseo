@@ -215,6 +215,36 @@ describe("syncObservers", () => {
   });
 });
 
+describe("reconcileObservers", () => {
+  test("releases workspaces the caller stops reporting and watches them again when reported", () => {
+    const h = buildHarness();
+    h.service.reconcileObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    expect(h.registerCalls).toEqual([WS1, WS2]);
+
+    h.service.reconcileObservers([makeDescriptor({ id: "ws2", workspaceDirectory: WS2 })]);
+    expect(h.unsubscribeCalls).toEqual([WS1]);
+    expect(h.service.getMetrics()).toEqual({
+      watchedDirectoryCount: 1,
+      workspaceRecordCount: 1,
+      subscriptionCount: 1,
+    });
+
+    h.service.reconcileObservers([
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    expect(h.registerCalls).toEqual([WS1, WS2, WS1]);
+    expect(h.service.getMetrics()).toEqual({
+      watchedDirectoryCount: 2,
+      workspaceRecordCount: 2,
+      subscriptionCount: 2,
+    });
+  });
+});
+
 describe("git snapshot listener", () => {
   test("fans a snapshot out to branch-change, workspace-update, and status-update", async () => {
     const h = buildHarness();
