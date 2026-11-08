@@ -229,6 +229,7 @@ function getFeatureIconColor(
   palette: {
     blue: { 400: string };
     green: { 400: string };
+    purple: { 500: string };
     yellow: { 400: string };
   },
   restColor: string,
@@ -242,6 +243,8 @@ function getFeatureIconColor(
       return palette.blue[400];
     case "green":
       return palette.green[400];
+    case "purple":
+      return palette.purple[500];
     case "yellow":
       return palette.yellow[400];
     default:

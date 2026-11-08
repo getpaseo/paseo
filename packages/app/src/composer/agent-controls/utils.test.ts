@@ -38,6 +38,7 @@ describe("feature metadata helpers", () => {
     expect(getFeatureHighlightColor("fast_mode")).toBe("yellow");
     expect(getFeatureHighlightColor("service_tier")).toBe("yellow");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
+    expect(getFeatureHighlightColor("ultracode")).toBe("purple");
     expect(getFeatureHighlightColor("other")).toBe("default");
   });
 

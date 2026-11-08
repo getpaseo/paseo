@@ -1515,7 +1515,7 @@ describe("model merging", () => {
       models
         .find((model) => model.id === "claude-sonnet-5")
         ?.thinkingOptions?.map((option) => option.id),
-    ).toEqual(["off", "low", "medium", "high", "xhigh", "max", "ultracode"]);
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
     expect(models.find((model) => model.id === "claude-opus-5")?.thinkingOptions).toEqual([]);
     expect(models.find((model) => model.id === "custom-explicit")).toMatchObject({
       thinkingOptions: [{ id: "bespoke", label: "Bespoke", isDefault: true }],

@@ -5,10 +5,11 @@ import {
   FAST_MODE_FEATURE_ID,
   PLAN_MODE_FEATURE_ID,
   SPEED_FEATURE_ID,
+  ULTRACODE_FEATURE_ID,
 } from "@/agent-controls/policy";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
-export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
+export type FeatureHighlightColor = "blue" | "default" | "green" | "purple" | "yellow";
 export type AgentControlHintKey =
   | "agentControls.hints.thinking"
   | "agentControls.hints.model"
@@ -54,6 +55,8 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
       return "green";
     case PLAN_MODE_FEATURE_ID:
       return "blue";
+    case ULTRACODE_FEATURE_ID:
+      return "purple";
     default:
       return "default";
   }
