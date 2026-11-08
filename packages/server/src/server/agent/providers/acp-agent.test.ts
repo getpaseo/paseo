@@ -187,9 +187,10 @@ function createSession(
   options: {
     terminateProcess?: ProcessTerminator;
     launchEnv?: Record<string, string>;
+    delegationExtension?: ACPDelegationExtension;
   } = {},
 ): ACPAgentSession {
-  const { terminateProcess, launchEnv } = options;
+  const { terminateProcess, launchEnv, delegationExtension } = options;
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -210,6 +211,7 @@ function createSession(
       },
       ...(terminateProcess ? { terminateProcess } : {}),
       ...(launchEnv ? { launchEnv } : {}),
+      ...(delegationExtension ? { delegationExtension } : {}),
     },
   );
 }
@@ -5509,5 +5511,165 @@ describe("ACP delegation extension", () => {
     session.subscribe((event) => events.push(event));
 
     expect(delegationRows(events)).toEqual([]);
+  });
+});
+
+const DELEGATION_CONFIRMATION_MS = 500;
+
+// A vendor extension of the test's own that holds a row back when the
+// provider reports a child as finished before it started. It mirrors what a
+// vendor does with the members the session already shows: a child the
+// session knows has run, so its finish is shown at once.
+const deferringDelegationExtension: ACPDelegationExtension = {
+  advertisementKey: "test/delegation",
+  readMethod: "test/delegation/get",
+  updateMethod: "test/delegation_update",
+  async readTree() {
+    return null;
+  },
+  parseReadResult() {
+    return null;
+  },
+  parseUpdate(params, context) {
+    const members = (params as { members?: unknown }).members;
+    if (!Array.isArray(members)) {
+      return null;
+    }
+    const rows: ACPDelegationRow[] = [];
+    for (const member of members) {
+      const entry = member as { id?: unknown; status?: unknown };
+      if (typeof entry.id !== "string") {
+        return null;
+      }
+      const row: ACPDelegationRow = {
+        id: entry.id,
+        title: null,
+        description: null,
+        status: entry.status === "completed" ? "completed" : "running",
+        parentSubagentId: null,
+      };
+      if (row.status === "completed" && !context.knownMemberIds.has(entry.id)) {
+        row.deferMs = DELEGATION_CONFIRMATION_MS;
+      }
+      rows.push(row);
+    }
+    return rows;
+  },
+};
+
+describe("ACP delegation deferral", () => {
+  let session: ACPAgentSession | null = null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    await session?.close();
+    session = null;
+    vi.useRealTimers();
+  });
+
+  function rowsFor(events: AgentStreamEvent[], id: string): Array<Record<string, unknown>> {
+    return events
+      .filter((event) => event.type === "provider_subagent")
+      .map((event) => (event as { event: Record<string, unknown> }).event)
+      .filter((input) => input.id === id)
+      .map((input) => ({ type: input.type, id: input.id, status: input.status }));
+  }
+
+  async function publishTree(
+    target: ACPAgentSession,
+    members: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    await target.extNotification("test/delegation_update", { members });
+  }
+
+  test("shows the row that waits by its deadline while other members change", async () => {
+    session = createSession({ delegationExtension: deferringDelegationExtension });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // The provider reports a child as finished before it started. The row
+    // waits for the deadline of that report.
+    await publishTree(session, [
+      { id: "child", status: "completed" },
+      { id: "other", status: "running" },
+    ]);
+    expect(rowsFor(events, "child")).toEqual([]);
+
+    // The provider keeps publishing its tree: another member changes every
+    // 100ms, well past the deadline the first report set.
+    const marks: number[] = [];
+    for (let step = 1; step <= 8; step += 1) {
+      vi.advanceTimersByTime(100);
+      await publishTree(session, [
+        { id: "child", status: "completed" },
+        { id: "other", status: "running" },
+        { id: "other-" + step, status: "running" },
+      ]);
+      marks.push(events.length);
+      if (step <= 4) {
+        // The row still waits: the deadline has not passed.
+        expect(rowsFor(events, "child")).toEqual([]);
+      }
+    }
+
+    // The row shows at the deadline of its first report, while the tree
+    // keeps changing around it. The changes must not push it further away.
+    const completed = events.findIndex((event) => {
+      const input = (event as { event: Record<string, unknown> }).event;
+      return (
+        event.type === "provider_subagent" && input.id === "child" && input.status === "completed"
+      );
+    });
+    expect(completed).toBeGreaterThanOrEqual(0);
+    // The deadline is 500ms: the row shows in the window that ends there.
+    expect(completed).toBeGreaterThanOrEqual(marks[3]);
+    expect(completed).toBeLessThan(marks[4]);
+  });
+
+  test("shows a newer state for the child instead of the state that waited", async () => {
+    session = createSession({ delegationExtension: deferringDelegationExtension });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await publishTree(session, [{ id: "child", status: "completed" }]);
+    vi.advanceTimersByTime(100);
+    // The provider reports another state for that child.
+    await publishTree(session, [{ id: "child", status: "running" }]);
+
+    // The new state takes the place of the row that waited, and the state
+    // that waited never shows.
+    expect(rowsFor(events, "child")).toEqual([{ type: "upsert", id: "child", status: "running" }]);
+
+    vi.advanceTimersByTime(1000);
+    expect(rowsFor(events, "child")).toEqual([{ type: "upsert", id: "child", status: "running" }]);
+  });
+
+  test("shows nothing for a child the tree no longer holds", async () => {
+    session = createSession({ delegationExtension: deferringDelegationExtension });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await publishTree(session, [{ id: "child", status: "completed" }]);
+    vi.advanceTimersByTime(100);
+    // The tree does not hold the child any more.
+    await publishTree(session, [{ id: "other", status: "running" }]);
+
+    vi.advanceTimersByTime(1000);
+    expect(rowsFor(events, "child")).toEqual([]);
+  });
+
+  test("shows nothing that waited after the session is closed", async () => {
+    session = createSession({ delegationExtension: deferringDelegationExtension });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await publishTree(session, [{ id: "child", status: "completed" }]);
+    await session.close();
+
+    vi.advanceTimersByTime(1000);
+    expect(rowsFor(events, "child")).toEqual([]);
   });
 });

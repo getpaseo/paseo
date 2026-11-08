@@ -511,7 +511,9 @@ export interface ACPDelegationRow {
    *
    * A provider that reports a child as finished before it started needs the
    * row to wait: the provider takes the child back a moment later. The wait
-   * is bounded, so a child that really finished is shown.
+   * is bounded, so a child that really finished is shown. The deadline is
+   * absolute: a provider that publishes the same child again does not push
+   * the row further away.
    */
   deferMs?: number;
 }
@@ -1881,10 +1883,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // removes its row.
   private readonly publishedDelegationIds = new Set<string>();
   // The rows that wait before they are published, so a provider that reports
-  // a child as finished before it started does not show it as finished.
+  // a child as finished before it started does not show it as finished. Every
+  // waiting row keeps the deadline of its first report, so a provider that
+  // keeps publishing its tree cannot push the row further away.
   private readonly pendingDelegationRows = new Map<
     string,
-    { row: ACPDelegationRow; timer: ReturnType<typeof setTimeout> }
+    { row: ACPDelegationRow; deadline: number; timer: ReturnType<typeof setTimeout> }
   >();
   // The delegation tree is read while the session initializes, before the
   // agent manager subscribes to the session. The rows wait here until a
@@ -3016,11 +3020,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.cancelPendingDelegationRow(id);
     }
     for (const row of rows) {
-      this.cancelPendingDelegationRow(row.id);
+      const pending = this.pendingDelegationRows.get(row.id);
       if (row.deferMs !== undefined) {
-        this.holdDelegationRow(row);
+        if (pending && pending.row.status === row.status) {
+          // The provider reports the same child in the same state again. The
+          // deadline of the first report stands: a provider that publishes
+          // its tree again must not push the row further away, or a row that
+          // waits would never show.
+          pending.row = row;
+          continue;
+        }
+        // Another state for that child takes the place of the row that waits.
+        // The deadline of the child stays where it is, so the wait never grows.
+        const deadline = pending?.deadline ?? Date.now() + row.deferMs;
+        this.cancelPendingDelegationRow(row.id);
+        this.holdDelegationRow(row, deadline);
         continue;
       }
+      // A row that does not wait supersedes the row that waits: the provider
+      // reports another state for that child.
+      this.cancelPendingDelegationRow(row.id);
       this.publishDelegationRow(row);
     }
   }
@@ -3048,15 +3067,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /**
    * Holds a row back until the provider has had time to correct it.
    *
-   * The row is published when the wait is over, unless a newer row for the
-   * same member arrives first.
+   * The wait ends at an absolute deadline, so the row shows even when the
+   * provider keeps publishing its tree. A newer row for the same member
+   * replaces it.
    */
-  private holdDelegationRow(row: ACPDelegationRow): void {
+  private holdDelegationRow(row: ACPDelegationRow, deadline: number): void {
+    const remainingMs = Math.max(0, deadline - Date.now());
     const timer = setTimeout(() => {
+      const pending = this.pendingDelegationRows.get(row.id);
+      if (!pending) {
+        return;
+      }
       this.pendingDelegationRows.delete(row.id);
-      this.publishDelegationRow(row);
-    }, row.deferMs);
-    this.pendingDelegationRows.set(row.id, { row, timer });
+      this.publishDelegationRow(pending.row);
+    }, remainingMs);
+    this.pendingDelegationRows.set(row.id, { row, deadline, timer });
   }
 
   /**

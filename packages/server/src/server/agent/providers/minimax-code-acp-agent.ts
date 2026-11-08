@@ -39,10 +39,14 @@ const MINIMAX_CODE_DELEGATION_UPDATE_NOTIFICATION = "mcode/session/delegation_up
  * How long a row waits when the provider reports a child as finished before
  * it started.
  *
- * The recorded traces show the provider publishing a child as finished at the
- * moment it created it, and taking it back 113ms and 115ms later. The wait
- * covers that with room to spare, and it stays short enough that a child that
- * really finished is shown without a delay a user notices.
+ * The recorded traces show the provider publishing a member that was created
+ * and updated at the same moment as finished, and taking it back 113ms and
+ * 115ms later. Equal timestamps are the evidence for that pattern, not a proof
+ * of the state of the member: they do not tell whether it ever ran, so the
+ * row waits instead of claiming a finish. The wait covers the observed delay
+ * with room to spare and stays short enough that a child that really finished
+ * is shown without a delay a user notices. That delay is the price of the
+ * heuristic: such a child appears one wait later.
  */
 const MINIMAX_CODE_DELEGATION_CONFIRMATION_MS = 500;
 
@@ -196,10 +200,17 @@ function readMiniMaxCodeRows(
       row.timestamp = new Date(member.updatedAtMs).toISOString();
     }
     if (knownMemberIds && status === "completed" && !knownMemberIds.has(member.sessionId)) {
-      // The provider publishes a child it has not started yet as finished, and
-      // takes it back a moment later. The row waits for that, so the track
-      // never shows a child as finished before it began. A child the session
-      // already showed is a child that ran, so its finish is shown at once.
+      // The recorded traces show the provider publishing a member as finished
+      // before it started it, and taking it back a moment later. That is a
+      // pattern in the traces, not a rule of the protocol, so the row waits
+      // instead of claiming a finish the provider may take back. A child the
+      // session already showed is a child that ran, so its finish is shown at
+      // once.
+      //
+      // The wait is what the heuristic costs: a child that really finished
+      // appears one wait later, and a provider that reports a child as
+      // finished without ever taking it back keeps the row hidden until the
+      // wait is over.
       row.deferMs = MINIMAX_CODE_DELEGATION_CONFIRMATION_MS;
     }
     rows.push(row);

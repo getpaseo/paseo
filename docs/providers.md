@@ -55,12 +55,11 @@ model; it does not override the model list returned by a resolver.
 
 A provider that runs its own child sessions can publish that tree. The generic ACP client carries the
 plumbing: when to read the tree, how a tree replaces the previous one, how the rows reach the track. A
-vendor supplies the tree through the `delegationExtension` option. MiniMax Code does it in
-`minimax-code-acp-agent.ts`: the client asks for the extension notifications in the handshake, and the
-delegation tree the provider reports becomes rows in the parent's subagents track. The registry picks
-that client by the provider id or by the exact name of the command it runs, so a provider whose name
-merely contains that name, `dimcode` for one, keeps the generic ACP client. Those rows are read-only,
-like every provider subagent row.
+vendor supplies the tree through the `delegationExtension` option of the ACP client, and the tree the
+provider reports becomes rows in the parent's subagents track. A vendor that reports a child as finished
+before it started can hold that row back with `deferMs`: the row waits for a bounded deadline, so it
+shows even when the provider keeps publishing its tree, and a newer state for the same child replaces it.
+Those rows are read-only, like every provider subagent row.
 
 ### Direct
 

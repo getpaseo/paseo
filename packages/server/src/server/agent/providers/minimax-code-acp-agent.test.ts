@@ -114,6 +114,25 @@ new AgentSideConnection(
       return { snapshot: tree };
     },
     async prompt() {
+      if (scenario === "confirm-repeat") {
+        // The provider reports the same child as finished again and again,
+        // while the tree it publishes changes around it.
+        for (let index = 0; index < 30; index += 1) {
+          await connection.extNotification("mcode/session/delegation_update", {
+            sessionId: "minimax-session",
+            snapshot: {
+              ...withLate,
+              members: [
+                ...withLate.members,
+                member("churn-" + index, "root-session", "worker", "Churn " + index, "running", 9000, 9000),
+              ],
+            },
+          });
+          log({ method: "delegation_update", index });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return { stopReason: "end_turn" };
+      }
       if (scenario === "confirm") {
         await connection.extNotification("mcode/session/delegation_update", {
           sessionId: "minimax-session",
@@ -413,6 +432,38 @@ describe("MiniMaxCodeACPAgentClient", () => {
         parentSubagentId: null,
       },
     ]);
+  });
+
+  test("shows the child that waits while the provider keeps publishing its tree", async () => {
+    const client = createClient({ scenario: "confirm-repeat" });
+    session = await client.createSession({ provider: "acp", cwd: dir });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("go");
+
+    // The provider reports the same child as finished again and again, and
+    // its tree changes around it. The row must not wait for the last report:
+    // it shows at the deadline of the first one.
+    const giveUpAt = Date.now() + 3000;
+    while (Date.now() < giveUpAt && rowsFor(events, "late-session").length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const late = rowsFor(events, "late-session");
+    expect(late.length).toBeGreaterThan(0);
+    expect(late[0]).toEqual({
+      id: "late-session",
+      title: "worker",
+      description: "Start late",
+      status: "completed",
+      parentSubagentId: null,
+    });
+
+    // The provider was still publishing its tree when the row showed.
+    const log = await readAgentLog();
+    const updates = log.filter((entry) => entry.method === "delegation_update").length;
+    expect(updates).toBeLessThan(30);
   });
 
   test("shows the running status the provider takes the child back with", async () => {
