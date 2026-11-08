@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
-import type { StreamRenderInput, StreamViewportHandle } from "./strategy";
+import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -91,10 +91,15 @@ function mountTimeline(historyMounted: StreamItem[]) {
 
   return {
     render: (segments: Partial<StreamRenderInput["segments"]>) => act(() => render(segments)),
-    hold: (rowId: string, apply: () => void) =>
-      act(() => viewportRef.current!.holdRow(rowId, apply)),
+    hold: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge = "top") =>
+      act(() => viewportRef.current!.holdRow(rowId, apply, triggerEdge)),
     rowTop: (id: string) =>
       rowElement(id).getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
+    rowBottom: (id: string) =>
+      rowElement(id).getBoundingClientRect().bottom - scrollContainer.getBoundingClientRect().top,
+    scrollTo: (top: number) => {
+      scrollContainer.scrollTop = top;
+    },
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
     // Resize observers and the hold's settle run on animation frames.
@@ -137,6 +142,53 @@ describe("web disclosure hold", () => {
     );
     await timeline.settle();
     expect(timeline.rowTop("message-5")).toBe(triggerTop);
+  });
+
+  // A long message's show more sits under the text it opens, on the bottom edge of its row.
+  it("keeps the bottom of a bottom-trigger row through show more and show less while following output", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    const triggerBottom = timeline.rowBottom("message-5");
+
+    timeline.hold(
+      "message-5",
+      () => timeline.render({ historyMounted: [...history.slice(0, 4), row(5, 240), history[5]!] }),
+      "bottom",
+    );
+    await timeline.settle();
+    expect(timeline.rowBottom("message-5")).toBe(triggerBottom);
+
+    timeline.hold("message-5", () => timeline.render({ historyMounted: history }), "bottom");
+    await timeline.settle();
+    expect(timeline.rowBottom("message-5")).toBe(triggerBottom);
+  });
+
+  it("keeps the bottom of a bottom-trigger row through show more and show less when scrolled up", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    timeline.scrollTo(60);
+    await timeline.settle();
+    // message-2 is cut off at the top; message-3 is fully in view.
+    for (const index of [2, 3]) {
+      const triggerBottom = timeline.rowBottom(`message-${index}`);
+      const grown = history.map((item, position) =>
+        position === index - 1 ? row(index, 240) : item,
+      );
+
+      timeline.hold(`message-${index}`, () => timeline.render({ historyMounted: grown }), "bottom");
+      await timeline.settle();
+      expect(timeline.rowBottom(`message-${index}`)).toBe(triggerBottom);
+
+      timeline.hold(
+        `message-${index}`,
+        () => timeline.render({ historyMounted: history }),
+        "bottom",
+      );
+      await timeline.settle();
+      expect(timeline.rowBottom(`message-${index}`)).toBe(triggerBottom);
+    }
   });
 
   it("resumes following when collapsing an anchored row lands back at the end", async () => {
