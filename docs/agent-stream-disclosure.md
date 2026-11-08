@@ -103,9 +103,10 @@ jumps by the keyboard height after the keyboard settles.
    row). The hold mounts the end pin while detached, and `apply` runs a frame later. The pin
    anchors only once it is mounted, and a pin that mounts in the same commit as the new height
    anchors nothing. The pin's commit mounts before that frame's JS callbacks run, so `apply`'s
-   commit mounts with the pin already in place. The pin keeps the distance from the end, so the
-   hold re-sticks only if the list was at its end when the toggle was tapped. The scroll metrics
-   cannot decide it at release: the new content size reaches JS before the pin's scroll does.
+   commit mounts with the pin already in place. The pin keeps the distance from the end, clamped
+   to the scroll room the content has left, so the hold re-sticks if the list was at its end when
+   tapped or a collapse used up the room. The release computes that distance instead of reading
+   the offset: the new content size reaches JS before the pin's scroll does.
 
    Upstream LegendList anchors only rows from the first fully visible one down to the last fully
    visible one, and a size change with no data change keeps the first row in view whatever

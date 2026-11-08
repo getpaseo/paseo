@@ -35,7 +35,11 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
-import { createNativeDisclosureHold, disclosureAnchor } from "./native-disclosure-hold";
+import {
+  createNativeDisclosureHold,
+  disclosureAnchor,
+  settledEndHoldDistance,
+} from "./native-disclosure-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
 import type {
@@ -312,12 +316,20 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     () => distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
   );
   // A hold on the content end mounts the end pin while detached (`holdRow`). The pin keeps the
-  // distance from the end, so the list ends the hold at its end only if it started there. The
-  // metrics cannot tell sooner: the content size reaches JS before the pin's scroll does.
-  const [endHold, setEndHold] = useState<{ wasAtEnd: boolean } | null>(null);
+  // distance from the end, clamped to the scroll room left, so the release computes where the hold
+  // settles instead of reading the offset: the content size reaches JS before the pin's scroll does.
+  const [endHold, setEndHold] = useState<{ distanceAtToggle: number } | null>(null);
   const releaseDisclosure = useStableEvent(() => {
     setEndHold(null);
-    bottomAnchorController.releaseDisclosure({ isAtEnd: endHold ? endHold.wasAtEnd : isAtEnd() });
+    const metrics = streamViewportMetricsRef.current;
+    const settlesAtEnd = endHold
+      ? settledEndHoldDistance({
+          distanceAtToggle: endHold.distanceAtToggle,
+          contentHeight: metrics.contentHeight,
+          viewportHeight: metrics.viewportHeight,
+        }) <= AT_END_OFFSET_PX
+      : isAtEnd();
+    bottomAnchorController.releaseDisclosure({ isAtEnd: settlesAtEnd });
   });
   const [disclosureHold] = useState(() =>
     createNativeDisclosureHold({
@@ -364,11 +376,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       const anchor = disclosureAnchor(rows, rowId, triggerEdge);
       bottomAnchorController.holdForDisclosure();
       if (anchor.kind === "row" || !isListPlacedRef.current) {
+        setEndHold(null);
         disclosureHold.hold(anchor);
         applyAndMeasure();
         return;
       }
-      setEndHold({ wasAtEnd: isAtEnd() });
+      setEndHold({ distanceAtToggle: distanceFromEnd(streamViewportMetricsRef.current) });
       const frame = requestAnimationFrame(() => {
         pendingEndHoldRef.current = null;
         disclosureHold.hold(anchor);

@@ -85,3 +85,15 @@ export function disclosureAnchor(
   const below = rows[index + 1];
   return below ? { kind: "row", rowId: below.id } : { kind: "end" };
 }
+
+/**
+ * Where an end hold leaves the list, as a distance from the end. The end pin keeps the distance the
+ * toggle started at, and the scroll view clamps it to the scroll room the content has left.
+ */
+export function settledEndHoldDistance(input: {
+  distanceAtToggle: number;
+  contentHeight: number;
+  viewportHeight: number;
+}): number {
+  return Math.min(input.distanceAtToggle, Math.max(0, input.contentHeight - input.viewportHeight));
+}

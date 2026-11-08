@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createNativeDisclosureHold, disclosureAnchor } from "./native-disclosure-hold";
+import {
+  createNativeDisclosureHold,
+  disclosureAnchor,
+  settledEndHoldDistance,
+} from "./native-disclosure-hold";
 
 function createFrames() {
   let nextId = 1;
@@ -137,5 +141,22 @@ describe("disclosure anchor", () => {
   // A prompt the agent has not answered yet is the last row; the running indicator is the footer.
   it("keeps the content end for a bottom-edge trigger on the last row", () => {
     expect(disclosureAnchor(rows, "message-2", "bottom")).toEqual({ kind: "end" });
+  });
+});
+
+describe("settled end hold distance", () => {
+  it("keeps the distance from the end the toggle started at", () => {
+    expect(
+      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 2000, viewportHeight: 600 }),
+    ).toBe(20);
+  });
+
+  it("ends at the end when a collapse leaves less scroll room than that distance", () => {
+    expect(
+      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 500, viewportHeight: 600 }),
+    ).toBe(0);
+    expect(
+      settledEndHoldDistance({ distanceAtToggle: 20, contentHeight: 610, viewportHeight: 600 }),
+    ).toBe(10);
   });
 });
