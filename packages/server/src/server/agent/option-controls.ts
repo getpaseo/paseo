@@ -183,12 +183,9 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
     if (featureValues) return { ...rest, options: { ...featureValues, ...ownOptions } };
     return ownOptions ? { ...rest, options: ownOptions } : rest;
   }
-  const base =
-    rest.options !== undefined
-      ? ownOptions
-      : stored?.provider === rest.provider
-        ? convert(provider, stored?.options)
-        : undefined;
+  const storedOptions =
+    stored?.provider === rest.provider ? convert(provider, stored?.options) : undefined;
+  const base = rest.options !== undefined ? ownOptions : storedOptions;
   const options = applyProviderOptionsPatch({ options: base, patch: featureValues ?? {} });
   return Object.keys(options).length > 0 ? { ...rest, options } : { ...rest, options: undefined };
 }

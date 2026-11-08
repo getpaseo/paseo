@@ -5,7 +5,6 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
   AgentDraftControls,
-  AgentOptionControl,
   AgentModelDefinition,
   AgentMode,
   AgentSessionConfig,
