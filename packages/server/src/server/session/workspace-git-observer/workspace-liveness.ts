@@ -12,7 +12,10 @@
 export const WORKSPACE_LIVENESS_WINDOW_MS = 15 * 60_000;
 
 export interface WorkspaceLivenessFacts {
-  /** Newest activity Paseo knows about: the workspace record's update or a human prompt. */
+  /**
+   * Newest activity Paseo knows about: the workspace record's update, a human
+   * prompt, or an on-demand watch touch from `syncWorkspaceGitObserverForWorkspace`.
+   */
   lastActivityAt: string | null;
   hasLoadedAgent: boolean;
   hasOpenAgentTab: boolean;

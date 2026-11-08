@@ -270,7 +270,10 @@ import {
   type WorkspaceObservationTarget,
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
-import { isLiveWorkspace } from "./session/workspace-git-observer/workspace-liveness.js";
+import {
+  isLiveWorkspace,
+  WORKSPACE_LIVENESS_WINDOW_MS,
+} from "./session/workspace-git-observer/workspace-liveness.js";
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
   createPaseoWorktree,
@@ -734,6 +737,15 @@ function sameWorkspaceIdSet(left: ReadonlySet<string>, right: ReadonlySet<string
   return true;
 }
 
+/** Newest of the activity timestamps, all of them ISO strings from the same format. */
+function latestTimestamp(candidates: Array<string | null>): string | null {
+  let latest: string | null = null;
+  for (const candidate of candidates) {
+    if (candidate && (latest === null || candidate > latest)) latest = candidate;
+  }
+  return latest;
+}
+
 /** Workspaces with a loaded agent runtime, and workspaces with an open agent tab label. */
 interface AgentWorkspaceLiveness {
   loadedWorkspaceIds: ReadonlySet<string>;
@@ -861,6 +873,8 @@ export class Session {
   private loadedAgentWorkspaceIds: ReadonlySet<string> | null = null;
   /** Last workspaces carrying an open agent tab label, part of the same change check. */
   private openAgentTabWorkspaceIds: ReadonlySet<string> | null = null;
+  /** Workspaces watched on demand outside the liveness sweep, and when they were touched. */
+  private readonly workspaceObserverTouchTimes = new Map<string, number>();
   /** Tail of the serialized liveness reconciles, so a slow run cannot apply a stale set. */
   private workspaceGitObserverReconcileTail: Promise<void> = Promise.resolve();
   /** A liveness read that started before the current reconcile needs its own run afterwards. */
@@ -1638,8 +1652,10 @@ export class Session {
     const demanded = [...this.workspaceUpdatesSubscriptions.values()].some((subscription) =>
       this.matchesWorkspaceFilter({ workspace: descriptor, filter: subscription.filter }),
     );
-    if (demanded || this.wantsEvent("checkout_status_update"))
-      this.workspaceGitObserver.syncObservers([descriptor]);
+    if (!demanded && !this.wantsEvent("checkout_status_update")) return;
+    // An on-demand watch counts as activity, so the next reconcile keeps it for the window.
+    this.workspaceObserverTouchTimes.set(workspace.workspaceId, Date.now());
+    this.workspaceGitObserver.syncObservers([descriptor]);
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
@@ -7322,12 +7338,22 @@ export class Session {
   }
 
   private async applyWorkspaceGitObserverReconcile(): Promise<void> {
+    this.pruneExpiredWorkspaceObserverTouches();
     const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
     const wanted = this.wantsEvent("checkout_status_update");
     const live = wanted ? await this.listLiveWorkspaceObservationTargets(explicitlySubscribed) : [];
     this.workspaceGitObserver.reconcileObservers(
       wanted ? [...explicitlySubscribed, ...live] : explicitlySubscribed,
     );
+  }
+
+  private pruneExpiredWorkspaceObserverTouches(): void {
+    const now = Date.now();
+    for (const [workspaceId, touchedAt] of this.workspaceObserverTouchTimes) {
+      if (now - touchedAt > WORKSPACE_LIVENESS_WINDOW_MS) {
+        this.workspaceObserverTouchTimes.delete(workspaceId);
+      }
+    }
   }
 
   /**
@@ -7360,11 +7386,12 @@ export class Session {
     const now = Date.now();
 
     return targets.filter((target) => {
-      const lastUserMessageAt = lastUserMessageTimes.get(target.id) ?? null;
-      const lastActivityAt =
-        lastUserMessageAt && lastUserMessageAt > target.updatedAt
-          ? lastUserMessageAt
-          : target.updatedAt;
+      const touchedAt = this.workspaceObserverTouchTimes.get(target.id);
+      const lastActivityAt = latestTimestamp([
+        target.updatedAt,
+        lastUserMessageTimes.get(target.id) ?? null,
+        touchedAt === undefined ? null : new Date(touchedAt).toISOString(),
+      ]);
       return isLiveWorkspace(
         {
           lastActivityAt,
