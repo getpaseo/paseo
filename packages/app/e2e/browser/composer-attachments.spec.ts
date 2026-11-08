@@ -64,6 +64,14 @@ test.describe("Composer attachments", () => {
     });
   });
 
+  test("failed attachment source setup releases its workspace", async ({ page }, info) => {
+    await expect(
+      withAttachmentSourceFixture(page, info, async () => {}, {
+        fixtureName: "missing-attachment-source",
+      }),
+    ).rejects.toThrow();
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,

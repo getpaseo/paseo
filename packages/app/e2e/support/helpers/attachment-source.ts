@@ -20,18 +20,29 @@ export async function withAttachmentSourceFixture(
   page: Page,
   info: TestInfo,
   run: (actions: AttachmentSourceActions) => Promise<void>,
+  options?: { fixtureName?: string },
 ): Promise<void> {
   info.setTimeout(120_000);
   const workspace = await seedWorkspace({ repoPrefix: "attachment-source-" });
-  const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-  const previousConfig = await pluginClient.getDaemonConfig();
-  const plugin = await copyPluginFixture("attachment-source");
+  const cleanupSteps: Array<() => Promise<unknown>> = [() => workspace.cleanup()];
   let journeyFailed = false;
   let journeyError: unknown;
 
   try {
+    const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    cleanupSteps.unshift(() => pluginClient.close());
+    const previousConfig = await pluginClient.getDaemonConfig();
+    const plugin = await copyPluginFixture(options?.fixtureName ?? "attachment-source");
+    cleanupSteps.unshift(() => plugin.cleanup());
+
+    cleanupSteps.unshift(() =>
+      pluginClient.patchDaemonConfig({
+        pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
+      }),
+    );
     await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
     await pluginClient.installDirectoryPlugin(plugin.directory);
+    cleanupSteps.unshift(() => pluginClient.removePlugin("test-attachment-source"));
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
@@ -79,16 +90,6 @@ export async function withAttachmentSourceFixture(
     journeyFailed = true;
     journeyError = error;
   }
-  const cleanupSteps: Array<() => Promise<unknown>> = [
-    () => pluginClient.removePlugin("test-attachment-source"),
-    () =>
-      pluginClient.patchDaemonConfig({
-        pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
-      }),
-    () => pluginClient.close(),
-    () => plugin.cleanup(),
-    () => workspace.cleanup(),
-  ];
   const errors: unknown[] = [];
   for (const cleanup of cleanupSteps) {
     try {
