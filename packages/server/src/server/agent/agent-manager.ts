@@ -2,7 +2,7 @@ import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agen
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
+import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -111,7 +111,7 @@ import {
 } from "./provider-subagents/store.js";
 import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { extractAttention } from "../persistence-hooks.js";
+import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -1469,21 +1469,56 @@ export class AgentManager {
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
-  createAgent(
+  async createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(resolvedAgentId, () =>
+        this.createAgentInternal(config, resolvedAgentId, options),
+      ),
+    );
+  }
+
+  /**
+   * Opens a stored agent whose provider left no session to resume: its first session, created
+   * from the record as it is when the lane reaches it. A write queued ahead (`setMetadata`,
+   * `setLabels`) is in that record; one queued behind applies to the live agent.
+   */
+  createAgentFromRecord(agentId: string): Promise<ManagedAgent> {
+    const resolvedAgentId = validateAgentId(agentId, "createAgentFromRecord");
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(resolvedAgentId, async () => {
+        const record = await this.requireRegistry().get(resolvedAgentId);
+        if (!record) throw new AgentNotFoundError(resolvedAgentId);
+        const config = buildSessionConfig(record, {
+          validProviders: this.getRegisteredProviderIds(),
+        });
+        if (!config) {
+          throw new Error(
+            `Agent ${resolvedAgentId} references unavailable provider '${record.provider}'`,
+          );
+        }
+        return this.createAgentInternal(config, resolvedAgentId, {
+          labels: record.labels,
+          metadata: record.metadata,
+          workspaceId: record.workspaceId,
+          owner: record.owner,
+          background: record.background,
+          env: record.launchEnv,
+        });
+      }),
+    );
   }
 
   private async createAgentInternal(
     config: AgentSessionConfig,
-    agentId: string | undefined,
+    resolvedAgentId: string,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
-    const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal) {
       const sent = exposeFeatureValuesToHook(config);
