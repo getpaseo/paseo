@@ -53,11 +53,14 @@ preferences and selection history. Cursor versions without that extension must b
 still probes model selections in its own shim. The initial session supplies modes and the current
 model; it does not override the model list returned by a resolver.
 
-A provider that runs its own child sessions can publish that tree. MiniMax Code sends it through a
-vendor extension, so Paseo asks for the extension notifications in the handshake and turns the
-provider's delegation snapshot into rows in the parent's subagents track. The request goes only to
-a provider that is MiniMax Code, recognized by its provider id or by the command it runs. Those rows
-are read-only, like every provider subagent row.
+A provider that runs its own child sessions can publish that tree. The generic ACP client carries the
+plumbing - when to read the tree, how a tree replaces the previous one, how the rows reach the track
+- and a vendor supplies it through the `delegationExtension` option. MiniMax Code does it in
+`minimax-code-acp-agent.ts`: the client asks for the extension notifications in the handshake, and the
+delegation tree the provider reports becomes rows in the parent's subagents track. The registry picks
+that client by the provider id or by the exact name of the command it runs, so a provider whose name
+merely contains that name - `dimcode` for one - keeps the generic ACP client. Those rows are
+read-only, like every provider subagent row.
 
 ### Direct
 

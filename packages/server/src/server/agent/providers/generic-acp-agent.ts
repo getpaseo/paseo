@@ -7,9 +7,8 @@ import {
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
+  type ACPDelegationExtension,
   type ACPExtensionCommandsParser,
-  isMiniMaxCodeProvider,
-  MCODE_CLIENT_CAPABILITY_META,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -29,6 +28,7 @@ interface GenericACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  delegationExtension?: ACPDelegationExtension;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
@@ -55,14 +55,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       // session/new, so the first listCommands() waits for that batch.
       waitForInitialCommands: options.waitForInitialCommands ?? true,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
-      // A MiniMax Code provider publishes its extension notifications only to
-      // a client that asked for them in the handshake. The request is a vendor
-      // extension, so it goes only to a provider that is MiniMax Code.
-      clientCapabilityMeta:
-        options.clientCapabilityMeta ??
-        (isMiniMaxCodeProvider(options.providerId, options.command)
-          ? MCODE_CLIENT_CAPABILITY_META
-          : undefined),
+      clientCapabilityMeta: options.clientCapabilityMeta,
+      delegationExtension: options.delegationExtension,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
