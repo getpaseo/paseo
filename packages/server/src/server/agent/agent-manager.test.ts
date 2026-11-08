@@ -4910,6 +4910,7 @@ test("importProviderSession imports the selected session without listing and pub
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
   expect(client.importLaunchContext).toEqual({
     agentId: imported.id,
+    workspaceId: "ws-imported",
     env: {
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,

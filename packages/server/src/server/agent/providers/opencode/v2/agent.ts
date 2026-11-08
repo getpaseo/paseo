@@ -4,7 +4,7 @@ import {
   features,
   permissionRules,
   applyResumeOverrides,
-  requiresDedicatedV2Server,
+  sessionServerRequest,
 } from "./configuration.js";
 import { commands } from "./commands.js";
 
@@ -41,6 +41,7 @@ import type { OpenCodeBridge } from "../bridge.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { V2Runtime, type V2Connection } from "./runtime.js";
 import type { OpenCodeServiceSelection } from "./service-selection.js";
+import { resolveOpenCodeServerScope, type OpenCodeServerScope } from "./external-server.js";
 import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
 
 interface V2AgentOptions {
@@ -57,7 +58,12 @@ export class OpenCodeV2AgentClient implements AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
   private readonly connections = new Map<string, V2Connection>();
+  private readonly scope: OpenCodeServerScope;
   constructor(private readonly options: V2AgentOptions) {
+    this.scope = resolveOpenCodeServerScope({
+      ...globalThis.process.env,
+      ...options.settings?.env,
+    });
     const bridge = options.bridge;
     this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(bridge) };
     this.runtime =
@@ -111,7 +117,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const connection = await this.runtime.acquire(
-      requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
+      sessionServerRequest({ config, launch, scope: this.scope }),
     );
     try {
       const info = await connection.client.session.create({
@@ -143,9 +149,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     };
     const connection =
       this.connections.get(handle.nativeHandle ?? handle.sessionId)?.retain() ??
-      (await this.runtime.acquire(
-        requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
-      ));
+      (await this.runtime.acquire(sessionServerRequest({ config, launch, scope: this.scope })));
     try {
       const info = await connection.client.session.get({
         sessionID: handle.nativeHandle ?? handle.sessionId,
@@ -165,9 +169,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     persist: boolean,
   ) {
     const acquire = () =>
-      this.runtime.acquire(
-        requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
-      );
+      this.runtime.acquire(sessionServerRequest({ config, launch, scope: this.scope }));
     let ownedConnection = connection;
     const bridge = this.options.bridge;
     const unbind = bridge?.bindSession({

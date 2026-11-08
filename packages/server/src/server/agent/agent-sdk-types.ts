@@ -633,6 +633,8 @@ export interface AgentLaunchContext {
   mcpServers?: Record<string, McpServerConfig>;
   mcpServerOwners?: Record<string, string>;
   agentId?: string;
+  /** The workspace the agent opens in, when it has one. */
+  workspaceId?: string;
   env?: Record<string, string>;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
