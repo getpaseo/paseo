@@ -174,6 +174,7 @@ describe("openAgentProfileForm", () => {
       provider: "codex",
       model: "gpt-5.2-codex",
       modeId: "read-only",
+      options: {},
     });
   });
 
@@ -544,7 +545,9 @@ describe("openAgentProfileForm", () => {
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
       model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
 
-      expect(model.getState().submitValue?.options).toBeUndefined();
+      // Empty, not absent: the daemon reads a profile write without `options` as one from an
+      // app that predates them and keeps the stored options.
+      expect(model.getState().submitValue?.options).toEqual({});
       expect(model.getState().controlsRequest?.providerOptions).toBeUndefined();
     });
 
@@ -576,7 +579,7 @@ describe("openAgentProfileForm", () => {
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
       model.applyControls(model.getState().controlsRequestKey ?? "", NO_CONTROLS);
 
-      expect(model.getState().submitValue?.options).toBeUndefined();
+      expect(model.getState().submitValue?.options).toEqual({});
     });
 
     it("never drops an option no control has drawn", () => {

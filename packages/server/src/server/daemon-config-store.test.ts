@@ -250,32 +250,46 @@ describe("DaemonConfigStore", () => {
     ]);
   });
 
-  describe("a profile edited by the unchanged app", () => {
-    function storeWithProfile(): DaemonConfigStore {
-      const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
-      tempDirs.push(paseoHome);
-      return new DaemonConfigStore(paseoHome, {
-        relay: { enabled: false },
-        mcp: { injectIntoAgents: false },
-        browserTools: { enabled: false },
-        providers: {},
-        metadataGeneration: { providers: [] },
-        autoArchiveAfterMerge: false,
-        enableTerminalAgentHooks: false,
-        appendSystemPrompt: "",
-        agentProfiles: [
-          {
-            id: "p",
-            name: "P",
-            provider: "codex",
-            options: { sandbox_mode: "read-only", plan_mode: false },
-          },
-        ],
-      });
-    }
+  function storeWithProfile(): { store: DaemonConfigStore; paseoHome: string } {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      agentProfiles: [
+        {
+          id: "p",
+          name: "P",
+          provider: "codex",
+          options: { sandbox_mode: "read-only", plan_mode: false },
+        },
+      ],
+    });
+    return { store, paseoHome };
+  }
 
+  test("a profile written with empty options, as the form sends it once the last one is removed, keeps none", async () => {
+    const { store, paseoHome } = storeWithProfile();
+
+    await store.patch({
+      agentProfiles: [{ id: "p", name: "P", provider: "codex", options: {} }],
+    });
+
+    expect(store.get().agentProfiles).toEqual([{ id: "p", name: "P", provider: "codex" }]);
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "p", name: "P", provider: "codex" },
+    ]);
+  });
+
+  describe("a profile edited by the unchanged app", () => {
     test("keeps the options its form never shows when it changes a control", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({
         agentProfiles: [
@@ -294,7 +308,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("keeps every option when it sends no featureValues at all", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({ agentProfiles: [{ id: "p", name: "Renamed", provider: "codex" }] });
 
@@ -309,7 +323,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("starts from no options when it moves the profile to another provider", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({
         agentProfiles: [
@@ -323,7 +337,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("drops the old provider's options when it moves the profile with no featureValues", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({ agentProfiles: [{ id: "p", name: "P", provider: "claude" }] });
 
@@ -331,7 +345,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("folds featureValues over the options a write carries, not over the stored ones", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({
         agentProfiles: [
@@ -356,7 +370,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("converts a Codex profile's legacy fast_mode to service_tier", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({
         agentProfiles: [
@@ -375,7 +389,7 @@ describe("DaemonConfigStore", () => {
     });
 
     test("removes an option whose featureValues entry is null", async () => {
-      const store = storeWithProfile();
+      const { store } = storeWithProfile();
 
       await store.patch({
         agentProfiles: [
@@ -465,7 +479,7 @@ describe("DaemonConfigStore", () => {
         agentProfiles: [{ id, name: id, provider: id, featureValues: { service_tier: null } }],
       });
 
-      expect(store.get().agentProfiles).toEqual([{ id, name: id, provider: id, options: {} }]);
+      expect(store.get().agentProfiles).toEqual([{ id, name: id, provider: id }]);
     });
 
     test("a provider edit in the same write does not hide which adapter a profile runs on", async () => {

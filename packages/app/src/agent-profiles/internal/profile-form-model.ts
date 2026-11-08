@@ -391,7 +391,6 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
   if (!name || !state.provider) {
     return null;
   }
-  const options = ownOptionsOf(state);
   return {
     name,
     ...(state.icon ? { icon: state.icon } : {}),
@@ -400,7 +399,9 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
-    ...(Object.keys(options).length > 0 ? { options } : {}),
+    // Always sent, empty included: the daemon reads a write without `options` as one from an
+    // app that predates them and keeps the profile's stored options.
+    options: ownOptionsOf(state),
     ...(notes ? { notes } : {}),
   };
 }

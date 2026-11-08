@@ -158,12 +158,13 @@ interface ProfileOptionFields {
  * Profiles saved before options carry `featureValues`; when one comes from storage, `options`
  * wins over a stale `featureValues` key.
  *
- * A write that carries `options` is from a client that knows them: its `featureValues` fold
- * over those. A write without `options` is from the unchanged app, whose form only knows the
- * controls: its `featureValues` are a patch (`null` deletes) over the options stored for that
- * profile, so options the form never shows, such as `sandbox_mode`, survive an edit. A profile
- * moved to another provider starts from no options, because the old provider's keys mean
- * nothing to the new one.
+ * A write that carries `options`, empty included, is from a client that knows them: its
+ * `featureValues` fold over those. A write without `options` is from the unchanged app, whose
+ * form only knows the controls: its `featureValues` are a patch (`null` deletes) over the
+ * options stored for that profile, so options the form never shows, such as `sandbox_mode`,
+ * survive an edit. A profile moved to another provider starts from no options, because the old
+ * provider's keys mean nothing to the new one. A profile with no options is stored without the
+ * key.
  */
 export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   profile: T;
@@ -183,15 +184,13 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
     return ownOptions ? { ...rest, options: ownOptions } : rest;
   }
   const base =
-    ownOptions ??
-    (stored?.provider === rest.provider ? convert(provider, stored?.options) : undefined);
-  // The form sends no `featureValues` when no control is set, which is still an edit of a
-  // profile that may hold other options.
-  if (!featureValues && !base) return rest;
-  return {
-    ...rest,
-    options: applyProviderOptionsPatch({ options: base, patch: featureValues ?? {} }),
-  };
+    rest.options !== undefined
+      ? ownOptions
+      : stored?.provider === rest.provider
+        ? convert(provider, stored?.options)
+        : undefined;
+  const options = applyProviderOptionsPatch({ options: base, patch: featureValues ?? {} });
+  return Object.keys(options).length > 0 ? { ...rest, options } : { ...rest, options: undefined };
 }
 
 /**
