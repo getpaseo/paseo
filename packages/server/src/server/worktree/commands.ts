@@ -3,7 +3,8 @@ import { basename } from "node:path";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
   archiveByScope,
-  resolveWorkspaceIdAtPath,
+  resolveWorkspaceTargetAtPath,
+  type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveScope,
 } from "../workspace-archive-service.js";
@@ -150,10 +151,12 @@ export async function archiveCommand(
     };
   }
 
-  const workspaceId =
-    input.workspaceId ?? (await resolveWorkspaceIdAtPath(dependencies, targetPath));
+  const workspaceTarget: { workspaceId: string | null; activeWorkspaces?: ActiveWorkspaceRef[] } =
+    input.workspaceId
+      ? { workspaceId: input.workspaceId }
+      : await resolveWorkspaceTargetAtPath(dependencies, targetPath);
 
-  if (!workspaceId) {
+  if (!workspaceTarget.workspaceId) {
     dependencies.sessionLogger?.warn(
       { targetPath },
       "Could not resolve workspace for archive; skipping",
@@ -165,8 +168,9 @@ export async function archiveCommand(
   }
 
   const result = await archiveByScope(dependencies, {
-    scope: { kind: "workspace", workspaceId },
+    scope: { kind: "workspace", workspaceId: workspaceTarget.workspaceId },
     requestId: input.requestId,
+    activeWorkspaces: workspaceTarget.activeWorkspaces,
   });
 
   return {
