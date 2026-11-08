@@ -28,7 +28,7 @@ export function GoalActivity({ goal, events }: { goal: Goal; events: GoalEvent[]
 
   const trailing = useMemo(
     () => (
-      <Button variant="ghost" size="xs" onPress={toggleRaw} testID="goal-activity-raw-toggle">
+      <Button variant="ghost" size="sm" onPress={toggleRaw} testID="goal-activity-raw-toggle">
         {showRaw ? t("goals.detail.hideRaw") : t("goals.detail.showRaw")}
       </Button>
     ),

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Check } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import type { GoalFormModel, GoalFormState } from "@/goals/goal-form-model";
 import {
   goalPermissionPolicyOptions,
@@ -31,7 +31,7 @@ interface AdvancedProps {
   state: GoalFormState;
   serverId: string;
   providersLoading: boolean;
-  size: FieldControlSize;
+  size: ControlSize;
 }
 
 /** Everything past the essentials, in four plain-language groups. */
@@ -216,7 +216,7 @@ function ProviderChip({
   return (
     <Button
       variant={selected ? "secondary" : "outline"}
-      size="xs"
+      size="sm"
       leftIcon={selected ? Check : undefined}
       onPress={handlePress}
       accessibilityState={accessibilityState}

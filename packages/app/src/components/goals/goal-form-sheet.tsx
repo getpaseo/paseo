@@ -7,7 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { Goal, GoalIsolation } from "@getpaseo/protocol/goal/types";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
@@ -59,7 +59,7 @@ export function GoalFormSheet({
   onCreated?: (goal: Goal, serverId: string) => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const controlSize: ControlSize = useIsCompactFormFactor() ? "md" : "sm";
   // A host without `goalBudgets` would drop the caps silently, so the inputs stay hidden there.
   const budgetSupported = useHostFeature(serverId, "goalBudgets");
   // An older daemon would drop thinking settings, so the pickers appear only with `goalThinking`.
@@ -320,7 +320,7 @@ function ManagedGoalFields({
   state: GoalFormState;
   serverId: string;
   providersLoading: boolean;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const { values } = state;
@@ -432,7 +432,7 @@ function BuildsOnNote({
           : t("goals.form.buildsOn", params)}
       </Text>
       <View style={styles.disclosure}>
-        <Button variant="ghost" size="xs" onPress={clear} testID="goal-form-builds-on-clear">
+        <Button variant="ghost" size="sm" onPress={clear} testID="goal-form-builds-on-clear">
           {t("goals.form.startFromHead")}
         </Button>
       </View>
@@ -448,7 +448,7 @@ function StylePicker({
 }: {
   model: GoalFormModel;
   state: GoalFormState;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const hasPersonal = state.personalSettings !== null;
@@ -501,7 +501,7 @@ function IsolationPicker({
 }: {
   model: GoalFormModel;
   state: GoalFormState;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement | null {
   const { t } = useTranslation();
   // An older daemon would drop the setting and cut worktrees, so the choice appears only on a

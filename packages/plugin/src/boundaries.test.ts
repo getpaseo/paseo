@@ -323,3 +323,110 @@ describe("agent session reload SDK boundary", () => {
     ).toEqual([]);
   });
 });
+
+describe("plugin subscription SDK boundary", () => {
+  it("types contracts, overloaded handlers, the client hook, and the client entry handle", () => {
+    expect(
+      typeErrors(`
+      import { defineRpc, defineSubscription, type SubscriptionEvent, type SubscriptionInput } from "@getpaseo/plugin";
+      import type { PluginClientContext } from "@getpaseo/plugin/client";
+      import { useRpc, useSubscription } from "@getpaseo/plugin/client";
+      import type { PluginServerContext, PluginSubscriptionContext } from "@getpaseo/plugin/server";
+      import { z } from "zod";
+      const diffWatch = defineSubscription({
+        name: "diff.watch",
+        input: z.object({ a: z.string(), b: z.string() }),
+        event: z.object({ path: z.string(), status: z.enum(["added", "modified", "deleted"]) }),
+      });
+      const frames = defineSubscription({
+        name: "screen.capture",
+        input: z.object({ display: z.number() }),
+        event: z.union([z.instanceof(Uint8Array), z.object({ type: z.literal("resized"), width: z.number() })]),
+      });
+      const thumbnail = defineRpc({ name: "thumbnail.render", input: z.object({ path: z.string() }), output: z.instanceof(Uint8Array) });
+      const input: SubscriptionInput<typeof diffWatch> = { a: "main", b: "HEAD" };
+      const event: SubscriptionEvent<typeof diffWatch> = { path: "a.ts", status: "added" };
+      function server(server: PluginServerContext) {
+        server.handle(diffWatch, ({ a, b }, { push, signal, paseo }: PluginSubscriptionContext<SubscriptionEvent<typeof diffWatch>>) => {
+          const pushed: Promise<void> = push({ path: a + b, status: "modified" });
+          // @ts-expect-error events follow the contract
+          void push({ path: 1, status: "modified" });
+          signal.addEventListener("abort", () => undefined, { once: true });
+        });
+        server.handle(frames, async (_input, { push }) => {
+          await push(new Uint8Array(4));
+          await push({ type: "resized", width: 2 });
+        });
+        server.handle(thumbnail, ({ path }) => new Uint8Array(path.length));
+        // @ts-expect-error subscription handlers receive push, not an output
+        server.handle(diffWatch, () => ({ path: "a", status: "added" as const }) as unknown as number);
+      }
+      function Panel() {
+        const state = useSubscription(diffWatch, { a: "main", b: "HEAD" }, (change) => {
+          const status: "added" | "modified" | "deleted" = change.status;
+        });
+        if (state.status === "error") state.error.message;
+        // @ts-expect-error the hook has no ready state, only live
+        if (state.status === "ready") return null;
+        useSubscription(frames, { display: 1 }, (event) => {
+          if (event instanceof Uint8Array) event.byteLength;
+          else event.width;
+        });
+        const render = useRpc(thumbnail);
+        void render({ path: "x" }).then((png: Uint8Array) => png.byteLength);
+        return null;
+      }
+      function client(client: PluginClientContext) {
+        const controller = new AbortController();
+        const remover = client.subscribe(diffWatch, { a: "main", b: "HEAD" }, (change) => change.path, { signal: controller.signal });
+        const ready: Promise<void> = remover.ready;
+        const released: Promise<void> = remover.release();
+        remover();
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("sidebar data SDK boundary", () => {
+  it("accepts references and preserves string-id panel consumers", () => {
+    expect(
+      typeErrors(`
+      import { useWorkspace, useAgent, usePaseo, type PluginClientContext, type PluginSidebarViewProps, type WorkspaceRef, type AgentRef, useProject, useTerminal, useWorkspaces, useAgents, useProjects, useTerminals, type ProjectRef, type TerminalRef, type Query, type Group } from "@getpaseo/plugin/client";
+      import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
+      function Panel({ workspace, agent }: { workspace: WorkspaceRef; agent: AgentRef }) {
+        const snapshot: PluginWorkspaceSnapshot | null = useWorkspace(workspace);
+        const title: string | null = useWorkspace("workspace", item => item.name);
+        const status = useAgent(agent, item => ({ status: item.status }), (a, b) => a?.status === b?.status);
+        const agentSnapshot = useAgent(agent);
+        const custom = useWorkspace(workspace, undefined, (a, b) => a?.name === b?.name);
+        const workspaces: readonly WorkspaceRef[] = useWorkspaces({ orderBy: "name" });
+        const groups: readonly Group<AgentRef>[] = useAgents({ groupBy: item => item.status });
+        const projects: readonly ProjectRef[] = useProjects({ hosts: [workspace.hostId] });
+        const terminals: readonly TerminalRef[] = useTerminals();
+        const paseo = usePaseo();
+        void paseo.workspaces.ref(workspace).setPinned(true);
+        void paseo.workspaces.ref(workspace).setLabel("Later", { assigned: true });
+        void paseo.workspaces.ref("old-id").setTitle("Title");
+        if (projects[0]) { paseo.projects.ref(projects[0]).open(); void paseo.projects.ref(projects[0]).createWorkspace(); }
+        if (terminals[0]) { paseo.terminals.ref(terminals[0]).focus(); void paseo.terminals.ref(terminals[0]).kill(); }
+        void paseo.agents.ref(agent);
+        if (projects[0]) useProject(projects[0], item => item.displayName);
+        if (terminals[0]) useTerminal(terminals[0]);
+        function View(props: PluginSidebarViewProps) {
+          props.navigation.openWorkspace(workspace);
+          props.navigation.openAgent(agent);
+          props.dismiss();
+          return null;
+        }
+        function contribute(client: PluginClientContext) {
+          client.addSidebarView({ id: "workspaces", title: "Workspaces", Component: View });
+        }
+        const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
+        return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});

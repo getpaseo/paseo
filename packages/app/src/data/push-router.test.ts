@@ -1,4 +1,4 @@
-import type { OwnedSubscription, SubscriptionObserver } from "@getpaseo/client";
+import type { DiffState, OwnedSubscription, SubscriptionObserver } from "@getpaseo/client";
 import { QueryClient, QueryObserver, skipToken } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { MutableDaemonConfig, SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -55,8 +55,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
-  subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
-  unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
+  subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
+  unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
 } {
   const handlers: Record<RouterMessageType, RouterHandler[]> = {
     providers_snapshot_update: [],
@@ -71,8 +71,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
-  const subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
-  const unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
+  const subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
+  const unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
 
   function on<K extends RouterMessageType>(
     type: K,
@@ -144,10 +144,21 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
           ["status", "providers_snapshot_update"],
           () => {},
         ),
-      observeCheckoutDiff(cwd, compare) {
+      observeDiff(input) {
+        const cwd = input.cwd;
+        let mode: "uncommitted" | "base" | "all" = "uncommitted";
+        if (input.head.kind === "rev") mode = "base";
+        else if (input.mergeBase) mode = "all";
+        const compare = {
+          mode,
+          ...(input.base.kind === "rev" && input.base.rev !== "HEAD"
+            ? { baseRef: input.base.rev }
+            : {}),
+          ignoreWhitespace: input.ignoreWhitespace,
+        };
         const subscriptionId = `server-diff-${subscribeCheckoutDiffCalls.length + 1}`;
         subscribeCheckoutDiffCalls.push({ cwd, compare, subscriptionId });
-        const handle = observe(
+        const handle = observe<SubscribeCheckoutDiffResponseMessage["payload"]>(
           { subscriptionId, cwd, files: [], error: null, requestId: "subscribe-checkout-diff" },
           ["checkout_diff_update", "subscribe_checkout_diff_response"],
           () => unsubscribeCheckoutDiffCalls.push(subscriptionId),
@@ -155,9 +166,43 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
             "subscriptionId" in message.payload &&
             message.payload.subscriptionId === subscriptionId,
         );
-        if (!config.rejectCheckoutDiffSubscribe) return handle;
-        return {
+        const modern: OwnedSubscription<DiffState> = {
           ...handle,
+          ready: Promise.resolve({
+            phase: "ready",
+            revision: 1,
+            resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+            files: [],
+            diffTooLarge: false,
+            subscriptionId,
+          }),
+          subscribe: (observer) =>
+            handle.subscribe({
+              snapshot: (payload) =>
+                observer.snapshot({
+                  phase: "ready",
+                  revision: 1,
+                  resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+                  files: payload.files,
+                  diffTooLarge: payload.diffTooLarge === true,
+                  subscriptionId,
+                }),
+              update: (message) => {
+                if (message.type === "checkout_diff_update")
+                  observer.snapshot({
+                    phase: "ready",
+                    revision: 2,
+                    resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+                    files: message.payload.files,
+                    diffTooLarge: message.payload.diffTooLarge === true,
+                    subscriptionId,
+                  });
+              },
+            }),
+        };
+        if (!config.rejectCheckoutDiffSubscribe) return modern;
+        return {
+          ...modern,
           subscribe: (observer) => {
             queueMicrotask(() => observer.error?.(new Error("subscribe failed")));
             return () => {};
@@ -328,7 +373,7 @@ describe("server data push router", () => {
       const first = publish(files, "first");
       const same = publish(structuredClone(files), "reopen");
       expect(same.files).toBe(first.files);
-      expect(same.requestId).toBe("reopen");
+      expect(same.requestId).toBe("diff:1:ready");
       const changed = structuredClone(files);
       changed[0]!.hunks[0]!.lines[0]!.tokens![0]!.style = "variable";
       const next = publish(changed, "edit");
@@ -430,7 +475,7 @@ describe("server data push router", () => {
       files: [],
       error: null,
       diffTooLarge: true,
-      requestId: "diff-1",
+      requestId: "diff:1:ready",
     });
 
     fake.emit({
@@ -449,7 +494,7 @@ describe("server data push router", () => {
       files: [],
       error: null,
       diffTooLarge: true,
-      requestId: `subscription:${serverSubscriptionId}`,
+      requestId: "diff:2:ready",
     });
 
     unsubscribeObserver();

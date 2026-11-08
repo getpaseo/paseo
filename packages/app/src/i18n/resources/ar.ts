@@ -1322,6 +1322,24 @@ export const ar: TranslationResources = {
       answerPlaceholder: "اكتب إجابتك...",
       otherPlaceholder: "آخر...",
     },
+    backgroundWork: {
+      pillOne: "مهمة واحدة في الخلفية",
+      pillMany: "{{count}} مهمة في الخلفية",
+      notRunning: "لم يعد قيد التشغيل",
+      dismiss: "إغلاق",
+      stop: "إيقاف",
+      stopping: "جارٍ الإيقاف…",
+      stopError: "تعذر تأكيد الإيقاف.",
+      label: "في الخلفية",
+      title: "عمل الخلفية",
+      waiting: "بانتظار تفاصيل عمل الخلفية",
+      error: "تعذر تحميل عمل الخلفية",
+      retry: "إعادة المحاولة",
+      running: "عمل الخلفية قيد التشغيل",
+      shell: "الصدفة",
+      monitor: "المراقبة",
+      other: "عمل آخر",
+    },
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
@@ -1874,6 +1892,9 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "الفرع الأساسي",
+        },
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
@@ -2102,6 +2123,14 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "تعذر تحميل عرض الشريط الجانبي.",
+      useDefault: "استخدام العرض الافتراضي",
+      readFailed: "تعذر تحميل تفضيل عرض الشريط الجانبي.",
+      agentUnavailable: "لم يعد الوكيل متاحًا",
+      terminalUnavailable: "لم تعد الطرفية متاحة",
+      projectUnavailable: "لم يعد المشروع متاحًا",
+    },
     statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
       needsInput: "تحتاج إدخالاً",
@@ -2177,6 +2206,7 @@ export const ar: TranslationResources = {
       hosts: "المضيفون",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+      moreActions: "المزيد من الإجراءات",
     },
     footer: {
       usage: "الاستخدام",
@@ -2282,6 +2312,9 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        archived: "تمت أرشفة مساحة العمل",
+        undoArchive: "تراجع",
+        undoArchiveFailed: "تعذّر التراجع عن الأرشفة",
       },
     },
   },
@@ -2486,6 +2519,8 @@ export const ar: TranslationResources = {
       cli: {
         statusFailed: "غير قادر على التحقق من حالة تثبيت CLI.",
         installFailed: "غير قادر على تثبيت PaseoCLI.",
+        uninstallFailed: "تعذر إلغاء تثبيت Paseo CLI.",
+        keptForeign: "تم الإبقاء على أمر paseo لم يثبته Paseo. احذفه بنفسك لإلغاء تثبيته.",
       },
     },
   },
@@ -2537,6 +2572,7 @@ export const ar: TranslationResources = {
     openPath: "فتح المسار",
   },
   branchSwitcher: {
+    failedToLoad: "تعذّر تحميل الفروع. أعد فتح قائمة الفروع للمحاولة مرة أخرى.",
     triggerTooltip: "تبديل فرع مساحة العمل",
     currentBranch: "الفرع الحالي:{{branchName}}. اضغط لتبديل الفرع.",
     placeholder: "تبديل الفرع...",
@@ -2559,7 +2595,11 @@ export const ar: TranslationResources = {
     loadingCommands: "جارٍ تحميل الأوامر...",
     noFiles: "لم يتم العثور على ملفات أو أدلة",
     noCommands: "لم يتم العثور على أي أوامر",
-    failedToLoad: "فشل التحميل",
+    loadingProviderCommands: "جارٍ تحميل أوامر {{provider}}...",
+    commandsFailed: "تعذر تحميل الأوامر",
+    providerCommandsFailed: "تعذر تحميل أوامر {{provider}}",
+    filesFailed: "تعذر البحث في الملفات",
+    skillTag: "مهارة",
     chooseProjectForCommands: "اختر مشروعًا لعرض الأوامر",
     chooseModelForCommands: "اختر نموذجًا لعرض الأوامر",
   },
@@ -2586,6 +2626,60 @@ export const ar: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "الخطوة {{current}} من {{total}}",
+      skip: "تخطي الإعداد",
+      continue: "متابعة",
+      finish: "إنهاء",
+      steps: {
+        appearance: {
+          label: "المظهر",
+          title: "مرحبًا بك في Paseo",
+          description: "لنبدأ باختيار المظهر",
+        },
+        providers: {
+          label: "المزوّدون",
+          title: "وكلاؤك",
+          description: "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر",
+        },
+        projects: {
+          label: "المشاريع",
+          title: "أضف مشاريعك",
+          description: "أين تريد أن يعمل وكلاؤك",
+          addProject: "إضافة مشروع",
+          added: "تمت الإضافة",
+          suggestions: {
+            loading: "جارٍ البحث عن المجلدات التي عملت فيها",
+            empty: "لم يتم العثور على مشاريع حديثة",
+            lastUsed: "آخر استخدام {{time}}",
+            addSelected_one: "إضافة مشروع واحد ({{count}})",
+            addSelected_other: "إضافة {{count}} مشاريع",
+            adding: "جارٍ الإضافة…",
+            addFailed: "تعذّرت إضافة هذا المجلد",
+          },
+        },
+        orchestration: {
+          label: "التنسيق",
+          title: "اسمح للوكلاء باستخدام Paseo",
+          description: "اسمح لوكلائك بإنشاء مساحات عمل والتحدث مع وكلاء آخرين",
+        },
+        phone: {
+          label: "الجوال",
+          title: "خذ وكلاءك معك",
+          description:
+            "يتيح لك تطبيق الجوال الأصلي كامل الميزات التحكم في أي كمبيوتر يعمل عليه Paseo من هاتفك",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "اختر طريقة الاتصال",
+          connectDocs: "الوثائق",
+          openConnectDocs: "افتح وثائق الاتصال",
+          recommended: "موصى به",
+          relay: { title: "التتابع", hint: "مشفّر من طرف إلى طرف، امسح رمز QR" },
+          tailscale: { title: "Tailscale", hint: "يتطلب بعض الإعداد" },
+        },
+      },
+    },
     title: "مرحبا بكم في Paseo",
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
@@ -2804,6 +2898,8 @@ export const ar: TranslationResources = {
       notNow: "ليس الآن",
       directConnectionHint:
         "بدون التتابع، اتصل مباشرة عبر TCP أو Tailscale أو شبكة VPN أخرى. لن يتم إنشاء رمز QR.",
+      tailscaleDocs: "إعداد Tailscale",
+      tailscaleDocsAccessibility: "اقرأ كيفية الاتصال عبر Tailscale",
       updateRequired: "حدّث المضيف لتمكين التتابع من Paseo Desktop.",
       unavailable: "عرض الاقتران غير متاح.",
       hint: "قم بمسح رمز QR هذا باستخدام Paseo على هاتفك، أو انسخ الرابط أدناه.",
@@ -3303,6 +3399,11 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      setup: {
+        label: "الإعداد الأولي",
+        description: "أعد المرور على المظهر والمزوّدين والمشاريع وإقران الهاتف",
+        action: "إظهار الإعداد مجددًا",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
@@ -3459,6 +3560,12 @@ export const ar: TranslationResources = {
         description: "عرض مخطط للتنقل بين المطالبات",
       },
       sidebar: {
+        view: {
+          title: "عرض الشريط الجانبي",
+          label: "العرض",
+          default: "العرض الافتراضي",
+          unavailable: "العرض المحدد غير متاح أو معطل. يتم عرض العرض الافتراضي.",
+        },
         header: {
           title: "الرأس",
           description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
@@ -3590,11 +3697,7 @@ export const ar: TranslationResources = {
       commandLine: {
         title: "سطر الأوامر",
         description: "وكلاء التحكم والبرنامج النصي من المحطة الطرفية الخاصة بك",
-      },
-      actions: {
-        install: "ثَبَّتَ",
-        installing: "جارٍ التثبيت...",
-        installed: "تم التثبيت",
+        accessibilityLabel: "تثبيت Paseo CLI",
       },
     },
     permissions: {
@@ -3672,10 +3775,9 @@ export const ar: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "مهارات التنسيق",
         title: "مهارات التنسيق",
-        description: "قم بتعليم عملائك كيفية التنسيق من خلال CLI",
+        description: "علّم وكلاءك كيفية استخدام أدوات Paseo",
         updateAvailable: "التحديث متاح",
         updateTitle: "تحديث مهارات Paseo ؟",
-        updateFallback: "مزامنة المهارات المجمعة لجهازك.",
         uninstallTitle: "إلغاء تثبيت مهارات Paseo ؟",
         uninstallMessage: "يزيل جميع مهارات تنسيق Paseo من ~/.agents ، ~/.claude ، ~/.codex.",
         choose: "اختيار المهارات",
@@ -3692,9 +3794,6 @@ export const ar: TranslationResources = {
         uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
         saveSelectionFailed: "غير قادر على حفظ اختيار مهارات التنسيق.",
         actions: {
-          install: "ثَبَّتَ",
-          installing: "جارٍ التثبيت...",
-          installed: "تم التثبيت",
           update: "تحديث",
           working: "عمل...",
           remove: "إزالة",
@@ -3716,6 +3815,7 @@ export const ar: TranslationResources = {
           title: "تمكين أدوات Paseo",
           hint: "سيتمكن الوكلاء من إدارة أشجار العمل والوكلاء والجداول الزمنية",
           accessibilityLabel: "حقن أدوات Paseo",
+          updateFailed: "تعذر تحديث أدوات Paseo.",
         },
         systemPrompt: {
           title: "موجه النظام",

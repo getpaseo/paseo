@@ -12,7 +12,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { Goal, GoalConfig } from "@getpaseo/protocol/goal/types";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
@@ -65,7 +65,7 @@ export function GoalSettingsSheet({
 }): ReactElement {
   const { t } = useTranslation();
   const toast = useToast();
-  const size: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const size: ControlSize = useIsCompactFormFactor() ? "md" : "sm";
   // An older daemon drops the caps silently, as on create.
   const budgetSupported = useHostFeature(serverId, "goalBudgets");
   const autoPermissionSupported = useHostFeature(serverId, "goalConfigEdit");
@@ -153,7 +153,7 @@ export function GoalSettingsSheet({
 interface FieldsProps {
   model: GoalSettingsFormModel;
   state: GoalSettingsFormState;
-  size: FieldControlSize;
+  size: ControlSize;
 }
 
 function GoalSettingsFields({ model, state, size }: FieldsProps): ReactElement {
@@ -274,7 +274,7 @@ function TestCommandField({
 }: {
   model: GoalSettingsFormModel;
   initialValue: string;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const handleChange = useCallback((value: string) => model.setTestCommand(value), [model]);

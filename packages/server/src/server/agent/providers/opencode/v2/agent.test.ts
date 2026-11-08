@@ -1201,3 +1201,773 @@ test("OpenCode v2 runtime safety follows descendant locations before releasing t
     await session.close();
   }
 });
+
+test("reconstructs only promoted session-owned running shells and reconciles exits", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: { description: "Watch tests", command: "sleep ours" },
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "ours" },
+        },
+      },
+    ],
+  });
+  harness.api.message.list = async (input) =>
+    input.cursor
+      ? { data: [...harness.history], cursor: {} }
+      : { data: [], cursor: { next: "second-page" } };
+  let live = ["ours", "other"];
+  harness.api.shell.list = async () => ({
+    location: harness.info.location,
+    data: live.map((id) => ({
+      id,
+      status: "running" as const,
+      command: `sleep ${id}`,
+      cwd: "/tmp/project",
+      shell: "sh",
+      file: "sh",
+      metadata: { sessionID: id === "ours" ? harness.info.id : "other" },
+      time: { started: 1 },
+    })),
+  });
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({
+        items: [{ id: "ours", kind: "shell", description: "Watch tests", command: "sleep ours" }],
+      });
+    live = [];
+    harness.push({ id: "reconnect", created: 2, type: "server.connected", data: {} });
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [] });
+  } finally {
+    await session.close();
+  }
+});
+
+test("an exit received during shell listing cannot restore an old row", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: {},
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "shell" },
+        },
+      },
+    ],
+  });
+  const shell = {
+    id: "shell",
+    status: "running" as const,
+    command: "sleep 120",
+    cwd: "/tmp/project",
+    shell: "sh",
+    file: "sh",
+    metadata: { sessionID: harness.info.id },
+    time: { started: 1 },
+  };
+  let listCount = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  harness.api.shell.list = async () => {
+    listCount++;
+    if (listCount === 2) {
+      await gate;
+      return { location: harness.info.location, data: [shell] };
+    }
+    return { location: harness.info.location, data: [] };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    harness.push({ id: "created", created: 2, type: "shell.created", data: { info: shell } });
+    await expect.poll(() => listCount).toBe(2);
+    harness.push({
+      id: "exited",
+      created: 3,
+      type: "shell.exited",
+      data: { id: "shell", status: "exited" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    await expect.poll(() => listCount).toBeGreaterThan(2);
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [] });
+    expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
+      expect.objectContaining({ items: [expect.objectContaining({ id: "shell" })] }),
+    );
+  } finally {
+    release();
+    await session.close();
+  }
+});
+
+test("does not publish a shell list from a lost server generation", async () => {
+  const harness = new V2Harness();
+  let exit!: (error: Error) => void;
+  Object.assign(harness.connection, {
+    exited: new Promise<Error>((resolve) => {
+      exit = resolve;
+    }),
+  });
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: {},
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "old" },
+        },
+      },
+    ],
+  });
+  const shell = {
+    id: "old",
+    status: "running" as const,
+    command: "sleep 120",
+    cwd: "/tmp/project",
+    shell: "sh",
+    file: "sh",
+    metadata: { sessionID: harness.info.id },
+    time: { started: 1 },
+  };
+  let reads = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  harness.api.shell.list = async () => {
+    reads++;
+    if (reads === 2) {
+      await gate;
+      return { location: harness.info.location, data: [shell] };
+    }
+    return { location: harness.info.location, data: [] };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    harness.push({ id: "created", created: 2, type: "shell.created", data: { info: shell } });
+    await expect.poll(() => reads).toBe(2);
+    exit(new Error("server exited"));
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: null });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(events.filter((event) => event.type === "background_work")).not.toContainEqual(
+      expect.objectContaining({ items: [expect.objectContaining({ id: "old" })] }),
+    );
+  } finally {
+    release();
+    await session.close();
+  }
+});
+
+test("polls a live shell without rereading conversation history", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: {},
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "live" },
+        },
+      },
+    ],
+  });
+  let historyReads = 0;
+  let shellReads = 0;
+  const readHistory = harness.api.message.list;
+  harness.api.message.list = async (...args) => {
+    historyReads++;
+    return readHistory(...args);
+  };
+  harness.api.shell.list = async () => {
+    shellReads++;
+    return {
+      location: harness.info.location,
+      data: [
+        {
+          id: "live",
+          status: "running",
+          command: "sleep 120",
+          cwd: "/tmp/project",
+          shell: "sh",
+          file: "sh",
+          metadata: { sessionID: harness.info.id },
+          time: { started: 1 },
+        },
+      ],
+    };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "live" }] });
+    const initialHistoryReads = historyReads;
+    const initialShellReads = shellReads;
+    await expect.poll(() => shellReads, { timeout: 7000 }).toBeGreaterThan(initialShellReads);
+    expect(historyReads).toBe(initialHistoryReads);
+  } finally {
+    await session.close();
+  }
+}, 12000);
+
+test("buffers tool promotion and shell events during background history bootstrap", async () => {
+  const harness = new V2Harness();
+  let historyReads = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  harness.api.message.list = async () => {
+    historyReads++;
+    if (historyReads === 3) await gate;
+    return { data: [], cursor: {} };
+  };
+  const shell = {
+    id: "promoted",
+    status: "running" as const,
+    command: "sleep 120",
+    cwd: "/tmp/project",
+    shell: "sh",
+    file: "sh",
+    metadata: { sessionID: harness.info.id },
+    time: { started: 1 },
+  };
+  harness.api.shell.list = async () => ({ location: harness.info.location, data: [shell] });
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect.poll(() => historyReads).toBeGreaterThanOrEqual(3);
+    harness.push({
+      id: "input",
+      created: 2,
+      type: "session.tool.input.started",
+      durable: { aggregateID: harness.info.id, seq: 1, version: 1 },
+      data: { sessionID: harness.info.id, assistantMessageID: "msg", id: "tool", name: "shell" },
+    });
+    harness.push({
+      id: "input-ended",
+      created: 3,
+      type: "session.tool.input.ended",
+      durable: { aggregateID: harness.info.id, seq: 2, version: 1 },
+      data: {
+        sessionID: harness.info.id,
+        assistantMessageID: "msg",
+        id: "tool",
+        text: JSON.stringify({ description: "Watch tests", command: "sleep 120" }),
+      },
+    });
+    harness.push({ id: "created", created: 3, type: "shell.created", data: { info: shell } });
+    harness.push({
+      id: "success",
+      created: 4,
+      type: "session.tool.success",
+      durable: { aggregateID: harness.info.id, seq: 3, version: 2 },
+      data: {
+        sessionID: harness.info.id,
+        assistantMessageID: "msg",
+        id: "tool",
+        executed: true,
+        content: [{ type: "text", text: "" }],
+        metadata: { status: "running", shellID: "promoted" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(events.filter((event) => event.type === "background_work")).toEqual([]);
+    release();
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({
+        items: [{ id: "promoted", description: "Watch tests", command: "sleep 120" }],
+      });
+    harness.push({
+      id: "next-input",
+      created: 5,
+      type: "session.tool.input.started",
+      durable: { aggregateID: harness.info.id, seq: 4, version: 1 },
+      data: { sessionID: harness.info.id, assistantMessageID: "next", id: "tool", name: "shell" },
+    });
+    harness.push({
+      id: "next-success",
+      created: 6,
+      type: "session.tool.success",
+      durable: { aggregateID: harness.info.id, seq: 5, version: 2 },
+      data: {
+        sessionID: harness.info.id,
+        assistantMessageID: "next",
+        id: "tool",
+        executed: true,
+        content: [{ type: "text", text: "" }],
+        metadata: { status: "running", shellID: "second" },
+      },
+    });
+    harness.api.shell.list = async () => ({
+      location: harness.info.location,
+      data: [shell, { ...shell, id: "second" }],
+    });
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "promoted" }, { id: "second" }] });
+  } finally {
+    release();
+    await session.close();
+  }
+});
+
+test("retries failed background bootstrap and roster without losing stale work", async () => {
+  const { vi } = await import("vitest");
+  vi.useFakeTimers();
+  try {
+    const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
+    const harness = new V2Harness();
+    harness.history.push({
+      id: "assistant",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "test", modelID: "test" },
+      time: { created: 1 },
+      content: [
+        {
+          type: "tool",
+          id: "tool",
+          name: "shell",
+          time: { created: 1 },
+          state: {
+            status: "completed",
+            input: {},
+            content: [{ type: "text", text: "" }],
+            metadata: { status: "running", shellID: "live" },
+          },
+        },
+      ],
+    });
+    let historyCalls = 0;
+    let shellCalls = 0;
+    let historyFails = true;
+    let shellFails = true;
+    harness.api.message.list = async () => {
+      historyCalls++;
+      if (historyFails) throw new Error("history unavailable");
+      return { data: harness.history, cursor: {} };
+    };
+    harness.api.shell.list = async () => {
+      shellCalls++;
+      if (shellFails) throw new Error("roster unavailable");
+      return {
+        location: harness.info.location,
+        data: [
+          {
+            id: "live",
+            status: "running",
+            command: "sleep 120",
+            cwd: "/tmp/project",
+            shell: "sh",
+            file: "sh",
+            metadata: { sessionID: harness.info.id },
+            time: { started: 1 },
+          },
+        ],
+      };
+    };
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
+    inventory.start(harness.api);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inventory.snapshot()).toBeNull();
+    historyFails = false;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(historyCalls).toBe(2);
+    expect(shellCalls).toBe(1);
+    expect(inventory.snapshot()).toBeNull();
+    inventory.observe({ id: "deleted", created: 1, type: "shell.deleted", data: { id: "other" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shellCalls).toBe(1);
+    shellFails = false;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(historyCalls).toBe(2);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
+    historyFails = true;
+    inventory.start(harness.api);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inventory.snapshot()?.items).toEqual([
+      { id: "live", kind: "shell", description: null, command: "sleep 120" },
+    ]);
+    await expect(inventory.stopItem("live")).rejects.toThrow("no longer available");
+    historyFails = false;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(historyCalls).toBe(4);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
+    shellFails = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    inventory.disconnect();
+    const stoppedCalls = shellCalls;
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(shellCalls).toBe(stoppedCalls);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("does not retry a failed bootstrap from a disconnected generation", async () => {
+  const { vi } = await import("vitest");
+  vi.useFakeTimers();
+  try {
+    const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
+    const harness = new V2Harness();
+    let reject!: (error: Error) => void;
+    let calls = 0;
+    const response = new Promise<Awaited<ReturnType<typeof harness.api.message.list>>>(
+      (_, fail) => {
+        reject = fail;
+      },
+    );
+    harness.api.message.list = () => {
+      calls++;
+      return response;
+    };
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
+    inventory.start(harness.api);
+    inventory.disconnect();
+    reject(new Error("late failure"));
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(calls).toBe(1);
+    expect(inventory.snapshot()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stops a selected promoted shell and retains its sibling", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: ["one", "two"].map((id) => ({
+      type: "tool" as const,
+      id,
+      name: "shell",
+      time: { created: 1 },
+      state: {
+        status: "completed" as const,
+        input: {},
+        content: [{ type: "text" as const, text: "" }],
+        metadata: { status: "running", shellID: id },
+      },
+    })),
+  });
+  let live = ["one", "two"];
+  harness.api.shell.list = async () => ({
+    location: harness.info.location,
+    data: live.map((id) => ({
+      id,
+      status: "running" as const,
+      command: `sleep ${id}`,
+      cwd: "/tmp/project",
+      shell: "sh",
+      file: "sh",
+      metadata: { sessionID: harness.info.id },
+      time: { started: 1 },
+    })),
+  });
+  harness.api.shell.remove = async ({ id }) => {
+    live = live.filter((entry) => entry !== id);
+    return { data: true };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "one" }, { id: "two" }] });
+    await session.stopBackgroundWork!("one");
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "two" }],
+    });
+    await expect(session.stopBackgroundWork!("one")).rejects.toThrow();
+  } finally {
+    await session.close();
+  }
+});
+
+test("closing during reconnect does not restart the background inventory", async () => {
+  const harness = new V2Harness();
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await expect
+    .poll(() => events.findLast((event) => event.type === "background_work"))
+    .toMatchObject({ items: [] });
+  let unblock!: () => void;
+  let entered = false;
+  const blocked = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
+  harness.connection.bindSession = async () => {
+    entered = true;
+    await blocked;
+  };
+  let reads = 0;
+  const original = harness.api.message.list;
+  harness.api.message.list = (...args) => {
+    reads++;
+    return original(...args);
+  };
+  harness.push({ id: "reconnect-close", created: 2, type: "server.connected", data: {} });
+  await expect.poll(() => entered).toBe(true);
+  const closing = session.close();
+  unblock();
+  await closing;
+  expect(reads).toBe(0);
+});
+
+test("keeps a shell available when its stop request times out", async () => {
+  const { vi } = await import("vitest");
+  vi.useFakeTimers();
+  try {
+    const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
+    const harness = new V2Harness();
+    harness.history.push({
+      id: "assistant",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "test", modelID: "test" },
+      time: { created: 1 },
+      content: [
+        {
+          type: "tool",
+          id: "tool",
+          name: "shell",
+          time: { created: 1 },
+          state: {
+            status: "completed",
+            input: {},
+            content: [{ type: "text", text: "" }],
+            metadata: { status: "running", shellID: "live" },
+          },
+        },
+      ],
+    });
+    harness.api.shell.list = async () => ({
+      location: harness.info.location,
+      data: [
+        {
+          id: "live",
+          status: "running",
+          command: "sleep 120",
+          cwd: "/tmp/project",
+          shell: "sh",
+          file: "sh",
+          metadata: { sessionID: harness.info.id },
+          time: { started: 1 },
+        },
+      ],
+    });
+    harness.api.shell.remove = () => new Promise(() => {});
+    const inventory = new OpenCodeBackgroundInventory({
+      id: harness.info.id,
+      cwd: "/tmp/project",
+      emit: () => {},
+      report: () => {},
+    });
+    inventory.start(harness.api);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live", canStop: true }]);
+    const result = expect(inventory.stopItem("live")).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(10000);
+    await result;
+    expect(inventory.snapshot()?.items).toMatchObject([{ id: "live" }]);
+    inventory.disconnect();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("keeps a live background shell visible and stoppable after its launch is rewound", async () => {
+  const harness = new V2Harness();
+  harness.history.push({
+    id: "assistant",
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1 },
+    content: [
+      {
+        type: "tool",
+        id: "tool",
+        name: "shell",
+        time: { created: 1 },
+        state: {
+          status: "completed",
+          input: {},
+          content: [{ type: "text", text: "" }],
+          metadata: { status: "running", shellID: "live" },
+        },
+      },
+    ],
+  });
+  let live = true;
+  harness.api.shell.list = async () => ({
+    location: harness.info.location,
+    data: live
+      ? [
+          {
+            id: "live",
+            status: "running",
+            command: "sleep 180",
+            cwd: "/tmp/project",
+            shell: "sh",
+            file: "sh",
+            metadata: { sessionID: harness.info.id },
+            time: { started: 1 },
+          },
+        ]
+      : [],
+  });
+  harness.api.shell.remove = async () => {
+    live = false;
+    return { data: true };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect
+      .poll(() => events.findLast((event) => event.type === "background_work"))
+      .toMatchObject({ items: [{ id: "live", canStop: true }] });
+    harness.history.length = 0;
+    harness.push({
+      id: "revert",
+      created: 2,
+      type: "session.revert.committed",
+      durable: { aggregateID: harness.info.id, seq: 1, version: 1 },
+      data: { sessionID: harness.info.id, to: "earlier" },
+    });
+    await expect
+      .poll(() => events.filter((event) => event.type === "background_work").length)
+      .toBeGreaterThanOrEqual(3);
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "live", canStop: true }],
+    });
+    harness.push({ id: "reconnect-after-rewind", created: 3, type: "server.connected", data: {} });
+    await expect
+      .poll(() => events.filter((event) => event.type === "background_work").length)
+      .toBeGreaterThanOrEqual(5);
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [{ id: "live", canStop: true }],
+    });
+    await session.stopBackgroundWork!("live");
+    expect(events.findLast((event) => event.type === "background_work")).toMatchObject({
+      items: [],
+    });
+  } finally {
+    await session.close();
+  }
+});

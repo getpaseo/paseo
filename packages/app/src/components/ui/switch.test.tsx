@@ -86,6 +86,7 @@ vi.mock("react-native-unistyles", () => ({
     ) =>
     (props: Record<string, unknown>) =>
       React.createElement(Component, { ...props, ...mapping?.(theme) }),
+  useUnistyles: () => ({ theme, rt: { breakpoint: "md" } }),
 }));
 
 describe("Switch", () => {

@@ -178,7 +178,7 @@ function ChangeSetRow({
           ))}
           {hiddenCount > 0 ? (
             <View style={styles.inlineAction}>
-              <Button variant="ghost" size="xs" onPress={toggleFiles}>
+              <Button variant="ghost" size="sm" onPress={toggleFiles}>
                 {showAll
                   ? t("goals.detail.showFewerFiles")
                   : t("goals.detail.showAllFiles", { n: changeSet.files.length })}

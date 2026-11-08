@@ -6,7 +6,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentTeamConfigWire } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { type FieldControlSize } from "@/components/ui/control-geometry";
+import { type ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import {
@@ -130,7 +130,7 @@ function OpenTeamEditModal({
   onSave,
 }: TeamEditModalProps & { onDismiss: () => void }): ReactElement {
   const { t } = useTranslation();
-  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
+  const controlSize: ControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const model = useTeamFormModel({
     mode,
     ...(teamName !== undefined ? { teamName } : {}),
@@ -304,7 +304,7 @@ function TeamRoleCard({
   agentOptions: SelectFieldOption<string>[];
   canRemove: boolean;
   disabled: boolean;
-  size: FieldControlSize;
+  size: ControlSize;
   model: TeamFormModel;
 }): ReactElement {
   const { t } = useTranslation();

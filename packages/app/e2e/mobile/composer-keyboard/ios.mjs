@@ -69,17 +69,23 @@ async function waitFor(name, predicate, timeoutMs = 10_000) {
   }
 }
 
-// Keyboard motion has settled once two snapshots agree on the composer position.
+// Keyboard motion has settled once two snapshots agree on the composer position. The
+// popover shows a loading row until the host lists its commands; a cold Claude list is slow.
 async function settledPlacement(name, keyboard) {
   let previousTop;
-  return waitFor(name, (snap) => {
-    const composer = nodeById(snap, "message-input-root");
-    if (!nodeById(snap, "composer-autocomplete-popover") || !composer) return false;
-    if (keyboardShown(snap) !== keyboard) return false;
-    const stable = composer.rect.y === previousTop;
-    previousTop = composer.rect.y;
-    return stable;
-  });
+  return waitFor(
+    name,
+    (snap) => {
+      const composer = nodeById(snap, "message-input-root");
+      if (!nodeById(snap, "composer-autocomplete-popover") || !composer) return false;
+      if (nodeById(snap, "composer-autocomplete-loading")) return false;
+      if (keyboardShown(snap) !== keyboard) return false;
+      const stable = composer.rect.y === previousTop;
+      previousTop = composer.rect.y;
+      return stable;
+    },
+    30_000,
+  );
 }
 
 function assertPlacement(name, snap, expected) {

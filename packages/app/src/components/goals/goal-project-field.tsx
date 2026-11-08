@@ -6,7 +6,7 @@ import { Folder, FolderOpen } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { ComboboxItem } from "@/components/ui/combobox";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import {
   SelectField,
@@ -36,7 +36,7 @@ export function GoalHostField({
 }: {
   model: GoalFormModel;
   state: GoalFormState;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const options = useMemo<SelectFieldOption<string>[]>(
@@ -129,7 +129,7 @@ export function GoalProjectField({
 }: {
   model: GoalFormModel;
   state: GoalFormState;
-  size: FieldControlSize;
+  size: ControlSize;
   error: string | null;
 }): ReactElement {
   const { t } = useTranslation();

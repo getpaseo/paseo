@@ -619,7 +619,7 @@ export function createGoalAgentPort(deps: GoalPortDeps): ManagerAgentPort {
     knownProviders: () => deps.agentManager.getRegisteredProviderIds(),
 
     async findAgents(labels) {
-      const records = await deps.agentStorage.list();
+      const records = await deps.agentStorage.listAll();
       return records
         .filter(
           (record) =>

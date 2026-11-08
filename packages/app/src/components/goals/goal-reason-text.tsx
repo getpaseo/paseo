@@ -29,7 +29,7 @@ export function GoalReasonText({ text, testID }: { text: string; testID?: string
         <View style={styles.toggleRow}>
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             onPress={toggle}
             accessibilityState={expandedState}
             testID={testID ? `${testID}-toggle` : undefined}

@@ -111,6 +111,7 @@ export type PluginClientRuntime = Pick<
   | "openScreen"
   | "openSurface"
   | "openPanel"
+  | "subscribe"
   | "addComposerPill"
   | "addHeaderButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
@@ -128,6 +129,7 @@ export function runPluginClientBundle(
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
     settingsScreens: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
@@ -140,6 +142,7 @@ export function runPluginClientBundle(
     timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
+  const sidebarViewIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
   const sidebarItemIds: Record<PluginSidebarSection, Set<string>> = {
     header: new Set(),
@@ -267,6 +270,18 @@ export function runPluginClientBundle(
         collector.surfaces,
         { id: normalizedId, title, Component: contribution.Component },
         () => surfaceIds.delete(normalizedId),
+      );
+    },
+    addSidebarView(contribution) {
+      const normalizedId = requireId(contribution.id, "sidebar view id");
+      if (sidebarViewIds.has(normalizedId))
+        throw new Error(`Duplicate sidebar view: ${normalizedId}`);
+      if (!isComponentType(contribution.Component))
+        throw new Error(`Sidebar view ${normalizedId} is not a component`);
+      const title = requirePluginText(contribution.title);
+      sidebarViewIds.add(normalizedId);
+      return register(collector.sidebarViews, { ...contribution, id: normalizedId, title }, () =>
+        sidebarViewIds.delete(normalizedId),
       );
     },
     addSidebarHeaderItem(contribution: PluginSidebarItemContribution) {
@@ -517,7 +532,8 @@ export function runPluginClientBundle(
     if (name === "@getpaseo/plugin/client")
       return {
         ...pluginClientRuntime,
-        useSettings,
+        useSettings: (definition: import("@getpaseo/plugin").SettingsDefinition) =>
+          useSettings(definition, id),
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
         useHosts: () =>
@@ -582,6 +598,7 @@ export function runPluginClientBundle(
     cleanup,
     surfaces: collector.surfaces,
     settingsScreens: collector.settingsScreens,
+    sidebarViews: collector.sidebarViews,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
     filePanels: collector.filePanels,

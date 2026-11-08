@@ -2,7 +2,7 @@ import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { durationLabel } from "@/goals/goal-labels";
 import { GOAL_BUDGET_FIELDS, GOAL_SETTING_FIELDS } from "@/goals/goal-number-fields";
@@ -66,7 +66,7 @@ export function GoalNumberSettingField({
   value: number;
   onChange: (setting: GoalNumberSetting, value: number) => void;
   error?: string | null;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const field = GOAL_SETTING_FIELDS[setting];
@@ -118,7 +118,7 @@ export function GoalBudgetField({
   value: number | null;
   onChange: (budgetKey: GoalBudgetKey, value: number | null) => void;
   error?: string | null;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const field = GOAL_BUDGET_FIELDS[budgetKey];
@@ -163,7 +163,7 @@ export function GoalPermissionPolicyField({
   /** In display order; see goalPermissionPolicyOptions. */
   options: readonly GoalPermissionPolicy[];
   onChange: (value: GoalPermissionPolicy) => void;
-  size: FieldControlSize;
+  size: ControlSize;
 }): ReactElement {
   const { t } = useTranslation();
   const segments = useMemo<SegmentedControlOption<GoalPermissionPolicy>[]>(

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { useProviderIcon } from "@/components/provider-icons";
 import { ComboboxItem } from "@/components/ui/combobox";
-import type { FieldControlSize } from "@/components/ui/control-geometry";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import {
   SelectField,
   type SelectFieldDisplay,
@@ -75,7 +75,7 @@ export function ProviderSelect({
   options: readonly GoalProviderOption[];
   serverId: string;
   loading: boolean;
-  size: FieldControlSize;
+  size: ControlSize;
   /** When set, an extra first option that clears the selection. */
   emptyLabel?: string;
   testID: string;
@@ -153,7 +153,7 @@ export function ModelSelect({
   value: string;
   onChange: (value: string) => void;
   options: readonly GoalProviderOption[];
-  size: FieldControlSize;
+  size: ControlSize;
   testID: string;
 }): ReactElement | null {
   const { t } = useTranslation();
@@ -222,7 +222,7 @@ export function ThinkingSelect({
   value: string;
   onChange: (value: string) => void;
   options: readonly GoalThinkingOption[];
-  size: FieldControlSize;
+  size: ControlSize;
   testID: string;
 }): ReactElement | null {
   const { t } = useTranslation();

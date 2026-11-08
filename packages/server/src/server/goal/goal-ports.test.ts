@@ -571,7 +571,7 @@ describe("agent port", () => {
     ];
     const port = createGoalAgentPort({
       logger: pino({ level: "silent" }),
-      agentStorage: { list: async () => records },
+      agentStorage: { listAll: async () => records },
     } as unknown as GoalPortDeps);
     expect(await port.findAgents?.({ "paseo.goal-id": "g1", "paseo.goal-recovery": "r1" })).toEqual(
       [

@@ -7,7 +7,7 @@ import type { GoalSummary } from "@getpaseo/protocol/goal/types";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { GOAL_LIST_FILTERS, countGoalsByFilter, type GoalListFilter } from "@/goals/goal-attention";
@@ -22,8 +22,8 @@ import { GOAL_PROJECT_FILTER_ALL, type GoalProjectFilterOption } from "@/goals/g
 import { goalToolbarMark } from "@/goals/goal-toolbar";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
-/** Grows the 32pt button to a 44pt touch target where a finger presses it. */
-const TOUCH_HIT_SLOP = (44 - CONTROL_HEIGHTS.compact) / 2;
+/** The `sm` control is 32pt under a finger; this grows it to the 44pt touch target. */
+const TOUCH_HIT_SLOP = (TOUCH_TARGET - 32) / 2;
 
 const toolbarIcons = {
   status: withUnistyles(ListFilter),
@@ -377,13 +377,13 @@ const styles = StyleSheet.create((theme) => ({
   // One step up from the pane toolbar's glyph button, so the icons sit level with the search
   // field and the New goal button.
   button: {
-    width: CONTROL_HEIGHTS.compact,
-    height: CONTROL_HEIGHTS.compact,
+    width: CONTROL_HEIGHTS.sm,
+    height: CONTROL_HEIGHTS.sm,
   },
   buttonWithBadge: {
     width: "auto",
-    minWidth: CONTROL_HEIGHTS.compact,
-    height: CONTROL_HEIGHTS.compact,
+    minWidth: CONTROL_HEIGHTS.sm,
+    height: CONTROL_HEIGHTS.sm,
     flexDirection: "row",
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[1.5],

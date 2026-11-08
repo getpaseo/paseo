@@ -575,7 +575,7 @@ function GoalFailureDetails({ failure }: { failure: GoalFailureView }): ReactEle
       <View style={styles.bannerActions}>
         <Button
           variant="ghost"
-          size="xs"
+          size="sm"
           leftIcon={expanded ? ChevronDown : ChevronRight}
           onPress={toggle}
           accessibilityState={expandedState}

@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import * as Haptics from "expo-haptics";
 import { ChevronsLeftRight } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { CONTROL_HEIGHTS, type FieldControlSize } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, type ControlSize } from "@/components/ui/control-geometry";
 import { FormTextInput } from "@/components/ui/form-field";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { isNative } from "@/constants/platform";
@@ -45,7 +45,7 @@ export interface ScrubNumberFieldProps {
   disabled?: boolean;
   /** An error from the caller; a typing error of the field's own wins over it. */
   error?: string | null;
-  size?: FieldControlSize;
+  size?: ControlSize;
   testID?: string;
 }
 
@@ -308,10 +308,9 @@ const HANDLE_WIDTH = 32;
 const INPUT_STYLE: TextStyle = { flexDirection: "row", fontVariant: ["tabular-nums"] };
 
 const HANDLE_SIZE_STYLE = {
-  xs: "handleXs",
   sm: "handleSm",
   md: "handleMd",
-} as const satisfies Record<FieldControlSize, string>;
+} as const satisfies Record<ControlSize, string>;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -330,14 +329,11 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
   },
-  handleXs: {
-    minHeight: CONTROL_HEIGHTS.tight,
-  },
   handleSm: {
-    minHeight: CONTROL_HEIGHTS.compact,
+    minHeight: CONTROL_HEIGHTS.sm,
   },
   handleMd: {
-    minHeight: CONTROL_HEIGHTS.field,
+    minHeight: CONTROL_HEIGHTS.md,
     borderRadius: theme.borderRadius.lg,
   },
   handleActive: {

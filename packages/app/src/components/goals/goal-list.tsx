@@ -56,7 +56,7 @@ export function GoalArchivedToggle({
   onChange: (value: boolean) => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const size = useIsCompactFormFactor() ? "sm" : "xs";
+  const size = "sm";
   const handlePress = useCallback(() => onChange(!value), [onChange, value]);
   const accessibilityState = useMemo(() => ({ selected: value }), [value]);
   return (
