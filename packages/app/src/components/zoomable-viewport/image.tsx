@@ -37,14 +37,16 @@ export function ZoomableImage({
   testID = "zoomable-image",
   wheelActivation = "always",
 }: ZoomableImageProps) {
+  const source = useMemo(() => ({ uri: normalizeImageUri(uri) }), [uri]);
   const [loadedImage, setLoadedImage] = useState<{ uri: string; size: ViewportSize } | null>(null);
-  const resolvedSize = contentSize ?? (loadedImage?.uri === uri ? loadedImage.size : null);
-  const source = useMemo(() => ({ uri }), [uri]);
+  const resolvedSize = contentSize ?? (loadedImage?.uri === source.uri ? loadedImage.size : null);
   const handleLoad = useCallback(
     ({ source: { url, width, height } }: ImageLoadEventData) => {
-      if (url === uri && width > 0 && height > 0) setLoadedImage({ uri, size: { width, height } });
+      if (url === source.uri && width > 0 && height > 0) {
+        setLoadedImage({ uri: source.uri, size: { width, height } });
+      }
     },
-    [uri],
+    [source.uri],
   );
 
   if (!resolvedSize) {
@@ -86,6 +88,15 @@ export function ZoomableImage({
       />
     </ZoomableViewport>
   );
+}
+
+// Use the same URL spelling as the decoder while preserving opaque native URIs.
+function normalizeImageUri(uri: string): string {
+  try {
+    return new URL(uri).href;
+  } catch {
+    return uri;
+  }
 }
 
 const styles = StyleSheet.create(() => ({

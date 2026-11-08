@@ -38,6 +38,15 @@ function editor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
 }
 
+async function expectTallImageFrame(frame: Locator): Promise<void> {
+  await expect
+    .poll(async () => {
+      const box = await frame.boundingBox();
+      return box ? box.height - box.width : 0;
+    })
+    .toBeGreaterThan(0);
+}
+
 function hasHorizontalOverflow(element: HTMLElement): boolean {
   return element.scrollWidth > element.clientWidth;
 }
@@ -806,8 +815,7 @@ test.describe("CodeMirror workspace file editing", () => {
       await pendingLoad.release();
     }
     await expect(imageCanvas).toBeVisible();
-    const tallFrame = await transformedContent.boundingBox();
-    expect(tallFrame!.height).toBeGreaterThan(tallFrame!.width);
+    await expectTallImageFrame(transformedContent);
   });
 
   test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
