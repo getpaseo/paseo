@@ -923,8 +923,17 @@ async function completeDraftCreateSubmission(
 
 test.describe("Agent message submission", () => {
   for (const submission of [
-    { name: "text and image", prompt: "Cross-device image: emit 1 coalesced agent stream updates" },
-    { name: "image-only", prompt: "" },
+    {
+      name: "text and image",
+      prompt: "Cross-device image: emit 1 coalesced agent stream updates",
+      receiverWidth: 1280,
+    },
+    { name: "image-only", prompt: "", receiverWidth: 1280 },
+    {
+      name: "compact receiver",
+      prompt: "Cross-device compact image: emit 1 coalesced agent stream updates",
+      receiverWidth: 390,
+    },
   ]) {
     test(`cross-device image loads on sender, receiver, and receiver reload (${submission.name})`, async ({
       page,
@@ -947,7 +956,7 @@ test.describe("Agent message submission", () => {
 
         const receiverContext = await browser.newContext({
           storageState: await page.context().storageState(),
-          viewport: { width: 1280, height: 960 },
+          viewport: { width: submission.receiverWidth, height: 960 },
         });
         try {
           const receiver = await receiverContext.newPage();
@@ -985,6 +994,14 @@ test.describe("Agent message submission", () => {
           await expect(receiverMessage).toHaveCount(1);
           await expect(receiverMessage).toHaveAttribute("aria-busy", "false");
           await expectUserImageLoaded(receiverMessage);
+          await testInfo.attach("sender-image-history", {
+            body: await page.screenshot(),
+            contentType: "image/png",
+          });
+          await testInfo.attach("receiver-image-history-after-reload", {
+            body: await receiver.screenshot(),
+            contentType: "image/png",
+          });
         } finally {
           await receiverContext.close();
         }
