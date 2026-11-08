@@ -7,6 +7,7 @@ import {
   usePluginComposersSource,
 } from "./composer.js";
 import { PluginClientStateProvider, usePluginClientStateSource } from "./client-state.js";
+import { PluginNewWorkspaceProvider, usePluginNewWorkspaceValue } from "./new-workspace.js";
 import { PaseoApiProvider, usePaseoContextValue } from "./paseo-context.js";
 import { PluginRpcProvider, usePluginRpcContextValue } from "./rpc-context.js";
 
@@ -20,6 +21,7 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
   const state = usePluginClientStateSource();
   const composer = usePluginComposerValue();
   const composers = usePluginComposersSource();
+  const newWorkspace = usePluginNewWorkspaceValue();
 
   if (!paseo || !rpc) {
     throw new Error("Plugin UI must run inside a contributed plugin surface");
@@ -37,10 +39,17 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
       ) : (
         withState
       );
-      const content = composer ? (
-        <PluginComposerProvider composer={composer}>{withComposers}</PluginComposerProvider>
+      const withNewWorkspace = newWorkspace ? (
+        <PluginNewWorkspaceProvider newWorkspace={newWorkspace}>
+          {withComposers}
+        </PluginNewWorkspaceProvider>
       ) : (
         withComposers
+      );
+      const content = composer ? (
+        <PluginComposerProvider composer={composer}>{withNewWorkspace}</PluginComposerProvider>
+      ) : (
+        withNewWorkspace
       );
       return (
         <PaseoApiProvider paseo={paseo}>
@@ -50,6 +59,6 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
         </PaseoApiProvider>
       );
     },
-    [composer, composers, paseo, rpc, state, translations],
+    [composer, composers, newWorkspace, paseo, rpc, state, translations],
   );
 }

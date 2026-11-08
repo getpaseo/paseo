@@ -66,6 +66,10 @@ export function PluginNewWorkspaceProvider({
   );
 }
 
+export function usePluginNewWorkspaceValue(): PluginNewWorkspace | null {
+  return useContext(PluginNewWorkspaceContext);
+}
+
 /** The New workspace setup this item sits in. Call it from a component registered with `addNewWorkspaceItem`. */
 export function useNewWorkspace(): PluginNewWorkspace {
   const newWorkspace = useContext(PluginNewWorkspaceContext);
