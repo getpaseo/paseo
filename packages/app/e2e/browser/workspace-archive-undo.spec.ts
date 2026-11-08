@@ -131,9 +131,11 @@ test.describe("Workspace archive undo", () => {
     await page.setViewportSize({ width: 400, height: 720 });
     await expect(undoButton(page)).toHaveCount(0);
 
-    archive.fail("Injected archive failure.");
+    archive.releaseForUnknownWorkspace("workspace-the-daemon-never-had");
 
-    await expect(page.getByTestId("app-toast-message")).toHaveText("Injected archive failure.");
+    await expect(page.getByTestId("app-toast-message")).toHaveText(
+      "Workspace not found: workspace-the-daemon-never-had",
+    );
   });
 
   test("the archived toast keeps Undo inside the card at the narrowest sidebar", async ({

@@ -100,23 +100,19 @@ export async function expectDirectoryPresence(directory: string, present: boolea
 
 export interface HeldArchiveRequest {
   waitForHeld(): Promise<void>;
-  fail(error: string): void;
+  /** Sends the held request to the daemon naming a workspace it has no record of, so it refuses. */
+  releaseForUnknownWorkspace(workspaceId: string): void;
 }
 
-/** Keeps the next archive request from the host and lets the test answer it with a failure. */
+/** Keeps the next archive request from reaching the daemon until the test releases it. */
 export async function holdNextArchiveRequest(page: Page): Promise<HeldArchiveRequest> {
-  let held: { requestId: string; workspaceId: string; respond: (raw: string) => void } | null =
-    null;
+  let held: { request: SessionRequest; forward: (raw: string) => void } | null = null;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((message) => {
       const request = parseSessionRequest(message);
       if (!held && request?.type === "archive_workspace_request") {
-        held = {
-          requestId: request.requestId,
-          workspaceId: request.workspaceId,
-          respond: (raw) => browser.send(raw),
-        };
+        held = { request, forward: (raw) => server.send(raw) };
         return;
       }
       server.send(message);
@@ -125,25 +121,20 @@ export async function holdNextArchiveRequest(page: Page): Promise<HeldArchiveReq
   });
   return {
     waitForHeld: () => expect.poll(() => held !== null).toBe(true),
-    fail: (error) => {
+    releaseForUnknownWorkspace: (workspaceId) => {
       if (!held) throw new Error("No archive request is held");
-      const { requestId, workspaceId, respond } = held;
-      respond(
-        JSON.stringify({
-          type: "session",
-          message: {
-            type: "archive_workspace_response",
-            payload: { requestId, workspaceId, archivedAt: null, error },
-          },
-        }),
-      );
+      held.forward(JSON.stringify({ type: "session", message: { ...held.request, workspaceId } }));
     },
   };
 }
 
-function parseSessionRequest(
-  message: string | Buffer,
-): { type: string; requestId: string; workspaceId: string } | null {
+interface SessionRequest {
+  type: string;
+  requestId: string;
+  workspaceId: string;
+}
+
+function parseSessionRequest(message: string | Buffer): SessionRequest | null {
   try {
     const envelope = JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
     return envelope?.type === "session" ? envelope.message : null;
