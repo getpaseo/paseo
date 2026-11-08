@@ -5,13 +5,15 @@ import { createNativeAudioEngine, type NativeAudioEngineDeps } from "./native-au
 // In-memory stand-in for `@getpaseo/expo-two-way-audio`, matching its iOS and Android modules:
 // one native engine per app, `initialize()` reuses it, `tearDown()` frees it, and
 // `toggleRecording(true)` / `startDictation()` return false while no engine exists.
+// Session handling follows iOS: recording activates the OS audio session, stopping does not
+// deactivate it, and `releaseAudioSession()` deactivates it only while nothing is recording.
 function fakeTwoWayAudio() {
-  let engine: { recording: boolean } | null = null;
+  let engine: { recording: boolean; sessionActive: boolean } | null = null;
   const calls = { initialize: 0, tearDown: 0 };
   const native: NativeAudioEngineDeps["native"] = {
     async initialize() {
       calls.initialize += 1;
-      engine ??= { recording: false };
+      engine ??= { recording: false, sessionActive: false };
       return true;
     },
     tearDown() {
@@ -21,14 +23,18 @@ function fakeTwoWayAudio() {
     toggleRecording(value: boolean) {
       if (!engine) return false;
       engine.recording = value;
+      if (value) engine.sessionActive = true;
       return value;
     },
     startDictation() {
       if (!engine) return false;
       engine.recording = true;
+      engine.sessionActive = true;
       return true;
     },
-    releaseAudioSession() {},
+    releaseAudioSession() {
+      if (engine && !engine.recording) engine.sessionActive = false;
+    },
     playPCMData() {},
     resumePlayback() {},
     stopPlayback() {},
@@ -46,6 +52,7 @@ function fakeTwoWayAudio() {
     native,
     calls,
     hasEngine: () => engine !== null,
+    sessionActive: () => engine?.sessionActive ?? false,
   };
 }
 
@@ -104,6 +111,41 @@ test("destroying dictation while voice is capturing keeps the native engine", as
 
   expect(fake.hasEngine()).toBe(true);
   expect(fake.calls.tearDown).toBe(0);
+});
+
+// Review on #9051: with voice holding the engine, destroying an active dictation engine must
+// still hand back the idle OS audio session so background music resumes (#2866).
+test("destroying active dictation releases the idle audio session while voice keeps the engine", async () => {
+  const fake = fakeTwoWayAudio();
+  const voiceEngine = createNativeAudioEngine(deps(fake.native), recordingCallbacks().callbacks);
+  await voiceEngine.initialize();
+
+  const dictationEngine = createNativeAudioEngine(
+    deps(fake.native),
+    recordingCallbacks().callbacks,
+    { captureMode: "dictation" },
+  );
+  await dictationEngine.startCapture();
+  await dictationEngine.destroy();
+
+  expect(fake.hasEngine()).toBe(true);
+  expect(fake.sessionActive()).toBe(false);
+});
+
+test("destroying dictation does not release the session while voice is recording", async () => {
+  const fake = fakeTwoWayAudio();
+  const voiceEngine = createNativeAudioEngine(deps(fake.native), recordingCallbacks().callbacks);
+  await voiceEngine.startCapture();
+
+  const dictationEngine = createNativeAudioEngine(
+    deps(fake.native),
+    recordingCallbacks().callbacks,
+    { captureMode: "dictation" },
+  );
+  await dictationEngine.initialize();
+  await dictationEngine.destroy();
+
+  expect(fake.sessionActive()).toBe(true);
 });
 
 test("destroying the last engine tears the native engine down", async () => {

@@ -209,6 +209,10 @@ export function createNativeAudioEngine(
       callbacks.onVolumeLevel(0);
       if (refs.initialized) {
         refs.initialized = false;
+        // Another engine may keep the native engine alive, so teardown alone no longer
+        // hands back the OS audio session. Release it while idle so background music
+        // resumes; the native module keeps it while anything is still recording or playing.
+        native.releaseAudioSession();
         lease.release();
       }
       microphoneSubscription.remove();
