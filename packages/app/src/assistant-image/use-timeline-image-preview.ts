@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { persistAttachmentFromBytes, resolveAttachmentPreviewUrl } from "@/attachments/service";
+import { useFetchQuery } from "@/data/query";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
 import { assistantImagePreviews, type AssistantImagePreview } from "./image-cache";
 import { createAssistantImageFileAcquisition } from "./file-acquisition";
@@ -18,6 +19,13 @@ export function useTimelineImagePreview(input: {
   serverId?: string;
 }): TimelineImagePreview {
   const { source, occurrenceKey, client, workspaceRoot, serverId } = input;
+  const resolution = useMemo(
+    () => resolveAssistantImageSource({ source, workspaceRoot }),
+    [source, workspaceRoot],
+  );
+  // A `direct` source (http, data: or blob:) is already renderable; only a host path needs
+  // a file read, so the file acquisition stays null for direct sources.
+  const directUri = resolution?.kind === "direct" ? resolution.uri : undefined;
   const acquisition = useMemo(
     () =>
       createAssistantImageFileAcquisition({
@@ -27,52 +35,45 @@ export function useTimelineImagePreview(input: {
               persist: persistAttachmentFromBytes,
             }
           : null,
-        resolution: resolveAssistantImageSource({ source, workspaceRoot }),
+        resolution,
         serverId,
         occurrenceKey,
         unavailableMessage: "Image unavailable",
       }),
-    [client, occurrenceKey, serverId, source, workspaceRoot],
+    [client, occurrenceKey, resolution, serverId],
   );
 
-  const cached = acquisition ? assistantImagePreviews.peek(acquisition.key) : undefined;
-  const [value, setValue] = useState<AssistantImagePreview | null>(cached ?? null);
-  const [failed, setFailed] = useState(false);
+  const result = useFetchQuery<AssistantImagePreview>({
+    queryKey: ["timelineImage", acquisition?.key ?? `${occurrenceKey}:${source}`],
+    enabled: acquisition !== null,
+    immutableWhen: () => true,
+    dataShape: "value",
+    gcTime: 0,
+    queryFn: async () => {
+      if (!acquisition) throw new Error("Image unavailable");
+      return assistantImagePreviews.acquire(acquisition.key, async () => {
+        const attachment = await acquisition.locate();
+        const uri = await resolveAttachmentPreviewUrl(attachment);
+        return { attachment, uri };
+      });
+    },
+  });
 
+  // Hold the fetched attachment against attachment garbage collection while this preview
+  // is mounted, and release its preview URL when it unmounts.
+  const value = result.data;
   useEffect(() => {
-    if (!acquisition) {
-      return;
-    }
-    let disposed = false;
-    const held = assistantImagePreviews.acquireRetained(acquisition.key, async () => {
-      const attachment = await acquisition.locate();
-      const uri = await resolveAttachmentPreviewUrl(attachment);
-      return { attachment, uri };
-    });
-    setValue(held.value ?? null);
-    setFailed(false);
-    void (async () => {
-      try {
-        const next = await held.promise;
-        if (!disposed) {
-          setValue(next);
-        }
-      } catch {
-        if (!disposed) {
-          setFailed(true);
-        }
-      }
-    })();
-    return () => {
-      disposed = true;
-      held.release();
-    };
-  }, [acquisition]);
+    if (!acquisition || !value) return;
+    return assistantImagePreviews.acquireRetained(acquisition.key, async () => value).release;
+  }, [acquisition, value]);
 
+  if (directUri !== undefined) {
+    return { status: "loaded", uri: directUri };
+  }
   if (!acquisition) {
     return { status: "unavailable", uri: null };
   }
-  if (failed) {
+  if (result.isError) {
     return { status: "failed", uri: null };
   }
   return value ? { status: "loaded", uri: value.uri } : { status: "pending", uri: null };

@@ -35,7 +35,9 @@ export async function userMessageImages(content: unknown): Promise<AgentTimeline
   const images = await Promise.all(
     content.flatMap((value) => {
       const candidate = readUserImageCandidate(value);
-      return candidate ? [resolveUserImage(candidate)] : [];
+      // A single image that cannot be written (full or unwritable temp storage) must not
+      // reject the whole message: history replay would drop the text and sibling messages.
+      return candidate ? [resolveUserImage(candidate).catch(() => undefined)] : [];
     }),
   );
   return images.filter((image) => image !== undefined);

@@ -85,6 +85,7 @@ import type {
   OmpModel,
   OmpRuntimeEvent,
   OmpSessionState,
+  OmpSubagentEventPayload,
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import {
@@ -717,6 +718,8 @@ export class OmpAgentSession implements AgentSession {
   private commandCache: AgentSlashCommand[] | null = null;
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
+  // Per-session queue of async subagent-event mapping; see the `subagent_event` branch.
+  private readonly subagentEventTails = new WeakMap<object, Promise<void>>();
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
   private currentModeId: string | null;
@@ -1696,18 +1699,16 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "subagent_event") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_event" }>).payload;
-      // The subagent mapper materializes user-message images, so it is async;
-      // runtime event handling stays synchronous and the mapped events are
-      // emitted on the next microtask.
-      void (async () => {
-        try {
-          for (const mapped of await this.subagentIndex.handleEvent(this.runtimeSession, payload)) {
-            this.emit(mapped);
-          }
-        } catch (error: unknown) {
-          this.logger.debug({ err: error }, "OMP subagent event mapping failed");
-        }
-      })();
+      // The subagent mapper materializes user-message images, so it awaits; runtime event
+      // handling stays synchronous. Apply one session's events at a time, in arrival order:
+      // `ProviderSubagentStore` appends whatever resolves first, so an unmapped queue would
+      // let a child reply overtake the prompt that was still waiting on its image write.
+      const parent = this.runtimeSession;
+      const tail = this.subagentEventTails.get(parent) ?? Promise.resolve();
+      this.subagentEventTails.set(
+        parent,
+        tail.then(() => this.applySubagentEvent(parent, payload)),
+      );
       return true;
     }
     if (event.type === "todo_reminder") {
@@ -1769,6 +1770,19 @@ export class OmpAgentSession implements AgentSession {
       this.lastTodoItem = item;
     }
     this.emit({ type: "timeline", provider: this.provider, turnId, item });
+  }
+
+  private async applySubagentEvent(
+    parent: object,
+    payload: OmpSubagentEventPayload,
+  ): Promise<void> {
+    try {
+      for (const mapped of await this.subagentIndex.handleEvent(parent, payload)) {
+        this.emit(mapped);
+      }
+    } catch (error: unknown) {
+      this.logger.debug({ err: error }, "OMP subagent event mapping failed");
+    }
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {

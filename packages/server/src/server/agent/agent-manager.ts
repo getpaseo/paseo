@@ -2792,11 +2792,12 @@ export class AgentManager {
     };
   }
 
-  async persistSubmittedPromptImages(
-    agentId: string,
-    prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
-  ): Promise<void> {
+  async persistSubmittedPromptImages(input: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    clientMessageId: string | undefined;
+  }): Promise<void> {
+    const { agentId, prompt, clientMessageId } = input;
     const images = submittedPromptImages(prompt);
     if (!clientMessageId || images.length === 0) return;
     const registry = this.registry;
@@ -5320,6 +5321,12 @@ export class AgentManager {
       // Human attempts stay in history on rejection; delivery notifications require acceptance.
       if (outcome === "rejected" && item.type !== "user_message") continue;
       this.recordSubmittedPromptItem(agent, item, options);
+    }
+    // A steered prompt the provider accepts without echoing a user message never reaches
+    // reconcileSubmittedPromptEcho. Link the provider id here, or the saved images stay
+    // reachable only by client message id and history replay cannot find them.
+    if (options?.providerMessageId) {
+      this.linkSubmittedMessageProviderId(agent.id, clientMessageId, options.providerMessageId);
     }
   }
 

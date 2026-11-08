@@ -1,5 +1,5 @@
 import type { AgentMessage } from "./agent-message.js";
-import type { AgentAttachment } from "./messages.js";
+import type { AgentAttachment, AgentTimelineImage } from "./messages.js";
 
 export type AgentProvider = string;
 
@@ -372,13 +372,8 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
-export interface AgentTimelineImage {
-  id: string;
-  mimeType: string;
-  source: string;
-  fileName?: string;
-  byteSize?: number;
-}
+// Inferred from `AgentTimelineImageSchema` in messages.ts — one source of truth for the fields.
+export type { AgentTimelineImage } from "./messages.js";
 
 export type AgentTimelineItem =
   | {

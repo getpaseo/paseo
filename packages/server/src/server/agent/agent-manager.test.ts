@@ -6538,14 +6538,32 @@ test("getAgent does not expose committed history internals once manager owns the
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
 });
 
+type HistoryImageDelivery = "provider_replay" | "live_event";
+
+// One delivery step per test: a live provider event or a provider history replay.
+async function deliverHistoryImages(input: {
+  manager: AgentManager;
+  agentId: string;
+  session: { pushEvent(event: AgentStreamEvent): void };
+  historyItem: AgentTimelineItem;
+  delivery: HistoryImageDelivery;
+}): Promise<void> {
+  if (input.delivery === "live_event") {
+    input.session.pushEvent({ type: "timeline", provider: "codex", item: input.historyItem });
+    await vi.waitFor(() => expect(input.manager.getTimeline(input.agentId)).toHaveLength(1));
+    return;
+  }
+  await input.manager.hydrateTimelineFromProvider(input.agentId, { force: true, broadcast: true });
+}
+
 test.each([
-  { messageId: "old-provider-message", live: false },
-  { messageId: undefined, live: false },
-  { messageId: "live-provider-message", live: true },
-  { messageId: undefined, live: true },
+  { messageId: "old-provider-message", delivery: "provider_replay" },
+  { messageId: undefined, delivery: "provider_replay" },
+  { messageId: "live-provider-message", delivery: "live_event" },
+  { messageId: undefined, delivery: "live_event" },
 ])(
-  "provider images survive temp cleanup and manager restart ($messageId, live=$live)",
-  async ({ messageId, live }) => {
+  "provider images survive temp cleanup and manager restart ($messageId, delivery=$delivery)",
+  async ({ messageId, delivery }) => {
     const workdir = mkdtempSync(join(tmpdir(), "history-images-restart-"));
     const temporaryImage = join(workdir, "provider-image.png");
     writeFileSync(temporaryImage, "historical image bytes");
@@ -6583,12 +6601,13 @@ test.each([
       });
       const events: AgentManagerEvent[] = [];
       manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
-      if (live) {
-        sessions[0].pushEvent({ type: "timeline", provider: "codex", item: historyItem });
-        await vi.waitFor(() => expect(manager.getTimeline(agent.id)).toHaveLength(1));
-      } else {
-        await manager.hydrateTimelineFromProvider(agent.id, { force: true, broadcast: true });
-      }
+      await deliverHistoryImages({
+        manager,
+        agentId: agent.id,
+        session: sessions[0],
+        historyItem,
+        delivery,
+      });
       const first = manager.getTimeline(agent.id)[0];
       expect(first).toMatchObject({
         type: "user_message",
@@ -6620,6 +6639,103 @@ test.each([
     }
   },
 );
+
+// A provider that admits a steered prompt without echoing it back as a user message names the
+// message only through the admission, so that id is the sole handle the saved images have after
+// a restart.
+test("images in a steered prompt the provider never echoes are recovered by its provider id", async () => {
+  class SilentSteerImageSession extends SteeringTestSession {
+    override async steerActiveTurn(
+      _prompt: AgentPromptInput,
+      options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
+        return { status: "unavailable" };
+      }
+      return { status: "accepted", providerMessageId: "provider-steer-image" };
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          messageId: "provider-steer-image",
+          text: "steered image",
+        },
+      };
+    }
+  }
+  class SilentSteerImageClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SilentSteerImageSession(config);
+    }
+  }
+
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steered-images-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const imageStore = createConversationImageStore(workdir);
+  const makeManager = () =>
+    new AgentManager({
+      clients: { codex: new SilentSteerImageClient() },
+      registry: storage,
+      conversationImageStore: imageStore,
+      logger,
+    });
+  const manager = makeManager();
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+        // Drain the running turn so the steer below is admitted.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await manager.persistSubmittedPromptImages({
+      agentId: agent.id,
+      prompt: [
+        { type: "text", text: "steered image" },
+        {
+          type: "image",
+          data: Buffer.from("steered image bytes").toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+      clientMessageId: "steer-image",
+    });
+    await expect(
+      manager.steerAgentRun(agent.id, [{ type: "text", text: "steered image" }], {
+        clientMessageId: "steer-image",
+      }),
+    ).resolves.toMatchObject({ status: "accepted" });
+
+    await manager.closeAgent(agent.id);
+    await manager.flushForShutdown();
+
+    const restarted = makeManager();
+    await restarted.createAgent({ provider: "codex", cwd: workdir }, agent.id, {
+      workspaceId: undefined,
+    });
+    await restarted.hydrateTimelineFromProvider(agent.id, { force: true, broadcast: false });
+    const recovered = restarted
+      .getTimeline(agent.id)
+      .find((item) => item.type === "user_message" && item.messageId === "provider-steer-image");
+    if (recovered?.type !== "user_message" || !recovered.images) {
+      throw new Error("Steered prompt image was not recovered");
+    }
+    expect(readFileSync(recovered.images[0].source, "utf8")).toBe("steered image bytes");
+
+    await restarted.closeAgent(agent.id);
+    await restarted.flushForShutdown();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("conversation rewind prunes removed image references without deleting shared images", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "rewind-images-"));
@@ -6727,14 +6843,14 @@ test("canonical user messages retain durable submitted image references", async 
     workspaceId: undefined,
   });
 
-  await manager.persistSubmittedPromptImages(
-    snapshot.id,
-    [
+  await manager.persistSubmittedPromptImages({
+    agentId: snapshot.id,
+    prompt: [
       { type: "text", text: "Inspect this" },
       { type: "image", data: Buffer.from("png").toString("base64"), mimeType: "image/png" },
     ],
-    "client-message-1",
-  );
+    clientMessageId: "client-message-1",
+  });
   await manager.appendTimelineItem(snapshot.id, {
     type: "user_message",
     text: "Inspect this",

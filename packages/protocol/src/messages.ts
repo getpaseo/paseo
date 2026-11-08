@@ -722,6 +722,8 @@ export const AgentTimelineImageSchema = z.object({
   byteSize: z.number().nonnegative().optional(),
 });
 
+export type AgentTimelineImage = z.infer<typeof AgentTimelineImageSchema>;
+
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { userMessageImages } from "./user-message-images.js";
 
@@ -34,4 +34,27 @@ test("does not treat nested tool images or non-image files as user attachments",
       { type: "file", uri: "file:///tmp/report.pdf" },
     ]),
   ).toEqual([]);
+});
+
+// One unwritable image must not drop the message it travelled with.
+vi.mock("./provider-image-output.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./provider-image-output.js")>();
+  return {
+    ...actual,
+    materializeProviderImage: (
+      image: Parameters<typeof actual.materializeProviderImage>[0],
+    ): Promise<Awaited<ReturnType<typeof actual.materializeProviderImage>>> =>
+      JSON.stringify(image).includes("UNWRITABLE")
+        ? Promise.reject(new Error("image store write failed"))
+        : actual.materializeProviderImage(image),
+  };
+});
+
+test("keeps the images that stored when one fails", async () => {
+  const images = await userMessageImages([
+    { type: "image", data: "UNWRITABLE", mimeType: "image/png" },
+    { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+  ]);
+  expect(images).toHaveLength(1);
+  expect(readFileSync(images[0].source, "utf8")).toBe("image");
 });
