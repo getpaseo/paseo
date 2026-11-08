@@ -136,7 +136,7 @@ test.describe("Settings host page", () => {
       await openHostSection(page, daemon.serverId, "host");
 
       await test.step("the alert identifies the host, rejected connection and missing password", async () => {
-        await expectHostPasswordRecovery(page, "Password host", `127.0.0.1:${daemon.port}`);
+        await expectHostPasswordRecovery(page, "Password host", `localhost:${daemon.port}`);
       });
 
       await test.step("entering the password in place brings the host online", async () => {
