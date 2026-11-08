@@ -184,6 +184,81 @@
             "additionalProperties": {}
           }
         },
+        "teams": {
+          "description": "Named teams of roles. Each role maps to an agent profile or a provider and model. A chat started with a team is told its roster.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "peerMessaging": {
+                "type": "boolean"
+              },
+              "roles": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "modeId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "thinkingOptionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "isolation": {
+                      "type": "string",
+                      "enum": ["worktree", "local"]
+                    }
+                  },
+                  "required": ["description"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["roles"],
+            "additionalProperties": false
+          }
+        },
+        "goals": {
+          "type": "object",
+          "properties": {
+            "maxConcurrentRuns": {
+              "description": "Worker runs across all goals at once (default 4). Applied without a restart.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            }
+          },
+          "additionalProperties": false
+        },
         "cors": {
           "type": "object",
           "properties": {

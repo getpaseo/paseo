@@ -27,6 +27,7 @@ import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { isWeb } from "@/constants/platform";
+import { useAgentTeamSelection } from "@/agent-teams/use-agent-team-selection";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -51,6 +52,10 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
+  /** The team chosen for the new chat, or null for none. */
+  team: string | null;
+  /** Role name -> model overrides for the chosen team; undefined when none. */
+  teamModelOverrides: Record<string, string> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -314,6 +319,12 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     ],
   );
 
+  const teamSelection = useAgentTeamSelection(composerOptions ? formState.selectedServerId : null);
+  const teamControl = useMemo(
+    () => (teamSelection.teams.length > 0 ? teamSelection : null),
+    [teamSelection],
+  );
+
   const composerState = useMemo<DraftComposerState | null>(() => {
     if (!composerOptions) {
       return null;
@@ -326,11 +337,17 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModelId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
+      team: teamControl?.selectedTeam ?? null,
+      teamModelOverrides:
+        teamControl?.roleModelOverrides && Object.keys(teamControl.roleModelOverrides).length > 0
+          ? teamControl.roleModelOverrides
+          : undefined,
       agentControls: buildDraftAgentControls({
         formState,
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
         onApplyAgentProfile: applyDraftAgentProfile,
+        teamControl,
       }),
       commandDraft,
     };
@@ -345,6 +362,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     applyDraftAgentProfile,
     formState,
     setDraftFeatureValue,
+    teamControl,
     workingDir,
   ]);
 

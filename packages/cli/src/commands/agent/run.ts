@@ -82,6 +82,10 @@ export function addRunOptions(cmd: Command): Command {
         [],
       )
       .option(
+        "--team <name>",
+        "Start the agent as the lead of a team from daemon.teams (see paseo agent teams)",
+      )
+      .option(
         "--wait-timeout <duration>",
         "Maximum time to wait for agent to finish (e.g., 30s, 5m, 1h). Default: no limit",
       )
@@ -137,6 +141,7 @@ export interface AgentRunOptions extends CommandOptions {
   cwd?: string;
   env?: string[];
   label?: string[];
+  team?: string;
   waitTimeout?: string;
   outputSchema?: string;
 }
@@ -648,6 +653,7 @@ export async function runRunCommand(
             images,
             env: requestEnv,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
+            team: options.team,
           });
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
@@ -718,6 +724,7 @@ export async function runRunCommand(
       images,
       env: requestEnv,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
+      team: options.team,
     });
 
     // Default run behavior is foreground: wait for completion unless --no-wait is set.

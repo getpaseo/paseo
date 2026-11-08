@@ -1,0 +1,125 @@
+appId: sh.paseo.debug
+env:
+  GOAL_OBJECTIVE: "Maestro goal: add a CONTRIBUTING note"
+  GOAL_CRITERIA: "The note exists"
+---
+# Creates a managed goal on the first project of the connected host, checks the permission
+# policy defaults to Ask me, drags the Max parallel handle, types values, and submits.
+# Preconditions: the running dev app is connected to a host with Goals, at least one project,
+# and a provider. Read packages/app/maestro/README.md#goals.
+- runFlow: flows/goals-open.yaml
+- runFlow:
+    when:
+      visible:
+        id: "goals-create-first"
+    commands:
+      - tapOn:
+          id: "goals-create-first"
+- runFlow:
+    when:
+      visible:
+        id: "goals-new"
+    commands:
+      - tapOn:
+          id: "goals-new"
+- extendedWaitUntil:
+    visible:
+      id: "goal-objective-input"
+    timeout: 10000
+
+- tapOn:
+    id: "goal-objective-input"
+- inputText: ${GOAL_OBJECTIVE}
+- tapOn:
+    id: "goal-criteria-input"
+- inputText: ${GOAL_CRITERIA}
+- hideKeyboard
+
+- runFlow:
+    when:
+      visible:
+        id: "goal-managed-switch"
+        checked: false
+    commands:
+      - tapOn:
+          id: "goal-managed-switch"
+- scrollUntilVisible:
+    element:
+      id: "goal-project-trigger"
+    direction: DOWN
+- tapOn:
+    id: "goal-project-trigger"
+- tapOn:
+    id: "goal-project-option-.*"
+    index: 0
+
+- scrollUntilVisible:
+    element:
+      id: "goal-advanced-toggle"
+    direction: DOWN
+- tapOn:
+    id: "goal-advanced-toggle"
+- scrollUntilVisible:
+    element:
+      id: "goal-permission-wait"
+    direction: DOWN
+- assertVisible:
+    id: "goal-permission-wait"
+    selected: true
+
+# Type a value: the number pad has no return key on iOS, so close the keyboard by tapping
+# outside the field.
+- scrollUntilVisible:
+    element:
+      id: "goal-setting-maxParallel-input"
+    direction: UP
+- tapOn:
+    id: "goal-setting-maxParallel-input"
+- eraseText
+- inputText: "2"
+- tapOn:
+    id: "goal-permission-row"
+- assertVisible:
+    id: "goal-setting-maxParallel-input"
+    text: "2"
+- assertNotVisible:
+    id: "goal-setting-maxParallel-error"
+
+# Drag the grip sideways: the value moves and the sheet neither scrolls nor closes.
+- swipe:
+    from:
+      id: "goal-setting-maxParallel-handle"
+    direction: RIGHT
+    duration: 800
+- assertVisible:
+    id: "goal-setting-maxParallel-input"
+- assertNotVisible:
+    id: "goal-setting-maxParallel-input"
+    text: "2"
+- assertVisible:
+    id: "goal-form-submit"
+
+# A comma decimal from a comma-locale decimal pad reads as dollars and cents.
+- runFlow:
+    when:
+      visible:
+        id: "goal-budget-maxCostUsd-input"
+    commands:
+      - tapOn:
+          id: "goal-budget-maxCostUsd-input"
+      - eraseText
+      - inputText: "2,5"
+      - tapOn:
+          id: "goal-permission-row"
+      - assertVisible:
+          id: "goal-budget-maxCostUsd-input"
+          text: "\\$2\\.50"
+
+- tapOn:
+    id: "goal-form-submit"
+- extendedWaitUntil:
+    visible:
+      id: "goal-detail-title"
+    timeout: 30000
+- assertVisible:
+    text: ${GOAL_OBJECTIVE}

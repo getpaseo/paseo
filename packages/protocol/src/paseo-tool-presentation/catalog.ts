@@ -171,6 +171,22 @@ export const PASEO_TOOL_CATALOG = {
     context: targetAgent(),
     detail: { inputOrder: ["agentId", "limit"] },
   },
+  wait_for_agent: {
+    label: "Wait for agent",
+    completedLabel: "Waited for agent",
+    context: targetAgent(),
+    detail: {
+      inputOrder: ["agentId", "timeoutSeconds"],
+      outputFields: ["status", "agentStatus", "lastMessage", "permission"],
+    },
+  },
+  list_team_members: { label: "List team members", completedLabel: "Listed team members" },
+  send_team_message: {
+    label: "Message teammate",
+    completedLabel: "Messaged teammate",
+    context: targetAgent(),
+    detail: { inputOrder: ["agentId", "message"], outputFields: ["outcome", "detail"] },
+  },
   list_agents: {
     label: "List agents",
     completedLabel: "Listed agents",
@@ -356,6 +372,18 @@ export const PASEO_TOOL_CATALOG = {
     completedLabel: "Deleted heartbeat",
     context: field("id"),
     detail: { inputOrder: ["id"] },
+  },
+
+  // Goals
+  goal_revise_plan: {
+    label: "Revise goal plan",
+    completedLabel: "Revised goal plan",
+    context: field("reason"),
+    detail: {
+      promptField: "reason",
+      inputOrder: ["ops", "tasks", "remove"],
+      outputFields: ["goalId", "revisionId", "status", "decisionReason"],
+    },
   },
 
   // Providers

@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { CalendarClock, History, Plus, Search } from "lucide-react-native";
+import { CalendarClock, History, Plus, Search, Target } from "lucide-react-native";
 import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
@@ -15,10 +15,13 @@ import {
   type BuiltinSidebarNavId,
 } from "@/sidebar-nav/model";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { selectTotalBlockedGoals, useGoalAttentionStore } from "@/stores/goal-attention-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import {
+  buildGoalsRoute,
   buildNewWorkspaceRoute,
   buildSchedulesRoute,
   buildSessionsRoute,
@@ -185,11 +188,49 @@ function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
   );
 }
 
+function SidebarGoalsRow({ onBeforeNavigate }: SidebarNavRowProps) {
+  const { t } = useTranslation();
+  const pathname = usePathname();
+  const blockedCount = useGoalAttentionStore(selectTotalBlockedGoals);
+  const badge = useMemo(
+    () =>
+      blockedCount > 0 ? (
+        <StatusBadge size="xs" variant="warning" label={String(blockedCount)} />
+      ) : undefined,
+    [blockedCount],
+  );
+  const handlePress = useCallback(() => {
+    onBeforeNavigate?.();
+    router.push(buildGoalsRoute());
+  }, [onBeforeNavigate]);
+
+  return (
+    <SidebarHeaderRow
+      icon={Target}
+      label={t(builtinSidebarNavLabelKey("goals"))}
+      onPress={handlePress}
+      isActive={pathname.includes("/goals")}
+      testID="sidebar-goals"
+      variant="compact"
+      accessibilityLabel={
+        blockedCount > 0
+          ? t("goals.sidebarBadge", {
+              label: t(builtinSidebarNavLabelKey("goals")),
+              n: blockedCount,
+            })
+          : undefined
+      }
+      trailing={badge}
+    />
+  );
+}
+
 const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps>> = {
   "new-workspace": SidebarNewWorkspaceRow,
   history: SidebarHistoryRow,
   search: SidebarSearchRow,
   schedules: SidebarSchedulesRow,
+  goals: SidebarGoalsRow,
 };
 
 const styles = StyleSheet.create({

@@ -5,6 +5,7 @@ import {
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
+import { parseAgentTeamsConfigPatch, type AgentTeamsConfig } from "./agent/agent-teams.js";
 import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
@@ -35,6 +36,9 @@ interface SupportedMutableConfigPatch {
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
+  /** Validated with the daemon's team schema; replaces the whole record. */
+  teams?: AgentTeamsConfig;
+  goals?: { maxConcurrentRuns?: number };
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
@@ -195,6 +199,8 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.teams",
+  "daemon.goals.maxConcurrentRuns",
   "app.baseUrl",
   "agents.idleRuntimeCleanup",
   "agents.resumeOnStartup",
@@ -223,6 +229,8 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.teams", "teams"],
+  ["daemon.goals.maxConcurrentRuns", "goals.maxConcurrentRuns"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.idleRuntimeCleanup", "idleRuntimeCleanup"],
   ["agents.resumeOnStartup", "resumeOnStartup"],
@@ -281,6 +289,20 @@ function pickRelayPatch(
   return Object.keys(picked).length > 0 ? { relay: picked } : {};
 }
 
+function pickGoalsPatch(
+  goals: MutableDaemonConfigPatch["goals"],
+): Pick<SupportedMutableConfigPatch, "goals"> {
+  return goals?.maxConcurrentRuns !== undefined
+    ? { goals: { maxConcurrentRuns: goals.maxConcurrentRuns } }
+    : {};
+}
+
+function pickTeamsPatch(
+  teams: MutableDaemonConfigPatch["teams"],
+): Pick<SupportedMutableConfigPatch, "teams"> {
+  return teams !== undefined ? { teams: parseAgentTeamsConfigPatch(teams) } : {};
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...pickRelayPatch(patch.relay),
@@ -312,6 +334,8 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...pickTeamsPatch(patch.teams),
+    ...pickGoalsPatch(patch.goals),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
     ...(patch.features !== undefined ? { features: patch.features } : {}),
@@ -427,6 +451,10 @@ export class DaemonConfigStore {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
+    if (parsedPatch.teams !== undefined) {
+      if (Object.keys(parsedPatch.teams).length > 0) merged.teams = parsedPatch.teams;
+      else delete merged.teams;
+    }
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -756,6 +784,14 @@ function mergeMutableAgentPatch(
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;
 }
 
+function mergeTeamsPatch(
+  target: NonNullable<PersistedConfig["daemon"]>,
+  teams: AgentTeamsConfig,
+): void {
+  if (Object.keys(teams).length > 0) target.teams = teams;
+  else delete target.teams;
+}
+
 function mergeMutableDaemonPatch(
   persistedDaemon: PersistedConfig["daemon"],
   patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
@@ -784,6 +820,10 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.teams !== undefined) mergeTeamsPatch(next, patch.teams);
+  if (patch.goals?.maxConcurrentRuns !== undefined) {
+    next.goals = { ...next.goals, maxConcurrentRuns: patch.goals.maxConcurrentRuns };
+  }
   return Object.keys(next).length > 0 ? next : undefined;
 }
 

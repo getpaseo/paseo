@@ -142,12 +142,13 @@ const darkDiffColors = {
 // Regenerate with the same rule rather than nudging one value.
 //
 // Hues are fixed per family across both themes: success 150, danger 27, warning 70.5,
-// merged 300.
+// running 250, merged 300.
 const lightStatusColors = {
   // L=0.50, chroma 60% of gamut max
   statusSuccess: "#3e704a",
   statusDanger: "#9d433b",
   statusWarning: "#7b5d39",
+  statusRunning: "#3b6692",
   statusMerged: "#7347af",
 };
 
@@ -156,6 +157,7 @@ const darkStatusColors = {
   statusSuccess: "#6cb17b",
   statusDanger: "#d8847b",
   statusWarning: "#c09664",
+  statusRunning: "#73a3d5",
   statusMerged: "#a890d5",
 };
 
@@ -167,6 +169,7 @@ function statusTints(colors: typeof lightStatusColors, alphaHex: string) {
     statusSuccessTint: `${colors.statusSuccess}${alphaHex}`,
     statusDangerTint: `${colors.statusDanger}${alphaHex}`,
     statusWarningTint: `${colors.statusWarning}${alphaHex}`,
+    statusRunningTint: `${colors.statusRunning}${alphaHex}`,
   };
 }
 

@@ -20,6 +20,12 @@ test("editors accept the daemon's browser, profile, plugin and metadata configur
       browserTools: { enabled: true },
       terminalProfiles: [],
       agentProfiles: [],
+      teams: {
+        "full-stack": {
+          roles: { reviewer: { description: "Reviews the diff.", provider: "claude" } },
+        },
+      },
+      goals: { maxConcurrentRuns: 8 },
     },
     pluginsEnabled: true,
     plugins: {},
@@ -67,6 +73,9 @@ test.each([
   { daemon: { browserTools: { enabled: "yes" } } },
   { daemon: { terminalProfiles: "default" } },
   { daemon: { agentProfiles: "default" } },
+  { daemon: { teams: { t: { roles: { r: { provider: "claude" } } } } } },
+  { daemon: { goals: { maxConcurrentRuns: 0 } } },
+  { daemon: { goals: { maxConcurrentRuns: 33 } } },
   { pluginsEnabled: "yes" },
   { plugins: [] },
   { agents: { metadataGeneration: { providers: [{ provider: "" }] } } },

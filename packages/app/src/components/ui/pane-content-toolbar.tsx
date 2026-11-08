@@ -118,7 +118,8 @@ export function ToolbarButton({
   if (kind === "menu") {
     return (
       <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild triggerRefProp="triggerRef">
+        {/* The menu trigger forwards `ref`; an unknown `triggerRef` prop left the tooltip unanchored. */}
+        <TooltipTrigger asChild triggerRefProp="ref">
           <DropdownMenuTrigger
             {...props}
             disabled={disabled}

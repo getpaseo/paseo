@@ -1,4 +1,4 @@
-import type { AgentUsage } from "../../agent-sdk-types.js";
+import type { AgentUsage, AgentUsageTotals } from "../../agent-sdk-types.js";
 import type { OmpSessionStats } from "./rpc-types.js";
 
 export interface OmpUsagePollScheduler {
@@ -47,6 +47,18 @@ function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
     totalCostUsd,
     ...(typeof contextWindowMaxTokens === "number" ? { contextWindowMaxTokens } : {}),
     ...(typeof contextWindowUsedTokens === "number" ? { contextWindowUsedTokens } : {}),
+    sessionTotals: toSessionTotals(stats),
+  };
+}
+
+/** The stats count the whole session; cache writes are fresh input. */
+function toSessionTotals(stats: OmpSessionStats): AgentUsageTotals {
+  const tokens = stats.tokens ?? {};
+  return {
+    inputTokens: (tokens.input ?? 0) + (tokens.cacheWrite ?? 0),
+    cachedInputTokens: tokens.cacheRead ?? 0,
+    outputTokens: tokens.output ?? 0,
+    costUsd: stats.cost ?? 0,
   };
 }
 

@@ -109,7 +109,7 @@ test.describe("Sidebar items in Appearance settings", () => {
     await gotoAppShell(page);
 
     await test.step("the sidebar starts in the default order", async () => {
-      await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules"]);
+      await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules", "goals"]);
     });
 
     await test.step("the Sidebar section lists every item in the same order", async () => {
@@ -123,6 +123,7 @@ test.describe("Sidebar items in Appearance settings", () => {
         "history",
         "search",
         "schedules",
+        "goals",
       ]);
       await expectSidebarNavSettingsRow(page, {
         key: "history",
@@ -164,6 +165,7 @@ test.describe("Sidebar items in Appearance settings", () => {
         { key: "schedules", visible: true },
         { key: "history", visible: false },
         { key: "search", visible: true },
+        { key: "goals", visible: true },
       ]);
 
       await leaveSettings(page);
@@ -184,6 +186,7 @@ test.describe("Sidebar items in Appearance settings", () => {
       { key: "history", visible: false },
       { key: "search", visible: false },
       { key: "schedules", visible: false },
+      { key: "goals", visible: false },
     ]);
     await gotoAppShell(page);
 
@@ -195,6 +198,7 @@ test.describe("Sidebar items in Appearance settings", () => {
     await expectSidebarItemHidden(page, "history");
     await expectSidebarItemHidden(page, "search");
     await expectSidebarItemHidden(page, "schedules");
+    await expectSidebarItemHidden(page, "goals");
   });
 });
 

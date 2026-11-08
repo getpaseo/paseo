@@ -44,6 +44,10 @@ import {
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
+import {
+  AgentTeamControl,
+  type AgentTeamControlValue,
+} from "@/composer/agent-controls/team-control";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -142,6 +146,7 @@ interface ControlledAgentControlsProps {
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider?: boolean;
   modeControl?: AgentModeControlValue | null;
+  teamControl?: AgentTeamControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
 }
@@ -172,6 +177,7 @@ export interface DraftAgentControlsProps {
   disabled?: boolean;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  teamControl?: AgentTeamControlValue | null;
 }
 
 interface AgentControlsProps {
@@ -518,6 +524,7 @@ function ControlledAgentControls({
   isRetryingModelProvider = false,
   modeControl,
   modelSelectorServerId = null,
+  teamControl = null,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
   const { t } = useTranslation();
@@ -810,6 +817,7 @@ function ControlledAgentControls({
             handleNestedOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
+            teamControl={teamControl}
             presentation={presentation}
             glyphs={layoutContextValue.glyphs}
             activeSheet={activeSheet}
@@ -852,6 +860,7 @@ function ControlledAgentControls({
             modeControl={modeControl}
             glyphs={layoutContextValue.glyphs}
             showLabels={presentation.showModelLabel}
+            teamControl={teamControl}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
@@ -911,6 +920,7 @@ interface DesktopAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
+  teamControl?: AgentTeamControlValue | null;
   presentation: ComposerControlPresentation;
   glyphs: ToolbarGlyphs;
   activeSheet: ActiveSheet;
@@ -968,6 +978,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleNestedOpenChange,
     renderThinkingOption,
     modeControl,
+    teamControl,
     presentation,
     glyphs,
     activeSheet,
@@ -1088,6 +1099,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 
       {modeControl ? <AgentModeControl {...modeControl} onClose={onDropdownClose} /> : null}
 
+      {teamControl ? <AgentTeamControl {...teamControl} onClose={onDropdownClose} /> : null}
+
       {presentation.aggregateFeatures && features?.length ? (
         <>
           <Pressable
@@ -1180,6 +1193,7 @@ interface SheetAgentControlsContentProps {
   modeControl?: AgentModeControlValue | null;
   glyphs: ToolbarGlyphs;
   showLabels: boolean;
+  teamControl?: AgentTeamControlValue | null;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
 }
@@ -1220,6 +1234,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     modeControl,
     glyphs,
     showLabels,
+    teamControl,
     modelSelectorServerId,
     canSwitchProvider,
   } = props;
@@ -1274,6 +1289,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       ) : null}
 
       {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
+
+      {teamControl ? <AgentTeamControl {...teamControl} surface="sheet" /> : null}
 
       {(features ?? []).map((feature) => (
         <SheetFeatureItem
@@ -1881,6 +1898,7 @@ export function DraftAgentControls({
   isRetryingModelProvider = false,
   disabled = false,
   modelSelectorServerId = null,
+  teamControl = null,
   isCompactLayout,
 }: DraftAgentControlsProps) {
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
@@ -1968,6 +1986,7 @@ export function DraftAgentControls({
         isRetryingModelProvider={isRetryingModelProvider}
         disabled={disabled}
         modeControl={modeControl}
+        teamControl={teamControl}
         modelSelectorServerId={modelSelectorServerId}
         isCompactLayout={isCompactLayout}
       />

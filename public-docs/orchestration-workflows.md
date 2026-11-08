@@ -44,16 +44,16 @@ The reviewer sees the worker's files in a fresh conversation. Use profiles from 
 
 ## Send a prompt to another agent
 
-Agents can prompt each other by **agent ID**, the identifier Paseo uses to address a specific agent. They can communicate across workspaces on the same host, including with agents they did not launch.
+Agents can prompt agents by **agent ID**, the identifier Paseo uses to address a specific agent. An agent can prompt the agents it launched and the agent that launched it, so a worker can report back to its creator. It cannot prompt siblings or agents it is not related to; members of a team with peer messaging use `send_team_message` for that.
+
+To pass work to an agent your agent did not launch, send it yourself:
 
 1. Right-click the receiving agent's tab and select **Copy agent id**.
-2. Paste that ID into your conversation with the sending agent and ask:
+2. Run [`paseo send <id> "<prompt>"`](/docs/cli#sending-messages), or type into that agent's conversation in the app.
 
-> Use Paseo to send this prompt to agent [paste agent ID here]: “Review the parser changes in your workspace and report any missing test cases.”
+The receiving agent gets the prompt in its existing conversation. Agent-originated sends default to steering a running turn, with interruption fallback when steering is unavailable. Set MCP `activeTurnBehavior` or CLI `--behavior` to `steer` or `interrupt` to override that default.
 
-The receiving agent gets the prompt in its existing conversation. Agent-originated sends default to steering a running turn, with interruption fallback when steering is unavailable. Set MCP `activeTurnBehavior` or CLI `--behavior` to `steer` or `interrupt` to override that default. To have it send a separate message back, give it the sender's agent ID too.
-
-Underneath, the agent calls `send_agent_prompt` with the recipient's `agentId` and a `prompt`. Agents can also discover IDs with `list_agents`; the CLI uses [`paseo send <id>`](/docs/cli#sending-messages). For another host, use the [remote CLI workflow](#work-on-another-machine).
+Underneath, the agent calls `send_agent_prompt` with the recipient's `agentId` and a `prompt`. For another host, use the [remote CLI workflow](#work-on-another-machine).
 
 ## Check, redirect, or continue work
 

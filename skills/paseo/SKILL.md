@@ -84,9 +84,9 @@ Detach is an explicit user action in the subagents track, not an agent tool. A c
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` when you want explicit reporting or no completion callback.
 
-**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. Set `activeTurnBehavior` to `steer` or `interrupt` to override the default. Steering falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Agent-scoped calls return a queued receipt immediately; messages to each recipient deliver after two quiet seconds. Top-level calls return after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
+**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls only reach your own subagents and the agent that created you; in a team run with peer messaging, use `send_team_message` for teammates. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. Set `activeTurnBehavior` to `steer` or `interrupt` to override the default. Steering falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Agent-scoped calls return a queued receipt immediately; messages to each recipient deliver after two quiet seconds. Top-level calls return after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
 
-**`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
+**`update_agent`** — `{ agentId, name?, labels?, settings? }`. Agents cannot set `paseo.*` labels except `paseo.team-role`, here or in `create_agent`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; set `includeBackground: true` to include agents in background workspaces.
 
@@ -104,6 +104,8 @@ There is no `profile` parameter on `create_agent`. Materialize the selected prof
 - copy `featureValues` to `settings.features`
 
 Omit absent values. Do not remember a selected profile or infer drift later; a profile is only launch configuration.
+
+If your system prompt says you lead a team, use the provider, settings and isolation it lists for each role instead of `list_profiles`. Helpers you create do not inherit the team.
 
 If no profile fits, or no profiles are configured, use the provider discovery tools below rather than guessing. Tell the user when you fall back because no configured profile fits.
 
@@ -130,6 +132,21 @@ Schedules have the full list/inspect/update/pause/resume/run-once/log/delete sur
 When you create or prompt a subagent, `notifyOnFinish` defaults to `true` and reports completion, errors, or permission requests, including across hosts.
 Finish your turn and wait for that notification instead of polling.
 If you want an explicit reply with `send_agent_prompt`, have the sender check `list_hosts` for the recipient’s server before setting `notifyOnFinish: false`.
+
+**`wait_for_agent`** — `{ agentId, timeoutSeconds? }`. Blocks until one of your own subagents ends its current turn and returns `{ status, agentStatus, lastMessage, lastMessageTruncated, permission?, guidance }`. `status` is `finished`, `error`, `closed`, `permission_requested`, or `timeout`. `timeoutSeconds` defaults to 600, minimum 1, maximum 1800. It returns at once when the agent needs permission or is not running a turn, and it refuses agents you did not create. On `timeout` the agent keeps running; call it again. A result the wait returned is not repeated as a notification. Use it when you need the result before you can continue; otherwise let the notification arrive.
+
+**`list_team_members`** / **`send_team_message`** — only inside a team run whose team sets `peerMessaging`. `list_team_members {}` shows your teammates (`role`, `isParent`, `isSelf`). `send_team_message { agentId, message }` messages one of them directly and returns `{ outcome: "delivered" | "queued" | "failed", detail }`; `delivered` means accepted, not read. Limits: 8000 characters, 20 messages per minute per sender, 200 per team run. Message a teammate for coordination; report final results to your parent.
+
+Delegate to a different provider and wait inline:
+
+```text
+create_agent { title: "Review", provider: "codex/gpt-5.4", initialPrompt: "Review the diff on this branch and list defects." }
+  -> { agentId: "A" }
+wait_for_agent { agentId: "A", timeoutSeconds: 900 }
+  -> status "permission_requested": respond_to_permission { agentId: "A", requestId: permission.requestId, response: { behavior: "allow" } }, then wait_for_agent again
+  -> status "timeout": the agent is still working; wait_for_agent again or do other work
+  -> status "finished": read lastMessage (get_agent_activity if lastMessageTruncated)
+```
 
 ## CLI semantics
 

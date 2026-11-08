@@ -25,6 +25,11 @@ export class WorkspaceSetupRuntime {
       });
   }
 
+  /** Resolves when the workspace's setup, if one is running, has finished. */
+  async wait(workspaceId: string): Promise<void> {
+    await this.runs.get(workspaceId)?.completion;
+  }
+
   async stop(workspaceId: string): Promise<void> {
     const run = this.runs.get(workspaceId);
     if (!run) {

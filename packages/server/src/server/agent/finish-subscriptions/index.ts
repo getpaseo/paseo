@@ -47,10 +47,21 @@ export interface FinishRegistration {
   /** Rejected dispatch preserves preceding registrations. */
   reject(): Promise<void>;
 }
+/** What a `wait_for_agent` call already handed to the caller. */
+export type WaitDeliveredOutcome = { kind: "terminal" } | { kind: "permission"; requestId: string };
+export interface FinishNotificationHold {
+  /** Ends the hold. A delivered outcome suppresses the matching notification. */
+  settle(delivered: WaitDeliveredOutcome | null): void;
+}
 export interface FinishSubscriptions {
   start(): Promise<void>;
   /** Pending notification intent, including registration, recovery and unacknowledged delivery. */
   hasPendingForCaller(agentId: string): boolean;
+  /**
+   * Held while a local caller blocks in wait_for_agent on its child. Notifications for
+   * the pair wait for open holds, then drop an outcome the wait already returned.
+   */
+  hold(input: { callerAgentId: string; childAgentId: string }): FinishNotificationHold;
   register(
     input: Omit<FinishSubscription, "id">,
     pendingDispatch?: boolean,
@@ -65,14 +76,24 @@ interface Watch {
   pending: boolean;
   task?: Promise<void>;
 }
+interface WaitState {
+  holds: Set<Promise<void>>;
+  deliveredTerminal: boolean;
+  deliveredPermissionIds: Set<string>;
+}
 function key(record: FinishSubscription): string {
   return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
+}
+function waitKey(callerAgentId: string, childAgentId: string): string {
+  return JSON.stringify([callerAgentId, childAgentId]);
 }
 
 /** Owns durable intent, live observation, supersession, and dispatch acknowledgment. */
 export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptions {
   const tasks = new Set<Promise<void>>();
   const watches = new Map<string, Set<Watch>>();
+  // wait_for_agent is local, so only local subscriptions consult these.
+  const waits = new Map<string, WaitState>();
   let closed = false;
   let recovering = true;
   const registering = new Map<string, number>();
@@ -84,6 +105,70 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       () => undefined,
     );
     return result;
+  }
+  function releaseWaitIfUnused(waitId: string): void {
+    const state = waits.get(waitId);
+    if (
+      state &&
+      !state.holds.size &&
+      !state.deliveredTerminal &&
+      !state.deliveredPermissionIds.size
+    )
+      waits.delete(waitId);
+  }
+  function hold(input: { callerAgentId: string; childAgentId: string }): FinishNotificationHold {
+    const waitId = waitKey(input.callerAgentId, input.childAgentId);
+    const state = waits.get(waitId) ?? {
+      holds: new Set<Promise<void>>(),
+      deliveredTerminal: false,
+      deliveredPermissionIds: new Set<string>(),
+    };
+    waits.set(waitId, state);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    state.holds.add(held);
+    let settled = false;
+    return {
+      settle(delivered) {
+        if (settled) return;
+        settled = true;
+        if (delivered?.kind === "terminal") state.deliveredTerminal = true;
+        else if (delivered?.kind === "permission")
+          state.deliveredPermissionIds.add(delivered.requestId);
+        state.holds.delete(held);
+        release();
+        releaseWaitIfUnused(waitId);
+      },
+    };
+  }
+  /**
+   * Waits for open wait_for_agent holds, then consumes what they delivered. Returns true
+   * when the wait already returned this terminal outcome; marks delivered permission
+   * requests as notified.
+   */
+  async function deliveredByWait(
+    record: FinishSubscription,
+    result: FinishObservationResult,
+    permissions: Set<string>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (record.serverId) return false;
+    const waitId = waitKey(record.callerAgentId, record.childAgentId);
+    const state = waits.get(waitId);
+    if (!state) return false;
+    await abortable(Promise.all(state.holds), signal);
+    let delivered = false;
+    if (reasonFor(result) === "needs permission") {
+      for (const request of result.final?.pendingPermissions ?? [])
+        if (state.deliveredPermissionIds.delete(request.id)) permissions.add(request.id);
+    } else if (state.deliveredTerminal) {
+      state.deliveredTerminal = false;
+      delivered = true;
+    }
+    releaseWaitIfUnused(waitId);
+    return delivered;
   }
   function attach(records: FinishSubscription[], pending: boolean): Watch {
     let decide!: Watch["decide"];
@@ -274,6 +359,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
+          if (!acknowledged)
+            acknowledged = await deliveredByWait(record, pending, permissions, signal);
           if (!acknowledged) acknowledged = await deliver(record, pending, permissions, signal);
           if (acknowledged) {
             // A removal failure retries only the commit, never the already accepted callback.
@@ -311,6 +398,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       }
       return false;
     },
+    hold,
     start: () =>
       serialize(async () => {
         const groups = new Map<string, FinishSubscription[]>();
@@ -332,6 +420,14 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           id: randomUUID(),
         };
         await deps.store.put(record);
+        if (!record.serverId) {
+          // This subscription watches new work, so an earlier wait's result is not its outcome.
+          const state = waits.get(waitKey(record.callerAgentId, record.childAgentId));
+          if (state) {
+            state.deliveredTerminal = false;
+            releaseWaitIfUnused(waitKey(record.callerAgentId, record.childAgentId));
+          }
+        }
         const group = watches.get(key(record)) ?? new Set<Watch>();
         const predecessors = [...group];
         const watch = attach([record], true);
