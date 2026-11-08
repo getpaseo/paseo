@@ -283,7 +283,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
-Do not await a write to the agent being opened, such as `setMetadata`. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
+Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }, { paseo }) => {

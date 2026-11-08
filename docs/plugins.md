@@ -474,9 +474,10 @@ path shape: a plugin can place a worktree several directories below the default 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
-The same holds for a hook that runs inside an agent's lifecycle lane: an `agent.open.before` hook
-that awaits a write to the agent being opened (`setMetadata`, `setLabels`) waits on the open, which
-waits on the hook. The hooks reference tells plugin authors to start such a write without awaiting it.
+The same holds for a hook that runs inside an agent's lifecycle lane: an `agent.open.before` or
+`agent.create.before` hook that awaits a write to the agent being opened (`setMetadata`, `setLabels`,
+an option, model, thinking or mode change) waits on the open, which waits on the hook. The hooks
+reference tells plugin authors to start such a write without awaiting it.
 
 ## Contribute a provider
 

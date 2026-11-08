@@ -53,12 +53,18 @@ or without a control.
   first prompt only Fast can change. Codex fixes its approval policy and sandbox when the thread
   starts, so it applies only `service_tier` and `plan_mode` live. A session with no
   `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
-  it ended up with when they differ from the request. The daemon
-  stores the patch and that result in one step after the call resolves, onto the agent's options
-  as they are at that moment, so the last write wins. Throwing rejects the whole patch and
-  none of it is stored. Emit nothing from inside the call. If the provider's own state moved
-  before it refused, it reports the moved values once as `options_changed` after the call has
-  ended, because the stored options must match what runs.
+  it ended up with when they differ from the request. The daemon stores the patch and that
+  result in one step after the call resolves. Throwing rejects the whole patch and none of it is
+  stored. Emit nothing from inside the call. If the provider's own state moved before it refused,
+  it reports the moved values once as `options_changed` after the call has ended, because the
+  stored options must match what runs.
+- **One change at a time per agent.** `AgentManager` runs every option, model, thinking and mode
+  change inside the agent's lifecycle lane, the same queue that opens, reopens, closes and
+  archives it. `applyOptions`, `setModel`, `setThinkingOption` and `setMode` are never in flight
+  together on one session, and none of them overlaps an open or reopen. Providers do no
+  sequencing of their own: no queues, no "apply over the options as they are now" handling. A
+  change that arrives while another runs waits for it and then reads the agent's stored options
+  as that one left them.
 - **Old data converts in the agent manager.** Codex used to take `fast_mode`; it takes
   `service_tier` now. `AgentManager` runs `convertLegacyOptions` (`option-controls.ts`) on an
   agent's own options when it creates, resumes, imports, reloads or applies to it, and on draft
