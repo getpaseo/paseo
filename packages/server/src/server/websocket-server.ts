@@ -1227,7 +1227,7 @@ export class VoiceAssistantWebSocketServer {
 
     await Promise.all(cleanupPromises);
     this.providerSnapshotManager.destroy();
-    this.checkoutDiffManager.dispose();
+    await this.checkoutDiffManager.dispose();
     await this.workspaceGitService.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
@@ -2025,6 +2025,7 @@ export class VoiceAssistantWebSocketServer {
         usageSetting: true,
         usageSources: true,
         ownedSubscriptions: true,
+        diffSubscription: true,
         binaryChunkingV1: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
@@ -2038,6 +2039,7 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        terminalCollection: true,
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         workspaceSetupObservation: true,

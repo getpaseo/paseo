@@ -61,6 +61,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     },
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],

@@ -2322,6 +2322,51 @@ const CheckoutDiffCompareSchema = z.object({
   ignoreWhitespace: z.boolean().optional(),
 });
 
+export const DiffEndpointSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("rev"), rev: z.string() }),
+  z.object({ kind: z.literal("index") }),
+  z.object({ kind: z.literal("worktree") }),
+  z.object({ kind: z.literal("empty") }),
+]);
+export const DiffErrorSchema = z.object({
+  code: z.enum([
+    "NOT_GIT_REPO",
+    "REF_NOT_FOUND",
+    "INVALID_COMPARE",
+    "TOO_MANY_SUBSCRIPTIONS",
+    "UNKNOWN",
+  ]),
+  message: z.string(),
+});
+export const DiffSubscribeRequestSchema = z.object({
+  type: z.literal("diff.subscribe.request"),
+  requestId: z.string(),
+  cwd: z.string(),
+  base: DiffEndpointSchema,
+  head: DiffEndpointSchema,
+  mergeBase: z.boolean().optional(),
+  ignoreWhitespace: z.boolean().optional(),
+  highlight: z.boolean().optional(),
+});
+// Unsubscribe is fire-and-forget; release has no correlated response.
+export const DiffUnsubscribeRequestSchema = z.object({
+  type: z.literal("diff.unsubscribe.request"),
+  subscriptionId: z.string(),
+});
+export const DiffSubscribeResponseSchema = z.object({
+  type: z.literal("diff.subscribe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    subscriptionId: z.string(),
+    slot: z.number().int().min(0).max(255),
+    error: DiffErrorSchema.nullable(),
+  }),
+});
+export type DiffEndpoint = z.infer<typeof DiffEndpointSchema>;
+export type DiffError = z.infer<typeof DiffErrorSchema>;
+export type DiffSubscribeRequest = z.infer<typeof DiffSubscribeRequestSchema>;
+export type DiffSubscribeResponse = z.infer<typeof DiffSubscribeResponseSchema>;
+
 export const CheckoutStatusRequestSchema = z.object({
   type: z.literal("checkout_status_request"),
   cwd: z.string(),
@@ -3093,13 +3138,13 @@ export const ListTerminalsRequestSchema = z.object({
 export const SubscribeTerminalsRequestSchema = z.object({
   type: z.literal("subscribe_terminals_request"),
   requestId: z.string().optional(),
-  cwd: z.string(),
+  cwd: z.string().optional(),
   workspaceId: z.string().optional(),
 });
 
 export const UnsubscribeTerminalsRequestSchema = z.object({
   type: z.literal("unsubscribe_terminals_request"),
-  cwd: z.string(),
+  cwd: z.string().optional(),
   workspaceId: z.string().optional(),
 });
 
@@ -3466,6 +3511,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
+  DiffSubscribeRequestSchema,
+  DiffUnsubscribeRequestSchema,
   CheckoutStatusRequestSchema,
   CheckoutDiffGetRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
@@ -3770,6 +3817,7 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        terminalCollection: z.boolean().optional(),
         // COMPAT(workspaceBaseBranch): added after v0.11.2, remove gate after 2027-10-14.
         workspaceBaseBranch: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
@@ -3931,6 +3979,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        diffSubscription: z.boolean().optional(),
         binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
@@ -5521,6 +5570,7 @@ const CheckoutStatusCommonSchema = z.object({
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
   baseRefExact: z.string().nullable().optional(),
+  comparisonBaseRef: z.string().nullable().optional(),
   // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
   // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a
   // "refs/heads/..." ref for a branch tracking a local branch. Null when there is no
@@ -6684,6 +6734,8 @@ export const ListCommandsResponseSchema = z.object({
 // ============================================================================
 
 const TerminalInfoSchema = z.object({
+  createdAt: z.string().nullable().optional(),
+  isScript: z.boolean().optional(),
   id: z.string(),
   name: z.string(),
   cwd: z.string(),
@@ -6747,8 +6799,8 @@ export const TerminalsChangedSchema = z.object({
     subscriptionId: z.string().optional(),
     requestId: z.string().optional(),
     workspaceId: z.string().optional(),
-    cwd: z.string(),
-    terminals: z.array(TerminalInfoSchema.omit({ cwd: true })),
+    cwd: z.string().optional(),
+    terminals: z.array(TerminalInfoSchema.partial({ cwd: true })),
   }),
 });
 
@@ -7332,6 +7384,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
   CloseItemsResponseSchema,
+  DiffSubscribeResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutStatusUpdateSchema,
   CheckoutDiffGetResponseSchema,

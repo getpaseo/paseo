@@ -1666,19 +1666,19 @@ it.each([1, 4])(
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(5);
+    expect(workers[0]!.protocolVersion).toBe(6);
   },
 );
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 6);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 6");
+  expect(unavailable?.message).toContain("worker protocol 7");
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
