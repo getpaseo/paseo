@@ -8076,24 +8076,7 @@ export class Session {
           ) {
             continue;
           }
-          const nextRecord: StoredAgentRecord = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            requiresAttention: false,
-            attentionReason: null,
-            attentionTimestamp: null,
-          };
-          await this.agentStorage.upsert(nextRecord);
-          const agent = this.buildStoredAgentPayload(nextRecord);
-          const project = await this.buildProjectPlacementForWorkspace(workspace);
-          this.emit({
-            type: "agent_update",
-            payload: {
-              kind: "upsert",
-              agent,
-              project,
-            },
-          });
+          await this.agentManager.clearAgentAttention(agentId);
           clearedAgentIds.push(agentId);
         }
 

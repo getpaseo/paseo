@@ -2517,12 +2517,30 @@ export class AgentManager {
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    if (agent.attention.requiresAttention) {
-      agent.attention = { requiresAttention: false };
-      await this.persistSnapshot(agent);
-      this.emitState(agent, { persist: false });
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      if (agent.attention.requiresAttention) {
+        agent.attention = { requiresAttention: false };
+        await this.persistSnapshot(agent);
+        this.emitState(agent, { persist: false });
+      }
+      return;
     }
+
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record || record.internal || record.archivedAt || record.requiresAttention !== true) {
+      return;
+    }
+    const nextRecord: StoredAgentRecord = {
+      ...record,
+      updatedAt: this.nextStoredUpdatedAt(record),
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    };
+    await registry.upsert(nextRecord);
+    this.dispatchStoredAgentState(nextRecord);
   }
 
   async markAgentUnread(agentId: string): Promise<void> {
