@@ -2,6 +2,8 @@ import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 
 export const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
+// Runtime trust follows the injected object, not its address or serializable config.
+const runtimePaseoMcpServers = new WeakSet<McpServerConfig>();
 
 export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSessionConfig {
   const mcpServers = config.mcpServers;
@@ -42,19 +44,23 @@ export function withRuntimePaseoMcpServer(params: {
     return storedConfig;
   }
 
+  const server: McpServerConfig = {
+    type: "http",
+    url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
+    ...(params.mcpAuthToken ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } } : {}),
+  };
+  runtimePaseoMcpServers.add(server);
   return {
     ...storedConfig,
     mcpServers: {
-      [PASEO_MCP_SERVER_NAME]: {
-        type: "http",
-        url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
-        ...(params.mcpAuthToken
-          ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } }
-          : {}),
-      },
+      [PASEO_MCP_SERVER_NAME]: server,
       ...storedConfig.mcpServers,
     },
   };
+}
+
+export function isRuntimePaseoMcpServer(config: McpServerConfig): boolean {
+  return runtimePaseoMcpServers.has(config);
 }
 
 function isInternalPaseoMcpServer(config: McpServerConfig): boolean {

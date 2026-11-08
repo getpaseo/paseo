@@ -54,6 +54,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
+import { isRuntimePaseoMcpServer, PASEO_MCP_SERVER_NAME } from "../runtime-mcp-config.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
   fileChangesToPreview,
@@ -961,6 +962,23 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
 
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
+}
+
+function isPaseoMcpToolApproval(request: {
+  serverName: string;
+  requestedSchema?: unknown;
+  _meta?: Record<string, unknown> | null;
+}): boolean {
+  const schema = toObjectRecord(request.requestedSchema);
+  const properties = toObjectRecord(schema?.properties);
+  return (
+    request.serverName === PASEO_MCP_SERVER_NAME &&
+    request._meta?.codex_approval_kind === "mcp_tool_call" &&
+    request._meta?.codex_requires_user_input !== true &&
+    schema?.type === "object" &&
+    (schema.properties === undefined ||
+      (properties !== undefined && Object.keys(properties).length === 0))
+  );
 }
 
 function isDefinitiveCodexSteerRejection(error: unknown): boolean {
@@ -4742,9 +4760,41 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.hasWorkflowModeOverride = true;
     this.config.modeId = modeId;
     this.cachedRuntimeInfo = null;
+    if (this.hasFullAccessPermissions()) {
+      for (const [requestId, pending] of this.pendingPermissionHandlers) {
+        if (!this.hasFullAccessPermissions()) break;
+        if (
+          pending.kind === "command" ||
+          pending.kind === "file" ||
+          (pending.kind === "mcp_elicitation" &&
+            this.pendingPermissions.get(requestId)?.metadata?.paseoToolApproval === true)
+        ) {
+          await this.respondToPermission(requestId, { behavior: "allow" });
+        }
+      }
+    }
     if (this.activeForegroundTurnId) {
+      if (this.hasFullAccessPermissions()) {
+        return {
+          type: "info",
+          message: "Full Access approvals apply now; sandbox changes apply next turn",
+        };
+      }
       return MODE_APPLIES_NEXT_TURN_NOTICE;
     }
+  }
+
+  private hasFullAccessPermissions(): boolean {
+    return (
+      this.currentMode === "full-access" &&
+      (this.providerOptions.approval_policy ?? "never") === "never" &&
+      (this.providerOptions.sandbox_mode ?? "danger-full-access") === "danger-full-access"
+    );
+  }
+
+  private hasRuntimePaseoMcpServer(): boolean {
+    const server = this.config.mcpServers?.[PASEO_MCP_SERVER_NAME];
+    return server !== undefined && isRuntimePaseoMcpServer(server);
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -7318,6 +7368,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         reason: z.string().nullable().optional(),
       })
       .parse(params);
+    if (this.hasFullAccessPermissions()) {
+      return Promise.resolve({ decision: "accept" });
+    }
     const commandPreview = mapCodexExecNotificationToToolCall({
       callId: parsed.itemId,
       command: parsed.command,
@@ -7368,6 +7421,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         reason: z.string().nullable().optional(),
       })
       .parse(params);
+    if (this.hasFullAccessPermissions()) {
+      return { decision: "accept" };
+    }
     const requestId = `permission-${parsed.itemId}`;
     const detail: ToolCallTimelineItem["detail"] = this.pendingToolCallDetails.get(
       parsed.itemId,
@@ -7463,6 +7519,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         requestedSchema: z.unknown().optional(),
         url: z.string().optional(),
         elicitationId: z.string().optional(),
+        _meta: z.record(z.string(), z.unknown()).nullable().optional(),
       })
       .parse(params);
     if (parsed.mode === "url") {
@@ -7471,6 +7528,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     const requiredFields = toObjectRecord(parsed.requestedSchema)?.required;
     if (Array.isArray(requiredFields) && requiredFields.length > 0) {
       return Promise.resolve({ action: "decline", content: null, _meta: null });
+    }
+    const paseoToolApproval = this.hasRuntimePaseoMcpServer() && isPaseoMcpToolApproval(parsed);
+    if (this.hasFullAccessPermissions() && paseoToolApproval) {
+      return Promise.resolve({ action: "accept", content: {}, _meta: null });
     }
     const requestId = `permission-${randomUUID()}`;
     const request: AgentPermissionRequest = {
@@ -7490,6 +7551,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         turnId: parsed.turnId ?? null,
         serverName: parsed.serverName,
         elicitationId: parsed.elicitationId ?? null,
+        ...(paseoToolApproval ? { paseoToolApproval: true } : {}),
       },
     };
     this.pendingPermissions.set(requestId, request);

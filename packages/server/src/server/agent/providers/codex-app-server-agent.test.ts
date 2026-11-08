@@ -18,6 +18,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+import { withRuntimePaseoMcpServer } from "../runtime-mcp-config.js";
 import {
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
@@ -153,6 +154,18 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     model: "gpt-5.4",
     ...overrides,
   };
+}
+
+function createConfigWithRuntimePaseoMcp(
+  overrides: Partial<AgentSessionConfig> = {},
+  mcpBaseUrl = "http://127.0.0.1:6767/mcp/agents",
+): AgentSessionConfig {
+  return withRuntimePaseoMcpServer({
+    config: createConfig(overrides),
+    agentId: "parent",
+    mcpBaseUrl,
+    mcpAuthToken: null,
+  });
 }
 
 function createSession(
@@ -1185,8 +1198,8 @@ describe("Codex app-server provider", () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 
     await expect(session.setMode("full-access")).resolves.toEqual({
-      type: "warning",
-      message: "Permission mode applies next turn",
+      type: "info",
+      message: "Full Access approvals apply now; sandbox changes apply next turn",
     });
     await expect(session.setThinkingOption?.("high")).resolves.toEqual({
       type: "warning",
@@ -1198,6 +1211,53 @@ describe("Codex app-server provider", () => {
     await expect(session.setMode("auto")).resolves.toBeUndefined();
     await expect(session.setThinkingOption?.("low")).resolves.toBeUndefined();
   });
+
+  test.each(["command", "file"] as const)(
+    "switching to Full Access releases pending %s approvals and accepts subsequent requests",
+    async (kind) => {
+      const appServer = createFakeCodexAppServer();
+      const session =
+        await createProviderWithFakeAppServer(appServer).createSession(createConfig());
+      const ask = (itemId: string) => {
+        const request = { itemId, threadId: "thread-1", turnId: "turn-1", reason: "Continue work" };
+        if (kind === "command") {
+          appServer.requestCommandApproval({
+            ...request,
+            command: "npm run lint",
+            cwd: "/workspace/project",
+          });
+        } else {
+          appServer.requestFileChangeApproval(request);
+        }
+      };
+      try {
+        await session.startTurn("continue");
+        await appServer.waitForTurnStart();
+        appServer.startsTurn({ threadId: "thread-1", turnId: "turn-1" });
+        const pending = waitForNextPermission(session);
+        ask("blocked-item");
+        const permission = await pending;
+        expect(session.getPendingPermissions().map((request) => request.id)).toEqual([
+          permission.request.id,
+        ]);
+
+        await session.setMode("full-access");
+        expect(session.getPendingPermissions()).toEqual([]);
+        await expect(appServer.waitForApprovalDecision("blocked-item")).resolves.toEqual({
+          decision: "accept",
+        });
+
+        ask("next-item");
+        await expect(appServer.waitForApprovalDecision("next-item")).resolves.toEqual({
+          decision: "accept",
+        });
+        expect(session.getPendingPermissions()).toEqual([]);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test.each(["auto_review", "guardian_subagent"])(
     "parses %s thread/start response as auto-review mode",
@@ -1492,6 +1552,93 @@ describe("Codex app-server provider", () => {
       await session.close();
     }
   });
+
+  test("Full Access does not leave persistent MCP preapproval after a mode downgrade", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfigWithRuntimePaseoMcp({ modeId: "full-access" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      await session.startTurn("continue");
+      expect(
+        appServer.requests().find((request) => request.method === "thread/start"),
+      ).toMatchObject({
+        params: {
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        },
+      });
+      expect(
+        appServer.requests().find((request) => request.method === "thread/start"),
+      ).not.toMatchObject({
+        params: { config: { mcp_servers: { paseo: { default_tools_approval_mode: "approve" } } } },
+      });
+      await appServer.waitForTurnStart();
+      const request = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "paseo",
+        message: "Approve tool",
+        requestedSchema: { type: "object" },
+        _meta: { codex_approval_kind: "mcp_tool_call" },
+      };
+      appServer.requestMcpElicitation(request);
+      await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+        action: "accept",
+        content: {},
+        _meta: null,
+      });
+      await session.setMode("auto");
+      const pending = waitForNextPermission(session);
+      appServer.requestMcpElicitation(request);
+      const permission = await pending;
+      expect(session.getPendingPermissions().map((item) => item.id)).toEqual([
+        permission.request.id,
+      ]);
+      await session.respondToPermission(permission.request.id, { behavior: "deny" });
+      await appServer.waitForMcpElicitationDecision();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([{ approval_policy: "on-request" }, { sandbox_mode: "read-only" }])(
+    "Full Access respects explicit provider restrictions %j",
+    async (providerOptions) => {
+      const appServer = createFakeCodexAppServer();
+      const session = await createProviderWithFakeAppServer(appServer).createSession(
+        createConfig({ modeId: "full-access", providerOptions }),
+      );
+      try {
+        await session.startTurn("continue");
+        await appServer.waitForTurnStart();
+        const pending = waitForNextPermission(session);
+        appServer.requestCommandApproval({
+          itemId: "restricted-command",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "npm run lint",
+          cwd: "/workspace/project",
+          reason: "Restricted provider options",
+        });
+        const permission = await pending;
+        await session.setMode("full-access");
+        expect(session.getPendingPermissions().map((request) => request.id)).toEqual([
+          permission.request.id,
+        ]);
+        await session.respondToPermission(permission.request.id, { behavior: "deny" });
+        await appServer.waitForApprovalDecision("restricted-command");
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
@@ -2003,6 +2150,151 @@ describe("Codex app-server provider", () => {
         callId: "terminal-session-4242-2",
         detail: { type: "plain_text", text: "git push\n" },
       });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    "http://127.0.0.1:6767/mcp/agents",
+    "http://192.168.1.25:6767/mcp/agents",
+    "http://100.85.12.3:6767/mcp/agents",
+    "http://[fd7a:115c:a1e0::1234]:6767/mcp/agents",
+  ])(
+    "switching to Full Access releases pending and subsequent Paseo tool approvals at %s",
+    async (mcpBaseUrl) => {
+      const appServer = createFakeCodexAppServer();
+      const session = await createProviderWithFakeAppServer(appServer).createSession(
+        createConfigWithRuntimePaseoMcp({}, mcpBaseUrl),
+      );
+      try {
+        const pending = waitForNextPermission(session);
+        appServer.requestMcpElicitation({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          serverName: "paseo",
+          message: 'Allow the paseo MCP server to run tool "send_agent_prompt"?',
+          requestedSchema: { type: "object" },
+          _meta: { codex_approval_kind: "mcp_tool_call" },
+        });
+        await pending;
+        await session.setMode("full-access");
+        expect(session.getPendingPermissions()).toEqual([]);
+        await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+          action: "accept",
+          content: {},
+          _meta: null,
+        });
+        appServer.requestMcpElicitation({
+          threadId: "thread-1",
+          turnId: "turn-1",
+          serverName: "paseo",
+          message: 'Allow the paseo MCP server to run tool "list_agents"?',
+          requestedSchema: { type: "object" },
+          _meta: { codex_approval_kind: "mcp_tool_call" },
+        });
+        await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+          action: "accept",
+          content: {},
+          _meta: null,
+        });
+        expect(session.getPendingPermissions()).toEqual([]);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test.each([
+    "http://127.0.0.1:6767/mcp/agents?callerAgentId=parent",
+    "https://external.example/mcp/agents?callerAgentId=parent",
+    "http://127.0.0.1:6767/mcp/agents",
+    "http://127.0.0.1:6767/mcp/agents?callerAgentId=",
+  ])("Full Access preserves approvals for a configured paseo server at %s", async (url) => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        modeId: "full-access",
+        mcpServers: { paseo: { type: "http", url } },
+      }),
+    );
+    try {
+      await session.startTurn("continue");
+      await appServer.waitForTurnStart();
+      expect(
+        appServer.requests().find((request) => request.method === "thread/start"),
+      ).not.toMatchObject({
+        params: { config: { mcp_servers: { paseo: { default_tools_approval_mode: "approve" } } } },
+      });
+      const pending = waitForNextPermission(session);
+      appServer.requestMcpElicitation({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "paseo",
+        message: "Approve tool",
+        requestedSchema: { type: "object" },
+        _meta: { codex_approval_kind: "mcp_tool_call" },
+      });
+      const permission = await pending;
+      await session.setMode("full-access");
+      expect(session.getPendingPermissions().map((item) => item.id)).toEqual([
+        permission.request.id,
+      ]);
+      await session.respondToPermission(permission.request.id, { behavior: "deny" });
+      await appServer.waitForMcpElicitationDecision();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    {
+      serverName: "external",
+      requestedSchema: { type: "object" },
+      _meta: { codex_approval_kind: "mcp_tool_call" },
+    },
+    { serverName: "paseo", requestedSchema: { type: "object" }, _meta: {} },
+    {
+      serverName: "paseo",
+      requestedSchema: { type: "object" },
+      _meta: { codex_approval_kind: "browser_auth" },
+    },
+    {
+      serverName: "paseo",
+      requestedSchema: { type: "object" },
+      _meta: { codex_approval_kind: "mcp_tool_call", codex_requires_user_input: true },
+    },
+    {
+      serverName: "paseo",
+      requestedSchema: { type: "object", properties: { answer: { type: "string" } } },
+      _meta: { codex_approval_kind: "mcp_tool_call" },
+    },
+  ])("Full Access preserves MCP requests needing a separate decision %j", async (request) => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfigWithRuntimePaseoMcp({ modeId: "full-access" }),
+    );
+    try {
+      const pending = waitForNextPermission(session);
+      appServer.requestMcpElicitation({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        message: "A separate decision",
+        ...request,
+      });
+      await expect(
+        Promise.race([pending, appServer.waitForMcpElicitationDecision()]),
+      ).resolves.toMatchObject({ type: "permission_requested" });
+      const permission = await pending;
+      await session.setMode("full-access");
+      expect(session.getPendingPermissions().map((item) => item.id)).toEqual([
+        permission.request.id,
+      ]);
+      await session.respondToPermission(permission.request.id, { behavior: "deny" });
+      await appServer.waitForMcpElicitationDecision();
       appServer.assertNoErrors();
     } finally {
       await session.close();
