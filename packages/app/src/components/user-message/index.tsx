@@ -9,6 +9,7 @@ import { useProviderIcon } from "@/components/provider-icons";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { isNative } from "@/constants/platform";
+import { useDisclosureHold } from "@/agent-stream/disclosure";
 
 const PREVIEW_HEIGHT = 240;
 // Native View still clips with "scroll", but Yoga measures its children without
@@ -26,7 +27,8 @@ export function MessagePreview({ children }: { children: ReactNode }) {
     (event: LayoutChangeEvent) => setOverflowing(event.nativeEvent.layout.height > PREVIEW_HEIGHT),
     [],
   );
-  const toggle = useCallback(() => setExpanded((value) => !value), []);
+  const hold = useDisclosureHold();
+  const toggle = useCallback(() => hold(() => setExpanded((value) => !value)), [hold]);
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   return (
     <>

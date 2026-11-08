@@ -1,8 +1,8 @@
 # Agent stream disclosures
 
 Expanding or collapsing something in the chat timeline (a turn's summary line, a tool-call group,
-a tool call's inline details, a todo card) keeps the tapped trigger at the same screen y in the
-first painted frame. No animation.
+a tool call's inline details, a todo card, a long user message's show more, a plan card) keeps the
+tapped trigger at the same screen y in the first painted frame. No animation.
 
 ## The contract
 
@@ -16,6 +16,8 @@ const handleToggle = () => hold(() => setExpanded((value) => !value));
 `view.tsx` wraps every timeline row in `DisclosureRow`, which routes `hold` to the strategy's
 `holdRow(rowId, apply)` (`packages/app/src/agent-stream/disclosure.tsx`). Outside a timeline row,
 `apply` runs as is. The strategy owns when `apply` runs and how the row keeps its place.
+A toggle that calls `setState` directly skips the hold: on Android the expanded content paints
+over the next row for a frame before the list learns the new size.
 
 Following output:
 
