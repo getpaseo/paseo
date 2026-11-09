@@ -1,0 +1,178 @@
+diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/ResolvingShareIntentDataParser.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/ResolvingShareIntentDataParser.kt
+index 5f4d942..cdb614c 100644
+--- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/ResolvingShareIntentDataParser.kt
++++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/ResolvingShareIntentDataParser.kt
+@@ -7,6 +7,7 @@ import android.net.Uri
+ import android.provider.OpenableColumns
+ import java.io.File
+ import java.io.FileOutputStream
++import java.util.UUID
+ import java.net.HttpURLConnection
+ import java.net.URL
+ import kotlin.text.indexOf
+@@ -25,11 +26,13 @@ class ResolvingShareIntentDataParser {
+     }
+ 
+     private fun handleSendAction(context: Context, intent: Intent, type: String): List<ResolvedSharePayload> {
+-      return if (type == "text/plain") {
++      // A share without EXTRA_STREAM carries its content in EXTRA_TEXT, whatever its type (browsers
++      // send text/html). A shared text file (.txt, .md) is text/plain but arrives in EXTRA_STREAM.
++      val streamUri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
++      return if (streamUri == null) {
+         extractTextPayload(intent)
+       } else {
+-        val uri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
+-        listOfNotNull(uri?.let { resolveUri(context, it, type) })
++        listOf(resolveUri(context, streamUri, type))
+       }
+     }
+ 
+@@ -39,7 +42,7 @@ class ResolvingShareIntentDataParser {
+     }
+ 
+     private fun extractTextPayload(intent: Intent): List<ResolvedSharePayload> {
+-      val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return emptyList()
++      val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return emptyList()
+ 
+       if (android.util.Patterns.WEB_URL.matcher(text).matches()) {
+         return listOf(resolveUrlContext(text))
+@@ -61,8 +64,9 @@ class ResolvingShareIntentDataParser {
+       val specificMimeType = contentResolver.getType(uri) ?: mimeType
+       val type = ShareType.fromMimeType(specificMimeType)
+ 
+-      // Copy to cache dir to ensure access
+-      val file = File(context.cacheDir, fileName)
++      // Copy to cache dir to ensure access. The UUID prefix keeps two shared files with the same
++      // name from overwriting each other; the original name travels in `originalName`.
++      val file = File(context.cacheDir, "${UUID.randomUUID()}-${fileName.replace('/', '_')}")
+       try {
+         contentResolver.openInputStream(uri)?.use { input ->
+           FileOutputStream(file).use { output ->
+diff --git a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
+index 8dd50e8..12aaca2 100644
+--- a/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
++++ b/node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
+@@ -17,8 +17,11 @@ internal class SimpleShareIntentDataParser {
+     }
+ 
+     private fun handleSendAction(context: Context, intent: Intent, type: String): List<SharePayload> {
+-      return if (type == "text/plain") {
+-        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return emptyList()
++      // A share without EXTRA_STREAM carries its content in EXTRA_TEXT, whatever its type (browsers
++      // send text/html). A shared text file (.txt, .md) is text/plain but arrives in EXTRA_STREAM.
++      val streamUri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
++      return if (streamUri == null) {
++        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return emptyList()
+         val isUrl = android.util.Patterns.WEB_URL.matcher(text).matches()
+ 
+         listOf(
+@@ -29,8 +32,7 @@ internal class SimpleShareIntentDataParser {
+           }
+         )
+       } else {
+-        val uri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
+-        listOfNotNull(uri?.let { createUriPayload(context, it, type) })
++        listOf(createUriPayload(context, streamUri, type))
+       }
+     }
+ 
+diff --git a/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift b/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
+index 7175339..1d07f54 100644
+--- a/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
++++ b/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
+@@ -118,6 +118,12 @@ class ShareIntoViewController: SLComposeServiceViewController {
+       return await handleText(provider)
+     }
+ 
++    // Documents such as .pptx or .docx often register only their own type, which conforms to
++    // public.data but not public.file-url. Accept them as files instead of dropping them.
++    if provider.hasItemConformingToTypeIdentifier(UTType.data.identifier) {
++      return await handleFile(provider, type: .file, utType: .data)
++    }
++
+     return nil
+   }
+ 
+@@ -126,6 +132,12 @@ class ShareIntoViewController: SLComposeServiceViewController {
+   private func handleText(_ provider: NSItemProvider) async -> SharePayload? {
+     return await withCheckedContinuation { continuation in
+       provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
++        // A shared text file (.txt, .md, .log) arrives as a file URL, not as a string.
++        if let url = item as? URL, url.isFileURL {
++          continuation.resume(returning: self.copyAndProcessFile(url: url, type: .file))
++          return
++        }
++
+         guard let text = item as? String else {
+           continuation.resume(returning: nil)
+           return
+@@ -166,6 +178,7 @@ class ShareIntoViewController: SLComposeServiceViewController {
+       let identifier = provider.registeredTypeIdentifiers.first { providerIdentifier in
+         UTType(providerIdentifier)?.conforms(to: utType) ?? false
+       } ?? utType.identifier
++      let suggestedName = provider.suggestedName
+ 
+       provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, _ in
+         if let url = item as? URL {
+@@ -175,7 +188,7 @@ class ShareIntoViewController: SLComposeServiceViewController {
+         }
+ 
+         if let data = item as? Data {
+-          let fileName = UUID().randomFilename(forTypeIdentifier: identifier)
++          let fileName = Self.dataFileName(suggestedName: suggestedName, identifier: identifier)
+           let result = self.saveDataToAppGroup(
+             data: data,
+             fileName: fileName,
+@@ -206,7 +219,15 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     }
+ 
+     let fileName = url.lastPathComponent.isEmpty ? UUID().uuidString : url.lastPathComponent
+-    let destinationURL = containerURL.appendingPathComponent(fileName)
++    let destinationURL = Self.uniqueDestination(in: containerURL, fileName: fileName)
++
++    // Files from document providers (iCloud Drive, third-party storage) are security-scoped.
++    let didStartAccessing = url.startAccessingSecurityScopedResource()
++    defer {
++      if didStartAccessing {
++        url.stopAccessingSecurityScopedResource()
++      }
++    }
+ 
+     do {
+       if FileManager.default.fileExists(atPath: destinationURL.path) {
+@@ -239,7 +260,7 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+       return nil
+     }
+-    let destinationURL = containerURL.appendingPathComponent(fileName)
++    let destinationURL = Self.uniqueDestination(in: containerURL, fileName: fileName)
+ 
+     do {
+       try data.write(to: destinationURL)
+@@ -255,6 +276,26 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     )
+   }
+ 
++  // Prefix every copy with a UUID so two shared files with the same name don't overwrite each other.
++  // The original name travels in the payload metadata.
++  nonisolated private static func uniqueDestination(in containerURL: URL, fileName: String) -> URL {
++    return containerURL.appendingPathComponent("\(UUID().uuidString)-\(fileName)")
++  }
++
++  // Keep the sender's file name for data-backed items instead of a random one.
++  nonisolated private static func dataFileName(suggestedName: String?, identifier: String) -> String {
++    let suggestedName = (suggestedName ?? "").replacingOccurrences(of: "/", with: "_")
++    if suggestedName.isEmpty {
++      return UUID().randomFilename(forTypeIdentifier: identifier)
++    }
++    guard (suggestedName as NSString).pathExtension.isEmpty,
++      let preferredExtension = UTType(identifier)?.preferredFilenameExtension
++    else {
++      return suggestedName
++    }
++    return "\(suggestedName).\(preferredExtension)"
++  }
++
+   // MARK: - Open main app
+ 
+   @MainActor

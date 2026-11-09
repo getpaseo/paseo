@@ -13,6 +13,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
+  appendToDraftInput,
   applyClearDraftRecord,
   editDraftRecordText,
   collectReferencedAttachmentIdsFromState,
@@ -69,6 +70,8 @@ interface DraftStoreActions {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
   }) => Promise<void>;
+  /** Adds text and attachments from outside the composer, after what the draft already holds. */
+  appendDraftInput: (input: { draftKey: string; addition: DraftInput }) => Promise<void>;
   getCreateModalDraft: () => DraftInput | null;
   saveCreateModalDraft: (draft: DraftInput | null) => void;
   collectActiveAttachmentIds: () => string[];
@@ -83,6 +86,11 @@ interface DraftStoreRuntimeState {
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
    */
   metadataByDraftKey: Record<string, Record<string, JsonValue>>;
+  /**
+   * Bumped when text reaches a draft from outside its composer. A mounted composer owns its input
+   * text and only reads the store on hydration, so it reloads the text when this changes.
+   */
+  externalTextRevisionByDraftKey: Record<string, number>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -281,6 +289,7 @@ export const useDraftStore = create<DraftStore>()(
       attachmentFocusRequestByDraftKey: {},
       textReplacementRequestByDraftKey: {},
       metadataByDraftKey: {},
+      externalTextRevisionByDraftKey: {},
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -455,6 +464,41 @@ export const useDraftStore = create<DraftStore>()(
               ...state.attachmentFocusRequestByDraftKey,
               [draftKey]: (state.attachmentFocusRequestByDraftKey[draftKey] ?? 0) + 1,
             },
+          };
+        });
+        scheduleAttachmentGc();
+      },
+
+      appendDraftInput: async ({ draftKey, addition }) => {
+        await get().hydrateDraftInput({ draftKey });
+        set((state) => {
+          const existing = state.drafts[draftKey];
+          const draft = toDraftInputIfReady(existing) ?? { text: "", attachments: [] };
+          return {
+            drafts: {
+              ...state.drafts,
+              [draftKey]: createDraftRecord({
+                draft: appendToDraftInput(draft, addition),
+                lifecycle: "active",
+                previousVersion: existing?.version,
+              }),
+            },
+            ...(addition.attachments.length > 0
+              ? {
+                  attachmentFocusRequestByDraftKey: {
+                    ...state.attachmentFocusRequestByDraftKey,
+                    [draftKey]: (state.attachmentFocusRequestByDraftKey[draftKey] ?? 0) + 1,
+                  },
+                }
+              : {}),
+            ...(addition.text.length > 0
+              ? {
+                  externalTextRevisionByDraftKey: {
+                    ...state.externalTextRevisionByDraftKey,
+                    [draftKey]: (state.externalTextRevisionByDraftKey[draftKey] ?? 0) + 1,
+                  },
+                }
+              : {}),
           };
         });
         scheduleAttachmentGc();

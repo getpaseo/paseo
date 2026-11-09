@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendToDraftInput,
   applyClearDraftRecord,
   pruneFinalizedDraftRecords,
   toDraftInputIfReady,
@@ -193,5 +194,40 @@ describe("draft-store normalization", () => {
       text: "Keep this prompt",
       attachments: [pickerAttachment],
     });
+  });
+});
+
+describe("appendToDraftInput", () => {
+  const uploaded = {
+    kind: "file" as const,
+    attachment: {
+      type: "uploaded_file" as const,
+      id: "upload-1",
+      fileName: "deck.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      size: 1024,
+      path: "/tmp/paseo/upload-1/deck.pptx",
+    },
+  };
+
+  it("keeps what the user already wrote and adds the shared content after it", () => {
+    expect(
+      appendToDraftInput(
+        { text: "Summarize this", attachments: [] },
+        { text: "https://example.com/spec", attachments: [uploaded] },
+      ),
+    ).toEqual({
+      text: "Summarize this\n\nhttps://example.com/spec",
+      attachments: [uploaded],
+    });
+  });
+
+  it("does not pad an empty draft or an empty addition with blank lines", () => {
+    expect(
+      appendToDraftInput({ text: "", attachments: [] }, { text: "hello", attachments: [] }),
+    ).toEqual({ text: "hello", attachments: [] });
+    expect(
+      appendToDraftInput({ text: "Keep", attachments: [] }, { text: "", attachments: [uploaded] }),
+    ).toEqual({ text: "Keep", attachments: [uploaded] });
   });
 });
