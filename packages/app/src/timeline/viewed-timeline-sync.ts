@@ -6,6 +6,7 @@ import {
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
   selectAgentTimelineState,
+  selectAgentUnsettledTurn,
   useSessionStore,
   type AgentTimelineCursorState,
   type AgentTimelineState,
@@ -87,6 +88,7 @@ async function prepareCachedTimeline(input: {
     newer: false,
     synchronized: false,
     acknowledgedClientMessageIds: replacement.acknowledgedClientMessageIds,
+    unsettledTurn: stored.unsettledTurn,
   });
   return stored;
 }
@@ -161,6 +163,7 @@ class TimelineReplicaOwner implements TimelineReplica {
       items: [...timeline.items, ...(session?.agentStreamHead.get(agentId) ?? [])],
       range: timeline.status === "synced" ? timeline.range : null,
       hasOlder: timeline.status === "synced" && timeline.older === "available",
+      unsettledTurn: selectAgentUnsettledTurn(session, agentId),
     });
   }
 }
@@ -240,6 +243,7 @@ function commitProcessedTimeline(input: {
     });
   }
   store.markAgentHistorySynchronized(serverId, agentId);
+  if (synchronized) store.setAgentTimelineUnsettledTurn(serverId, agentId, null);
 }
 
 function finalizeProcessedTimeline(input: {
@@ -330,6 +334,10 @@ export interface ViewedTimelineSyncPorts {
    * demanded set. Disconnect and backgrounding keep the obligation and do not report here.
    */
   onCatchUpEnded(agentId: string): void;
+  /** The chat stopped receiving every row, so a catch-up is owed before it is current again. */
+  onCatchUpOwed(agentId: string): void;
+  /** The owed catch-up reached current or failed. The chat can take the true turn status. */
+  onCatchUpSettled(agentId: string): void;
   reportError(error: unknown): void;
 }
 
@@ -358,7 +366,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
-  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded"
+  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded" | "onCatchUpOwed" | "onCatchUpSettled"
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
@@ -396,6 +404,13 @@ export function createViewedTimelineOwner(input: {
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
     onCatchUpEnded: (agentId) =>
       useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
+    onCatchUpOwed: (agentId) => {
+      const store = useSessionStore.getState();
+      const openTurn = selectAgentUnsettledTurn(store.sessions[input.serverId], agentId);
+      if (openTurn) store.setAgentTimelineUnsettledTurn(input.serverId, agentId, openTurn);
+    },
+    onCatchUpSettled: (agentId) =>
+      useSessionStore.getState().setAgentTimelineUnsettledTurn(input.serverId, agentId, null),
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
     serverId: input.serverId,
@@ -423,6 +438,7 @@ export function createViewedTimelineOwner(input: {
       if (turnLiveness.length === 0) return;
       streamQueue.flushAgent(agentId);
       input.applyTurnLiveness(agentId, turnLiveness);
+      input.replica.timelineUpdated(agentId);
     },
     flushStreamAgent(agentId) {
       streamQueue.flushAgent(agentId);
@@ -537,6 +553,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const wasPending = visibilityCatchUpPending.delete(agentId);
     const hadError = visibilityCatchUpErrors.delete(agentId);
     const wasRetrying = manualRetries.delete(agentId);
+    ports.onCatchUpSettled(agentId);
     ports.onCatchUpEnded(agentId);
     if (wasPending || hadError || wasRetrying) notifyListeners();
   };
@@ -545,6 +562,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const message = error instanceof Error ? error.message : String(error);
     let changed = false;
     for (const agentId of agentIds) {
+      ports.onCatchUpSettled(agentId);
       if (manualRetries.delete(agentId)) changed = true;
       if (visibilityCatchUpPending.delete(agentId)) changed = true;
       if (visibilityCatchUpErrors.get(agentId) !== message) {
@@ -553,6 +571,11 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       }
     }
     if (changed) notifyListeners();
+  };
+
+  const markCatchUpOwed = (agentId: string) => {
+    visibilityCatchUpPending.add(agentId);
+    ports.onCatchUpOwed(agentId);
   };
 
   const cancelCatchUp = (agentId: string) => {
@@ -749,7 +772,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (options.resetCatchUpStatus) {
       for (const agentId of nextDesired) {
         if (!visibilityCatchUpPending.has(agentId)) {
-          visibilityCatchUpPending.add(agentId);
+          markCatchUpOwed(agentId);
           statusChanged = true;
         }
         if (visibilityCatchUpErrors.delete(agentId)) statusChanged = true;
@@ -768,12 +791,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         visibilityCatchUpPending.delete(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
+        ports.onCatchUpOwed(agentId);
         released.push(agentId);
       }
     }
     for (const agentId of nextDesired) {
       if (!desired.includes(agentId)) {
-        visibilityCatchUpPending.add(agentId);
+        markCatchUpOwed(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
         ensureCacheLoaded(agentId);
@@ -830,8 +854,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       }
       for (const agentId of visibleAgentIds()) {
         if (visibilityCatchUpErrors.has(agentId)) continue;
-        visibilityCatchUpPending.add(agentId);
-        visibilityCatchUpErrors.delete(agentId);
+        markCatchUpOwed(agentId);
         startCatchUp(agentId, { supersede: true });
       }
       notifyListeners();

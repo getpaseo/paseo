@@ -420,6 +420,7 @@ export const ja: TranslationResources = {
     },
     turnFooter: {
       workedFor: "作業時間 {{duration}}",
+      updating: "更新中...",
     },
     compaction: {
       loading: "コンテキストを圧縮中...",

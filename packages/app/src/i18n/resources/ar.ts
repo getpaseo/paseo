@@ -415,6 +415,7 @@ export const ar: TranslationResources = {
     },
     turnFooter: {
       workedFor: "عمل لمدة {{duration}}",
+      updating: "جارٍ التحديث...",
     },
     compaction: {
       loading: "الضغط...",

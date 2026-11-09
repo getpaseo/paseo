@@ -142,6 +142,8 @@ class TimelineWorld {
         status: this.sync.getAgentTimelineStatus(agentId),
       });
     },
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
     prepare: async (agentId) => {
       this.cacheRequests.push(agentId);
       this.cacheRequestWaiters.shift()?.(agentId);

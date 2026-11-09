@@ -237,6 +237,7 @@ function ProviderSubagentPanel() {
       isCancelling: false,
       startedAt: null,
       turnId: null,
+      isUpdating: false,
     }),
     [descriptor?.status],
   );

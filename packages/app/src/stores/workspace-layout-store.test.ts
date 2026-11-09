@@ -174,6 +174,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
     onCatchUpEnded: () => undefined,
     reportError: () => undefined,
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
   });
   // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
   // agent behind a restored tab on the daemon.

@@ -216,6 +216,16 @@ function timeline(text = "Cached") {
   };
 }
 
+it("keeps the unsettled turn with the cached messages", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const cached = { ...timeline(), unsettledTurn: { turnId: "turn-1" } };
+  writer.commitTimeline(SERVER_ID, "agent-1", cached);
+  await writer.flush();
+
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(cached);
+});
+
 function commitDirectory(
   cache: ReplicaCache,
   serverId: string,

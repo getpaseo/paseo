@@ -56,10 +56,12 @@ import {
   type WorkspaceAgentActivity,
 } from "@/utils/workspace-agent-activity";
 import {
+  resolveTimelineTurnPresentation,
   resolveTurnPresentation,
   TURN_LIVENESS_IDLE,
   type TurnLiveness,
   type TurnPresentation,
+  type UnsettledTurn,
 } from "@/timeline/turn-liveness";
 
 export interface AgentRuntimeInfo {
@@ -374,6 +376,60 @@ export function selectAgentTurnPresentation(
   );
 }
 
+/** Turn state for the chat's own timeline. Every other surface reads the true status above. */
+export function selectAgentTimelineTurnPresentation(
+  session: SessionState | undefined,
+  agentId: string,
+): TurnPresentation {
+  return resolveTimelineTurnPresentation(
+    selectAgentTurnPresentation(session, agentId),
+    session?.agentTimelineUnsettledTurn.get(agentId),
+  );
+}
+
+/** The unsettled turn a chat's messages carry: the one it holds, or the one open right now. */
+export function selectAgentUnsettledTurn(
+  session: SessionState | undefined,
+  agentId: string,
+): UnsettledTurn | undefined {
+  const held = session?.agentTimelineUnsettledTurn.get(agentId);
+  if (held) return held;
+  const turn = session?.agents.get(agentId)?.turn ?? session?.agentDetails.get(agentId)?.turn;
+  return turn?.phase === "open" ? { turnId: turn.turnId } : undefined;
+}
+
+function withUnsettledTurn(
+  current: Map<string, UnsettledTurn>,
+  agentId: string,
+  turn: UnsettledTurn,
+): Map<string, UnsettledTurn> {
+  if (current.get(agentId)?.turnId === turn.turnId) return current;
+  const next = new Map(current);
+  next.set(agentId, turn);
+  return next;
+}
+
+function withoutUnsettledTurn(
+  current: Map<string, UnsettledTurn>,
+  agentId: string,
+): Map<string, UnsettledTurn> {
+  if (!current.has(agentId)) return current;
+  const next = new Map(current);
+  next.delete(agentId);
+  return next;
+}
+
+// The messages that bring a chat current settle its turn in this same commit.
+function commitUnsettledTurn(
+  current: Map<string, UnsettledTurn>,
+  agentId: string,
+  commit: { synchronized: boolean; unsettledTurn?: UnsettledTurn },
+): Map<string, UnsettledTurn> {
+  if (commit.synchronized) return withoutUnsettledTurn(current, agentId);
+  if (commit.unsettledTurn) return withUnsettledTurn(current, agentId, commit.unsettledTurn);
+  return current;
+}
+
 function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
@@ -426,6 +482,7 @@ export interface SessionState {
   agentTasks: Map<string, TodoEntry[]>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
+  agentTimelineUnsettledTurn: Map<string, UnsettledTurn>;
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineHasNewer: Map<string, boolean>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
@@ -569,7 +626,13 @@ interface SessionStoreActions {
       newer: boolean;
       synchronized: boolean;
       acknowledgedClientMessageIds: string[];
+      unsettledTurn?: UnsettledTurn;
     },
+  ) => void;
+  setAgentTimelineUnsettledTurn: (
+    serverId: string,
+    agentId: string,
+    turn: UnsettledTurn | null,
   ) => void;
 
   // Initializing agents
@@ -674,6 +737,7 @@ function createInitialSessionState(
     agentTasks: new Map(),
     messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
+    agentTimelineUnsettledTurn: new Map(),
     agentTimelineHasOlder: new Map(),
     agentTimelineHasNewer: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
@@ -1455,6 +1519,11 @@ export const useSessionStore = create<SessionStore>()(
             nextAuthoritative.set(agentId, true);
             nextSyncGeneration.set(agentId, session.historySyncGeneration);
           }
+          const agentTimelineUnsettledTurn = commitUnsettledTurn(
+            session.agentTimelineUnsettledTurn,
+            agentId,
+            state,
+          );
           const tasks = latestTasksFromStream([...state.items, ...state.head]);
           const agentTasks = new Map(session.agentTasks);
           if (tasks.length > 0) agentTasks.set(agentId, tasks);
@@ -1472,10 +1541,30 @@ export const useSessionStore = create<SessionStore>()(
                 agentTimelineCursor: nextCursor,
                 agentTimelineHasOlder: nextHasOlder,
                 agentTimelineHasNewer: nextHasNewer,
+                agentTimelineUnsettledTurn,
                 agentAuthoritativeHistoryApplied: nextAuthoritative,
                 agentHistorySyncGeneration: nextSyncGeneration,
                 messageSubmissions,
               },
+            },
+          };
+        });
+      },
+
+      setAgentTimelineUnsettledTurn: (serverId, agentId, turn) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const current = session.agentTimelineUnsettledTurn;
+          const next = turn
+            ? withUnsettledTurn(current, agentId, turn)
+            : withoutUnsettledTurn(current, agentId);
+          if (next === current) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineUnsettledTurn: next },
             },
           };
         });

@@ -8,15 +8,23 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { CachedTimeline } from "@/runtime/replica-cache";
-import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
+import {
+  selectAgentTimelineState,
+  selectAgentTimelineTurnPresentation,
+  selectAgentTurnPresentation,
+  useSessionStore,
+  type Agent,
+} from "@/stores/session-store";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
-import type { TurnLivenessTransition } from "./turn-liveness";
+import { reduceTurnLiveness, type TurnLivenessTransition } from "./turn-liveness";
 import {
   createTimelineReplica,
   createViewedTimelineOwner,
   type TimelineReplicaStorage,
+  type TimelineResponsePayload,
   type ViewedTimelineOwner,
+  type ViewedTimelineOwnerPorts,
 } from "./viewed-timeline-sync";
 
 const SERVER_ID = "timeline-replica-host";
@@ -47,6 +55,10 @@ function createOwner(
     agentId: string,
     transitions: readonly TurnLivenessTransition[],
   ) => void = () => undefined,
+  fetchPage: ViewedTimelineOwnerPorts["fetchPage"] = async () => ({
+    hasNewer: false,
+    endCursor: null,
+  }),
 ): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
@@ -62,7 +74,7 @@ function createOwner(
     ports: {
       observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
       readCursor: () => undefined,
-      fetchPage: async () => ({ hasNewer: false, endCursor: null }),
+      fetchPage,
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
     },
@@ -622,6 +634,387 @@ describe("turn boundaries", () => {
       type: "stream_close",
       committed: ["tool_call", "assistant_message"],
     });
+    owner.dispose();
+  });
+});
+
+describe("the turn footer changes together with its messages", () => {
+  const OPEN_TURN = { turnId: "turn-1", startedAt: new Date("2026-08-26T09:59:00.000Z") };
+
+  function setTurn(transition: TurnLivenessTransition): void {
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const agent =
+        agents.get(AGENT_ID) ??
+        ({
+          id: AGENT_ID,
+          turn: { phase: "idle", cancellationRequestId: null },
+        } as Agent);
+      const next = new Map(agents);
+      next.set(AGENT_ID, { ...agent, turn: reduceTurnLiveness(agent.turn, transition) });
+      return next;
+    });
+  }
+  const agentIsRunning = () => setTurn({ type: "snapshot", activeTurn: OPEN_TURN });
+  const idleSnapshotArrives = () => setTurn({ type: "snapshot", activeTurn: null });
+
+  type Footer = "running" | "updating" | "settled";
+  function footer(): Footer {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    const turn = selectAgentTimelineTurnPresentation(session, AGENT_ID);
+    if (turn.isUpdating) return "updating";
+    return turn.isActive ? "running" : "settled";
+  }
+  function replies(): string[] {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return [
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]
+      .filter((entry) => entry.kind === "assistant_message")
+      .map((entry) => entry.text);
+  }
+
+  // A chat that was current when the connection dropped, holding `cachedReply` if given.
+  function createChat(
+    cachedReply: string | null,
+    fetchPage?: ViewedTimelineOwnerPorts["fetchPage"],
+  ): ViewedTimelineOwner {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+      items: cachedReply ? [item("reply-1", cachedReply, 4)] : [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+    return createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      undefined,
+      fetchPage,
+    );
+  }
+
+  async function connectAndCatchUp(owner: ViewedTimelineOwner): Promise<void> {
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    owner.setConnected(true);
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+  }
+
+  function catchUpPage(input: {
+    replyThroughSeq: number | null;
+    reply?: string;
+  }): TimelineResponsePayload {
+    const end = input.replyThroughSeq ?? 4;
+    return {
+      requestId: "catch-up",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "after",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: end, nextSeq: end + 1 },
+      startCursor: input.reply ? { epoch: "epoch-1", seq: 5 } : null,
+      endCursor: input.reply ? { epoch: "epoch-1", seq: end } : null,
+      entries: input.reply
+        ? [
+            {
+              provider: "mock",
+              item: { type: "assistant_message", text: input.reply },
+              timestamp: "2026-08-26T10:00:02.000Z",
+              seqStart: 5,
+              seqEnd: end,
+              sourceSeqRanges: [{ startSeq: 5, endSeq: end }],
+              collapsed: [],
+            },
+          ]
+        : [],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    };
+  }
+
+  function recordCommits(): { commits: { footer: Footer; replies: string[] }[]; stop(): void } {
+    const commits: { footer: Footer; replies: string[] }[] = [
+      { footer: footer(), replies: replies() },
+    ];
+    const stop = useSessionStore.subscribe(() => {
+      commits.push({ footer: footer(), replies: replies() });
+    });
+    return { commits, stop };
+  }
+
+  it.each([
+    ["only the prompt cached", null, ["Done."]],
+    ["a partial reply cached", "Half", ["HalfDone."]],
+  ])("snapshot before messages, %s: updating until messages land", async (_name, cached, final) => {
+    const owner = createChat(cached);
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    expect(footer()).toBe("running");
+
+    owner.setConnected(false);
+    expect(footer()).toBe("running");
+    owner.setConnected(true);
+    const recorder = recordCommits();
+
+    idleSnapshotArrives();
+    expect(footer()).toBe("updating");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    recorder.stop();
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(final);
+    // The messages and the settled footer arrive in one commit, with no state between.
+    const previous = recorder.commits.at(-2);
+    expect(previous?.footer).toBe("updating");
+    expect(previous?.replies).not.toEqual(final);
+    expect(
+      recorder.commits.filter(
+        (commit) => commit.footer === "settled" && commit.replies.join() !== final.join(),
+      ),
+    ).toEqual([]);
+    owner.dispose();
+  });
+
+  it("messages before snapshot: running stays until the idle snapshot, then completes", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(replies()).toEqual(["HalfDone."]);
+    expect(footer()).toBe("running");
+
+    idleSnapshotArrives();
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a turn that ended with no new messages settles when the empty catch-up lands", async () => {
+    const owner = createChat("Done.");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+    expect(footer()).toBe("updating");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(["Done."]);
+    owner.dispose();
+  });
+
+  it("keeps the true idle status for every surface outside the timeline", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("updating");
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(selectAgentTurnPresentation(session, AGENT_ID)).toMatchObject({
+      isActive: false,
+      isUpdating: false,
+    });
+    owner.dispose();
+  });
+
+  it("shows no timer while updating and keeps the turn's identity for layout", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(selectAgentTimelineTurnPresentation(session, AGENT_ID)).toEqual({
+      isActive: true,
+      isCancelling: false,
+      startedAt: null,
+      turnId: "turn-1",
+      isUpdating: true,
+    });
+    owner.dispose();
+  });
+
+  it("an agent still running on return keeps its running footer", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    agentIsRunning();
+
+    expect(footer()).toBe("running");
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 6, reply: " more" }));
+    expect(footer()).toBe("running");
+    owner.dispose();
+  });
+
+  it("applies a snapshot at once when the chat is current", async () => {
+    const owner = createChat("Done.");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a reconnect that finds nothing changed never leaves the settled footer", async () => {
+    const owner = createChat("Done.");
+    await connectAndCatchUp(owner);
+    const recorder = recordCommits();
+
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
+    recorder.stop();
+
+    expect(recorder.commits.map((commit) => commit.footer)).not.toContain("updating");
+    owner.dispose();
+  });
+
+  it("catch-up failure gives the footer the true status", async () => {
+    let failNext = false;
+    const owner = createChat("Half", async () => {
+      if (failNext) throw new Error("catch-up failed");
+      return { hasNewer: false, endCursor: null };
+    });
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    failNext = true;
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a catch-up that completes without a page still releases the footer", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    idleSnapshotArrives();
+    expect(footer()).toBe("updating");
+
+    owner.setConnected(true);
+
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a chat closed while running and reopened after it finished shows updating", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+    idleSnapshotArrives();
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    expect(footer()).toBe("updating");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  function paintChat(unsettledTurn: CachedTimeline["unsettledTurn"]): ViewedTimelineOwner {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    idleSnapshotArrives();
+    return createOwner({
+      readTimeline: async () => ({
+        agentId: AGENT_ID,
+        items: [item("reply-1", "Half", 4)],
+        range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+        hasOlder: false,
+        ...(unsettledTurn ? { unsettledTurn } : {}),
+      }),
+      commitTimeline: () => undefined,
+    });
+  }
+
+  it("first paint from cache: shows updating in the first frame when the cached messages were from an open turn", async () => {
+    const owner = paintChat({ turnId: "turn-1" });
+    const recorder = recordCommits();
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect.poll(() => replies()).toEqual(["Half"]);
+    recorder.stop();
+
+    expect(recorder.commits.find((commit) => commit.replies.length > 0)?.footer).toBe("updating");
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("first paint from cache: shows the settled footer at once when the cached messages were from a finished turn", async () => {
+    const owner = paintChat(undefined);
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("first paint from cache: records the open turn with the messages and drops it once the turn ends", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 8);
+    agentIsRunning();
+    const commits: CachedTimeline[] = [];
+    const owner = createOwner(
+      {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+      (_agentId, transitions) => {
+        for (const transition of transitions) setTurn(transition);
+      },
+    );
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Working" },
+      } as AgentStreamEventPayload,
+      seq: 9,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:01.000Z"),
+    });
+    owner.flushStreamAgent(AGENT_ID);
+    expect(commits.at(-1)?.unsettledTurn).toEqual({ turnId: "turn-1" });
+
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: new Date("2026-08-26T10:00:02.000Z"),
+    });
+
+    expect(commits.at(-1)?.unsettledTurn).toBeUndefined();
     owner.dispose();
   });
 });

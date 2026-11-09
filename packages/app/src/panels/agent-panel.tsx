@@ -86,7 +86,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import {
   selectAgentTimelineState,
-  selectAgentTurnPresentation,
+  selectAgentTimelineTurnPresentation,
   type Agent,
   useSessionStore,
 } from "@/stores/session-store";
@@ -1411,8 +1411,14 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const turnPresentation = useSessionStore(
     useShallow((state) =>
       agentId
-        ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
-        : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
+        ? selectAgentTimelineTurnPresentation(state.sessions[serverId], agentId)
+        : {
+            isActive: false,
+            isCancelling: false,
+            startedAt: null,
+            turnId: null,
+            isUpdating: false,
+          },
     ),
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
