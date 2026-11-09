@@ -1412,13 +1412,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
     useShallow((state) =>
       agentId
         ? selectAgentTimelineTurnPresentation(state.sessions[serverId], agentId)
-        : {
-            isActive: false,
-            isCancelling: false,
-            startedAt: null,
-            turnId: null,
-            isUpdating: false,
-          },
+        : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
     ),
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;

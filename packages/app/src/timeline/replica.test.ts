@@ -661,12 +661,15 @@ describe("the turn footer changes together with its messages", () => {
   const agentIsRunning = () => setTurn({ type: "snapshot", activeTurn: OPEN_TURN });
   const idleSnapshotArrives = () => setTurn({ type: "snapshot", activeTurn: null });
 
-  type Footer = "running" | "updating" | "settled";
+  type Footer = "running" | "settled";
   function footer(): Footer {
     const session = useSessionStore.getState().sessions[SERVER_ID];
     const turn = selectAgentTimelineTurnPresentation(session, AGENT_ID);
-    if (turn.isUpdating) return "updating";
     return turn.isActive ? "running" : "settled";
+  }
+  function timerStart(): Date | null {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return selectAgentTimelineTurnPresentation(session, AGENT_ID).startedAt;
   }
   function replies(): string[] {
     const session = useSessionStore.getState().sessions[SERVER_ID];
@@ -756,7 +759,7 @@ describe("the turn footer changes together with its messages", () => {
   it.each([
     ["only the prompt cached", null, ["Done."]],
     ["a partial reply cached", "Half", ["HalfDone."]],
-  ])("snapshot before messages, %s: updating until messages land", async (_name, cached, final) => {
+  ])("snapshot before messages, %s: running until messages land", async (_name, cached, final) => {
     const owner = createChat(cached);
     agentIsRunning();
     await connectAndCatchUp(owner);
@@ -768,7 +771,7 @@ describe("the turn footer changes together with its messages", () => {
     const recorder = recordCommits();
 
     idleSnapshotArrives();
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
 
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
     recorder.stop();
@@ -777,7 +780,7 @@ describe("the turn footer changes together with its messages", () => {
     expect(replies()).toEqual(final);
     // The messages and the settled footer arrive in one commit, with no state between.
     const previous = recorder.commits.at(-2);
-    expect(previous?.footer).toBe("updating");
+    expect(previous?.footer).toBe("running");
     expect(previous?.replies).not.toEqual(final);
     expect(
       recorder.commits.filter(
@@ -810,7 +813,7 @@ describe("the turn footer changes together with its messages", () => {
     owner.setConnected(false);
     owner.setConnected(true);
     idleSnapshotArrives();
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
 
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
 
@@ -827,16 +830,13 @@ describe("the turn footer changes together with its messages", () => {
     owner.setConnected(true);
     idleSnapshotArrives();
 
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
     const session = useSessionStore.getState().sessions[SERVER_ID];
-    expect(selectAgentTurnPresentation(session, AGENT_ID)).toMatchObject({
-      isActive: false,
-      isUpdating: false,
-    });
+    expect(selectAgentTurnPresentation(session, AGENT_ID).isActive).toBe(false);
     owner.dispose();
   });
 
-  it("shows no timer while updating and keeps the turn's identity for layout", async () => {
+  it("keeps the running turn's identity and timer start when the idle status arrives", async () => {
     const owner = createChat("Half");
     agentIsRunning();
     await connectAndCatchUp(owner);
@@ -848,9 +848,8 @@ describe("the turn footer changes together with its messages", () => {
     expect(selectAgentTimelineTurnPresentation(session, AGENT_ID)).toEqual({
       isActive: true,
       isCancelling: false,
-      startedAt: null,
+      startedAt: OPEN_TURN.startedAt,
       turnId: "turn-1",
-      isUpdating: true,
     });
     owner.dispose();
   });
@@ -891,7 +890,7 @@ describe("the turn footer changes together with its messages", () => {
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
     recorder.stop();
 
-    expect(recorder.commits.map((commit) => commit.footer)).not.toContain("updating");
+    expect(recorder.commits.map((commit) => commit.footer)).not.toContain("running");
     owner.dispose();
   });
 
@@ -920,7 +919,7 @@ describe("the turn footer changes together with its messages", () => {
     await connectAndCatchUp(owner);
     owner.setConnected(false);
     idleSnapshotArrives();
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
 
     owner.setConnected(true);
 
@@ -929,7 +928,7 @@ describe("the turn footer changes together with its messages", () => {
     owner.dispose();
   });
 
-  it("a chat closed while running and reopened after it finished shows updating", async () => {
+  it("a chat closed while running and reopened after it finished keeps the running footer", async () => {
     const owner = createChat("Half");
     agentIsRunning();
     await connectAndCatchUp(owner);
@@ -938,10 +937,28 @@ describe("the turn footer changes together with its messages", () => {
     idleSnapshotArrives();
 
     owner.replaceVisibleAgentIds("test", [AGENT_ID]);
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
 
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
     expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a newer turn replaces the held one so the timer follows it", async () => {
+    const newerTurn = { turnId: "turn-2", startedAt: new Date("2026-08-26T09:59:30.000Z") };
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+    idleSnapshotArrives();
+
+    setTurn({ type: "snapshot", activeTurn: newerTurn });
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("running");
+    expect(timerStart()).toEqual(newerTurn.startedAt);
     owner.dispose();
   });
 
@@ -960,15 +977,16 @@ describe("the turn footer changes together with its messages", () => {
     });
   }
 
-  it("first paint from cache: shows updating in the first frame when the cached messages were from an open turn", async () => {
-    const owner = paintChat({ turnId: "turn-1" });
+  it("first paint from cache: shows the running footer in the first frame when the cached messages were from an open turn", async () => {
+    const owner = paintChat({ turnId: "turn-1", startedAt: OPEN_TURN.startedAt });
     const recorder = recordCommits();
 
     owner.replaceVisibleAgentIds("test", [AGENT_ID]);
     await expect.poll(() => replies()).toEqual(["Half"]);
     recorder.stop();
 
-    expect(recorder.commits.find((commit) => commit.replies.length > 0)?.footer).toBe("updating");
+    expect(recorder.commits.find((commit) => commit.replies.length > 0)?.footer).toBe("running");
+    expect(timerStart()).toEqual(OPEN_TURN.startedAt);
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
     expect(footer()).toBe("settled");
     owner.dispose();
@@ -1004,7 +1022,7 @@ describe("the turn footer changes together with its messages", () => {
           items: [item("reply-1", "Half", 4)],
           range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
           hasOlder: false,
-          unsettledTurn: { turnId: "turn-1" },
+          unsettledTurn: { turnId: "turn-1", startedAt: OPEN_TURN.startedAt },
         }),
     };
   }
@@ -1020,14 +1038,14 @@ describe("the turn footer changes together with its messages", () => {
     owner.dispose();
   });
 
-  it("first paint from cache: a catch-up owed again during the cache read shows updating", async () => {
+  it("first paint from cache: a catch-up owed again during the cache read keeps the running footer", async () => {
     const { owner, finishCacheRead } = await subscriptionRefusedDuringCacheRead();
     owner.setConnected(false);
 
     finishCacheRead();
     await expect.poll(() => replies()).toEqual(["Half"]);
 
-    expect(footer()).toBe("updating");
+    expect(footer()).toBe("running");
     owner.dispose();
   });
 
@@ -1066,7 +1084,10 @@ describe("the turn footer changes together with its messages", () => {
       timestamp: new Date("2026-08-26T10:00:01.000Z"),
     });
     owner.flushStreamAgent(AGENT_ID);
-    expect(commits.at(-1)?.unsettledTurn).toEqual({ turnId: "turn-1" });
+    expect(commits.at(-1)?.unsettledTurn).toEqual({
+      turnId: "turn-1",
+      startedAt: expect.any(Date),
+    });
 
     owner.applyStreamEvent(AGENT_ID, {
       event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },

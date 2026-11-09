@@ -219,7 +219,10 @@ function timeline(text = "Cached") {
 it("keeps the unsettled turn with the cached messages", async () => {
   const storage = new MemoryStorage();
   const writer = createCache(storage);
-  const cached = { ...timeline(), unsettledTurn: { turnId: "turn-1" } };
+  const cached = {
+    ...timeline(),
+    unsettledTurn: { startedAt: new Date("2026-08-26T09:59:00.000Z"), turnId: "turn-1" },
+  };
   writer.commitTimeline(SERVER_ID, "agent-1", cached);
   await writer.flush();
 

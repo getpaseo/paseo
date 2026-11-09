@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
@@ -18,15 +17,11 @@ import {
 } from "@/components/message";
 import type { TurnFooterHost } from "./layout";
 import { AssistantForkMenu } from "@/components/assistant-fork-menu";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const updatingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const UPDATING_SPINNER_SIZE = 14;
 export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
 // Every footer variant (running, completed with Copy, completed with only its duration) gets
 // this content height, so a turn ending swaps the footer's controls without moving the rows
@@ -52,7 +47,6 @@ export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<v
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
-  isUpdating,
   inFlightTurnStartedAt,
   host,
   strategy,
@@ -61,7 +55,6 @@ export const TurnFooter = memo(function TurnFooter({
   onForkInFlightTurn,
 }: {
   isRunning: boolean;
-  isUpdating: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -69,13 +62,6 @@ export const TurnFooter = memo(function TurnFooter({
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
-  if (isUpdating) {
-    return (
-      <TurnFooterRow>
-        <UpdatingTurnFooter />
-      </TurnFooterRow>
-    );
-  }
   if (isRunning) {
     return (
       <TurnFooterRow>
@@ -174,22 +160,6 @@ function RunningTurnFooter({
   );
 }
 
-/** The agent has finished and this chat's messages have not caught up yet. */
-function UpdatingTurnFooter() {
-  const { t } = useTranslation();
-  return (
-    <View style={stylesheet.turnFooterSlot} testID="turn-updating-indicator">
-      <View style={stylesheet.turnFooterContent}>
-        <ThemedLoadingSpinner
-          size={UPDATING_SPINNER_SIZE}
-          uniProps={updatingIndicatorColorMapping}
-        />
-        <Text style={stylesheet.updatingLabel}>{t("message.turnFooter.updating")}</Text>
-      </View>
-    </View>
-  );
-}
-
 function CompletedTurnFooter({
   strategy,
   items,
@@ -284,9 +254,5 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingLoader: {
     marginLeft: -2,
-  },
-  updatingLabel: {
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));

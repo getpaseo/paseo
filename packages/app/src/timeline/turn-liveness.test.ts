@@ -71,7 +71,6 @@ describe("turn activity", () => {
     expect(resolveTurnPresentation(TURN_LIVENESS_IDLE, true)).toEqual({
       isActive: true,
       isCancelling: false,
-      isUpdating: false,
       startedAt: null,
       turnId: null,
     });

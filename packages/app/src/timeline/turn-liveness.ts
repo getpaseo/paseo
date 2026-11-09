@@ -52,7 +52,6 @@ export interface TurnPresentation {
   isCancelling: boolean;
   startedAt: Date | null;
   turnId: string | null;
-  isUpdating: boolean;
 }
 
 /**
@@ -62,6 +61,7 @@ export interface TurnPresentation {
  */
 export interface UnsettledTurn {
   turnId: string | null;
+  startedAt: Date | null;
 }
 
 export function resolveTurnPresentation(
@@ -74,7 +74,6 @@ export function resolveTurnPresentation(
       isCancelling: liveness.cancellationRequestId !== null,
       startedAt: liveness.startedAt,
       turnId: liveness.turnId,
-      isUpdating: false,
     };
   }
   return {
@@ -82,14 +81,13 @@ export function resolveTurnPresentation(
     isCancelling: liveness.cancellationRequestId !== null,
     startedAt: null,
     turnId: null,
-    isUpdating: false,
   };
 }
 
 /**
  * What a chat shows for its turn. It differs from the true status only while the agent has
- * finished and the chat's messages have not caught up: the chat stays laid out as an open turn and
- * reports updating, so the completed footer can land with the messages it belongs to.
+ * finished and the chat's messages have not caught up: the chat keeps showing the running turn, so
+ * the completed footer can land with the messages it belongs to.
  */
 export function resolveTimelineTurnPresentation(
   turn: TurnPresentation,
@@ -99,9 +97,8 @@ export function resolveTimelineTurnPresentation(
   return {
     isActive: true,
     isCancelling: false,
-    startedAt: null,
+    startedAt: unsettledTurn.startedAt,
     turnId: unsettledTurn.turnId,
-    isUpdating: true,
   };
 }
 

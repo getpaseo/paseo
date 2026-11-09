@@ -387,15 +387,14 @@ export function selectAgentTimelineTurnPresentation(
   );
 }
 
-/** The unsettled turn a chat's messages carry: the one it holds, or the one open right now. */
+/** The unsettled turn a chat's messages carry: the one open right now, or the one it holds. */
 export function selectAgentUnsettledTurn(
   session: SessionState | undefined,
   agentId: string,
 ): UnsettledTurn | undefined {
-  const held = session?.agentTimelineUnsettledTurn.get(agentId);
-  if (held) return held;
   const turn = session?.agents.get(agentId)?.turn ?? session?.agentDetails.get(agentId)?.turn;
-  return turn?.phase === "open" ? { turnId: turn.turnId } : undefined;
+  if (turn?.phase === "open") return { turnId: turn.turnId, startedAt: turn.startedAt };
+  return session?.agentTimelineUnsettledTurn.get(agentId);
 }
 
 function withUnsettledTurn(

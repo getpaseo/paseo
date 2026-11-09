@@ -359,7 +359,9 @@ const StoredTimelineSchema = z.strictObject({
     })
     .nullable(),
   hasOlder: z.boolean(),
-  unsettledTurn: z.strictObject({ turnId: z.string().nullable() }).optional(),
+  unsettledTurn: z
+    .strictObject({ turnId: z.string().nullable(), startedAt: IsoDateSchema.nullable() })
+    .optional(),
 });
 
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
@@ -416,7 +418,16 @@ function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | nu
     items: stored.items.map(deserializeTimelineItem),
     range: stored.range,
     hasOlder: stored.hasOlder,
-    ...(stored.unsettledTurn ? { unsettledTurn: stored.unsettledTurn } : {}),
+    ...(stored.unsettledTurn
+      ? {
+          unsettledTurn: {
+            turnId: stored.unsettledTurn.turnId,
+            startedAt: stored.unsettledTurn.startedAt
+              ? new Date(stored.unsettledTurn.startedAt)
+              : null,
+          },
+        }
+      : {}),
   };
 }
 
@@ -817,7 +828,14 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
       ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
       : null,
     hasOlder: canPersistCoverage ? timeline.hasOlder : false,
-    ...(timeline.unsettledTurn ? { unsettledTurn: timeline.unsettledTurn } : {}),
+    ...(timeline.unsettledTurn
+      ? {
+          unsettledTurn: {
+            turnId: timeline.unsettledTurn.turnId,
+            startedAt: timeline.unsettledTurn.startedAt?.toISOString() ?? null,
+          },
+        }
+      : {}),
   };
 }
 
