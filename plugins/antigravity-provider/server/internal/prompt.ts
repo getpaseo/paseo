@@ -14,12 +14,17 @@ export class PromptFiles {
   private directory: string | null = null;
 
   async encode(prompt: ProviderPrompt): Promise<EncodedPrompt> {
-    if (
-      prompt.input.type !== "message" ||
-      prompt.delivery === "steer" ||
-      prompt.outputSchema !== undefined
-    )
-      throw new AntigravityError("Antigravity supports messages only");
+    if (prompt.outputSchema !== undefined)
+      throw new AntigravityError(
+        "Antigravity does not support structured output schemas in stream mode",
+      );
+    if (prompt.input.type === "command") {
+      const args = prompt.input.arguments?.trim();
+      const commandText = args ? `/${prompt.input.name} ${args}` : `/${prompt.input.name}`;
+      return { text: commandText, nativeText: commandText };
+    }
+    if (prompt.input.type !== "message")
+      throw new AntigravityError("Antigravity supports messages and slash commands only");
     const parts = prompt.input.content.map((part) => {
       if (part.type === "text") return part;
       if (part.type === "image") return { ...part, extension: imageExtension(part.mimeType) };
@@ -38,7 +43,10 @@ export class PromptFiles {
           await chmod(this.directory, 0o700);
         }
         const file = path.join(this.directory, `${randomUUID()}.${extension}`);
-        await writeFile(file, Buffer.from(part.data, "base64"), { flag: "wx", mode: 0o600 });
+        await writeFile(file, Buffer.from(part.data, "base64"), {
+          flag: "wx",
+          mode: 0o600,
+        });
         await chmod(file, 0o600);
         native.push(`Attached image: ${file}`);
       }

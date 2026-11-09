@@ -160,8 +160,11 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.command",
     "prompt.image",
+    "prompt.steer",
     "session.configure",
+    "session.list",
     "session.persistence",
   ]);
   await h.open();
@@ -186,7 +189,6 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
     "stream-json",
     "--add-dir",
     h.cwd,
-    "--disable-slash-commands",
     "--dangerously-skip-permissions",
   ]);
   expect(records.find((entry) => entry.args.includes("--input-format")).env).toBe(
@@ -228,7 +230,10 @@ it("maps tools and emits one denial notice for a SUCCESS result", async () => {
         item: expect.objectContaining({
           name: "run_command",
           status: "failed",
-          detail: expect.objectContaining({ type: "shell", command: "printf PHASE0_SHELL" }),
+          detail: expect.objectContaining({
+            type: "shell",
+            command: "printf PHASE0_SHELL",
+          }),
         }),
       }),
     ]),
@@ -265,7 +270,10 @@ it("reports only new process denials across replayed turns and resets after resp
   expect(followup).toContainEqual(
     expect.objectContaining({
       type: "timeline.item",
-      item: expect.objectContaining({ type: "assistant_message", text: "FOLLOWUP_OK\n" }),
+      item: expect.objectContaining({
+        type: "assistant_message",
+        text: "FOLLOWUP_OK\n",
+      }),
     }),
   );
   await h.request({
@@ -325,7 +333,11 @@ it("accounts DONE generation usage once without adding cumulative results, inclu
     usages.map((event) => (event.type === "session.usage" ? event.usage.inputTokens : null)),
   ).toEqual([11263, 11604]);
   const persistence = h.persistence();
-  await h.request({ type: "session.close", sessionId: "s", requestId: "close" });
+  await h.request({
+    type: "session.close",
+    sessionId: "s",
+    requestId: "close",
+  });
   await h.open(persistence);
   await h.completed(await h.prompt("RESUME"));
   expect(h.events.filter((event) => event.type === "session.usage")).toHaveLength(3);
@@ -366,7 +378,11 @@ it.each(["HANG", "TOOL_HANG"])(
         event.type === "timeline.item" &&
         (event.item.type === "assistant_message" || event.item.type === "tool_call"),
     );
-    await h.request({ type: "session.interrupt", requestId: "interrupt", sessionId: "s" });
+    await h.request({
+      type: "session.interrupt",
+      requestId: "interrupt",
+      sessionId: "s",
+    });
     expect(await h.completed(message)).toMatchObject({ state: "canceled" });
     await h.completed(await h.prompt("HELLO"));
     const records = await h.records();
@@ -394,7 +410,11 @@ it("stops an unresponsive driver and still respawns the conversation", async () 
   await h.wait(
     (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
   );
-  await h.request({ type: "session.interrupt", requestId: "interrupt-timeout", sessionId: "s" });
+  await h.request({
+    type: "session.interrupt",
+    requestId: "interrupt-timeout",
+    sessionId: "s",
+  });
   expect(await h.completed(message)).toMatchObject({ state: "canceled" });
   expect((await h.records()).filter((entry) => entry.signal)).toEqual(
     process.platform === "win32" ? [] : [{ signal: "SIGINT" }, { signal: "SIGTERM" }],
@@ -402,32 +422,46 @@ it("stops an unresponsive driver and still respawns the conversation", async () 
   await h.completed(await h.prompt("HELLO"));
 });
 
-it("rejects plan and keeps the full-access selection without respawning", async () => {
+it("accepts plan mode, thinking options, and sandbox setting while rejecting invalid modes", async () => {
   const h = await harness();
   await h.open();
   await h.request({
     type: "session.configure",
-    requestId: "plan",
+    requestId: "invalid-mode",
     sessionId: "s",
-    changes: { mode: "plan" },
+    changes: { mode: "nonexistent" },
   });
   expect(h.events).toContainEqual(
     expect.objectContaining({
       type: "request.failed",
-      requestId: "plan",
-      error: { code: "INVALID_MODE", message: "Unknown Antigravity mode: plan" },
+      requestId: "invalid-mode",
+      error: {
+        code: "INVALID_MODE",
+        message: "Unknown Antigravity mode: nonexistent",
+      },
     }),
   );
   await h.request({
     type: "session.configure",
-    requestId: "full",
+    requestId: "plan-config",
     sessionId: "s",
-    changes: { mode: "full-access" },
+    changes: {
+      model: "gemini-3.8-flash-high",
+      mode: "plan",
+      thinkingOption: "low",
+      settings: { sandbox: true },
+    },
   });
   await h.completed(await h.prompt("HELLO"));
-  expect(
-    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
-  ).toHaveLength(1);
+  const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
+  expect(launches).toHaveLength(2);
+  expect(launches[1].args).toContain("--mode");
+  expect(launches[1].args).toContain("plan");
+  expect(launches[1].args).toContain("--model");
+  expect(launches[1].args).toContain("gemini-3.8-flash");
+  expect(launches[1].args).toContain("--effort");
+  expect(launches[1].args).toContain("low");
+  expect(launches[1].args).toContain("--sandbox");
 });
 
 it("emits one full-access warning per open, none on respawn, and one again on resume", async () => {
@@ -541,30 +575,52 @@ it.each(["auth", "exit", "stderr"])(
   },
 );
 
-it("rejects mid-turn steering and reports a busy message without queueing a second native turn", async () => {
+it("interrupts an active turn and starts a new turn when steered mid-turn", async () => {
   const h = await harness();
   await h.open();
-  await h.prompt("HANG");
-  const second = await h.prompt("SECOND");
-  expect(
-    h.events.find(
-      (event) => event.type === "session.prompt_result" && event.clientMessageId === second,
-    ),
-  ).toMatchObject({
-    type: "session.prompt_result",
-    result: { type: "failed", error: { code: "TURN_ACTIVE" } },
+  const first = await h.prompt("HANG");
+  await h.wait(
+    (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+  );
+  const second = await h.prompt("HELLO");
+  expect(await h.completed(first)).toMatchObject({ state: "canceled" });
+  expect(await h.completed(second)).toMatchObject({ state: "completed" });
+});
+
+it("encodes slash commands and discovers workspace skills", async () => {
+  const h = await harness();
+  const skillDir = path.join(h.cwd, ".agent", "skills", "custom-skill");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(skillDir, { recursive: true }));
+  await writeFile(
+    path.join(skillDir, "SKILL.md"),
+    "---\nname: custom-skill\ndescription: Custom test skill\n---\n# Body\n",
+  );
+  await h.open();
+  const commandsEvent = h.events.find((event) => event.type === "session.commands");
+  expect(commandsEvent).toMatchObject({
+    type: "session.commands",
+    commands: expect.arrayContaining([
+      { name: "plan", description: expect.any(String) },
+      { name: "custom-skill", description: "Custom test skill" },
+    ]),
   });
-  await expect(
-    h.connection.send({
-      type: "session.prompt",
-      sessionId: "s",
-      prompt: {
-        clientMessageId: "steer",
-        delivery: "steer",
-        input: { type: "message", content: [{ type: "text", text: "x" }] },
-      },
-    }),
-  ).rejects.toThrow(/prompt.steer/);
+  await h.connection.send({
+    type: "session.prompt",
+    sessionId: "s",
+    prompt: {
+      clientMessageId: "cmd-1",
+      delivery: "auto",
+      input: { type: "command", name: "plan", arguments: "HELLO" },
+    },
+  });
+  await h.wait(
+    (event) => event.type === "session.prompt_result" && event.clientMessageId === "cmd-1",
+  );
+  await h.completed("cmd-1");
+  const inputs = (await h.records())
+    .filter((entry) => entry.input)
+    .map((entry) => entry.input.message.content);
+  expect(inputs[0]).toContain("/plan HELLO");
 });
 
 describe("discovery", () => {
@@ -588,10 +644,12 @@ describe("discovery", () => {
   });
   it.each(["1.1.15", "1.2.12", "1.2.13"])("accepts driver-capable version %s", async (version) => {
     const h = await harness({ AGY_TEST_VERSION: version });
-    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+    expect(await provider.status?.({ launch: h.launch })).toEqual({
+      available: true,
+    });
   });
 
-  it("parses tab-separated catalog and exposes only full access without thinking options", async () => {
+  it("parses tab-separated catalog and exposes modes and Gemini thinking options", async () => {
     const h = await harness();
     await h.request({ type: "catalog", requestId: "catalog" });
     const event = h.events[0];
@@ -599,28 +657,29 @@ describe("discovery", () => {
       type: "catalog",
       catalog: {
         models: expect.arrayContaining([
-          {
+          expect.objectContaining({
             id: "gemini-3.8-flash-low",
             label: "Gemini 3.8 Flash (Low)",
             contextWindowMaxTokens: 1_048_576,
-          },
+            defaultThinkingOptionId: "low",
+          }),
         ]),
-        thinkingOptions: [],
+        thinkingOptions: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
         defaultMode: "full-access",
+        defaultThinkingOption: "high",
       },
     });
     if (event.type !== "catalog") throw new Error("Missing catalog");
-    expect(event.catalog.models).toHaveLength(11);
-    expect(event.catalog.modes).toEqual([
-      {
-        id: "full-access",
-        label: "Full access",
-        icon: "ShieldOff",
-        colorTier: "dangerous",
-        isUnattended: true,
-        description:
-          "Antigravity cannot ask for permission when another app drives it. Paseo starts it with --dangerously-skip-permissions.",
-      },
+    expect(event.catalog.models).toHaveLength(13);
+    expect(event.catalog.modes.map((mode) => mode.id)).toEqual([
+      "full-access",
+      "auto",
+      "accept-edits",
+      "plan",
     ]);
   });
   it("reports missing, old, unauthenticated and available launches", async () => {
@@ -631,9 +690,15 @@ describe("discovery", () => {
     const missing = await harness();
     expect(
       await provider.status?.({
-        launch: { ...missing.launch, command: path.join(missing.cwd, "missing-agy") },
+        launch: {
+          ...missing.launch,
+          command: path.join(missing.cwd, "missing-agy"),
+        },
       }),
-    ).toMatchObject({ available: false, diagnostic: expect.stringContaining("ENOENT") });
+    ).toMatchObject({
+      available: false,
+      diagnostic: expect.stringContaining("ENOENT"),
+    });
     const old = await harness({ AGY_TEST_VERSION: "1.1.14" });
     expect(await provider.status?.({ launch: old.launch })).toMatchObject({
       available: false,
@@ -645,11 +710,16 @@ describe("discovery", () => {
       diagnostic: "Antigravity authentication failed. Run `agy` and sign in, then retry.",
     });
     const authenticated = await harness();
-    expect(await provider.status?.({ launch: authenticated.launch })).toEqual({ available: true });
+    expect(await provider.status?.({ launch: authenticated.launch })).toEqual({
+      available: true,
+    });
   });
   it("keys catalog caching by the complete effective launch without exposing env values", async () => {
     const h = await harness();
-    const key = await provider.getCatalogCacheKey?.({ scope: "global", launch: h.launch });
+    const key = await provider.getCatalogCacheKey?.({
+      scope: "global",
+      launch: h.launch,
+    });
     expect(key).toMatch(/^[a-f0-9]{64}$/);
     expect(
       await provider.getCatalogCacheKey?.({
@@ -707,9 +777,17 @@ describe("image prompts", () => {
       await h.completed(
         await h.message([
           { type: "text", text: "Describe these images." },
-          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+          {
+            type: "image",
+            data: png.toString("base64"),
+            mimeType: "image/png",
+          },
           { type: "text", text: "Compare them." },
-          { type: "image", data: jpeg.toString("base64"), mimeType: "image/jpeg" },
+          {
+            type: "image",
+            data: jpeg.toString("base64"),
+            mimeType: "image/jpeg",
+          },
         ]),
       );
       const sent = (await h.records()).find((entry) => entry.input).input.message.content;
@@ -734,8 +812,15 @@ describe("image prompts", () => {
       const args = (await h.records()).find((entry) => entry.args?.includes("--input-format")).args;
       expect(args.filter((arg: string) => arg === "--add-dir")).toHaveLength(1);
       if (close === "connection") await h.connection.close();
-      else await h.request({ type: "session.close", requestId: "close-images", sessionId: "s" });
-      await expect(stat(path.dirname(pngPath))).rejects.toMatchObject({ code: "ENOENT" });
+      else
+        await h.request({
+          type: "session.close",
+          requestId: "close-images",
+          sessionId: "s",
+        });
+      await expect(stat(path.dirname(pngPath))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 
@@ -756,11 +841,19 @@ describe("image prompts", () => {
     expect(path.dirname(paths[0])).toBe(path.dirname(paths[1]));
     expect(path.dirname(paths[0])).not.toBe(path.dirname(paths[2]));
     expect(paths.every((file: string) => path.extname(file) === ".webp")).toBe(true);
-    await h.request({ type: "session.close", requestId: "close-first", sessionId: "s" });
-    await expect(stat(path.dirname(paths[0]))).rejects.toMatchObject({ code: "ENOENT" });
+    await h.request({
+      type: "session.close",
+      requestId: "close-first",
+      sessionId: "s",
+    });
+    await expect(stat(path.dirname(paths[0]))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(await readFile(paths[2], "utf8")).toBe("image");
     await h.connection.close();
-    await expect(stat(path.dirname(paths[2]))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(path.dirname(paths[2]))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("rejects a non-image MIME type before writing to native stdin", async () => {
@@ -772,7 +865,10 @@ describe("image prompts", () => {
         (event) => event.type === "session.prompt_result" && event.clientMessageId === id,
       ),
     ).toMatchObject({
-      result: { type: "failed", error: { message: expect.stringContaining("image MIME type") } },
+      result: {
+        type: "failed",
+        error: { message: expect.stringContaining("image MIME type") },
+      },
     });
     expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
   });
@@ -786,7 +882,9 @@ it.runIf(process.platform === "win32")(
     await writeFile(shim, `@echo off\r\n"${process.execPath}" "${fake}" %*\r\n`);
     h.launch.command = shim;
     h.launch.args = ["--launch-prefix"];
-    expect(await provider.status!({ launch: h.launch })).toEqual({ available: true });
+    expect(await provider.status!({ launch: h.launch })).toEqual({
+      available: true,
+    });
     await h.open();
     expect(await h.wait((event) => event.type === "session.opened")).toMatchObject({
       sessionId: "s",

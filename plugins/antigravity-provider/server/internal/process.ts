@@ -3,6 +3,7 @@ import { spawnProcess } from "@getpaseo/plugin/server";
 import { signalProcess } from "./signals.js";
 import { createInterface } from "node:readline";
 import type { ProviderLaunch, ProviderSessionConfig } from "@getpaseo/plugin/server/provider";
+import { resolveModelAndEffort } from "./catalog.js";
 import {
   AntigravityError,
   decodeFrame,
@@ -28,7 +29,12 @@ export interface Driver {
 }
 
 export function selection(config: ProviderSessionConfig): string {
-  return JSON.stringify([config.model, config.mode]);
+  return JSON.stringify([
+    config.model,
+    config.mode,
+    config.thinkingOption,
+    Boolean(config.settings?.sandbox),
+  ]);
 }
 
 function driverArgs(options: DriverOptions): string[] {
@@ -41,10 +47,17 @@ function driverArgs(options: DriverOptions): string[] {
     "stream-json",
     "--add-dir",
     config.cwd,
-    "--disable-slash-commands",
     "--dangerously-skip-permissions",
   ];
-  if (config.model) args.push("--model", config.model);
+  if (config.mode && config.mode !== "full-access") {
+    args.push("--mode", config.mode);
+  }
+  const { model, effort } = resolveModelAndEffort(config.model, config.thinkingOption);
+  if (model) args.push("--model", model);
+  if (effort) args.push("--effort", effort);
+  if (config.settings?.sandbox === true) {
+    args.push("--sandbox");
+  }
   if (conversationId) args.push("--conversation", conversationId);
   return args;
 }
