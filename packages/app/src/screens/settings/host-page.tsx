@@ -287,8 +287,15 @@ function HostConnectionError({ serverId }: { serverId: string }) {
     }
   }, [password, failure, serverId, setHostPassword, t]);
 
+  const needsPassword = Boolean(failure?.reason && host && !awaitingOrigin);
+  // The field remounts empty, so drop any draft it held when it goes away.
+  useEffect(() => {
+    if (needsPassword) return;
+    setPassword("");
+    setSaveError(null);
+  }, [needsPassword]);
+
   if (!failure || !host) return null;
-  const needsPassword = failure.reason && !awaitingOrigin;
   const title = awaitingOrigin
     ? t("settings.host.password.awaitingOrigin", { host: host.label, origin: awaitingOrigin })
     : failure.title;
