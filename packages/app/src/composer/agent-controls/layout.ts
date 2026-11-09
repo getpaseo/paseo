@@ -27,12 +27,15 @@ export interface ComposerControlPresence {
   hasThinking: boolean;
   hasMode: boolean;
   features: readonly ComposerFeatureControlPresence[];
-  /** Plugin composer items. Each is budgeted like a select with a short label. */
-  pluginItems: number;
+  /** The plugin items' measured width in the toolbar row; 0 when none of them renders anything. */
+  pluginItemsWidth: number;
   fontScale: number;
 }
 
-export type ComposerFeatureControlPresence = { type: "toggle" } | { type: "select"; label: string };
+export type ComposerFeatureControlPresence =
+  | { type: "toggle" }
+  /** `label` is what the toolbar trigger draws; null for an icon-only trigger. */
+  | { type: "select"; label: string | null };
 
 export interface ComposerControlPresentation {
   showCarets: boolean;
@@ -69,7 +72,6 @@ export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarG
 }
 
 const DENSITY_HYSTERESIS = 12;
-const PLUGIN_ITEM_LABEL = "Plugin item";
 /** The model label's narrowest useful width: enough for the model family, such as "GPT-6…". */
 const MODEL_FAMILY_LABEL_WIDTH = 56;
 
@@ -98,7 +100,7 @@ function resolveFeatureControlWidth(
   fontScale: number,
   geometry: ComposerToolbarGeometry,
 ): number {
-  if (feature.type === "toggle") return geometry.controlSize;
+  if (feature.type === "toggle" || feature.label === null) return geometry.controlSize;
   return (
     geometry.controlSize +
     geometry.iconLabelGap +
@@ -117,7 +119,7 @@ function resolveCondensedFloor(
   if (controls.hasModel) widths.push(chrome + 60 * fontScale);
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(chrome + 96 * fontScale);
-  if (controls.features.length > 0 || controls.pluginItems > 0) {
+  if (controls.features.length > 0 || controls.pluginItemsWidth > 0) {
     widths.push(geometry.controlSize);
   }
   return sumControlWidths(widths, geometry);
@@ -137,11 +139,7 @@ function resolveFullFloor(
   for (const feature of controls.features) {
     widths.push(resolveFeatureControlWidth(feature, fontScale, geometry));
   }
-  for (let index = 0; index < controls.pluginItems; index++) {
-    widths.push(
-      resolveFeatureControlWidth({ type: "select", label: PLUGIN_ITEM_LABEL }, fontScale, geometry),
-    );
-  }
+  if (controls.pluginItemsWidth > 0) widths.push(controls.pluginItemsWidth);
   return sumControlWidths(widths, geometry);
 }
 
@@ -157,7 +155,7 @@ function resolveTightFloor(
   }
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(geometry.controlSize);
-  if (controls.features.length > 0 || controls.pluginItems > 0) {
+  if (controls.features.length > 0 || controls.pluginItemsWidth > 0) {
     widths.push(geometry.controlSize);
   }
   return sumControlWidths(widths, geometry);

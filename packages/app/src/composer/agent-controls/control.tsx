@@ -73,6 +73,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         chevron={showCaret ? undefined : null}
+        block={isSheet}
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
