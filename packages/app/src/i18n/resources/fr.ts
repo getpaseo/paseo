@@ -1322,7 +1322,8 @@ export const fr: TranslationResources = {
       title: "Configurer les scripts de worktree",
       description:
         "Ajoutez des commandes de configuration pour que les nouveaux worktrees installent leurs dépendances et se préparent automatiquement.",
-      openProjectSettings: "Ouvrir les paramètres du projet",
+      askAgent: "Confier à l'agent",
+      addManually: "Ajouter manuellement",
     },
     project: {
       actions: {

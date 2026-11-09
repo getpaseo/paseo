@@ -4,13 +4,17 @@ import { useEffect, useMemo } from "react";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import {
+  navigateToWorkspace,
+  useActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import {
   buildWorktreeSetupCalloutPolicy,
   selectActiveGitWorkspaceProject,
   shouldShowWorktreeSetupCallout,
 } from "./worktree-setup-callout-policy";
+import { prepareWorktreeSetupAgentDraft } from "./worktree-setup-agent-draft";
 
 export function WorktreeSetupCalloutSource() {
   const selection = useActiveWorkspaceSelection();
@@ -28,6 +32,16 @@ export function WorktreeSetupCalloutSource() {
       return;
     }
     router.navigate(buildWorktreeSetupCalloutPolicy(activeProject).projectSettingsRoute);
+  });
+  const askAgent = useStableEvent(() => {
+    if (!selection) {
+      return;
+    }
+    navigateToWorkspace({
+      serverId: selection.serverId,
+      workspaceId: selection.workspaceId,
+      target: prepareWorktreeSetupAgentDraft(selection.serverId),
+    });
   });
 
   const readQuery = useQuery({
@@ -62,11 +76,12 @@ export function WorktreeSetupCalloutSource() {
       title: calloutPolicy.title,
       description: calloutPolicy.description,
       actions: [
-        { label: calloutPolicy.actionLabel, onPress: openProjectSettings, variant: "primary" },
+        { label: calloutPolicy.askAgentLabel, onPress: askAgent, variant: "primary" },
+        { label: calloutPolicy.addManuallyLabel, onPress: openProjectSettings },
       ],
       testID: calloutPolicy.testID,
     });
-  }, [calloutPolicy, callouts, openProjectSettings]);
+  }, [askAgent, calloutPolicy, callouts, openProjectSettings]);
 
   return null;
 }

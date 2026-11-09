@@ -1292,7 +1292,8 @@ export const ar: TranslationResources = {
       title: "إعداد البرامج النصية لشجرة العمل",
       description:
         "أضف أوامر الإعداد حتى تتمكن أشجار العمل الجديدة من تثبيت التبعيات وإعداد نفسها تلقائيًا.",
-      openProjectSettings: "افتح إعدادات المشروع",
+      askAgent: "اطلب من الوكيل",
+      addManually: "إضافة يدويًا",
     },
     project: {
       actions: {
