@@ -408,6 +408,8 @@ describe("cursor usage source", () => {
 it("discovery returns a locator when fetch finds cursor credentials", async () => {
   const previous = process.env["CURSOR_ACCESS_TOKEN"];
   const previousAppData = process.env["APPDATA"];
+  const previousHome = process.env["HOME"];
+  const previousUserProfile = process.env["USERPROFILE"];
   const directory = mkdtempSync(join(tmpdir(), "usage-env-"));
   try {
     delete process.env["APPDATA"];
@@ -431,6 +433,10 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;
     if (previousAppData === undefined) delete process.env["APPDATA"];
     else process.env["APPDATA"] = previousAppData;
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
+    if (previousUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = previousUserProfile;
     rmSync(directory, { recursive: true, force: true });
   }
 });
