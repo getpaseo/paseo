@@ -11,6 +11,7 @@ import {
   seedLongMockAgentTimeline,
 } from "../support/helpers/timeline-pagination";
 import {
+  answerFreshnessCheck,
   commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
   expectResumeAnsweredWithoutFetch,
@@ -21,6 +22,7 @@ import {
   restoreUnchangedViewedTimeline,
   restoreViewedTimelineHoldingCatchUp,
   restoreViewedTimelineWithHeldResponse,
+  returnWithFreshnessCheckUnanswered,
   waitForResumeAnswer,
   reopenAppWatchingForUpdatingToast,
   watchForUpdatingToast,
@@ -63,7 +65,7 @@ test.describe("Agent timeline resume", () => {
 
       await test.step("back from the background", async () => {
         const requests = rememberTimelineRequestCounts(gate);
-        const expectNoUpdatingToast = await watchForUpdatingToast(page, gate, requests);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page);
 
         await hideTabAndReturn(page);
         await waitForResumeAnswer(gate, requests);
@@ -75,7 +77,7 @@ test.describe("Agent timeline resume", () => {
 
       await test.step("back from a dropped connection", async () => {
         const requests = rememberTimelineRequestCounts(gate);
-        const expectNoUpdatingToast = await watchForUpdatingToast(page, gate, requests);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page);
 
         await disconnectViewedTimeline(page, gate);
         await restoreUnchangedViewedTimeline(page, gate);
@@ -88,13 +90,32 @@ test.describe("Agent timeline resume", () => {
       await test.step("back from reopening the app", async () => {
         const requests = rememberTimelineRequestCounts(gate);
 
-        const expectNoUpdatingToast = await reopenAppWatchingForUpdatingToast(page, gate, requests);
+        const expectNoUpdatingToast = await reopenAppWatchingForUpdatingToast(page);
         await waitForResumeAnswer(gate, requests);
         await expectTimelinePromptVisible(page, agent.newestPrompt);
 
         await expectNoUpdatingToast();
         expectResumeAnsweredWithoutFetch(gate, requests);
       });
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("a check the daemon has not answered reports the update until it does", async ({ page }) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedLongMockAgentTimeline({ turns: 3 });
+    try {
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      const requests = rememberTimelineRequestCounts(gate);
+
+      await returnWithFreshnessCheckUnanswered(page, gate);
+      await answerFreshnessCheck(page, gate);
+
+      expectResumeAnsweredWithoutFetch(gate, requests);
     } finally {
       gate.restore();
       await agent.cleanup();
