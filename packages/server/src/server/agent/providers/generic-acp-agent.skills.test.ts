@@ -33,6 +33,28 @@ describe("GenericACPAgentClient skill discovery", () => {
     });
   });
 
+  test("offers skills from every agent home Paseo knows", async () => {
+    await withFakeACPAgent("silent", async (command, cwd, home) => {
+      // Codex and ZCode read their own skill homes, so a skill installed only
+      // for one of them has to reach the agent that cannot see it itself.
+      await writeSkill(path.join(home, ".codex", "skills", "codex-only"));
+      await writeSkill(path.join(home, ".zcode", "skills", "zcode-only"));
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command,
+        initialCommandsWaitTimeoutMs: 50,
+        homeDir: home,
+      });
+      const session = await client.createSession({ provider: "acp", cwd });
+      try {
+        const commands = await session.listCommands!();
+        expect(commandNames(commands)).toEqual(["codex-only", "zcode-only"]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
   test("a skill the agent advertises itself is not duplicated", async () => {
     await withFakeACPAgent("commands-after-session-new", async (command, cwd, home) => {
       await writeSkill(path.join(cwd, ".agents", "skills", "review"));

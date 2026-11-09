@@ -6,6 +6,7 @@ import {
   mergeSkillCommands,
   type DiscoveredACPSkill,
 } from "./acp-skill-commands.js";
+import { resolveAgentSkillRoots } from "./agent-skill-roots.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -2294,14 +2295,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * Earlier roots win, so the project's own skills shadow the user's.
    */
   private resolveSkillRoots(): readonly string[] {
-    const cwd = this.config.cwd;
-    const home = this.homeDir ?? homedir();
-    return [
-      path.join(cwd, ".agents", "skills"),
-      path.join(cwd, ".claude", "skills"),
-      path.join(home, ".agents", "skills"),
-      path.join(home, ".claude", "skills"),
-    ];
+    return resolveAgentSkillRoots({ cwd: this.config.cwd, home: this.homeDir });
   }
 
   /**
