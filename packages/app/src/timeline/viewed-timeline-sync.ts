@@ -12,7 +12,7 @@ import {
   type AgentTimelineState,
 } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getSendingClientMessageIds } from "@/composer/submission/model";
 import {
   getInitDeferred,
@@ -381,7 +381,10 @@ export interface ViewedTimelineSyncPorts {
     agentIds: string[],
     cursors?: Record<string, { epoch: string; seq: number }>,
   ): {
-    ready: Promise<{ timelines?: Record<string, TimelineFreshness> } | void>;
+    ready: Promise<{
+      timelines?: Record<string, TimelineFreshness>;
+      agents?: Record<string, AgentSnapshotPayload>;
+    } | void>;
     release(): Promise<void>;
   };
   /** The daemon confirmed the cached timeline is at its head, as a zero-row after page would. */

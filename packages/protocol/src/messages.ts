@@ -5259,6 +5259,9 @@ export const SetAgentTimelineSubscriptionResponseMessageSchema = z.object({
     requestId: z.string(),
     // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
     timelines: z.record(z.string(), TimelineFreshnessSchema).optional(),
+    // The agent row for each chat answered "current", which gets no timeline fetch to carry it.
+    // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+    agents: z.record(z.string(), AgentSnapshotPayloadSchema).optional(),
   }),
 });
 

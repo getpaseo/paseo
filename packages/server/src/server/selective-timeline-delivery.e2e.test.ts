@@ -262,11 +262,15 @@ test("subscribing with a cursor answers whether each chat is at its head", async
     },
   );
 
-  expect((await observation.ready).timelines).toEqual({
+  const answer = await observation.ready;
+  expect(answer.timelines).toEqual({
     [atHead.agentId]: "current",
     [staleSeq.agentId]: "behind",
     [otherEpoch.agentId]: "behind",
   });
+  // Only a current chat skips the fetch that would have delivered its agent row.
+  expect(Object.keys(answer.agents ?? {})).toEqual([atHead.agentId]);
+  expect(answer.agents?.[atHead.agentId]).toMatchObject({ id: atHead.agentId, title: "At head" });
 
   connected.clear();
   await daemon.daemon.agentManager.appendTimelineItem(atHead.agentId, {
@@ -292,7 +296,9 @@ test("subscribing with a cursor answers behind for a stored agent and leaves it 
     cursors: { [stored.agentId]: stored.head },
   });
 
-  expect((await observation.ready).timelines).toEqual({ [stored.agentId]: "behind" });
+  const answer = await observation.ready;
+  expect(answer.timelines).toEqual({ [stored.agentId]: "behind" });
+  expect(answer.agents).toEqual({});
   expect(daemon.daemon.agentManager.getAgent(stored.agentId)).toBeNull();
   await observation.release();
 });

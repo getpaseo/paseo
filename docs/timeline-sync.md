@@ -110,9 +110,10 @@ A chat with a cached cursor asks the daemon first. The `agent.timeline.set_subsc
 that attaches the chat carries its `{ epoch, seq }`, and the response answers `current` or `behind`
 per chat. The daemon attaches before it compares, so an entry committed in between arrives live or
 counts as behind. `current` means the agent is loaded, the epoch matches, and the cursor is at the
-head; it completes catch-up with no fetch. `behind`, or no entry, runs the bounded catch-up. The
-subscribe handler never loads an agent, so an agent the daemon has not loaded answers `behind` and
-resumes in that fetch. Hosts without `features.timelineFreshnessCheck` get no cursors and always fetch.
+head; it completes catch-up with no fetch. The response carries the agent row for each `current`
+chat, because the timeline fetch is also what refreshes that row and the replica cache stores only
+part of it. `behind`, or no entry, runs the bounded catch-up. The subscribe handler never loads an
+agent, so an agent the daemon has not loaded answers `behind` and resumes in that fetch. Hosts without `features.timelineFreshnessCheck` get no cursors and always fetch.
 
 Cached history remains readable during recovery. The chat shows Reconnecting to host while the host
 is offline and until a reconnected chat's check answers, so an unchanged chat never shows a second
