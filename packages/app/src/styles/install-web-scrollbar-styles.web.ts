@@ -19,8 +19,13 @@ export function installWebScrollbarStyles(): () => void {
   scrollbar-width: ${WEB_SCROLLBAR_WIDTH};
 }
 
+/* The composer draws an overlay thumb; macOS overlay scrollbars hide the native one until scrolled. */
 [data-composer-input] {
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+
+[data-composer-input]::-webkit-scrollbar {
+  display: none;
 }
 
 *::-webkit-scrollbar {
