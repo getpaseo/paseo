@@ -265,10 +265,16 @@ export async function discover(): Promise<UsageAccount[]> {
     locator,
   }));
   if (process.env.APPDATA)
-    candidates.push({
-      store: "sqlite",
-      locator: join(process.env.APPDATA, "Cursor", "User", "globalStorage", "state.vscdb"),
-    });
+    candidates.push(
+      {
+        store: "sqlite",
+        locator: join(process.env.APPDATA, "Cursor", "User", "globalStorage", "state.vscdb"),
+      },
+      {
+        store: "file",
+        locator: join(process.env.APPDATA, "Cursor", "auth.json"),
+      },
+    );
   candidates.push(
     ...[
       join(
@@ -284,11 +290,15 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
+  const accounts: UsageAccount[] = [];
+  const seenTokens = new Set<string>();
   for (const input of candidates) {
     const token = await readToken(input);
-    if (token) return [cursorAccount(token, input)];
+    if (!token || seenTokens.has(token)) continue;
+    seenTokens.add(token);
+    accounts.push(cursorAccount(token, input));
   }
-  return [];
+  return accounts;
 }
 
 // Account identity joins global and session logins without merging different users.
