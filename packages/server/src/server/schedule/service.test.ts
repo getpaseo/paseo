@@ -753,6 +753,7 @@ describe("ScheduleService", () => {
       agent.id,
       expect.stringContaining(`Schedule fired (id=${schedule.id}, run=`),
       undefined,
+      { onWait: expect.any(Function) },
     ]);
   });
 

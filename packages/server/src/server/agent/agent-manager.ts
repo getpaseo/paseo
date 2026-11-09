@@ -848,6 +848,7 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
+  private readonly waitingPrompts = new Map<string, Set<Promise<void>>>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
@@ -3492,20 +3493,71 @@ export class AgentManager {
       if (!expectedTurnId) {
         return { status: "inactive" };
       }
-      const result = await this.admitSteer(agent, expectedTurnId, prompt, options);
+      // Watch before asking: the admission drains buffered provider events, so the turn can
+      // end inside it, and a watch started after a busy answer would miss that and wait forever.
+      // An event that only wakes the watch costs one more busy answer.
+      const wake = this.watchNextAgentEvent(agentId);
+      let result: SteerResult;
+      try {
+        result = await this.admitSteer(agent, expectedTurnId, prompt, options);
+      } catch (error) {
+        wake.cancel();
+        throw error;
+      }
       if (result.status !== "busy") {
+        wake.cancel();
         return await this.dispatchUnsteeredPrompt(agent, expectedTurnId, result, prompt, options);
       }
       // The turn can take no input now and must not be replaced (a compaction, which an
       // interrupt would cancel). Ask again on the agent's next event: the steer joins the turn
-      // once it can, or starts a new one if the turn ends first. Subscribing only after the
-      // answer keeps the admission's own events from waking the wait; a change in between is
-      // caught by a later event, and the end of the turn always produces one.
+      // once it can, or starts a new one if the turn ends first.
       if (!waited) {
         waited = true;
         hooks?.onWait?.();
       }
-      await this.nextAgentEvent(agentId);
+      await wake.next;
+    }
+  }
+
+  /**
+   * Holds completion waits for a prompt that had to wait for its agent's turn (a compaction)
+   * until `dispatched` settles, by when the prompt has joined a turn or started its own. Without
+   * this, a wait would see the busy turn end and finish before the prompt's own turn begins.
+   */
+  trackWaitingPrompt(agentId: string, dispatched: Promise<unknown>): void {
+    const settled = dispatched.then(
+      () => undefined,
+      () => undefined,
+    );
+    let waiting = this.waitingPrompts.get(agentId);
+    if (!waiting) {
+      waiting = new Set();
+      this.waitingPrompts.set(agentId, waiting);
+    }
+    const entries = waiting;
+    entries.add(settled);
+    void settled.finally(() => {
+      entries.delete(settled);
+      if (entries.size === 0 && this.waitingPrompts.get(agentId) === entries) {
+        this.waitingPrompts.delete(agentId);
+      }
+    });
+  }
+
+  /** Resolves once the prompts waiting for this agent's turn when called have dispatched. */
+  async waitForWaitingPrompts(agentId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const waiting = [...(this.waitingPrompts.get(agentId) ?? [])];
+    if (waiting.length === 0) return;
+    let aborted!: () => void;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      aborted = () => reject(new DOMException("Wait aborted", "AbortError"));
+      signal.addEventListener("abort", aborted, { once: true });
+    });
+    try {
+      await Promise.race([Promise.all(waiting), cancellation]);
+    } finally {
+      signal.removeEventListener("abort", aborted);
     }
   }
 
@@ -3536,10 +3588,11 @@ export class AgentManager {
     });
   }
 
-  /** Resolves on the next event about this agent: a state change, stream event or removal. */
-  private nextAgentEvent(agentId: string): Promise<void> {
-    return new Promise<void>((settle) => {
-      const unsubscribe = this.subscribe(
+  /** Watches for the next event about this agent: a state change, stream event or removal. */
+  private watchNextAgentEvent(agentId: string): { next: Promise<void>; cancel: () => void } {
+    let unsubscribe = () => {};
+    const next = new Promise<void>((settle) => {
+      unsubscribe = this.subscribe(
         () => {
           unsubscribe();
           settle();
@@ -3547,6 +3600,7 @@ export class AgentManager {
         { agentId, replayState: false },
       );
     });
+    return { next, cancel: () => unsubscribe() };
   }
 
   private async dispatchUnsteeredPrompt(

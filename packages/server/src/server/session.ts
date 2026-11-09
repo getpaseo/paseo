@@ -9050,6 +9050,10 @@ export class Session {
         agentId,
         AbortSignal.any([abortController.signal, sourceSignal]),
       );
+      await this.agentManager.waitForWaitingPrompts(
+        agentId,
+        AbortSignal.any([abortController.signal, sourceSignal]),
+      );
 
       const live = this.agentManager.getAgent(agentId);
       if (!live) {
