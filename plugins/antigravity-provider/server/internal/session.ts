@@ -161,7 +161,7 @@ function extractUserText(content: string): string {
 }
 
 function resolveTranscriptPath(conversationId: string, homeDir: string): string {
-  return path.join(
+  const logDir = path.join(
     homeDir,
     ".gemini",
     "antigravity-cli",
@@ -169,8 +169,10 @@ function resolveTranscriptPath(conversationId: string, homeDir: string): string 
     conversationId,
     ".system_generated",
     "logs",
-    "transcript.jsonl",
   );
+  const fullPath = path.join(logDir, "transcript_full.jsonl");
+  if (fs.existsSync(fullPath)) return fullPath;
+  return path.join(logDir, "transcript.jsonl");
 }
 
 function readTranscriptContent(conversationId: string | null, homeDir: string): string | null {
