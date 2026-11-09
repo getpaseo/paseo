@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.

@@ -804,13 +804,12 @@ class AcpRuntime {
       this.modes = { ...this.modes, currentModeId: change.value };
       return;
     }
-    let category: "model" | "thought_level" | null = null;
-    if (change.target === "model") category = "model";
-    if (change.target === "thinking") category = "thought_level";
-    const configId =
-      change.target === "setting"
-        ? change.id
-        : this.configOptions.find((option) => option.category === category)?.id;
+    let configId: string | undefined;
+    if (change.target === "setting") configId = change.id;
+    if (change.target === "model") configId = modelOption(this.configOptions)?.id;
+    if (change.target === "thinking") {
+      configId = this.configOptions.find((option) => option.category === "thought_level")?.id;
+    }
     if (!configId) {
       throw new Error(`ACP session does not expose ${change.target} configuration`);
     }
@@ -1375,7 +1374,7 @@ function toProviderConfigState(
   modes: NewSessionResponse["modes"],
   options: readonly SessionConfigOption[],
 ): ProviderConfigState {
-  const model = options.find((option) => option.category === "model");
+  const model = modelOption(options);
   const thinking = options.find((option) => option.category === "thought_level");
   return {
     model: selectedValue(model),
@@ -1393,9 +1392,21 @@ function toProviderConfigState(
       label: option.label,
     })),
     settings: options
-      .filter((option) => option.category !== "model" && option.category !== "thought_level")
+      .filter(
+        (option) =>
+          option !== model &&
+          option.category !== "thought_level" &&
+          !(modes && option.category === "mode"),
+      )
       .map(toProviderSetting),
   };
+}
+
+// ACP's category is a grouping hint, so one category can hold several controls. fx files its
+// provider first, then the model, Fast, and Ultrafast under "model".
+function modelOption(options: readonly SessionConfigOption[]): SessionConfigOption | undefined {
+  const candidates = options.filter((option) => option.category === "model");
+  return candidates.find((option) => option.id === "model") ?? candidates[0];
 }
 
 function toProviderCatalog(
