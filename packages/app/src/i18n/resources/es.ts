@@ -122,6 +122,10 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: {
+      keepOpen: "Mantener abierto debajo del chat",
+      collapse: "Plegar panel",
+    },
     placeholders: {
       desktop: "Envíe un mensaje al agente, etiquete@fileso use/commandsy/skills",
       mobile: "Mensaje,@files,/commands",

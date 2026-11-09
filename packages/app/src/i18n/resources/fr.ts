@@ -123,6 +123,7 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "Garder ouvert sous le chat", collapse: "Replier le panneau" },
     placeholders: {
       desktop: "Écrivez à l’agent, mentionnez des @fichiers ou utilisez les /commandes et /skills",
       mobile: "Message, @fichiers, /commandes",

@@ -122,6 +122,7 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "Manter aberto abaixo do chat", collapse: "Recolher painel" },
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",

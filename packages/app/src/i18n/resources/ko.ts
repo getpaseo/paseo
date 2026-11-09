@@ -121,6 +121,7 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    keptPanel: { keepOpen: "채팅 아래에 열린 상태로 유지", collapse: "패널 접기" },
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",

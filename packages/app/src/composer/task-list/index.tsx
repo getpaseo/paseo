@@ -29,6 +29,7 @@ const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] 
   return (
     <ComposerTrackPill
       testID="agent-task-list-header"
+      keepOpen
       segments={segments}
       panelTitle={t("message.todo.title")}
     >

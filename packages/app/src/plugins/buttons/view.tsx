@@ -25,6 +25,7 @@ import {
   type MenuPageDefinition,
 } from "@/components/ui/menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { KeepPanelContent } from "@/composer/kept-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import {
@@ -241,6 +242,51 @@ function buttonPages(
   });
 }
 
+function ComposerPluginSurface({ view, children }: { view: ButtonView; children: ReactNode }) {
+  const surface = useCallback(
+    (content: ReactNode) => (
+      <PluginPopoverSurface
+        sheetTitle={view.entry.button.title}
+        side="top"
+        align="start"
+        offset={12}
+      >
+        {content}
+      </PluginPopoverSurface>
+    ),
+    [view.entry.button.title],
+  );
+  return (
+    <KeepPanelContent
+      id={`plugin-${view.entry.key}`}
+      title={view.entry.button.title}
+      renderSurface={surface}
+    >
+      {children}
+    </KeepPanelContent>
+  );
+}
+
+function ButtonPanel({ view, pages }: { view: ButtonView; pages: MenuPageDefinition[] }) {
+  const { button } = view.entry;
+  const composer = view.entry.placement === "composer";
+  if (button.behavior.kind === "action") return null;
+  const body = <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />;
+  if (composer && button.behavior.kind === "popover")
+    return <ComposerPluginSurface view={view}>{body}</ComposerPluginSurface>;
+  return (
+    <PluginPopoverSurface
+      sheetTitle={button.title}
+      side={composer ? "top" : "bottom"}
+      align={composer ? "start" : "end"}
+      offset={composer ? 12 : 4}
+      pages={pages}
+    >
+      {body}
+    </PluginPopoverSurface>
+  );
+}
+
 function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
@@ -334,17 +380,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
           <Text style={styles.tooltipLabel}>{button.title}</Text>
         </TooltipContent>
       </Tooltip>
-      {expanded ? (
-        <PluginPopoverSurface
-          sheetTitle={button.title}
-          side={composer ? "top" : "bottom"}
-          align={composer ? "start" : "end"}
-          offset={composer ? 12 : 4}
-          pages={pages}
-        >
-          <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />
-        </PluginPopoverSurface>
-      ) : null}
+      <ButtonPanel view={view} pages={pages} />
     </MenuRoot>
   );
 }

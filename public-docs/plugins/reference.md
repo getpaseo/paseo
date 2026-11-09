@@ -2139,6 +2139,11 @@ pill; actions show none, so a pill that runs on tap reads differently from one t
 The track keeps its space above the composer whether or not it has pills, so adding and removing
 pills does not move the transcript.
 
+A popover also offers **Keep open below chat**. Paseo hosts its content between the transcript
+and composer until you collapse it. Only one panel stays open per agent pane; choosing another
+replaces it. This is a client layout choice, not a new plugin API or background task. Removing
+the contribution removes its panel. The original tool-call history is unchanged.
+
 ```tsx
 const pill = client.addComposerPill({
   id: "review",
