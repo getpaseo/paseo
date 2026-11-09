@@ -7476,14 +7476,21 @@ export class Session {
     liveTargets: readonly WorkspaceObservationTarget[],
   ): void {
     const liveWorkspaceIds = new Set(liveTargets.map((target) => target.id));
+    // One directory can back several workspace records and the read is shared by directory, so
+    // collect every record that shares it instead of emitting for whichever was seen first.
+    const workspaceIdsByCwd = new Map<string, string[]>();
     for (const target of targets) {
       if (liveWorkspaceIds.has(target.id) || target.workspaceKind === "directory") continue;
-      void this.fillGitDataForWorkspace(target);
+      const workspaceIds = workspaceIdsByCwd.get(target.workspaceDirectory);
+      if (workspaceIds) workspaceIds.push(target.id);
+      else workspaceIdsByCwd.set(target.workspaceDirectory, [target.id]);
+    }
+    for (const [cwd, workspaceIds] of workspaceIdsByCwd) {
+      void this.fillGitDataForWorkspace(cwd, workspaceIds);
     }
   }
 
-  private fillGitDataForWorkspace(target: WorkspaceObservationTarget): Promise<void> {
-    const cwd = target.workspaceDirectory;
+  private fillGitDataForWorkspace(cwd: string, workspaceIds: readonly string[]): Promise<void> {
     if (this.workspaceRuntimeStore.get(cwd) || this.workspaceGitWarmUpCwds.has(cwd)) {
       return Promise.resolve();
     }
@@ -7492,10 +7499,10 @@ export class Session {
       try {
         await this.workspaceGitService.getSnapshot(cwd);
         if (this.isCleanedUp) return;
-        await this.emitWorkspaceUpdateForWorkspaceId(target.id);
+        await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
       } catch (error) {
         this.sessionLogger.warn(
-          { err: error, workspaceId: target.id, cwd },
+          { err: error, workspaceIds, cwd },
           "Failed to read git state for an unwatched workspace",
         );
       } finally {
