@@ -7319,6 +7319,9 @@ export class Session {
     const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
     const wanted = this.wantsEvent("checkout_status_update");
     const live = wanted ? await this.listLiveWorkspaceObservationTargets(explicitlySubscribed) : [];
+    // A terminal-triggered check can outlive the session. cleanup() disposed the observer, so
+    // registering here would revive watches for a dead session and keep them running.
+    if (this.isCleanedUp) return;
     this.workspaceGitObserver.reconcileObservers(
       wanted ? [...explicitlySubscribed, ...live] : explicitlySubscribed,
     );

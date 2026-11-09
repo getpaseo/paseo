@@ -1168,6 +1168,41 @@ describe("live workspace observation", () => {
     await session.cleanup();
   });
 
+  test("a reconcile still running when the session cleans up registers nothing", async () => {
+    const terminalCwd = "/tmp/cleanup-race-workspace";
+    const slowTerminals = createSlowTerminalManager(terminalCwd);
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({ terminalManager: slowTerminals.terminalManager });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-cleanup",
+      cwd: terminalCwd,
+      name: "cleanup",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+
+    // The reconcile reads a live terminal and holds the answer, so it applies after cleanup.
+    slowTerminals.addTerminal("ws-cleanup");
+    const lookupsBefore = slowTerminals.lookupCount();
+    slowTerminals.delayNextLookup(50);
+    const pendingReconcile = reconcileObservers(session);
+    await vi.waitFor(() => expect(slowTerminals.lookupCount()).toBe(lookupsBefore + 1));
+    await session.cleanup();
+    await pendingReconcile;
+
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+    expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0);
+  });
+
   test("a touched workspace survives the next reconcile and drops after the liveness window", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
