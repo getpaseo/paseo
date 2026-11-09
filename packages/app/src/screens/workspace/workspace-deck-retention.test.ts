@@ -30,21 +30,56 @@ function retainedWorkspaceIds(
 }
 
 describe("reconcileRetainedWorkspaceSelections", () => {
-  it("retains only the active workspace on native", () => {
+  it("retains only the active workspace on a phone-sized native layout", () => {
     const entries = reconcileRetainedWorkspaceSelections({
       currentEntries: [retained("A", null)],
       activeSelection: workspace("B"),
       now: 2,
-      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative: true }),
+      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({
+        isNative: true,
+        isCompact: false,
+        shortestSide: 700,
+      }),
     });
 
     expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
   });
 
+  it("trims the deck when a tablet-sized layout folds down to a phone", () => {
+    const entries = reconcileRetainedWorkspaceSelections({
+      currentEntries: [retained("B", null), retained("A", 1), retained("C", 2)],
+      activeSelection: workspace("B"),
+      now: 3,
+      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({
+        isNative: true,
+        isCompact: false,
+        shortestSide: 700,
+      }),
+    });
+
+    expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
+  });
+
+  it("retains the last few workspaces on a tablet-sized native layout", () => {
+    expect(
+      resolveWorkspaceDeckRetentionLimit({ isNative: true, isCompact: false, shortestSide: 880 }),
+    ).toBe(3);
+    expect(
+      resolveWorkspaceDeckRetentionLimit({ isNative: true, isCompact: false, shortestSide: 700 }),
+    ).toBe(1);
+  });
+
+  it("keeps one workspace in a compact layout, where sheets cover the whole app", () => {
+    // Compact sheets present on the app overlay host and only leave with their workspace.
+    expect(
+      resolveWorkspaceDeckRetentionLimit({ isNative: true, isCompact: true, shortestSide: 880 }),
+    ).toBe(1);
+  });
+
   it("retains the desktop deck limit on web", () => {
-    expect(resolveWorkspaceDeckRetentionLimit({ isNative: false })).toBe(
-      WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
-    );
+    expect(
+      resolveWorkspaceDeckRetentionLimit({ isNative: false, isCompact: false, shortestSide: 700 }),
+    ).toBe(WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES);
   });
 
   it("retains inactive workspaces for ten minutes across app-wide routes", () => {
