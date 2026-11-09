@@ -53,7 +53,7 @@ function layoutFor(items: StreamItem[], isTurnActive: boolean) {
       isTurnActive,
       history: model.segments.historyMounted,
       liveHead: model.segments.liveHead,
-      timingByAssistantId: model.turnTiming.byAssistantId,
+      timingByItemId: model.turnTiming.byItemId,
     }),
   };
 }
@@ -67,6 +67,24 @@ function completedFooterIds(layout: ReturnType<typeof layoutFor>["layout"]): str
 }
 
 describe("canonical turn membership", () => {
+  it("uses trigger fallback for missing IDs without pretending to recover batching", () => {
+    const previous = assistant("reply", 1, "first");
+    const trigger = runningTool("heartbeat", 2, "first");
+    if (trigger.kind !== "tool_call" || trigger.payload.source !== "agent")
+      throw new Error("Expected agent tool");
+    trigger.payload.data.name = "heartbeat";
+    expect(continuesTurn(previous, trigger)).toBe(true);
+    delete trigger.turnId;
+    expect(continuesTurn(previous, trigger)).toBe(false);
+    trigger.payload.data.name = "agent_message";
+    trigger.payload.data.agentMessage = {
+      event: "finished",
+      sender: { id: "worker" },
+      text: "Done",
+    };
+    expect(continuesTurn(previous, trigger)).toBe(false);
+  });
+
   it("stops tagged traversal at every mismatching turn ID", () => {
     expect(continuesTurn(assistant("first", 1, "turn-1"), runningTool("next", 2, "turn-2"))).toBe(
       false,
@@ -76,7 +94,7 @@ describe("canonical turn membership", () => {
     );
   });
 
-  it("renders adjacent turns without visible prompts as one response", () => {
+  it("renders a separate footer for each canonical turn without visible prompts", () => {
     const items = [
       user("prompt", 1, "turn-1"),
       assistant("first reply", 2, "turn-1"),
@@ -88,7 +106,11 @@ describe("canonical turn membership", () => {
 
     const completed = layoutFor(items, false);
 
-    expect(completedFooterIds(completed.layout)).toEqual(["heartbeat-2-reply"]);
+    expect(completedFooterIds(completed.layout)).toEqual([
+      "first reply",
+      "heartbeat-1-reply",
+      "heartbeat-2-reply",
+    ]);
     expect(completed.layout.auxiliaryTurnFooter?.timing).toEqual({
       completedAt: at(6),
       durationMs: null,
@@ -123,7 +145,7 @@ describe("canonical turn membership", () => {
     const completedItems = [...build(turnId), assistant("done", 9, turnId)];
     const completed = layoutFor(completedItems, false);
     expect(completedFooterIds(completed.layout)).toEqual(["done"]);
-    expect(completed.model.turnTiming.byAssistantId.get("done")).toMatchObject({
+    expect(completed.model.turnTiming.byItemId.get("done")).toMatchObject({
       completedAt: at(9),
       durationMs: 8000,
     });

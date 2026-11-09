@@ -1,9 +1,13 @@
-import changelogMarkdown from "../../../CHANGELOG.md?raw";
+import englishChangelog from "../../../CHANGELOG.md?raw";
+import chineseChangelog from "../../../CHANGELOG.zh-CN.md?raw";
+import { DEFAULT_LOCALE, type Locale, localizePath } from "~/i18n";
 
 export interface ChangelogRelease {
   version: string;
   date: string;
   markdown: string;
+  /** The language of `markdown`; English when the release has no translation yet. */
+  locale: Locale;
 }
 
 export interface ChangelogReleaseGroup {
@@ -21,7 +25,7 @@ function minorVersion(version: string): string {
   return version.split(".").slice(0, 2).join(".");
 }
 
-function parseChangelog(markdown: string): ChangelogRelease[] {
+export function parseChangelog(markdown: string, locale: Locale): ChangelogRelease[] {
   const releases: ChangelogRelease[] = [];
   const versions = new Set<string>();
   let currentRelease: ChangelogRelease | null = null;
@@ -40,6 +44,7 @@ function parseChangelog(markdown: string): ChangelogRelease[] {
         version,
         date: heading[2],
         markdown: "",
+        locale,
       };
       continue;
     }
@@ -49,6 +54,24 @@ function parseChangelog(markdown: string): ChangelogRelease[] {
 
   if (currentRelease) releases.push(currentRelease);
   return releases;
+}
+
+/**
+ * The English releases, each replaced by its translation when one exists. A translation counts
+ * only when it carries the same version and date as the English entry, so a stale translation never
+ * stands in for newer notes. A release without a current translation is shown whole in English, and
+ * a translation whose English entry was renamed or removed, such as a promoted beta, is dropped:
+ * a release never waits on its translation.
+ */
+export function localizeReleases(
+  english: readonly ChangelogRelease[],
+  translated: readonly ChangelogRelease[],
+): ChangelogRelease[] {
+  const byVersion = new Map(translated.map((release) => [release.version, release]));
+  return english.map((release) => {
+    const translation = byVersion.get(release.version);
+    return translation?.date === release.date ? translation : release;
+  });
 }
 
 function groupChangelogReleases(releases: ChangelogRelease[]): ChangelogReleaseGroup[] {
@@ -67,9 +90,18 @@ function groupChangelogReleases(releases: ChangelogRelease[]): ChangelogReleaseG
   return groups;
 }
 
-const changelogReleases = parseChangelog(changelogMarkdown);
+const englishReleases = parseChangelog(englishChangelog, DEFAULT_LOCALE);
 
-export const changelogReleaseGroups = groupChangelogReleases(changelogReleases);
+const releaseGroups: Record<Locale, ChangelogReleaseGroup[]> = {
+  en: groupChangelogReleases(englishReleases),
+  "zh-CN": groupChangelogReleases(
+    localizeReleases(englishReleases, parseChangelog(chineseChangelog, "zh-CN")),
+  ),
+};
+
+export function getChangelogReleaseGroups(locale: Locale): ChangelogReleaseGroup[] {
+  return releaseGroups[locale];
+}
 
 /**
  * Deep link from a downloadable version to its notes.
@@ -81,9 +113,8 @@ export const changelogReleaseGroups = groupChangelogReleases(changelogReleases);
  * changelog commit hasn't been deployed yet) get the plain changelog, never a
  * dead anchor.
  */
-export function changelogLink(version: string): { to: "/changelog"; hash?: string } {
-  const known = changelogReleases.some((release) => release.version === version);
-  return known
-    ? { to: "/changelog", hash: releaseAnchor(minorVersion(version)) }
-    : { to: "/changelog" };
+export function changelogLink(version: string, locale: Locale): { to: string; hash?: string } {
+  const to = localizePath("/changelog", locale);
+  const known = englishReleases.some((release) => release.version === version);
+  return known ? { to, hash: releaseAnchor(minorVersion(version)) } : { to };
 }

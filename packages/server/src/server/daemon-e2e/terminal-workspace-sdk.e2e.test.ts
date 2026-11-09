@@ -1,5 +1,5 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -192,3 +192,209 @@ test("listing by workspace ID keeps terminals in a shared directory separate", a
     expect.objectContaining({ id: created.terminal?.id, workspaceId: second, cwd }),
   ]);
 });
+
+test("script status started and stopped by one client reaches every subscribed client", async () => {
+  await writeFile(
+    path.join(cwd, "paseo.json"),
+    JSON.stringify({
+      scripts: { sleeper: { type: "script", command: 'node -e "setInterval(() => {}, 60000)"' } },
+    }),
+  );
+  const observer = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const bystander = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await observer.connect();
+    await bystander.connect();
+    const bystanderEvents: string[] = [];
+    bystander.subscribeRawMessages((message) => bystanderEvents.push(message.type));
+    const opened = await client.openProject(cwd);
+    expect(opened.error).toBeNull();
+    const workspaceId = opened.workspace!.id;
+    const actorSeen = await observeScriptLifecycles(client, "sleeper");
+    const observerSeen = await observeScriptLifecycles(observer, "sleeper");
+
+    expect((await client.startWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
+    await expect.poll(() => actorSeen.at(-1)).toBe("running");
+    await expect.poll(() => observerSeen.at(-1)).toBe("running");
+
+    expect((await client.stopWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
+    await expect.poll(() => actorSeen.at(-1)).toBe("stopped");
+    await expect.poll(() => observerSeen.at(-1)).toBe("stopped");
+    expect(bystanderEvents).not.toContain("script_status_update");
+  } finally {
+    await observer.close();
+    await bystander.close();
+  }
+}, 60_000);
+
+async function observeScriptLifecycles(
+  daemonClient: DaemonClient,
+  scriptName: string,
+): Promise<string[]> {
+  const lifecycles: string[] = [];
+  const subscription = daemonClient.observeEvents(["script_status_update"]);
+  subscription.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      if (message.type !== "script_status_update") return;
+      const script = message.payload.scripts.find((entry) => entry.scriptName === scriptName);
+      if (script) lifecycles.push(script.lifecycle);
+    },
+  });
+  await subscription.ready;
+  return lifecycles;
+}
+
+test.runIf(process.platform !== "win32")(
+  "a missing command fails creation without leaving a terminal listed",
+  async () => {
+    const workspaceId = await createWorkspace("Missing command");
+    await expect(
+      sdk.terminals.create({
+        workspaceId,
+        name: "Missing command",
+        command: "paseo-test-absent-terminal-command",
+      }),
+    ).rejects.toThrow("paseo-test-absent-terminal-command: command not found");
+    expect((await sdk.terminals.list({ workspaceId })).entries).toEqual([]);
+    const control = await sdk.terminals.create({
+      workspaceId,
+      command: process.execPath,
+      args: ["-e", "process.stdin.resume()"],
+    });
+    expect((await sdk.terminals.list({ workspaceId })).entries.map((entry) => entry.id)).toEqual([
+      control.id,
+    ]);
+    await control.kill();
+    expect((await sdk.terminals.list({ workspaceId })).entries).toEqual([]);
+  },
+);
+
+test("host-wide terminal observation tracks every workspace, metadata and release", async () => {
+  const first = await createWorkspace("Observe first");
+  const second = await createWorkspace("Observe second");
+  expect(client.getLastServerInfoMessage()?.features?.terminalCollection).toBe(true);
+  const observation = client.observeTerminals({});
+  let terminals = (await observation.ready).terminals;
+  const update = observation.subscribe({
+    snapshot: (value) => {
+      terminals = value.terminals;
+    },
+    update: (message) => {
+      if (message.type === "terminals_changed") terminals = message.payload.terminals;
+    },
+  });
+  try {
+    expect(terminals).toEqual([]);
+    const scoped = client.observeTerminals({ workspaceId: first });
+    const scopedSnapshot = await scoped.ready;
+    let owned = scopedSnapshot.terminals;
+    const releaseScoped = scoped.subscribe({
+      snapshot: (value) => {
+        owned = value.terminals;
+      },
+      update: (message) => {
+        if (message.type === "terminals_changed") owned = message.payload.terminals;
+      },
+    });
+    // Use a controlled process: interactive shells publish their own OSC title on startup.
+    const command = {
+      command: process.execPath,
+      args: ["-e", "console.log('READY'); process.stdin.resume()"],
+    };
+    const a = await sdk.terminals.create({
+      workspaceId: first,
+      name: "First terminal",
+      ...command,
+    });
+    const b = await sdk.terminals.create({
+      workspaceId: second,
+      name: "Second terminal",
+      ...command,
+    });
+    await expect
+      .poll(async () => (await a.capture({ stripAnsi: true })).lines.join("\n"))
+      .toContain("READY");
+    await expect
+      .poll(async () => (await b.capture({ stripAnsi: true })).lines.join("\n"))
+      .toContain("READY");
+    await expect.poll(() => terminals.map((item) => item.id).sort()).toEqual([a.id, b.id].sort());
+    expect(terminals.every((item) => item.cwd === cwd && item.createdAt && !item.isScript)).toBe(
+      true,
+    );
+    expect(terminals.map((item) => item.workspaceId).sort()).toEqual([first, second].sort());
+    await expect.poll(() => owned.map((item) => item.id)).toEqual([a.id]);
+    releaseScoped();
+    await scoped.release();
+    await client.renameTerminal({ terminalId: a.id, title: "Renamed terminal" });
+    await expect
+      .poll(() => terminals.find((item) => item.id === a.id)?.title)
+      .toBe("Renamed terminal");
+    await b.kill();
+    await expect.poll(() => terminals.map((item) => item.id)).toEqual([a.id]);
+    await a.kill();
+    await expect.poll(() => terminals).toEqual([]);
+  } finally {
+    update();
+    await observation.release();
+  }
+}, 60_000);
+
+test("terminal collection reports workspace script ownership after runtime registration", async () => {
+  await writeFile(
+    path.join(cwd, "paseo.json"),
+    JSON.stringify({
+      scripts: {
+        sleeper: {
+          type: "script",
+          command: `node -e "const fs = require('node:fs'); fs.writeFileSync('sleeper.pid', String(process.pid)); setInterval(() => { if (fs.existsSync('finish-sleeper')) process.exit(0); }, 50)"`,
+        },
+      },
+    }),
+  );
+  const workspaceId = await createWorkspace("Script observation");
+  const observation = client.observeTerminals({});
+  let terminals = (await observation.ready).terminals;
+  const release = observation.subscribe({
+    snapshot: (value) => {
+      terminals = value.terminals;
+    },
+    update: (message) => {
+      if (message.type === "terminals_changed") terminals = message.payload.terminals;
+    },
+  });
+  try {
+    expect((await client.startWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
+    await expect
+      .poll(() =>
+        terminals.some((terminal) => terminal.workspaceId === workspaceId && terminal.isScript),
+      )
+      .toBe(true);
+    const terminalId = terminals.find((terminal) => terminal.workspaceId === workspaceId)!.id;
+    const pidFile = path.join(cwd, "sleeper.pid");
+    await expect
+      .poll(async () => Number(await readFile(pidFile, "utf8")), { timeout: 10_000 })
+      .toBeGreaterThan(0);
+    const pid = Number(await readFile(pidFile, "utf8"));
+    await writeFile(path.join(cwd, "finish-sleeper"), "done");
+    await expect.poll(() => isFixtureProcessRunning(pid), { timeout: 10_000 }).toBe(false);
+    // The program has exited; now close its interactive shell as well.
+    await sdk.terminals.ref(terminalId).kill();
+    await expect
+      .poll(() => terminals.filter((terminal) => terminal.workspaceId === workspaceId))
+      .toEqual([]);
+  } finally {
+    release();
+    await observation.release();
+  }
+}, 60_000);
+
+function isFixtureProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}

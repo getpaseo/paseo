@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import {
@@ -21,7 +20,7 @@ import {
 } from "./git-process-scheduler.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
+export const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
 
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
@@ -311,7 +310,6 @@ function executeGitCommand<Output>(
             command: "git",
             args,
             cwd: options.cwd,
-            cwdExists: existsSync(options.cwd),
             timeout,
             maxOutputBytes,
             acceptExitCodes,

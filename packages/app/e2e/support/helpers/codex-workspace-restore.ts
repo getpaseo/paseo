@@ -98,7 +98,6 @@ async function createCodexRestoreJourney(page: Page, client: SeedDaemonClient, i
           settings: { modeId: "full-access", thinkingOptionId: "low" },
           title: "Codex worktree restore reproduction",
           initialPrompt: `Reply with exactly ${REPLY} and nothing else. Do not use tools.`,
-          background: true,
         }),
       );
       agentId = agent.agentId;

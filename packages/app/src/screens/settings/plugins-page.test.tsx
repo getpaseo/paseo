@@ -20,7 +20,8 @@ const runtime = vi.hoisted(() => ({
   client: null as DaemonClient | null,
 }));
 
-vi.mock("@/runtime/host-runtime", () => ({
+vi.mock("@/runtime/host-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/runtime/host-runtime")>()),
   useHostRuntimeClient: () => runtime.client,
   useHostRuntimeIsConnected: () => runtime.connected,
 }));
@@ -80,6 +81,7 @@ vi.mock("@gorhom/bottom-sheet", async () => {
     await vi.importActual<typeof import("react-native")>("react-native");
   return {
     BottomSheetBackdrop: () => null,
+    BottomSheetHandle: () => null,
     BottomSheetModal: ReactModule.forwardRef(() => null),
     BottomSheetScrollView: ScrollView,
     BottomSheetTextInput: TextInput,

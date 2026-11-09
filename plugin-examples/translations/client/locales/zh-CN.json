@@ -1,0 +1,21 @@
+{
+  "title": "工作区笔记",
+  "intro": "为下一个灵感留一点空间。",
+  "draft": "你的草稿",
+  "placeholder": "有什么想记下来的？",
+  "add": "添加笔记",
+  "empty": "暂无笔记。在上方写下你的想法吧。",
+  "notes_other": "{{count}} 条笔记",
+  "preview": "预览草稿",
+  "close": "关闭预览",
+  "previewTitle": "草稿预览",
+  "draftEmpty": "草稿为空。",
+  "locale": "应用语言：{{locale}}",
+  "open": "打开工作区笔记",
+  "description": "打开笔记页面",
+  "hint": "[可选文本]",
+  "copyTitle": "复制笔记标题",
+  "tools": "笔记工具",
+  "pin": "显示笔记工具",
+  "openPanel": "打开笔记面板"
+}

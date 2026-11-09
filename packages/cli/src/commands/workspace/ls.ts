@@ -1,10 +1,22 @@
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, ListResult } from "../../output/index.js";
-import { toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js";
+import {
+  toWorkspaceRow,
+  workspaceSchema,
+  workspaceWithBackgroundSchema,
+  type WorkspaceRow,
+} from "./shared.js";
+
+export interface WorkspaceLsOptions {
+  host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
+  /** --background: Include background workspaces */
+  background?: boolean;
+}
 
 export async function runLsCommand(
-  options: { host?: string; daemonTarget: import("../../utils/daemon-target.js").DaemonTarget },
+  options: WorkspaceLsOptions,
   _command: Command,
 ): Promise<ListResult<WorkspaceRow>> {
   const host = getDaemonHost({ target: options.daemonTarget });
@@ -20,12 +32,17 @@ export async function runLsCommand(
     let cursor: string | undefined;
     do {
       const payload = await client.fetchWorkspaces({
+        ...(options.background ? { filter: { includeBackground: true } } : {}),
         page: { limit: 200, ...(cursor ? { cursor } : {}) },
       });
       workspaces.push(...payload.entries.map(toWorkspaceRow));
       cursor = payload.pageInfo.nextCursor ?? undefined;
     } while (cursor);
-    return { type: "list", data: workspaces, schema: workspaceSchema };
+    return {
+      type: "list",
+      data: workspaces,
+      schema: options.background ? workspaceWithBackgroundSchema : workspaceSchema,
+    };
   } finally {
     await client.close().catch(() => undefined);
   }

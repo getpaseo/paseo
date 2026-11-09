@@ -1,10 +1,14 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { ACPAgentSession } from "./acp-agent.js";
 import type { SpawnedACPProcess, SessionStateResponse } from "./acp-agent.js";
 import type { AgentSessionConfig } from "../agent-sdk-types.js";
 import { CURSOR_FAST_FEATURE_OPTION, CursorACPAgentClient } from "./cursor-acp-agent.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 function captureWarnings(): {
@@ -151,7 +155,7 @@ describe("CursorACPAgentClient model discovery", () => {
     });
   });
 
-  test("exposes Cursor fast mode through provider features", async () => {
+  test("exposes Cursor fast mode through provider controls", async () => {
     const client = new TestCursorACPAgentClient({
       sessionId: "session-1",
       models: null,
@@ -159,46 +163,35 @@ describe("CursorACPAgentClient model discovery", () => {
     });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "acp",
         cwd: "/tmp/cursor",
       }),
-    ).resolves.toEqual([
-      {
-        type: "toggle",
-        id: "auto_accept",
-        label: "Auto Accept",
-        description: "Automatically approves ACP permission prompts.",
-        tooltip: "Auto accept permission prompts",
-        icon: "shield-check",
-        value: false,
-      },
-      {
-        type: "select",
-        id: CURSOR_FAST_FEATURE_OPTION.id,
-        label: "Fast",
-        description: "Cursor fast mode",
-        tooltip: "Select Cursor fast mode",
-        icon: "zap",
-        value: "false",
-        options: [
-          {
-            id: "false",
-            label: "Off",
-            isDefault: true,
-            description: undefined,
-            metadata: undefined,
-          },
-          {
-            id: "true",
-            label: "Fast",
-            isDefault: false,
-            description: undefined,
-            metadata: undefined,
-          },
-        ],
-      },
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        {
+          type: "toggle",
+          key: "auto_accept",
+          label: "Auto Accept",
+          description: "Automatically approves ACP permission prompts.",
+          tooltip: "Auto accept permission prompts",
+          icon: "shield-check",
+        },
+        {
+          type: "select",
+          key: CURSOR_FAST_FEATURE_OPTION.id,
+          label: "Fast",
+          description: "Cursor fast mode",
+          tooltip: "Select Cursor fast mode",
+          icon: "zap",
+          choices: [
+            { value: "false", label: "Off" },
+            { value: "true", label: "Fast" },
+          ],
+        },
+      ],
+      options: { fast: "false" },
+    });
   });
 });
 
@@ -224,7 +217,9 @@ describe("CursorACPAgentClient session start", () => {
     session: {
       currentModelId: string;
       configOptions: SessionConfigOption[];
-      setSessionConfigOption?: () => Promise<{ configOptions: SessionConfigOption[] }>;
+      setSessionConfigOption?: (request: {
+        value: string;
+      }) => Promise<{ configOptions: SessionConfigOption[] }>;
     } = { currentModelId: "kimi-k3", configOptions: KIMI_K3_CONFIG_OPTIONS },
     logger = createTestLogger(),
   ): ACPAgentSession {
@@ -273,7 +268,7 @@ describe("CursorACPAgentClient session start", () => {
     // still stored after the draft moved to a model that has no fast variant.
     const warn = captureWarnings();
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       { currentModelId: "kimi-k3", configOptions: KIMI_K3_CONFIG_OPTIONS },
       warn.logger,
     );
@@ -291,7 +286,7 @@ describe("CursorACPAgentClient session start", () => {
     // still listed after the model moves to one that has no fast variant.
     const warn = captureWarnings();
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false"), ...KIMI_K3_CONFIG_OPTIONS],
@@ -315,7 +310,7 @@ describe("CursorACPAgentClient session start", () => {
 
   test("still fails session start when a stored feature write fails for another reason", async () => {
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false"), ...KIMI_K3_CONFIG_OPTIONS],
@@ -330,16 +325,71 @@ describe("CursorACPAgentClient session start", () => {
     const session = createCursorSession({ model: "kimi-k3" });
     await session.initializeNewSession();
 
-    await expect(session.setFeature(CURSOR_FAST_FEATURE_OPTION.id, "true")).rejects.toThrow(
+    await expect(session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" })).rejects.toThrow(
       "acp does not expose ACP feature 'fast'",
     );
+  });
+
+  test("removing auto_accept returns the session to asking for permission", async () => {
+    const session = createCursorSession({ model: "composer-2.5" });
+    await session.initializeNewSession();
+    const request = {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", title: "Run command", kind: "execute", status: "pending" },
+      options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+    } as const;
+
+    await session.applyOptions({ auto_accept: true });
+    await expect(session.requestPermission({ ...request })).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-always" },
+    });
+    await expect(session.applyOptions({ auto_accept: null })).resolves.toEqual({});
+
+    void session.requestPermission({ ...request });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+  });
+
+  test("a rejected patch leaves auto_accept as it was", async () => {
+    const session = createCursorSession({ model: "kimi-k3" });
+    await session.initializeNewSession();
+
+    await expect(
+      session.applyOptions({ auto_accept: true, [CURSOR_FAST_FEATURE_OPTION.id]: "true" }),
+    ).rejects.toThrow("acp does not expose ACP feature 'fast'");
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", title: "Run command", kind: "execute", status: "pending" },
+      options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+  });
+
+  test("applies only the selects the patch sets", async () => {
+    const setSessionConfigOption = vi.fn(async (request: { value: string }) => ({
+      configOptions: [fastConfigOption(request.value === "true" ? "true" : "false")],
+    }));
+    const session = createCursorSession(
+      { model: "composer-2.5" },
+      {
+        currentModelId: "composer-2.5",
+        configOptions: [fastConfigOption("false")],
+        setSessionConfigOption,
+      },
+    );
+    await session.initializeNewSession();
+
+    await session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" });
+    await session.applyOptions({});
+
+    expect(setSessionConfigOption.mock.calls.map(([request]) => request.value)).toEqual(["true"]);
   });
 
   test("still fails session start when the provider rejects a write it should accept", async () => {
     // No model switch, so the session's options came straight from session/new and the
     // provider disagreeing about a feature it just advertised is a real failure.
     const session = createCursorSession(
-      { model: "composer-2.5", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "composer-2.5", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false")],
@@ -355,3 +405,70 @@ describe("CursorACPAgentClient session start", () => {
     await expect(session.initializeNewSession()).rejects.toThrow("Invalid params");
   });
 });
+
+describe("CursorACPAgentClient usage session", () => {
+  test("matches usage sources as cursor, with the agent's provider and launch env", async () => {
+    await withFakeACPAgent(async (command, cwd) => {
+      const client = new CursorACPAgentClient({
+        logger: createTestLogger(),
+        command,
+        env: { XDG_CONFIG_HOME: "/profile/config" },
+      });
+      const session = await client.createSession(
+        { provider: "acp", cwd },
+        { agentId: "agent-1", env: { HOME: "/agent/home" } },
+      );
+      const usage = session.usageSession?.();
+      expect(usage).toMatchObject({
+        provider: "cursor",
+        env: { XDG_CONFIG_HOME: "/profile/config", HOME: "/agent/home" },
+      });
+      expect(session.usageSession?.()?.sessionKey).toBe(usage?.sessionKey);
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    });
+  });
+
+  test("leaves other ACP agents without a usage session", async () => {
+    await withFakeACPAgent(async (command, cwd) => {
+      const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+      const session = await client.createSession({ provider: "acp", cwd });
+      try {
+        expect(session.usageSession?.()).toBeNull();
+      } finally {
+        await session.close();
+      }
+    });
+  });
+});
+
+async function withFakeACPAgent(
+  run: (command: [string, ...string[]], cwd: string) => Promise<void>,
+): Promise<void> {
+  const testDir = await mkdtemp(path.join(tmpdir(), "paseo-cursor-usage-"));
+  try {
+    const scriptPath = path.join(testDir, "fake-acp-agent.cjs");
+    await writeFile(scriptPath, fakeACPAgentScript, "utf8");
+    await run([process.execPath, scriptPath], testDir);
+  } finally {
+    await rm(testDir, { recursive: true, force: true });
+  }
+}
+
+const fakeACPAgentScript = `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+}
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    write({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? 1, agentCapabilities: {} } });
+  } else if (message.method === "session/new") {
+    write({ id: message.id, result: { sessionId: "session-1" } });
+  } else if (message.id !== undefined) {
+    write({ id: message.id, result: {} });
+  }
+});
+`;

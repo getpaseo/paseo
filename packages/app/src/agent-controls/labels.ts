@@ -34,10 +34,9 @@ export function formatAgentModeLabel(mode: ControlLabelInput): string {
 
 export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   const rawLabel = (option.label ?? option.id).trim();
-  const compactId = option.id.replace(/[\s_-]+/g, "").toLowerCase();
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
-  if (compactId === "xhigh" || compactLabel === "xhigh") {
+  if (compactLabel === "xhigh" || compactLabel === "extrahigh") {
     return i18n.t("agentControls.thinking.extraHigh");
   }
 

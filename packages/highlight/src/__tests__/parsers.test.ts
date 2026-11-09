@@ -22,9 +22,13 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.dart")).toBe(true);
     expect(isLanguageSupported("test.cs")).toBe(true);
     expect(isLanguageSupported("test.nix")).toBe(true);
+    expect(isLanguageSupported("main.tf")).toBe(true);
+    expect(isLanguageSupported("prod.tfvars")).toBe(true);
+    expect(isLanguageSupported("terragrunt.hcl")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
     expect(isLanguageSupported("Counter.svelte")).toBe(true);
     expect(isLanguageSupported("Page.astro")).toBe(true);
+    expect(isLanguageSupported("App.vue")).toBe(true);
   });
 
   it("returns false for unsupported file extensions", () => {
@@ -64,9 +68,13 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("dart");
     expect(extensions).toContain("cs");
     expect(extensions).toContain("nix");
+    expect(extensions).toContain("tf");
+    expect(extensions).toContain("tfvars");
+    expect(extensions).toContain("hcl");
     expect(extensions).toContain("json");
     expect(extensions).toContain("svelte");
     expect(extensions).toContain("astro");
+    expect(extensions).toContain("vue");
   });
 });
 
