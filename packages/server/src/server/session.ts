@@ -859,6 +859,8 @@ export class Session {
   >();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private unsubscribeTerminalsChanged: (() => void) | null = null;
+  private unsubscribeDaemonConfigChanged: (() => void) | null = null;
+  private observedAutoArchiveAfterMerge = false;
   /** Last workspace ownership seen per terminal cwd, used to notice terminal lifecycle changes. */
   private readonly liveTerminalWorkspaceIdsByCwd = new Map<string, ReadonlySet<string>>();
   /** Last workspace ownership seen from loaded agents, used to notice agent lifecycle changes. */
@@ -1935,7 +1937,25 @@ export class Session {
             );
           });
         }) ?? null;
+      if (!this.unsubscribeDaemonConfigChanged) {
+        // Turning auto-archive on makes every owned worktree live; the reconcile only runs on events.
+        this.observedAutoArchiveAfterMerge =
+          this.daemonConfigStore.get().autoArchiveAfterMerge === true;
+        this.unsubscribeDaemonConfigChanged = this.daemonConfigStore.onChange((config) => {
+          const enabled = config.autoArchiveAfterMerge === true;
+          if (enabled === this.observedAutoArchiveAfterMerge) return;
+          this.observedAutoArchiveAfterMerge = enabled;
+          void this.reconcileWorkspaceGitObservers().catch((error) => {
+            this.sessionLogger.warn(
+              { err: error },
+              "Failed to re-evaluate workspace git observation after auto-archive setting change",
+            );
+          });
+        });
+      }
     } else {
+      this.unsubscribeDaemonConfigChanged?.();
+      this.unsubscribeDaemonConfigChanged = null;
       this.unsubscribeProjectMutations?.();
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
@@ -9606,6 +9626,8 @@ export class Session {
     }
     this.unsubscribeTerminalsChanged?.();
     this.unsubscribeTerminalsChanged = null;
+    this.unsubscribeDaemonConfigChanged?.();
+    this.unsubscribeDaemonConfigChanged = null;
     this.resetWorkspaceLivenessBaselines();
     this.providerCatalogSession.dispose();
 

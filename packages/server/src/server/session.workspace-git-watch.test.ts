@@ -168,7 +168,10 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     listener: WorkspaceGitListener;
     unsubscribe: ReturnType<typeof vi.fn>;
   }>;
+  setAutoArchiveAfterMerge: (enabled: boolean) => void;
 } {
+  let autoArchiveAfterMerge = options?.autoArchiveAfterMerge ?? false;
+  const configListeners = new Set<(config: { autoArchiveAfterMerge: boolean }) => void>();
   const emitted: Array<{ type: string; payload: unknown }> = [];
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
@@ -305,11 +308,20 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     onBranchChanged: options?.onBranchChanged,
     getDaemonTcpPort: () => 6767,
     daemonConfigStore: asDaemonConfigStore({
-      get: () => ({ autoArchiveAfterMerge: options?.autoArchiveAfterMerge ?? false }),
+      get: () => ({ autoArchiveAfterMerge: autoArchiveAfterMerge }),
+      onChange: (listener: (config: { autoArchiveAfterMerge: boolean }) => void) => {
+        configListeners.add(listener);
+        return () => configListeners.delete(listener);
+      },
     }),
   });
 
   asInternals<SessionInternals>(session).listAgentPayloads = async () => [];
+
+  const setAutoArchiveAfterMerge = (enabled: boolean) => {
+    autoArchiveAfterMerge = enabled;
+    for (const listener of configListeners) listener({ autoArchiveAfterMerge: enabled });
+  };
 
   return {
     session,
@@ -320,6 +332,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     workspaceRuntimeStore,
     agentEventListeners,
     subscriptions,
+    setAutoArchiveAfterMerge,
   };
 }
 
@@ -1079,6 +1092,36 @@ describe("live workspace observation", () => {
     expect(watchedCwds(workspaceGitService)).toEqual(
       ["/tmp/paseo-worktree", "/tmp/pull-request-workspace"].sort(),
     );
+
+    await session.cleanup();
+  });
+
+  test("enabling auto-archive after merge starts watching quiet owned worktrees", async () => {
+    const { session, projects, workspaces, workspaceGitService, setAutoArchiveAfterMerge } =
+      createSessionForWorkspaceGitWatchTests();
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-worktree",
+      cwd: "/tmp/quiet-worktree",
+      name: "worktree",
+      updatedAt: OLD,
+      isPaseoOwnedWorktree: true,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+
+    setAutoArchiveAfterMerge(true);
+
+    await vi.waitFor(() => {
+      expect(watchedCwds(workspaceGitService)).toEqual(["/tmp/quiet-worktree"]);
+    });
 
     await session.cleanup();
   });
