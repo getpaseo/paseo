@@ -188,6 +188,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     warn: vi.fn(),
     error: vi.fn(),
   };
+  const workspaceRuntimeStore = options?.workspaceRuntimeStore ?? createWorkspaceRuntimeStore();
   const workspaceGitService = {
     ...createNoopWorkspaceGitService(),
     registerWorkspace: vi.fn((params: { cwd: string }, listener: WorkspaceGitListener) => {
@@ -202,7 +203,12 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       };
     }),
 
-    getSnapshot: vi.fn(async (cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
+    // Bootstrap wires the service's snapshot listener to the runtime store the descriptor reads.
+    getSnapshot: vi.fn(async (cwd: string) => {
+      const snapshot = createWorkspaceRuntimeSnapshot(cwd);
+      workspaceRuntimeStore.set(snapshot);
+      return snapshot;
+    }),
     refresh: vi.fn(async () => {}),
     requestWorkingTreeWatch: vi.fn(async (cwd: string) => ({
       repoRoot: cwd,
@@ -212,7 +218,6 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     dispose: vi.fn(),
   };
 
-  const workspaceRuntimeStore = options?.workspaceRuntimeStore ?? createWorkspaceRuntimeStore();
   const agentEventListeners: Array<(event: unknown) => void> = [];
 
   const session = new Session({
@@ -374,8 +379,12 @@ function seedGitWorkspace(input: {
 
 describe("workspace git watch targets", () => {
   test("emits one workspace_update when the workspace git service emits a changed snapshot", async () => {
+    // A cached snapshot keeps the quiet workspace out of the one-shot fill so the count below is
+    // only the update this watch emits.
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    workspaceRuntimeStore.set(createWorkspaceRuntimeSnapshot(REPO_CWD));
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
-      createSessionForWorkspaceGitWatchTests();
+      createSessionForWorkspaceGitWatchTests({ workspaceRuntimeStore });
     const sessionAny = asInternals<SessionInternals>(session);
     seedGitWorkspace({
       projects,
@@ -1285,5 +1294,111 @@ describe("live workspace observation", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("fills the git data of a quiet workspace once without registering a watch", async () => {
+    const quietCwd = "/tmp/quiet-workspace";
+    const { session, emitted, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests();
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-quiet",
+      cwd: quietCwd,
+      name: "quiet",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+
+    const quietUpdates = () =>
+      getWorkspaceUpdates(emitted).filter(
+        (message) =>
+          message.payload.kind === "upsert" && message.payload.workspace.id === "ws-quiet",
+      );
+    await vi.waitFor(() => expect(quietUpdates()).toHaveLength(1));
+    expect(quietUpdates()[0]?.payload.workspace.gitRuntime?.currentBranch).toBe("main");
+
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledExactlyOnceWith(quietCwd);
+    expect(workspaceGitService.registerWorkspace).not.toHaveBeenCalled();
+    expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0);
+
+    await session.cleanup();
+  });
+
+  test("does not read a quiet workspace that already has a cached snapshot", async () => {
+    const quietCwd = "/tmp/cached-workspace";
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    workspaceRuntimeStore.set(createWorkspaceRuntimeSnapshot(quietCwd));
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({ workspaceRuntimeStore });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-cached",
+      cwd: quietCwd,
+      name: "cached",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+    await reconcileObservers(session);
+
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    await session.cleanup();
+  });
+
+  test("reads the git data of quiet workspaces two at a time", async () => {
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests();
+    const readings: Array<() => void> = [];
+    let inFlight = 0;
+    let peakInFlight = 0;
+    workspaceGitService.getSnapshot.mockImplementation(async (cwd: string) => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise<void>((resolve) => readings.push(resolve));
+      inFlight -= 1;
+      return createWorkspaceRuntimeSnapshot(cwd);
+    });
+    for (const name of ["one", "two", "three"]) {
+      seedGitWorkspace({
+        projects,
+        workspaces,
+        projectId: "proj-1",
+        workspaceId: `ws-${name}`,
+        cwd: `/tmp/quiet-${name}`,
+        name,
+        updatedAt: OLD,
+      });
+    }
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+    await vi.waitFor(() => expect(inFlight).toBe(2));
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(2);
+
+    readings.shift()?.();
+    await vi.waitFor(() => expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(3));
+    readings.shift()?.();
+    readings.shift()?.();
+    await vi.waitFor(() => expect(inFlight).toBe(0));
+
+    expect(peakInFlight).toBe(2);
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(3);
+    await session.cleanup();
   });
 });
