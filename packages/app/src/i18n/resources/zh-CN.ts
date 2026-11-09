@@ -1981,6 +1981,15 @@ export const zhCN: TranslationResources = {
     shareFile: "共享文件",
     shareFileNamed: "共享 {{fileName}}",
   },
+  shareIntake: {
+    title: "添加到智能体",
+    searchPlaceholder: "搜索智能体和工作区",
+    agents: "智能体",
+    newAgent: "在工作区中新建智能体",
+    empty: "还没有智能体或工作区",
+    readFailed: "无法读取分享的文件",
+    deliverFailed: "无法添加分享的内容",
+  },
   menu: {
     backdrop: "菜单背景",
   },

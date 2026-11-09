@@ -81,6 +81,22 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
     patchPrefix: "@mattermost+react-native-paste-input+",
   },
+  // Receiving shares from other apps (https://github.com/getpaseo/paseo/discussions/8035):
+  // - iOS extension: accept items that register only their own document type (a .pptx with no
+  //   public.file-url), keep text files that arrive as file URLs, keep the sender's file name for
+  //   data-backed items, open security-scoped files. Upstream: expo/expo#53188.
+  // - Android: decide text vs file by whether EXTRA_STREAM is present instead of by MIME type, so a
+  //   shared .txt/.md arrives as a file and a text/html share as text; read EXTRA_TEXT as a
+  //   CharSequence. Upstream: expo/expo#51646 (open) and #51648 (merged). Android builds
+  //   expo-sharing from source (packages/app/package.json expo.autolinking.android.buildFromSource)
+  //   so this hunk applies; drop that entry together with this patch.
+  // - Both: give each copy a unique name. Upstream: expo/expo#51839 (merged).
+  // Remove when the installed expo-sharing ships equivalent fixes.
+  {
+    nodeModulesPath: "packages/app/node_modules/expo-sharing",
+    patchPrefix: "expo-sharing+",
+    cwd: "packages/app",
+  },
   {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",
     patchPrefix: "@opencode-ai+sdk+",

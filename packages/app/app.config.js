@@ -13,6 +13,17 @@ const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
 
+const SHARE_EXTENSION_ACTIVATION_RULE = `SUBQUERY (
+  extensionItems,
+  $extensionItem,
+  SUBQUERY (
+    $extensionItem.attachments,
+    $attachment,
+    ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+    || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url"
+  ).@count > 0
+).@count > 0`;
+
 const buildProfile = isFdroidBuild
   ? {
       androidPermissions: [
@@ -163,6 +174,23 @@ export default {
       ],
       ...buildProfile.notificationPlugins,
       "expo-audio",
+      [
+        "expo-sharing",
+        {
+          ios: {
+            enabled: true,
+            // The dictionary activation keys only match documents that expose a file URL. A .pptx
+            // from many apps registers only its own type, so match anything that conforms to
+            // public.data (files, images, text) or public.url (links).
+            activationRule: SHARE_EXTENSION_ACTIVATION_RULE,
+          },
+          android: {
+            enabled: true,
+            singleShareMimeTypes: ["*/*"],
+            multipleShareMimeTypes: ["*/*"],
+          },
+        },
+      ],
       [
         "expo-gradle-jvmargs",
         {

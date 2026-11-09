@@ -2004,6 +2004,15 @@ export const ar: TranslationResources = {
     shareFile: "مشاركة الملف",
     shareFileNamed: "مشاركة{{fileName}}",
   },
+  shareIntake: {
+    title: "إضافة إلى وكيل",
+    searchPlaceholder: "ابحث في الوكلاء ومساحات العمل",
+    agents: "الوكلاء",
+    newAgent: "وكيل جديد في مساحة عمل",
+    empty: "لا توجد وكلاء أو مساحات عمل بعد",
+    readFailed: "تعذّرت قراءة الملفات المشتركة",
+    deliverFailed: "تعذّرت إضافة ما شاركته",
+  },
   menu: {
     backdrop: "خلفية القائمة",
   },

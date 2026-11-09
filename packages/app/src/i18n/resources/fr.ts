@@ -2052,6 +2052,15 @@ export const fr: TranslationResources = {
     shareFile: "Partager le fichier",
     shareFileNamed: "Partager {{fileName}}",
   },
+  shareIntake: {
+    title: "Ajouter à un agent",
+    searchPlaceholder: "Rechercher des agents et des espaces de travail",
+    agents: "Agents",
+    newAgent: "Nouvel agent dans un espace de travail",
+    empty: "Aucun agent ni espace de travail pour l’instant",
+    readFailed: "Impossible de lire les fichiers partagés",
+    deliverFailed: "Impossible d’ajouter ce que vous avez partagé",
+  },
   menu: {
     backdrop: "Arrière-plan du menu",
   },

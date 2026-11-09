@@ -239,6 +239,28 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     };
   }, [draftKey, publishTextReplacement]);
 
+  // Text appended from outside (a share from another app) lands in the store; the input only
+  // reads the store on hydration, so reload it here. Before hydration, hydration reads it.
+  const externalTextRevision = useDraftStore(
+    (state) => state.externalTextRevisionByDraftKey[draftKey] ?? 0,
+  );
+  const appliedExternalTextRef = useRef({ draftKey, revision: externalTextRevision });
+  useEffect(() => {
+    const applied = appliedExternalTextRef.current;
+    if (applied.draftKey === draftKey && applied.revision === externalTextRevision) return;
+    appliedExternalTextRef.current = { draftKey, revision: externalTextRevision };
+    if (applied.draftKey !== draftKey || !isHydrated) return;
+    textPublication.cancel();
+    publishTextReplacement("replace", textSource.getSnapshot());
+  }, [
+    draftKey,
+    externalTextRevision,
+    isHydrated,
+    publishTextReplacement,
+    textPublication,
+    textSource,
+  ]);
+
   const providerSelection = useMemo<ProviderSelectionState>(
     () => ({
       provider: formState.selectedProvider,

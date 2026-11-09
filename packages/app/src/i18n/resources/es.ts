@@ -2053,6 +2053,15 @@ export const es: TranslationResources = {
     shareFile: "compartir archivo",
     shareFileNamed: "Compartir{{fileName}}",
   },
+  shareIntake: {
+    title: "Añadir a un agente",
+    searchPlaceholder: "Buscar agentes y espacios de trabajo",
+    agents: "Agentes",
+    newAgent: "Nuevo agente en un espacio de trabajo",
+    empty: "Aún no hay agentes ni espacios de trabajo",
+    readFailed: "No se pudieron leer los archivos compartidos",
+    deliverFailed: "No se pudo añadir lo que compartiste",
+  },
   menu: {
     backdrop: "Fondo del menú",
   },

@@ -2025,6 +2025,15 @@ export const ja: TranslationResources = {
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
   },
+  shareIntake: {
+    title: "エージェントに追加",
+    searchPlaceholder: "エージェントとワークスペースを検索",
+    agents: "エージェント",
+    newAgent: "ワークスペースで新しいエージェント",
+    empty: "エージェントもワークスペースもまだありません",
+    readFailed: "共有されたファイルを読み込めませんでした",
+    deliverFailed: "共有された内容を追加できませんでした",
+  },
   menu: {
     backdrop: "メニューの背景",
   },

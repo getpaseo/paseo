@@ -2015,6 +2015,15 @@ export const ko: TranslationResources = {
     shareFile: "파일 공유",
     shareFileNamed: "{{fileName}} 공유",
   },
+  shareIntake: {
+    title: "에이전트에 추가",
+    searchPlaceholder: "에이전트 및 워크스페이스 검색",
+    agents: "에이전트",
+    newAgent: "워크스페이스에서 새 에이전트",
+    empty: "아직 에이전트나 워크스페이스가 없습니다",
+    readFailed: "공유된 파일을 읽을 수 없습니다",
+    deliverFailed: "공유한 내용을 추가할 수 없습니다",
+  },
   menu: {
     backdrop: "메뉴 배경",
   },
