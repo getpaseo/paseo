@@ -342,6 +342,25 @@ describe("forwardLiveAgent", () => {
     ]);
   });
 
+  test("publishes a preserved status instead of the closed lifecycle", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "error" }));
+    h.useProjectedPayload();
+    const closed = { ...h.managed("a"), lifecycle: "closed" } as ManagedAgent;
+
+    await h.service.forwardLiveAgent(closed, "error");
+
+    expect(h.agentUpdates()).toEqual([
+      {
+        kind: "upsert",
+        agent: expect.objectContaining({ id: "a", status: "error" }),
+        project: makeProject(),
+      },
+    ]);
+  });
+
   test("emits an upsert for a matching agent and updates its workspace", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
