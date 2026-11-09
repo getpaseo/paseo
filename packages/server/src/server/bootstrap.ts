@@ -1874,7 +1874,6 @@ export async function createPaseoDaemon(
               () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
               () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
               (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
-              (workspaceId) => scriptHealthMonitor.removeWorkspace(workspaceId),
               workspaceGitService,
               github,
               config.pushNotificationSender,
@@ -1905,6 +1904,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              (workspaceId) => scriptHealthMonitor.removeWorkspace(workspaceId),
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
