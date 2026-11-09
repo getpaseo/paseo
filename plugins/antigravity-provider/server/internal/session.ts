@@ -248,35 +248,6 @@ function replayHistoryFromTranscript(options: ReplayHistoryOptions): void {
   }
 }
 
-function readStepThinking(
-  conversationId: string | null,
-  stepIndex: number,
-  homeDir: string,
-): string | null {
-  const content = readTranscriptContent(conversationId, homeDir);
-  if (!content) return null;
-  const lines = content.trim().split("\n");
-  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 15); i--) {
-    let raw: unknown;
-    try {
-      raw = JSON.parse(lines[i]);
-    } catch {
-      continue;
-    }
-    const parsed = transcriptLineSchema.safeParse(raw);
-    if (!parsed.success) continue;
-    const obj = parsed.data;
-    if (
-      obj.step_index === stepIndex &&
-      typeof obj.thinking === "string" &&
-      obj.thinking.trim().length > 0
-    ) {
-      return obj.thinking.trim();
-    }
-  }
-  return null;
-}
-
 function readLastContextUsage(
   conversationId: string | null,
   homeDir: string,
@@ -604,18 +575,6 @@ export class Session {
       if (step.text_delta) this.item({ type: "assistant_message", id, messageId: id, text });
       if (step.state === "DONE" && step.usage && !turn.usageSteps.has(step.step_index)) {
         turn.usageSteps.add(step.step_index);
-        const thinking = readStepThinking(
-          this.conversationId,
-          step.step_index,
-          this.resolveHomeDir(),
-        );
-        if (thinking) {
-          this.item({
-            type: "reasoning",
-            id: `${turn.id}:reasoning:${step.step_index}`,
-            text: thinking,
-          });
-        }
         turn.usage.inputTokens += step.usage.input_tokens;
         turn.usage.outputTokens += step.usage.output_tokens;
         turn.usage.cachedInputTokens += step.usage.cache_read_tokens;
