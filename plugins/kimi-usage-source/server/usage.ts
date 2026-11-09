@@ -281,7 +281,7 @@ export async function fetchUsage(
     return unavailable({
       kind: "rejected",
       status: res.status,
-      refreshedBy: "kimi login",
+      refreshedBy: input.store === "env" ? undefined : "kimi login",
     });
   if (!res.ok) throw new Error(`Kimi usage API returned ${res.status}`);
 

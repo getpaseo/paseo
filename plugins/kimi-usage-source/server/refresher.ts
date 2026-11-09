@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { existsSync, promises as fs } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -53,6 +53,10 @@ export function credentialPath(): string {
   return join(kimiHome(), "credentials", "kimi-code.json");
 }
 
+export function credentialPaths(): string[] {
+  return [credentialPath(), join(homedir(), ".kimi", "credentials", "kimi-code.json")];
+}
+
 function resolveKimiCommand(): string {
   const commandNames = process.platform === "win32" ? ["kimi.EXE", "kimi.exe", "kimi"] : ["kimi"];
   for (const name of commandNames) {
@@ -85,6 +89,15 @@ async function readCredentials(path = credentialPath()): Promise<KimiCredentialS
       hasRefreshToken: false,
     };
   }
+}
+
+async function readFirstCredentials(): Promise<KimiCredentialSnapshot> {
+  let first = await readCredentials();
+  for (const path of credentialPaths().slice(1)) {
+    if (first.exists && first.hasAccessToken) return first;
+    first = await readCredentials(path);
+  }
+  return first;
 }
 
 async function findFreePort(): Promise<number> {
@@ -120,11 +133,20 @@ function sanitizeProcessOutput(value: string): string {
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill();
-  const exited = await Promise.race([
+  let exited = await Promise.race([
     once(child, "exit").then(() => true),
     delay(3_000).then(() => false),
   ]);
-  if (exited || process.platform !== "win32" || child.pid === undefined) return;
+  if (exited) return;
+
+  if (process.platform !== "win32" || child.pid === undefined) {
+    child.kill("SIGKILL");
+    exited = await Promise.race([
+      once(child, "exit").then(() => true),
+      delay(3_000).then(() => false),
+    ]);
+    return;
+  }
 
   const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
     windowsHide: true,
@@ -143,7 +165,10 @@ async function launchKimiRefresh(
     resolveKimiCommand(),
     ["web", "--no-open", "--port", String(port), "--log-level", "warn"],
     {
-      env: process.env,
+      env: {
+        ...process.env,
+        KIMI_CODE_HOME: dirname(dirname(before.path)),
+      },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -202,7 +227,7 @@ export async function refreshKimiCredentialsIfNeeded(
 ): Promise<KimiCredentialRefreshOutcome> {
   if (options.signal?.aborted) return { status: "not-needed" };
   const now = options.now ?? Date.now;
-  const read = options.readCredentials ?? readCredentials;
+  const read = options.readCredentials ?? readFirstCredentials;
   const before = await read();
 
   if (!before.exists || !before.hasAccessToken) {
@@ -288,7 +313,7 @@ export function startKimiCredentialRefresh(): () => void {
   };
 
   if (!disabled) {
-    console.log(`[kimi-usage-source] watching ${credentialPath()}`);
+    console.log(`[kimi-usage-source] watching ${credentialPaths().join(", ")}`);
     void check().finally(schedule);
   }
 

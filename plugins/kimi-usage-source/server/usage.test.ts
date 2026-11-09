@@ -229,7 +229,7 @@ describe("kimi usage source", () => {
 
     expect(findProvider(result, "kimi")).toMatchObject({
       status: "unavailable",
-      problem: { kind: "rejected", status: 401, refreshedBy: "kimi login" },
+      problem: { kind: "rejected", status: 401 },
     });
     expect(usageFetch).toHaveBeenCalledTimes(1);
   });
@@ -433,7 +433,7 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     );
     expect(report).toEqual({
       status: "unavailable",
-      problem: { kind: "rejected", status, refreshedBy: "kimi login" },
+      problem: { kind: "rejected", status },
     });
   } finally {
     if (previous === undefined) delete process.env["KIMI_TOKEN"];
