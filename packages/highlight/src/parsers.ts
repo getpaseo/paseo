@@ -34,6 +34,7 @@ const cStyleComments = { commentTokens: { line: "//", block: { open: "/*", close
 const hashComments = { commentTokens: { line: "#" } };
 const cssComments = { commentTokens: { block: { open: "/*", close: "*/" } } };
 const markupComments = { commentTokens: { block: { open: "<!--", close: "-->" } } };
+const mdxComments = { commentTokens: { block: { open: "{/*", close: "*/}" } } };
 
 function language(
   parser: LRParser | MarkdownParser,
@@ -115,7 +116,7 @@ const languagesByExtension: Record<string, Language> = {
   exs: language(elixirParser, hashComments),
   // Markdown
   md: language(markdownParser, markupComments),
-  mdx: language(markdownParser, markupComments),
+  mdx: language(markdownParser, mdxComments),
 };
 
 export function getLanguageForFile(filename: string): Language | null {

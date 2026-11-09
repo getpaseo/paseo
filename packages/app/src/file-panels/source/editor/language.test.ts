@@ -10,6 +10,7 @@ test.each([
   ["source.html", "<p>text</p>", "<!-- <p>text</p> -->"],
   ["source.vue", "<p>text</p>", "<!-- <p>text</p> -->"],
   ["source.md", "text", "<!-- text -->"],
+  ["source.mdx", "text", "{/* text */}"],
   ["source.ex", "value = 1", "# value = 1"],
   ["source.cs", "var value = 1;", "// var value = 1;"],
   ["source.nix", "1", "# 1"],
