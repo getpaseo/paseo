@@ -11223,6 +11223,19 @@ test("idle runtime cleanup reaps a settled error runtime on the same clock", asy
     workspaceId: undefined,
   });
   const running = waitForAgentLifecycle(manager, agent.id, "running");
+  const closedUpdates: Array<{ lifecycle: string; lastStatus?: string }> = [];
+  const unsubscribeClosedUpdates = manager.subscribe(
+    (event) => {
+      if (
+        event.type === "agent_state" &&
+        event.agent.id === agent.id &&
+        event.agent.lifecycle === "closed"
+      ) {
+        closedUpdates.push({ lifecycle: event.agent.lifecycle, lastStatus: event.lastStatus });
+      }
+    },
+    { replayState: false },
+  );
   client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
   await running;
   const failed = waitForAgentLifecycle(manager, agent.id, "error");
@@ -11240,6 +11253,11 @@ test("idle runtime cleanup reaps a settled error runtime on the same clock", asy
     { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
   ]);
   expect(manager.getAgent(agent.id)).toBeNull();
+
+  // The published close carries the preserved status, so a subscribed client does not see the
+  // agent flip from failed to closed when the idle clock collects it.
+  expect(closedUpdates).toEqual([{ lifecycle: "closed", lastStatus: "error" }]);
+  unsubscribeClosedUpdates();
 
   // The reap releases the process, not the outcome: the stored record still reports the failure
   // and its attention, so the list does not turn a failed agent into a closed one.
