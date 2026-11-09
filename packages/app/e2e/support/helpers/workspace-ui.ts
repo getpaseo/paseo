@@ -91,6 +91,20 @@ export async function expectWorkspaceHeader(
   });
 }
 
+export async function setTabVisibility(
+  page: Page,
+  visibility: DocumentVisibilityState,
+): Promise<void> {
+  await page.evaluate((state) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => state === "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visibility);
+}
+
 export async function expectReconnectingToastVisible(
   page: Page,
   options?: { timeout?: number },

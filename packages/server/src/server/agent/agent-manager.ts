@@ -1399,6 +1399,11 @@ export class AgentManager {
     return this.timelineStore.getRows(id);
   }
 
+  /** The timeline head of a loaded agent, or null when this agent is not loaded. Never loads. */
+  getLoadedTimelineHead(id: string): { epoch: string; seq: number } | null {
+    return this.getAgent(id) ? this.timelineStore.getHead(id) : null;
+  }
+
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);

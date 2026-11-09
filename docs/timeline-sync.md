@@ -102,15 +102,26 @@ updated after the checkpoint does not block it. Forking the current context rema
 
 ## Resume behavior
 
-Opening, reconnecting, and returning from app background establish the current timeline through
-bounded catch-up. Switching between continuously subscribed open chats needs no fetch.
-Focus alone does not mutate timeline state; the response is compared with the local
-authoritative range first.
+Opening, reconnecting, and returning from app background establish whether the chat is current.
+Switching between continuously subscribed open chats needs no fetch. Focus alone does not mutate
+timeline state; the response is compared with the local authoritative range first.
 
-Cached history remains readable during recovery. The chat shows Reconnecting to host while the host is
-offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
-certify that the displayed conversation is current. The timeline owner publishes freshness; the
-view renders it without a toast timer or a separate resume workflow.
+A chat with a cached cursor asks the daemon first. The `agent.timeline.set_subscription.request`
+that attaches the chat carries its `{ epoch, seq }`, and the response answers `current` or `behind`
+per chat. The daemon attaches before it compares, so an entry committed in between arrives live or
+counts as behind. `current` means the agent is loaded, the epoch matches, and the cursor is at the
+head; it completes catch-up with no fetch. `behind`, or no entry, runs the bounded catch-up. The
+subscribe handler never loads an agent, so an agent the daemon has not loaded answers `behind` and
+resumes in that fetch. Hosts without `features.timelineFreshnessCheck` get no cursors and always fetch.
+
+Cached history remains readable during recovery. The chat shows Reconnecting to host while the host
+is offline and until a reconnected chat's check answers, so an unchanged chat never shows a second
+toast. A check on cached content shows nothing. Updating messages appears for a chat that is behind,
+until the fetch completes, and for a check still unanswered `FRESHNESS_CHECK_QUIET_MS` after it was
+sent. That delay measures the daemon, so it starts at the request: on a cold start the cache read
+alone can take longer. Socket connectivity alone cannot certify that the displayed conversation is
+current. The timeline owner publishes freshness; the view renders it without a toast timer or a
+separate resume workflow.
 
 The turn footer in a chat follows its messages, not the agent status. Turn activity comes from the
 agent directory and messages from the chat's own catch-up, and either can land first. So the timeline

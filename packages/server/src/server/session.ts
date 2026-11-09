@@ -1408,6 +1408,21 @@ export class Session {
     this.refreshObservationProducers();
   }
 
+  private compareTimelineCursors(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Record<string, "current" | "behind"> {
+    const timelines: Record<string, "current" | "behind"> = {};
+    for (const agentId of agentIds) {
+      const cursor = cursors[agentId];
+      if (!cursor) continue;
+      const head = this.agentManager.getLoadedTimelineHead(agentId);
+      timelines[agentId] =
+        head?.epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
+    }
+    return timelines;
+  }
+
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
     const owner = this.delivery.begin("timelines", undefined, (id) => {
       this.timelineSubscriptions.delete(id);
@@ -3045,11 +3060,19 @@ export class Session {
       }
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
+        // Attach before comparing: a row appended after the comparison reaches this owner live.
         const owner = this.subscribeAgentTimelines(agentIds);
         this.emitForSource(
           {
             type: "agent.timeline.set_subscription.response",
-            payload: { agentIds, requestId: msg.requestId, subscriptionId: owner.responseId },
+            payload: {
+              agentIds,
+              requestId: msg.requestId,
+              subscriptionId: owner.responseId,
+              ...(msg.cursors
+                ? { timelines: this.compareTimelineCursors(agentIds, msg.cursors) }
+                : {}),
+            },
           },
           source,
         );

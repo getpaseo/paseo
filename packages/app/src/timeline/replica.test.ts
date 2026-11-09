@@ -76,6 +76,7 @@ function createOwner(
     drainQueuedAgentMessage: () => undefined,
     applyTurnLiveness,
     ports: {
+      canCheckFreshness: () => false,
       observe,
       readCursor: () => undefined,
       fetchPage,
@@ -1172,6 +1173,7 @@ describe("create handoff lifetime", () => {
       drainQueuedAgentMessage: () => undefined,
       applyTurnLiveness: () => undefined,
       ports: {
+        canCheckFreshness: () => false,
         observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
         readCursor: () => undefined,
         fetchPage: async () => {
