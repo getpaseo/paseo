@@ -110,8 +110,13 @@ function sidebarViews(
         label: { name: "Unlabelled", color: "red" },
         assigned: true,
       });
-      // Each label renders a row. Observe the addition before removing the old
-      // label so a stale single row cannot satisfy the final readiness check.
+      // Wait for the named label folder alongside the built-in unlabelled bucket.
+      // Counts alone can match stale Inbox/Later rows from the preceding move.
+      await expect(
+        slot.getByRole("button", { name: "Toggle Unlabelled", exact: true }),
+      ).toHaveCount(2);
+      // Observe both label rows before removing Later so a stale single row
+      // cannot satisfy the final readiness check.
       const moveWorkspace = slot.getByRole("button", {
         name: `Move workspace ${workspaceId}`,
         exact: true,
