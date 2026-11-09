@@ -1,4 +1,10 @@
 import {
+  DiffStreamRouter,
+  DiffSubscriptionError,
+  type DiffCompare,
+  type DiffState,
+} from "./diff/index.js";
+import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
 } from "@getpaseo/protocol/chunked-transport";
@@ -21,6 +27,7 @@ import {
 } from "./connection/index.js";
 import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
@@ -102,6 +109,7 @@ import type {
   WorkspaceSetupStatusResponseMessage,
   ListCommandsResponse,
   ListProviderFeaturesResponseMessage,
+  ProviderControlsListResponseMessage,
   ListProviderModelsResponseMessage,
   ListProviderModesResponseMessage,
   ListAvailableProvidersResponse,
@@ -143,6 +151,7 @@ import type {
   AgentSkillsSaveResult,
 } from "@getpaseo/protocol/messages";
 import type {
+  AgentOptionControl,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -189,6 +198,10 @@ import {
   normalizeProviderSnapshotUpdateMessage,
   normalizeProvidersSnapshotPayload,
 } from "./compat/normalize-provider-models.js";
+import {
+  LegacyProviderOptions,
+  usesLegacyProviderOptions,
+} from "./compat/legacy-provider-options.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
   BrowserAutomationExecuteRequest,
@@ -504,16 +517,21 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /** Creates a background agent. A workspace this request creates inherits it. */
   background?: CreateAgentRequestMessage["background"];
   /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+  /** Plugin-owned data stored on the agent. Needs a host with `entityMetadata`. */
+  metadata?: CreateAgentRequestMessage["metadata"];
 }
 
 export interface CreateWorkspaceRequestOptions {
   source: WorkspaceCreateRequest["source"];
   title?: string;
+  /** Plugin-owned data stored on the workspace. Needs a host with `entityMetadata`. */
+  metadata?: WorkspaceCreateRequest["metadata"];
   /** Workspace discovery visibility; contents retain normal durability. */
   background?: boolean;
   callerAgentId?: string;
@@ -603,6 +621,7 @@ export interface FileUploadInput {
 export type FileUploadResult = FileUploadResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
+export type ListProviderControlsPayload = ProviderControlsListResponseMessage["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
@@ -629,7 +648,7 @@ type WriteProjectConfigPayload = Extract<
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
-  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues"
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues" | "providerOptions"
 >;
 export interface WriteProjectConfigInput {
   repoRoot: string;
@@ -874,6 +893,14 @@ export type WorkspaceLabelDeleteInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.delete.inspect.response" }
 >["payload"];
+export type ProjectSuggestionsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "project.suggestions.response" }
+>["payload"];
+export type ProjectSuggestionsOptions = Omit<
+  Extract<SessionInboundMessage, { type: "project.suggestions.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
 export type ProjectListPayload = Extract<
   SessionOutboundMessage,
   { type: "project.list.response" }
@@ -1040,6 +1067,9 @@ type CorrelatedResponsePayloads = {
 };
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> =
   CorrelatedResponsePayloads[TType];
+export type AgentBackgroundWorkListPayload =
+  CorrelatedResponsePayload<"agent.background_work.list.response">;
+export type AgentBackgroundWorkItem = AgentBackgroundWorkListPayload["items"][number];
 
 type PluginCatalogResponseEntry =
   CorrelatedResponsePayload<"plugin.catalog.get.response">["plugins"][number];
@@ -1125,6 +1155,12 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
+// Window of each check after the app returns to the foreground. A socket that silently died
+// while the app was suspended stays OPEN and accepts sends, so only inbound frames prove it.
+const FOREGROUND_LIVENESS_TIMEOUT_MS = 5_000;
+// A foreground window whose timer fires this much later than scheduled (wall clock) spanned
+// another suspension or a blocked JS thread, so its silence is no evidence either way.
+const SUSPENDED_WINDOW_SLACK_MS = 2_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
@@ -1287,11 +1323,26 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
-  // Whether a timeout on this ping should be recorded as a liveness failure. Only the
-  // heartbeat sets this; a latency measurement never drives teardown, even when a
-  // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
-  drivesLivenessFailure: boolean;
+  // Wall clock, which keeps running while the OS has JS suspended; perfNow may not.
+  startedAtWallMs: number;
+  receivedActivity: boolean;
+  role: PingProbeRole;
 }
+
+// A latency measurement waits for the next pong, not for a particular probe: the liveness
+// cycle may replace the probe the measurement joined, and a pong that answers an expired window
+// still proves the socket. It settles on a pong, a connection failure, or its own deadline.
+interface PongWaiter {
+  startedAt: number;
+  resolve: (rttMs: number) => void;
+  reject: (error: Error) => void;
+}
+
+// Who started the probe. A "latency" probe never drives teardown, even when a heartbeat
+// tick shares (dedupes onto) it. A "heartbeat" probe runs the regular cadence. A
+// "foreground" probe belongs to the verification cycle that ensureConnected({ verify })
+// runs after the app resumes: short window, immediate second check, reconnect at once.
+type PingProbeRole = "latency" | "heartbeat" | "foreground";
 
 // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
 export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
@@ -1361,12 +1412,16 @@ export class DaemonClient {
       ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
+      const transport = this.transport;
       try {
         await this.sendCorrelatedSessionRequest({
           message: { type: "subscription.release.request", subscriptionId },
           responseType: "subscription.release.response",
         });
       } catch (error) {
+        // close() rejects in-flight requests after dropping the transport. That failure says
+        // nothing about a live connection, and rethrowing it would abort close() midway.
+        if (this.transport !== transport) return;
         this.disposeTransport(1001, "Subscription release failed");
         this.scheduleReconnect({ reason: "Subscription release failed" });
         throw error;
@@ -1401,6 +1456,20 @@ export class DaemonClient {
   private connectionFailure: Error | undefined;
   private authFailureReasonValue: DaemonAuthFailureReason | null = null;
   private connectionState: ConnectionState = { status: "idle" };
+  private readonly diffStreams = new DiffStreamRouter({
+    modern: (compare) =>
+      this.observe(
+        "diff.subscribe.response",
+        { type: "diff.subscribe.request", ...compare },
+        {
+          validateSnapshot: (payload) => {
+            if (payload.error) throw new DiffSubscriptionError(payload.error);
+          },
+        },
+      ),
+    legacy: (cwd, compare) => this.observeCheckoutDiff(cwd, compare),
+    failed: (error) => this.logger.error({ err: error }, "Diff observer failed"),
+  });
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
@@ -1430,7 +1499,7 @@ export class DaemonClient {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
-  private connectionVerification: DaemonTransport | null = null;
+  private readonly pongWaiters = new Set<PongWaiter>();
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
@@ -1580,6 +1649,7 @@ export class DaemonClient {
         send: (frame) => transport.send(frame),
         onFailure: () => transport.close(4003, "Transport send failed"),
         deliver: (frame) => this.handleTransportMessage(frame),
+        onActivity: () => this.recordTransportActivity(),
       });
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
@@ -1750,10 +1820,12 @@ export class DaemonClient {
     this.disposeTransport(1000, "Client closed");
     this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
+    await this.diffStreams.close();
     await this.owned.close();
     this.creations.close();
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
+    this.rejectPongWaiters(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
@@ -1776,7 +1848,7 @@ export class DaemonClient {
       this.shouldReconnect = true;
     }
     if (this.connectionState.status === "connected") {
-      if (options?.verify) this.verifyConnection();
+      if (options?.verify) this.verifyConnectionOnForeground();
       return;
     }
     if (this.connectionState.status === "connecting") return;
@@ -1789,26 +1861,9 @@ export class DaemonClient {
     );
   }
 
-  private verifyConnection(): void {
-    const transport = this.transport;
-    if (!transport || this.connectionVerification === transport) return;
-    this.connectionVerification = transport;
-    // A session probe has its own deadline, independent of a heartbeat that the OS
-    // may have suspended. A successful response also proves the session can serve RPCs.
-    void this.ping({ timeoutMs: 3_000 })
-      .catch((error: unknown) => {
-        if (this.transport !== transport || this.connectionState.status !== "connected") return;
-        this.disposeTransport(1001, "Connection verification failed");
-        this.scheduleReconnect({
-          reason: error instanceof Error ? error.message : String(error),
-          event: "CONNECTION_VERIFICATION_FAILED",
-          reasonCode: "liveness_timeout",
-        });
-        this.ensureConnected();
-      })
-      .finally(() => {
-        if (this.connectionVerification === transport) this.connectionVerification = null;
-      });
+  private recordTransportActivity(): void {
+    this.consecutiveLivenessFailures = 0;
+    if (this.pingProbe) this.pingProbe.receivedActivity = true;
   }
 
   requireConnectedHosts(): void {
@@ -1884,18 +1939,34 @@ export class DaemonClient {
       });
     }
   }
-  async openHostLink(channelId: string): Promise<string> {
+  openHostLink(channelId: string): Promise<string>;
+  openHostLink(
+    channelId: string,
+    options: { flowControl: true },
+  ): Promise<{ routeId: string; flowControl: boolean }>;
+  async openHostLink(
+    channelId: string,
+    options?: { flowControl: true },
+  ): Promise<string | { routeId: string; flowControl: boolean }> {
     this.requireConnectedHosts();
     if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
       throw Object.assign(new Error("Update the destination daemon"), {
         code: "unsupported_capability",
       });
-    return (
-      await this.sendCorrelatedSessionRequest({
-        message: { type: "hosts.link.open.request", channelId },
-        responseType: "hosts.link.open.response",
-      })
-    ).routeId;
+    const response = await this.sendCorrelatedSessionRequest({
+      message: {
+        type: "hosts.link.open.request",
+        channelId,
+        ...(options?.flowControl ? { flowControl: true } : {}),
+      },
+      responseType: "hosts.link.open.response",
+    });
+    return options?.flowControl
+      ? { routeId: response.routeId, flowControl: response.flowControl === true }
+      : response.routeId;
+  }
+  acknowledgeHostLink(routeId: string, sequence: number): Promise<void> {
+    return this.sendSessionMessageStrict({ type: "hosts.link.ack.request", routeId, sequence });
   }
   sendHostFrame(routeId: string, data: string | Uint8Array): Promise<void> {
     if (typeof data === "string") {
@@ -2094,17 +2165,13 @@ export class DaemonClient {
   }
 
   private sendSessionPayload(payload: SessionInboundMessage): Promise<void> {
-    return this.sendJsonMessage(
-      "session",
-      payload.type,
-      { type: "session", message: payload },
-      () => {
-        if (!("requestId" in payload) || typeof payload.requestId !== "string") return;
-        for (const waiter of this.waiters) {
-          if (waiter.requestId === payload.requestId) waiter.submitted = true;
-        }
-      },
-    );
+    const wire = this.legacyProviderOptions()?.prepare(payload) ?? payload;
+    return this.sendJsonMessage("session", payload.type, { type: "session", message: wire }, () => {
+      if (!("requestId" in payload) || typeof payload.requestId !== "string") return;
+      for (const waiter of this.waiters) {
+        if (waiter.requestId === payload.requestId) waiter.submitted = true;
+      }
+    });
   }
 
   private sendTransportFrame(
@@ -2544,34 +2611,41 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    return this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }).catch((error) => {
-      throw toTimeoutError(error, "Latency measurement", timeoutMs);
-    });
-  }
-
-  private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
-    const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    try {
-      const rttMs = await this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: true });
-      this.lastLivenessRttMs = rttMs;
-      return rttMs;
-    } catch (error) {
-      throw toTimeoutError(error, "Liveness check", timeoutMs);
-    }
-  }
-
-  private sendPingAwaitRtt(params: {
-    timeoutMs: number;
-    drivesLivenessFailure: boolean;
-  }): Promise<number> {
     if (this.connectionState.status !== "connected" || !this.transport) {
       return Promise.reject(
         new Error(`Transport not connected (status: ${this.connectionState.status})`),
       );
     }
+    const waiter: PongWaiter = { startedAt: perfNow(), resolve: () => {}, reject: () => {} };
+    const pong = new Promise<number>((resolve, reject) => {
+      waiter.resolve = resolve;
+      waiter.reject = reject;
+    });
+    let deadline: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new PingTimeoutError(timeoutMs)), timeoutMs);
+    });
+    this.pongWaiters.add(waiter);
+    // The probe only puts a ping on the wire; its own outcome is the heartbeat's concern. A
+    // measurement that joins an in-flight ping reports that ping's round trip, so the clock
+    // starts at the send, not at the join.
+    const probe = this.ensurePingProbe({ timeoutMs, role: "latency" });
+    void probe.promise.catch(() => {});
+    waiter.startedAt = probe.startedAt;
+    return Promise.race([pong, timeout])
+      .catch((error) => {
+        throw toTimeoutError(error, "Latency measurement", timeoutMs);
+      })
+      .finally(() => {
+        clearTimeout(deadline);
+        this.pongWaiters.delete(waiter);
+      });
+  }
 
+  // One ping is outstanding at a time; a caller that finds one shares it.
+  private ensurePingProbe(params: { timeoutMs: number; role: PingProbeRole }): PingProbe {
     if (this.pingProbe) {
-      return this.pingProbe.promise;
+      return this.pingProbe;
     }
 
     const startedAt = perfNow();
@@ -2582,23 +2656,36 @@ export class DaemonClient {
       resolveProbe = resolve;
       rejectProbe = reject;
     });
+    const expire = () => {
+      if (this.pingProbe !== probe) return;
+      this.pingProbe = null;
+      const error = new PingTimeoutError(timeoutMs);
+      probe.reject(error);
+      if (
+        probe.role === "foreground" &&
+        Date.now() - probe.startedAtWallMs > timeoutMs + SUSPENDED_WINDOW_SLACK_MS
+      ) {
+        // The app was suspended again inside this window. Discard it, any frame it saw and
+        // the misses before it; the heartbeat tick that owns this probe starts the cycle over.
+        probe.receivedActivity = false;
+        this.consecutiveLivenessFailures = 0;
+        return;
+      }
+      // Keep the deadline fixed so subsequent pings renew the daemon socket lease
+      // during a long download. Progress proves life even when its pong is queued.
+      if (probe.role !== "latency" && !probe.receivedActivity) {
+        this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs), probe.role);
+      }
+    };
     const probe: PingProbe = {
       promise,
       resolve: (value) => resolveProbe?.(value),
       reject: (error) => rejectProbe?.(error),
-      timeoutHandle: setTimeout(() => {
-        if (this.pingProbe !== probe) {
-          return;
-        }
-        this.pingProbe = null;
-        const error = new PingTimeoutError(timeoutMs);
-        probe.reject(error);
-        if (probe.drivesLivenessFailure) {
-          this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
-        }
-      }, timeoutMs),
+      timeoutHandle: setTimeout(expire, timeoutMs),
+      receivedActivity: false,
       startedAt,
-      drivesLivenessFailure: params.drivesLivenessFailure,
+      startedAtWallMs: Date.now(),
+      role: params.role,
     };
     this.pingProbe = probe;
 
@@ -2606,7 +2693,8 @@ export class DaemonClient {
       if (this.pingProbe !== probe) return;
       const sendError = error instanceof Error ? error : new Error(String(error));
       this.rejectPingProbe(sendError);
-      if (probe.drivesLivenessFailure) this.recordLivenessFailure(sendError);
+      this.rejectPongWaiters(sendError);
+      if (probe.role !== "latency") this.recordLivenessFailure(sendError, probe.role);
     };
     try {
       void this.sendJsonMessage("ping", "ping", { type: "ping" }).catch(rejectSend);
@@ -2614,7 +2702,7 @@ export class DaemonClient {
       rejectSend(error);
     }
 
-    return promise;
+    return probe;
   }
 
   private startLivenessHeartbeat(): void {
@@ -2637,12 +2725,60 @@ export class DaemonClient {
     }
     this.livenessHeartbeatTimer = setTimeout(() => {
       this.livenessHeartbeatTimer = null;
-      this.livenessPing({ timeoutMs: LIVENESS_HEARTBEAT_TIMEOUT_MS })
-        .catch(() => {})
-        .finally(() => {
-          this.scheduleNextLivenessHeartbeat();
-        });
+      this.tickLivenessHeartbeat();
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * The app came back to the foreground. Start a fresh verification cycle: two
+   * FOREGROUND_LIVENESS_TIMEOUT_MS windows back to back, then teardown and an immediate
+   * reconnect. Misses recorded before the app was suspended do not count, and a heartbeat
+   * probe that straddled the suspension measured the suspension, not the socket, so it is
+   * dropped without a miss. Latency measurements wait for the next pong, so replacing the
+   * probe they joined does not fail them.
+   */
+  private verifyConnectionOnForeground(): void {
+    // A cycle already running keeps its deadline and its window count.
+    if (this.pingProbe?.role === "foreground") return;
+    if (this.pingProbe?.role === "heartbeat") {
+      this.rejectPingProbe(new Error("Heartbeat superseded by foreground check"));
+    }
+    // A shared latency probe keeps its deadline, but only frames that arrive from now on count
+    // for this check; a latency probe never reads this flag for itself.
+    if (this.pingProbe) this.pingProbe.receivedActivity = false;
+    this.consecutiveLivenessFailures = 0;
+    this.tickLivenessHeartbeat("foreground");
+  }
+
+  private tickLivenessHeartbeat(check: "heartbeat" | "foreground" = "heartbeat"): void {
+    this.stopLivenessHeartbeat();
+    const transport = this.transport;
+    if (this.connectionState.status !== "connected" || !transport) return;
+    const probe = this.ensurePingProbe({
+      timeoutMs:
+        check === "foreground" ? FOREGROUND_LIVENESS_TIMEOUT_MS : LIVENESS_HEARTBEAT_TIMEOUT_MS,
+      role: check,
+    });
+    void probe.promise
+      .then(
+        (rttMs) => {
+          this.lastLivenessRttMs = rttMs;
+          return true;
+        },
+        () => probe.receivedActivity,
+      )
+      .then((alive) => {
+        // A replaced transport, or a probe that superseded this one, owns the next step.
+        if (this.transport !== transport || this.pingProbe) return;
+        if (!alive && check === "foreground") {
+          // Zero inbound frames in a foreground window: check again now. The second silent
+          // window reaches the threshold inside recordLivenessFailure.
+          this.tickLivenessHeartbeat("foreground");
+          return;
+        }
+        this.scheduleNextLivenessHeartbeat();
+        return;
+      });
   }
 
   // ============================================================================
@@ -2652,7 +2788,12 @@ export class DaemonClient {
   private observe<T extends CorrelatedResponseType>(
     responseType: T,
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>,
-    options?: { requestId?: string; timeout?: number; signal?: AbortSignal },
+    options?: {
+      requestId?: string;
+      timeout?: number;
+      signal?: AbortSignal;
+      validateSnapshot?: (payload: CorrelatedResponsePayload<T>) => void;
+    },
   ): OwnedSubscription<CorrelatedResponsePayload<T>> {
     let resetSource = false;
     return this.owned.observeRequest<CorrelatedResponsePayload<T>>(
@@ -2678,12 +2819,16 @@ export class DaemonClient {
                   requestType: message.type,
                   error: payload.error,
                 });
+              options?.validateSnapshot?.(payload);
               accept(payload);
               return payload;
             },
           });
         } catch (error) {
-          resetSource = !(error instanceof DaemonRpcError) && this.isConnected;
+          resetSource =
+            !(error instanceof DaemonRpcError) &&
+            !(error instanceof DiffSubscriptionError) &&
+            this.isConnected;
           throw error;
         }
       },
@@ -2883,6 +3028,28 @@ export class DaemonClient {
     });
   }
 
+  /** Finds one workspace by id across pages, background ones included when the host has them. */
+  async findWorkspace(
+    workspaceId: string,
+    options?: { requestId?: string },
+  ): Promise<FetchWorkspacesEntry | null> {
+    const filter = this.supportsBackgroundWorkspaces() ? { includeBackground: true } : {};
+    let cursor: string | undefined;
+    let requestId = options?.requestId;
+    do {
+      const result = await this.fetchWorkspaces({
+        requestId,
+        filter,
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      const match = result.entries.find((entry) => entry.id === workspaceId);
+      if (match) return match;
+      cursor = result.pageInfo.nextCursor ?? undefined;
+      requestId = undefined;
+    } while (cursor);
+    return null;
+  }
+
   listWorkspaceLabels(
     options: {
       sync?: { generation: string; afterSeq: number };
@@ -2984,6 +3151,19 @@ export class DaemonClient {
         if (msg.type !== "project.list.response") return null;
         if (msg.payload.requestId !== resolvedRequestId) return null;
         return msg.payload;
+      },
+    });
+  }
+
+  /** Repositories the user ran agent sessions in recently, grouped by main checkout. */
+  listProjectSuggestions(options?: ProjectSuggestionsOptions): Promise<ProjectSuggestionsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"project.suggestions.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "project.suggestions.request",
+        ...(options?.providers ? { providers: options.providers } : {}),
+        ...(options?.since ? { since: options.since } : {}),
+        ...(options?.limit ? { limit: options.limit } : {}),
       },
     });
   }
@@ -3261,6 +3441,13 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  // Entity metadata is gated once at the transport boundary.
+  private requireEntityMetadata(): void {
+    if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
+      throw new Error("Update the host to use metadata.");
+    }
+  }
+
   // Background workspaces are gated once at the transport boundary.
   private requireBackgroundWorkspaces(): void {
     if (this.lastServerInfoMessage?.features?.backgroundWorkspaces !== true) {
@@ -3272,19 +3459,61 @@ export class DaemonClient {
     return this.lastServerInfoMessage?.features?.backgroundWorkspaces === true;
   }
 
+  // Background on a request that creates its workspace predates background agents: older hosts
+  // apply it to the new workspace. Placing a background agent in an existing workspace, or
+  // under a caller, needs a host that knows background agents.
+  private requireBackgroundCreation(options: CreateAgentRequestOptions): void {
+    if (options.workspaceId === undefined && options.callerAgentId === undefined) {
+      this.requireBackgroundWorkspaces();
+    } else if (this.lastServerInfoMessage?.features?.backgroundAgents !== true) {
+      throw new Error("Update the host to use background agents.");
+    }
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
     if (options.git !== undefined || options.worktreeName !== undefined) {
       throw new Error(
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
       );
     }
-    if (options.background !== undefined) this.requireBackgroundWorkspaces();
+    if (options.background !== undefined) this.requireBackgroundCreation(options);
+    if (options.metadata !== undefined) this.requireEntityMetadata();
+    const config = resolveAgentConfig(options);
     const result = await this.creations.createAgent({
       ...options,
-      config: resolveAgentConfig(options),
+      config: this.carriesLegacyOptions(config)
+        ? await this.routeLegacyCreateConfig(config)
+        : config,
     });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
+  }
+
+  /**
+   * A legacy daemon reads control options as `featureValues`, and which options are controls
+   * depends on the config (Claude's differ by model), so a create that carries options first lists
+   * the controls for its own config. Callers never prime anything.
+   */
+  private carriesLegacyOptions(config: AgentSessionConfig): boolean {
+    return (
+      this.legacyProviderOptions() !== null && Object.keys(config.providerOptions ?? {}).length > 0
+    );
+  }
+
+  private async routeLegacyCreateConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+    const payload = await this.listProviderFeatures({
+      provider: config.provider,
+      cwd: config.cwd || "~",
+      ...(config.modeId ? { modeId: config.modeId } : {}),
+      ...(config.model ? { model: config.model } : {}),
+      ...(config.thinkingOptionId ? { thinkingOptionId: config.thinkingOptionId } : {}),
+      featureValues: config.providerOptions,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return this.legacyOptions.routeCreateConfig(
+      config,
+      new Set((payload.features ?? []).map((feature) => feature.id)),
+    );
   }
 
   private async createLegacyAgent(
@@ -3485,6 +3714,42 @@ export class DaemonClient {
     return { removedWorkspaceIds: payload.removedWorkspaceIds };
   }
 
+  /** Top-level keys replace; `null` removes the key. Resolves to the agent's metadata afterwards. */
+  async setAgentMetadata(
+    agentId: string,
+    patch: Record<string, JsonValue>,
+    requestId?: string,
+  ): Promise<Record<string, JsonValue>> {
+    this.requireEntityMetadata();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.metadata.update.response">({
+        requestId,
+        message: { type: "agent.metadata.update.request", agentId, patch },
+      });
+    if (!payload.accepted || !payload.metadata) {
+      throw new Error(payload.error ?? "setAgentMetadata rejected");
+    }
+    return payload.metadata;
+  }
+
+  /** Top-level keys replace; `null` removes the key. Resolves to the workspace's metadata afterwards. */
+  async setWorkspaceMetadata(
+    workspaceId: string,
+    patch: Record<string, JsonValue>,
+    requestId?: string,
+  ): Promise<Record<string, JsonValue>> {
+    this.requireEntityMetadata();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.metadata.update.response">({
+        requestId,
+        message: { type: "workspace.metadata.update.request", workspaceId, patch },
+      });
+    if (!payload.accepted || !payload.metadata) {
+      throw new Error(payload.error ?? "setWorkspaceMetadata rejected");
+    }
+    return payload.metadata;
+  }
+
   async setWorkspaceTitle(
     workspaceId: string,
     title: string | null,
@@ -3525,6 +3790,22 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceBaseBranch(options: {
+    workspaceId: string;
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }> {
+    const { requestId, workspaceId, baseRef } = options;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.base_branch.set.response">({
+        requestId,
+        message: { type: "workspace.base_branch.set.request", workspaceId, baseRef },
+      });
+    if (!payload.accepted)
+      throw new Error(payload.error ?? "Changing the workspace base branch failed");
+    return { baseRef: payload.baseRef };
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,
@@ -3552,6 +3833,23 @@ export class DaemonClient {
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
+    }
+  }
+
+  /** Rejects when the host could not put the workspace back; an old host has no such RPC. */
+  async undoWorkspaceArchive(workspaceId: string, requestId?: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.archive.undo.response">({
+        requestId,
+        message: {
+          type: "workspace.archive.undo.request",
+          workspaceId,
+        },
+        // Undoing a finished worktree archive recreates the worktree, like recovery does.
+        timeout: 150_000,
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "The host could not undo the workspace archive");
     }
   }
 
@@ -3777,6 +4075,58 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
     return payload;
+  }
+
+  async listAgentBackgroundWork(
+    agentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<AgentBackgroundWorkItem[]> {
+    this.assertAgentBackgroundWorkSupported();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.background_work.list.response">({
+        requestId: options.requestId,
+        timeout: options.timeout,
+        message: { type: "agent.background_work.list.request", agentId },
+      });
+    if (payload.error) throw new Error(payload.error);
+    return payload.items;
+  }
+
+  async stopAgentBackgroundWork(
+    agentId: string,
+    item: AgentBackgroundWorkItem,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<void> {
+    // COMPAT(agentBackgroundWorkStop): added after v0.15.0, remove after 2027-05-03.
+    if (this.lastServerInfoMessage?.features?.agentBackgroundWorkStop !== true)
+      throw new Error("Update the host to stop background work.");
+    if (!item.canStop || !item.stopToken) throw new Error("Background work cannot be stopped.");
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.background_work.stop.response">({
+        requestId: options.requestId,
+        timeout: options.timeout ?? 30000,
+        message: {
+          type: "agent.background_work.stop.request",
+          agentId,
+          itemId: item.id,
+          stopToken: item.stopToken,
+        },
+      });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  observeAgentBackgroundWork(
+    options: { signal?: AbortSignal } = {},
+  ): OwnedSubscription<CorrelatedResponsePayload<"session.events.set_subscription.response">> {
+    this.assertAgentBackgroundWorkSupported();
+    return this.observeEvents(["agent.background_work.update"], options);
+  }
+
+  private assertAgentBackgroundWorkSupported(): void {
+    // COMPAT(agentBackgroundWork): added after v0.11.0-beta.5, remove gate after 2027-04-06.
+    if (this.lastServerInfoMessage?.features?.agentBackgroundWork !== true) {
+      throw new Error("Update the host to see an agent's background work.");
+    }
   }
 
   async fetchProviderSubagentTimeline(
@@ -4077,6 +4427,41 @@ export class DaemonClient {
     }
   }
 
+  /**
+   * Changes the agent's own provider options: top-level keys replace, `null` removes the key.
+   * A daemon without `providerOptionControls` takes each key as a feature write.
+   */
+  async setAgentOptions(
+    agentId: string,
+    patch: Record<string, unknown>,
+  ): Promise<AgentProviderNotice | null> {
+    const legacy = this.legacyProviderOptions();
+    if (legacy) {
+      // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
+      const pending = this.legacyResetControls(agentId, patch);
+      const controls = pending ? await pending : [];
+      for (const [featureId, value] of legacy.featureWrites(patch, controls)) {
+        await this.setAgentFeature(agentId, featureId, value);
+      }
+      return null;
+    }
+    return this.applyAgentConfig(agentId, { options: patch });
+  }
+
+  /**
+   * COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
+   * A reset (`null`) on a daemon without `providerOptionControls` is written as the value its
+   * control resets to, which takes the agent's controls. Without a reset nothing is fetched, so
+   * the write is not delayed.
+   */
+  private legacyResetControls(
+    agentId: string,
+    patch: Record<string, unknown>,
+  ): Promise<AgentOptionControl[]> | null {
+    if (!Object.values(patch).includes(null)) return null;
+    return this.fetchAgent(agentId).then((result) => result?.agent.controls ?? []);
+  }
+
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
@@ -4119,11 +4504,18 @@ export class DaemonClient {
     agentId: string,
     config: AgentConfigApply,
   ): Promise<AgentProviderNotice | null> {
+    let wireConfig = config;
+    const legacy = this.legacyProviderOptions();
+    if (legacy && config.options) {
+      // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01.
+      const pending = this.legacyResetControls(agentId, config.options);
+      wireConfig = legacy.featureValuesConfig(config, pending ? await pending : []);
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "agent.config.apply.request",
       agentId,
-      config,
+      config: wireConfig,
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4587,6 +4979,26 @@ export class DaemonClient {
     });
   }
 
+  observeDiff(compare: DiffCompare): OwnedSubscription<DiffState> {
+    return this.diffStreams.observe(compare);
+  }
+
+  async readDiff(compare: DiffCompare): Promise<DiffState> {
+    const observation = this.observeDiff(compare);
+    try {
+      return await new Promise<DiffState>((resolve) => {
+        observation.subscribe({
+          snapshot: (state) => {
+            if (state.phase !== "loading") resolve(state);
+          },
+          update: () => {},
+        });
+      });
+    } finally {
+      await observation.release();
+    }
+  }
+
   observeCheckoutDiff(
     cwd: string,
     compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
@@ -5020,12 +5432,16 @@ export class DaemonClient {
     if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    if (input.metadata !== undefined || input.agent?.metadata !== undefined)
+      this.requireEntityMetadata();
+    let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+    if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
+      agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+    }
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
-      ...(input.agent
-        ? { agent: { ...input.agent, config: resolveAgentConfig(input.agent) } }
-        : {}),
+      ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
     });
     return {
       ...result,
@@ -5077,7 +5493,7 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; refMode?: "exact" },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -5087,6 +5503,7 @@ export class DaemonClient {
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,
+        refMode: options.refMode,
       },
       responseType: "branch_suggestions_response",
     });
@@ -5506,6 +5923,36 @@ export class DaemonClient {
     });
   }
 
+  /**
+   * The controls a draft agent would show and the options it would run with: `config.json`
+   * defaults merged with the draft's own `providerOptions`, resolved by the daemon.
+   */
+  async listProviderControls(
+    draftConfig: ListCommandsDraftConfig,
+    options?: { requestId?: string },
+  ): Promise<ListProviderControlsPayload> {
+    const legacy = this.legacyProviderOptions();
+    if (legacy) {
+      const { providerOptions, ...rest } = draftConfig;
+      const payload = await this.listProviderFeatures(
+        {
+          ...rest,
+          // A legacy daemon reads the options it exposes as features, whatever the others are.
+          ...(providerOptions ? { featureValues: providerOptions } : {}),
+        },
+        options,
+      );
+      return legacy.controlsResponse(payload);
+    }
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "provider.controls.list.request", draftConfig },
+      responseType: "provider.controls.list.response",
+      timeout: 90000,
+    });
+  }
+
+  /** @deprecated Use `listProviderControls`. */
   async listProviderFeatures(
     draftConfig: ListCommandsDraftConfig,
     options?: { requestId?: string },
@@ -6432,10 +6879,16 @@ export class DaemonClient {
   // ============================================================================
 
   observeTerminals(input: {
-    cwd: string;
+    cwd?: string;
     workspaceId?: string;
     signal?: AbortSignal;
   }): OwnedSubscription<CorrelatedResponsePayload<"terminals_changed">> {
+    // COMPAT(terminalCollection): added in v0.16, remove after 2027-06.
+    if (
+      input.cwd === undefined &&
+      this.getLastServerInfoMessage()?.features?.terminalCollection !== true
+    )
+      throw new Error("Update the host to list terminals across workspaces.");
     const { signal, ...query } = input;
     return this.observe(
       "terminals_changed",
@@ -6796,6 +7249,14 @@ export class DaemonClient {
     return requestId ?? crypto.randomUUID();
   }
 
+  private readonly legacyOptions = new LegacyProviderOptions();
+
+  /** The translation for a daemon without `providerOptionControls`; null for a current one. */
+  private legacyProviderOptions(): LegacyProviderOptions | null {
+    const info = this.lastServerInfoMessage;
+    return info && usesLegacyProviderOptions(info) ? this.legacyOptions : null;
+  }
+
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
     return this.lastServerInfoMessage;
   }
@@ -6862,6 +7323,7 @@ export class DaemonClient {
     this.chunkedTransport?.close();
     this.chunkedTransport = null;
     this.owned.disconnected();
+    this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
     this.stopLivenessHeartbeat();
     this.cleanupTransport();
@@ -6994,6 +7456,7 @@ export class DaemonClient {
         messageType: "pong",
       });
       this.resolvePingProbe();
+      this.resolvePongWaiters();
       this.runtimeMetrics?.recordMessage("pong", bytes, perfNow() - startMs);
       return;
     }
@@ -7050,6 +7513,10 @@ export class DaemonClient {
     }
     if (hostFrame) {
       for (const handler of this.hostFrameListeners) handler(hostFrame);
+      return true;
+    }
+    if (rawBytes[0] >= 0x40 && rawBytes[0] <= 0x4f) {
+      this.diffStreams.receive(rawBytes);
       return true;
     }
     if (isPluginFrameOpcode(rawBytes[0])) {
@@ -7239,6 +7706,8 @@ export class DaemonClient {
     reason?: string;
     event?: string;
     reasonCode?: string;
+    // Attempt now instead of after the backoff delay. Failures of that attempt back off as usual.
+    immediate?: boolean;
   }): void {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -7252,6 +7721,7 @@ export class DaemonClient {
     }
 
     this.owned.disconnected();
+    this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
 
     // Clear all pending waiters and queued sends since the connection was lost
@@ -7268,6 +7738,7 @@ export class DaemonClient {
     this.clearWaiters(connectionError, true);
     this.rejectPendingSendQueue(connectionError);
     this.rejectPingProbe(connectionError);
+    this.rejectPongWaiters(connectionError);
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
 
@@ -7287,6 +7758,10 @@ export class DaemonClient {
       return;
     }
 
+    if (input?.immediate) {
+      void this.attemptConnect();
+      return;
+    }
     this.armReconnectTimer();
   }
 
@@ -7361,7 +7836,18 @@ export class DaemonClient {
     probe.reject(error);
   }
 
-  private recordLivenessFailure(error: Error): void {
+  private resolvePongWaiters(): void {
+    const now = perfNow();
+    for (const waiter of this.pongWaiters) waiter.resolve(now - waiter.startedAt);
+    this.pongWaiters.clear();
+  }
+
+  private rejectPongWaiters(error: Error): void {
+    for (const waiter of this.pongWaiters) waiter.reject(error);
+    this.pongWaiters.clear();
+  }
+
+  private recordLivenessFailure(error: Error, role: PingProbeRole): void {
     this.consecutiveLivenessFailures += 1;
     if (this.consecutiveLivenessFailures < LIVENESS_FAILURE_RECONNECT_THRESHOLD) {
       return;
@@ -7373,11 +7859,14 @@ export class DaemonClient {
       reason: error.message,
       event: "LIVENESS_TIMEOUT",
       reasonCode: "liveness_timeout",
+      // The foreground cycle already waited two windows; the user is looking at the app.
+      immediate: role === "foreground",
     });
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
     msg = this.owned.normalize(msg);
+    msg = this.legacyProviderOptions()?.normalize(msg) ?? msg;
     if (
       msg.type === "providers_snapshot_update" &&
       this.config.providerSnapshots !== "wire" &&
@@ -7411,6 +7900,7 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
+          this.diffStreams.connected(serverInfo.features?.diffSubscription === true);
           this.owned.restore(serverInfo, {
             ...DEFAULT_CLIENT_CAPABILITIES,
             ...this.config.capabilities,
@@ -7666,6 +8156,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     worktreeName: _worktreeName,
     requestId: _requestId,
     labels: _labels,
+    metadata: _metadata,
     ...overrides
   } = options;
 
@@ -7687,3 +8178,5 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     cwd: merged.cwd,
   };
 }
+
+export type { DiffCompare, DiffState, DiffEntry, ResolvedShas } from "./diff/index.js";

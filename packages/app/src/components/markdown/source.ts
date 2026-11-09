@@ -24,10 +24,12 @@ const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
 // Bare prose paths need a known extension, a line suffix, or at least two separators.
 const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
 
-function createFilePattern(path: string): RegExp {
+function createTextPattern(path: string, forgeReferencePattern?: string): RegExp {
+  // Forge references come before paths so `group/project#12` is not read as a path.
+  const forgeReference = forgeReferencePattern ? `|${forgeReferencePattern}` : "";
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:${BARE_URL}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}${forgeReference}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
@@ -38,8 +40,20 @@ const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
 const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
 const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
-const FILE_PATTERN = createFilePattern(PROSE_PATH);
-function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
+const TEXT_PATTERN = createTextPattern(PROSE_PATH);
+// One entry per distinct workspace forge remote; reuse keeps the engine's regex identity stable.
+const textPatternsByForgeReference = new Map<string, RegExp>();
+function textPattern(forgeReferencePattern?: string): RegExp {
+  if (!forgeReferencePattern) return TEXT_PATTERN;
+  let pattern = textPatternsByForgeReference.get(forgeReferencePattern);
+  if (!pattern) {
+    pattern = createTextPattern(PROSE_PATH, forgeReferencePattern);
+    textPatternsByForgeReference.set(forgeReferencePattern, pattern);
+  }
+  return pattern;
+}
+
+function linkMetadata(inlineCodePaths: ReadonlySet<string>, forgeReferencePattern?: string) {
   // The engine accepts regexes on both platforms. Classify complete code spans
   // first, then pass literal matches rather than maintaining a second path grammar.
   const alternatives = [...inlineCodePaths].map((path) =>
@@ -47,7 +61,7 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   );
   return {
     linkRecognition: {
-      text: FILE_PATTERN,
+      text: textPattern(forgeReferencePattern),
       inlineCode: new RegExp(
         String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
@@ -120,7 +134,12 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean; commandNames?: ReadonlySet<string> } = {},
+  options: {
+    supportsSvg?: boolean;
+    commandNames?: ReadonlySet<string>;
+    /** Regex source for forge references such as `#12`; see `@/git/forge-shorthand`. */
+    forgeReferencePattern?: string;
+  } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -132,6 +151,7 @@ export function prepareMarkdownSource(
     }));
   const metadata = linkMetadata(
     collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+    options.forgeReferencePattern,
   );
   const edits: { start: number; end: number; text: string }[] = [];
   if (

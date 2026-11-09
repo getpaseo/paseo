@@ -203,3 +203,19 @@ describe("requestArchiveSubagent", () => {
     expect(env.recordedErrors).toEqual([error]);
   });
 });
+
+it("warns before archiving an idle subagent with live background work", async () => {
+  const env = createFakeEnv({
+    initialSubagents: [
+      {
+        id: "child",
+        snapshot: { title: "Review branch", status: "idle", backgroundWork: { count: 1 } },
+      },
+    ],
+  });
+  await requestArchiveSubagent({ serverId: "server-1", subagentId: "child" }, env.deps);
+  expect(env.recordedConfirmInputs[0]).toMatchObject({
+    title: "Archive running subagent?",
+    message: expect.stringContaining("will stop"),
+  });
+});
