@@ -921,8 +921,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       const previous = observation;
       const handle = ports.observe(requested, cursors);
       observation = { handle, agentIds: requested };
-      void previous?.handle.release().catch(ports.reportError);
-      const answer = await handle.ready;
+      // A subscription routes events only once the daemon accepts it, so the old one delivers until then.
+      const answer = await handle.ready.finally(() => {
+        void previous?.handle.release().catch(ports.reportError);
+      });
       timelines = answer ? answer.timelines : undefined;
     } catch (error) {
       if (isReconcileSuperseded(generation)) return;

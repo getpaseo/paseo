@@ -173,6 +173,7 @@ class TimelineWorld {
         ready: result.promise,
         release: async () => {
           this.releasedMemberships.push(agentIds);
+          result.reject(new Error("Subscription released"));
         },
       };
     },
@@ -1371,11 +1372,65 @@ test("foregrounding a current chat checks over the subscription instead of fetch
   const check = await world.nextMembership();
   expect(check.agentIds).toEqual(["agent-a"]);
   expect(check.cursors).toEqual({ "agent-a": { epoch: "epoch-a", seq: 42 } });
-  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a"]]));
 
   check.succeed({ "agent-a": "current" });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
   world.expectNoPendingFetch();
+  world.sync.dispose();
+});
+
+test("the old subscription keeps delivering until the daemon accepts its replacement", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.cursors.set("agent-b", { epoch: "epoch-b", endSeq: 2 });
+  world.openedEarlier(["agent-b"]);
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current", "agent-b": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-b")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  const check = await world.nextMembership();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(world.releasedMemberships).toEqual([]);
+
+  check.succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a", "agent-b"]]));
+  world.sync.dispose();
+});
+
+test("losing the connection during a check releases both the check and what it replaced", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  await world.nextMembership();
+  world.sync.setConnected(false);
+
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a"], ["agent-a"]]));
+  world.sync.dispose();
+});
+
+test("a replacement the daemon refuses still releases the subscription it replaced", async () => {
+  const world = freshnessWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-a", endSeq: 1 });
+  world.show("pane", ["agent-a"]);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed({ "agent-a": "current" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.setActive(false);
+  world.sync.setActive(true);
+  const check = await world.nextMembership();
+  check.fail("refused");
+
+  await vi.waitFor(() => expect(world.releasedMemberships).toEqual([["agent-a"]]));
   world.sync.dispose();
 });
 
