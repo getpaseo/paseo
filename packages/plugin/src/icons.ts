@@ -34,5 +34,8 @@ export function findSvgIconProblem(svg: string): string | null {
     const href = match[2] ?? match[3] ?? "";
     if (!href.startsWith("#")) return "external href references are not allowed";
   }
+  for (const match of svg.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+    if (!match[2].trim().startsWith("#")) return "external URL references are not allowed";
+  }
   return null;
 }
