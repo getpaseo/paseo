@@ -697,7 +697,6 @@ export class VoiceAssistantWebSocketServer {
     getDaemonTcpPort?: () => number | null,
     getDaemonTcpHost?: () => string | null,
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
-    forgetWorkspaceScriptHealth?: (workspaceId: string) => void,
     workspaceGitService?: WorkspaceGitService,
     github?: ForgeService,
     pushNotificationSender?: PushNotificationSender,
@@ -710,6 +709,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    forgetWorkspaceScriptHealth?: (workspaceId: string) => void,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
