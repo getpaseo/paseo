@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { WebSocket } from "ws";
 import { hash } from "bcryptjs";
 import { readFile, stat, writeFile } from "node:fs/promises";
@@ -51,6 +52,188 @@ describe("daemon bearer auth", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     process.env = { ...originalEnv, PASEO_SUPERVISED: "0" };
+  });
+
+  test("issues a device credential, admits it and revokes only its sockets", async () => {
+    const handle = await createTestPaseoDaemon({ auth: { password: CORRECT_PASSWORD_HASH } });
+    const sockets: WebSocket[] = [];
+    function receive(ws: WebSocket, matches: (frame: unknown) => boolean): Promise<unknown> {
+      return new Promise((resolve, reject) => {
+        function cleanup() {
+          ws.off("message", message);
+          ws.off("close", closed);
+        }
+        function message(data: import("ws").RawData) {
+          const frame: unknown = JSON.parse(data.toString());
+          if (!matches(frame)) return;
+          cleanup();
+          resolve(frame);
+        }
+        function closed() {
+          cleanup();
+          reject(new Error("closed before response"));
+        }
+        ws.on("message", message);
+        ws.once("close", closed);
+      });
+    }
+    async function hello(clientId: string, auth: Record<string, string>) {
+      const { ws } = await connectWebSocket({ port: handle.port });
+      sockets.push(ws);
+      const response = receive(
+        ws,
+        (frame) =>
+          z
+            .object({
+              message: z.object({ payload: z.object({ status: z.literal("server_info") }) }),
+            })
+            .safeParse(frame).success,
+      );
+      ws.send(
+        JSON.stringify({ type: "hello", clientId, clientType: "cli", protocolVersion: 1, auth }),
+      );
+      await expect(response).resolves.toMatchObject({
+        type: "session",
+        message: { payload: { status: "server_info" } },
+      });
+      return ws;
+    }
+    async function request(ws: WebSocket, message: Record<string, string>) {
+      const response = receive(ws, (frame) => {
+        const parsed = z
+          .object({ message: z.object({ payload: z.object({ requestId: z.string() }) }) })
+          .safeParse(frame);
+        return parsed.success && parsed.data.message.payload.requestId === message.requestId;
+      });
+      ws.send(JSON.stringify({ type: "session", message }));
+      return response;
+    }
+    try {
+      const owner = await hello("credential-owner", {
+        kind: "password",
+        password: "correct-password",
+      });
+      const issued = await request(owner, {
+        type: "access.device_credentials.issue.request",
+        requestId: "issue",
+        label: "Synthetic test phone",
+      });
+      expect(issued).toMatchObject({
+        type: "session",
+        message: { type: "access.device_credentials.issue.response", payload: { error: null } },
+      });
+      const { id, secret } = z
+        .object({
+          message: z.object({
+            payload: z.object({ credential: z.object({ id: z.string(), secret: z.string() }) }),
+          }),
+        })
+        .parse(issued).message.payload.credential;
+      const device = await hello("shared-session", { kind: "deviceCredential", id, secret });
+      const sibling = await hello("shared-session", {
+        kind: "password",
+        password: "correct-password",
+      });
+      expect(
+        await request(device, {
+          type: "access.device_credentials.list.request",
+          requestId: "list",
+        }),
+      ).toMatchObject({ message: { payload: { credentials: [{ id, current: true }] } } });
+      const closed = new Promise<number>((resolve) => device.once("close", resolve));
+      expect(
+        await request(owner, {
+          type: "access.device_credentials.revoke.request",
+          requestId: "revoke",
+          id,
+        }),
+      ).toMatchObject({ message: { payload: { revoked: true } } });
+      await expect(closed).resolves.toBe(4401);
+      expect(sibling.readyState).toBe(WebSocket.OPEN);
+      expect(
+        await request(sibling, {
+          type: "access.device_credentials.list.request",
+          requestId: "after",
+        }),
+      ).toMatchObject({ message: { payload: { credentials: [] } } });
+      await expectWebSocketCloses({
+        port: handle.port,
+        code: 4401,
+        reason: "Incorrect password",
+        hello: {
+          type: "hello",
+          clientId: "revoked",
+          clientType: "cli",
+          protocolVersion: 1,
+          auth: { kind: "deviceCredential", id, secret },
+        },
+      });
+    } finally {
+      for (const socket of sockets) socket.close();
+      await handle.close();
+    }
+  });
+
+  test("SDK pairs, persists a device credential, and retries a revoked credential once with password", async () => {
+    const daemonHandle = await createTestPaseoDaemon({ auth: { password: CORRECT_PASSWORD_HASH } });
+    const config = {
+      url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+      clientId: "sdk-device-owner",
+      password: "correct-password",
+      webSocketFactory: (
+        url: string,
+        options?: { protocols?: string[]; headers?: Record<string, string> },
+      ) => new WebSocket(url, options?.protocols, { headers: options?.headers }),
+      reconnect: { enabled: false },
+    };
+    const owner = new DaemonClient(config);
+    const clients = [owner];
+    try {
+      await owner.connect();
+      const issued = await owner.issueDeviceCredential("SDK phone");
+      if (!issued.credential) throw new Error(`Issue failed: ${issued.error}`);
+      const { id, secret } = issued.credential;
+      const device = new DaemonClient({
+        ...config,
+        clientId: "sdk-device",
+        password: undefined,
+        deviceCredential: { id, secret },
+      });
+      clients.push(device);
+      await device.connect();
+      expect(await device.listDeviceCredentials()).toContainEqual({
+        id,
+        label: "SDK phone",
+        createdAt: issued.credential.createdAt,
+        current: true,
+      });
+      await device.close();
+      expect(await owner.revokeDeviceCredential(id)).toBe(true);
+      let forgotten = 0;
+      const retry = new DaemonClient({
+        ...config,
+        clientId: "sdk-revoked-device",
+        deviceCredential: { id, secret },
+        onDeviceCredentialRejected: () => {
+          forgotten += 1;
+        },
+      });
+      clients.push(retry);
+      await retry.connect();
+      expect(forgotten).toBe(1);
+      expect(retry.isConnected).toBe(true);
+      const noPassword = new DaemonClient({
+        ...config,
+        clientId: "sdk-revoked-no-password",
+        password: undefined,
+        deviceCredential: { id, secret },
+      });
+      clients.push(noPassword);
+      await expect(noPassword.connect()).rejects.toMatchObject({ reason: "password_required" });
+    } finally {
+      for (const client of clients) await client.close();
+      await daemonHandle.close();
+    }
   });
 
   test("leaves HTTP and WebSocket open when no password is configured", async () => {

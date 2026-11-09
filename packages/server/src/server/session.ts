@@ -1,3 +1,8 @@
+import {
+  executeDeviceAccess,
+  type DeviceAccess,
+  type DeviceAccessRequest,
+} from "./device-access.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -575,6 +580,7 @@ export interface SessionOptions {
   providerSnapshotManager: ProviderSnapshotManager;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
+  deviceAccess?: DeviceAccess;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupObservation?: WorkspaceSetupObservation;
@@ -866,6 +872,7 @@ export class Session {
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
+  private readonly deviceAccess: DeviceAccess | undefined;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
@@ -1134,10 +1141,12 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
+    this.deviceAccess = options.deviceAccess;
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
         emitLifecycleIntent: (intent) => this.emitLifecycleIntent(intent),
+        emitToSource: (msg, source) => this.emitForSource(msg, source),
       },
       clientId: this.clientId,
       paseoHome: this.paseoHome,
@@ -1170,6 +1179,7 @@ export class Session {
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
       reloadConfig: () => daemonConfigStore.reload(),
+      mintPairingToken: (source) => options.deviceAccess?.mintToken(source),
     });
     this.hubExecutionController = options.hubExecutionAgents
       ? new HubExecutionController({
@@ -2612,7 +2622,7 @@ export class Session {
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
-      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchAgentConfigMessage(msg, source) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -3185,7 +3195,41 @@ export class Session {
     }
   }
 
-  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchDeviceAccessMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "access.device_credentials.issue.request":
+      case "access.device_credentials.list.request":
+      case "access.device_credentials.revoke.request":
+        return this.handleDeviceAccess(msg, source);
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleDeviceAccess(msg: DeviceAccessRequest, source?: object): Promise<void> {
+    if (!source || !this.deviceAccess) throw new Error("Device access is unavailable");
+    const response = await executeDeviceAccess(this.deviceAccess, source, msg);
+    this.emitForSource(response, source);
+    if (msg.type === "access.device_credentials.revoke.request")
+      this.deviceAccess.disconnectRevoked();
+  }
+
+  private dispatchAgentConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    return (
+      this.dispatchDeviceAccessMessage(msg, source) ?? this.dispatchDaemonConfigMessage(msg, source)
+    );
+  }
+
+  private dispatchDaemonConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
@@ -3209,7 +3253,7 @@ export class Session {
       case "daemon.get_status.request":
         return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
-        return this.daemonSession.handleGetPairingOfferRequest(msg);
+        return this.daemonSession.handleGetPairingOfferRequest(msg, source);
       case "daemon.config.reload.request":
         return this.daemonSession.handleConfigReloadRequest(msg);
       case "hub.management.daemon.connect.request":

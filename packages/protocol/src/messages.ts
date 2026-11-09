@@ -1527,8 +1527,50 @@ export const DaemonGetStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const DeviceCredentialSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  createdAt: z.string(),
+});
+export const DeviceCredentialIssueRequestSchema = z.object({
+  type: z.literal("access.device_credentials.issue.request"),
+  requestId: z.string(),
+  label: z.string().min(1).max(128),
+});
+export const DeviceCredentialListRequestSchema = z.object({
+  type: z.literal("access.device_credentials.list.request"),
+  requestId: z.string(),
+});
+export const DeviceCredentialRevokeRequestSchema = z.object({
+  type: z.literal("access.device_credentials.revoke.request"),
+  requestId: z.string(),
+  id: z.string().min(1).max(64),
+});
+export const DeviceCredentialIssueResponseSchema = z.object({
+  type: z.literal("access.device_credentials.issue.response"),
+  payload: z.object({
+    requestId: z.string(),
+    credential: DeviceCredentialSchema.extend({ secret: z.string() }).nullable(),
+    error: z
+      .enum(["password_not_configured", "unsupported_principal", "limit_reached", "store_failed"])
+      .nullable(),
+  }),
+});
+export const DeviceCredentialListResponseSchema = z.object({
+  type: z.literal("access.device_credentials.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    credentials: z.array(DeviceCredentialSchema.extend({ current: z.boolean() })),
+  }),
+});
+export const DeviceCredentialRevokeResponseSchema = z.object({
+  type: z.literal("access.device_credentials.revoke.response"),
+  payload: z.object({ requestId: z.string(), revoked: z.boolean() }),
+});
+
 export const DaemonGetPairingOfferRequestSchema = z.object({
   type: z.literal("daemon.get_pairing_offer.request"),
+  includePairingToken: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -3493,6 +3535,10 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  DeviceCredentialIssueRequestSchema,
+  DeviceCredentialListRequestSchema,
+  DeviceCredentialRevokeRequestSchema,
+
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -3911,6 +3957,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        // COMPAT(deviceCredentials): added in v0.15.4, remove gate after 2027-05-09.
+        deviceCredentials: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
@@ -7362,6 +7410,10 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  DeviceCredentialIssueResponseSchema,
+  DeviceCredentialListResponseSchema,
+  DeviceCredentialRevokeResponseSchema,
+
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,
@@ -8108,6 +8160,12 @@ export const WSHelloMessageSchema = z.object({
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("password"), password: z.string() }),
       z.object({ kind: z.literal("localCredential"), token: z.string() }),
+      z.object({
+        kind: z.literal("deviceCredential"),
+        id: z.string().min(1).max(64),
+        secret: z.string().min(1).max(128),
+      }),
+      z.object({ kind: z.literal("pairingToken"), token: z.string().min(1).max(128) }),
     ])
     .optional(),
   appVersion: z.string().optional(),

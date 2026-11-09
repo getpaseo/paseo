@@ -32,9 +32,11 @@ export async function createConnectionOfferV2(args: {
   daemonPublicKeyB64: string;
   relay: { endpoint: string; useTls?: boolean };
   minimumSecurityMode?: "protected";
+  pairingToken?: string;
 }): Promise<ConnectionOffer> {
   return ConnectionOfferV2Schema.parse({
     v: 2,
+    ...(args.pairingToken ? { pairingToken: args.pairingToken } : {}),
     serverId: args.serverId,
     daemonPublicKeyB64: args.daemonPublicKeyB64,
     relay: args.relay,

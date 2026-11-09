@@ -8,6 +8,8 @@ import { z } from "zod";
  */
 export const ConnectionOfferV2Schema = z.object({
   v: z.literal(2),
+  // COMPAT(deviceCredentials): added in v0.15.4, remove gate after 2027-05-09.
+  pairingToken: z.string().min(1).max(128).optional(),
   serverId: z.string().min(1),
   daemonPublicKeyB64: z.string().min(1),
   relay: z.object({

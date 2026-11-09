@@ -13,7 +13,11 @@ principal -> grants
 
 A principal is the durable identity the daemon authorizes. A credential proves that a device or service represents it. Keep them separate so you can rotate credentials, attach more than one device, and revoke a Hub user without inventing daemon user accounts.
 
-A pairing invitation is neither. It is an expiring, single-use exchange that creates a principal and credential with the permissions selected by its issuer.
+Device credentials authenticate the existing `owner` principal. Only owner sessions holding every owner permission may issue them, and issuance requires a configured daemon password. They grant full owner authority; a narrowed owner session or a Hub principal cannot mint one.
+
+The daemon persists only SHA-256 digests of random 256-bit secrets in the private `device-credentials.json` store. A malformed store is quarantined and admits no devices. Changing the password preserves device credentials; revoke one or all to remove access. Revocation closes the sockets admitted by that credential, including their host links. Password sockets sharing the same session remain connected.
+
+A pairing invitation is a random, single-use token that admits one hello as owner. It expires after ten minutes and lives only in daemon memory. Full-owner sessions may request one in an RPC pairing offer; CLI offers and startup logs never contain it. Exchange it for a device credential after admission. Both credential kinds work over direct connections and encrypted relay connections.
 
 ## Permissions
 
