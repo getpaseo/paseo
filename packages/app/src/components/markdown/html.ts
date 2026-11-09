@@ -32,7 +32,7 @@ const EMPHASIS: Readonly<Record<string, string>> = { b: "**", strong: "**", i: "
 
 /** Convert comment HTML to Markdown while preserving the original spelling of code. */
 export function normalizeMarkdownHtml(source: string): string {
-  if (!source.includes("<")) return source;
+  if (!/<(?:!--|\/?[A-Za-z])/.test(source)) return source;
   const htmlRanges: { start: number; end: number }[] = [];
   function findHtml(node: Nodes) {
     if (node.type === "html" && node.position) {
@@ -40,6 +40,7 @@ export function normalizeMarkdownHtml(source: string): string {
     } else if ("children" in node) node.children.forEach(findHtml);
   }
   findHtml(fromMarkdown(source));
+  if (htmlRanges.length === 0) return source;
   const codeRanges: { start: number; end: number }[] = [];
   // Disable HTML parsing so code inside <details> remains visible to the Markdown parser.
   const tree = fromMarkdown(source, {

@@ -1,6 +1,6 @@
 import { type Dirent, type FSWatcher, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
@@ -198,6 +198,7 @@ class LinuxBackend implements ObservationBackend {
   }
 
   private async reconcile(scopes: string[]): Promise<void> {
+    const watchedDirectories = [...this.watchers.keys()].sort();
     for (const scope of scopes) {
       const snapshot = await this.scan(scope);
       if (!this.host.isActive()) return;
@@ -207,7 +208,9 @@ class LinuxBackend implements ObservationBackend {
       for (const path of snapshot.filesDiscoveredBeforeCoverage) {
         this.host.queueEvent("create", path);
       }
-      for (const [directory, watcher] of this.watchers) {
+      for (const directory of watchedSubtree(watchedDirectories, scope)) {
+        const watcher = this.watchers.get(directory);
+        if (!watcher) continue;
         const disappeared =
           directory !== this.host.root &&
           this.host.isPathInside(scope, directory) &&
@@ -340,4 +343,18 @@ class LinuxBackend implements ObservationBackend {
     this.timer = null;
     this.pendingScopes.clear();
   }
+}
+
+function watchedSubtree(sorted: string[], scope: string): string[] {
+  const prefix = scope.endsWith(sep) ? scope : scope + sep;
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (sorted[middle] < prefix) low = middle + 1;
+    else high = middle;
+  }
+  const matches = [scope];
+  while (low < sorted.length && sorted[low].startsWith(prefix)) matches.push(sorted[low++]);
+  return matches;
 }
