@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { type LayoutChangeEvent, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { RetainedPanelActivity } from "@/components/retained-panel";
 import { TOOLBAR_CONTROL_GAP } from "@/components/ui/control-geometry";
 import { isWeb } from "@/constants/platform";
 import { PluginComposerItems } from "@/plugins/composer-items";
@@ -29,7 +30,7 @@ export function usePluginToolbarWidth(): {
  * is an arbitrary component, so its width is known only from rendering it, and it is always the
  * toolbar form that is measured: the width never depends on the density it decides, so moving the
  * items to the overflow sheet cannot change the answer. Out of the row, the same node stays
- * mounted and measured, unseen and out of reach.
+ * mounted and measured, unseen and out of reach, and inactive so an open picker closes with it.
  */
 export function PluginToolbarSlot({
   serverId,
@@ -54,7 +55,9 @@ export function PluginToolbarSlot({
       importantForAccessibility={inline ? "auto" : "no-hide-descendants"}
       aria-hidden={!inline}
     >
-      <PluginComposerItems serverId={serverId} surface="toolbar" />
+      <RetainedPanelActivity active={inline}>
+        <PluginComposerItems serverId={serverId} surface="toolbar" />
+      </RetainedPanelActivity>
     </View>
   );
 }

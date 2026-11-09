@@ -3,6 +3,7 @@ import {
   expectToolbarNeverCondensedOrClipped,
   recordToolbarFramesFromLoad,
   withComposerControlsExample,
+  withPickerComposerItem,
   withToggleAndWatcherComposerItems,
 } from "../support/helpers/plugin-composer-items";
 
@@ -40,6 +41,17 @@ test("a toolbar without room moves a plugin toggle to the overflow sheet and bac
     await composer.closeOverflowSheet();
     await composer.setWindowWidth(1000);
     await composer.expectToggleInlineAtFullDensity();
+  });
+});
+
+test("an open plugin picker closes when its trigger moves to the overflow", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPickerComposerItem(page, async (composer) => {
+    await composer.setWindowWidth(1000);
+    await composer.openInlinePicker();
+    await composer.setWindowWidth(880);
+    await composer.expectToolbarWidthBetween(300, 395);
+    await composer.expectPickerClosed();
   });
 });
 

@@ -90,6 +90,33 @@ export default function contribute(client) {
   return () => {};
 }`;
 
+const PICKER_NAME = "Review state";
+const PICKER_PLUGIN_SOURCE = `import { Select } from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+
+const OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "ready", label: "Ready" },
+];
+
+function ReviewState() {
+  const [value, setValue] = useState("draft");
+  return (
+    <Select
+      title="${PICKER_NAME}"
+      icon="CircleDot"
+      value={value}
+      options={OPTIONS}
+      onValueChange={({ value: next }) => setValue(next)}
+    />
+  );
+}
+
+export default function contribute(client) {
+  client.addComposerItem({ id: "review-state", Component: ReviewState });
+  return () => {};
+}`;
+
 function toolbar(page: Page) {
   return page.getByTestId("agent-controls-toolbar").filter({ visible: true }).first();
 }
@@ -136,18 +163,38 @@ function agentFeaturesButton(page: Page) {
   return page.getByRole("button", { name: "Open agent features", exact: true });
 }
 
+interface ToolbarPluginComposer {
+  setWindowWidth(width: number): Promise<void>;
+  expectToolbarWidthBetween(min: number, max: number): Promise<void>;
+  expectToggleInlineAtFullDensity(): Promise<void>;
+  expectToggleInOverflow(): Promise<void>;
+  closeOverflowSheet(): Promise<void>;
+  startRecordingDensity(): Promise<void>;
+  expectAtMostOneDensityChange(): Promise<void>;
+  openInlinePicker(): Promise<void>;
+  expectPickerClosed(): Promise<void>;
+}
+
 /** Runs `run` in an agent's composer with one icon toggle and one item that renders nothing. */
-export async function withToggleAndWatcherComposerItems(
+export function withToggleAndWatcherComposerItems(
   page: Page,
-  run: (composer: {
-    setWindowWidth(width: number): Promise<void>;
-    expectToolbarWidthBetween(min: number, max: number): Promise<void>;
-    expectToggleInlineAtFullDensity(): Promise<void>;
-    expectToggleInOverflow(): Promise<void>;
-    closeOverflowSheet(): Promise<void>;
-    startRecordingDensity(): Promise<void>;
-    expectAtMostOneDensityChange(): Promise<void>;
-  }) => Promise<void>,
+  run: (composer: ToolbarPluginComposer) => Promise<void>,
+) {
+  return withToolbarPlugin(page, ONE_TOGGLE_PLUGIN_SOURCE, run);
+}
+
+/** Runs `run` in an agent's composer with one plugin `Select` in the toolbar. */
+export function withPickerComposerItem(
+  page: Page,
+  run: (composer: ToolbarPluginComposer) => Promise<void>,
+) {
+  return withToolbarPlugin(page, PICKER_PLUGIN_SOURCE, run);
+}
+
+async function withToolbarPlugin(
+  page: Page,
+  pluginSource: string,
+  run: (composer: ToolbarPluginComposer) => Promise<void>,
 ) {
   const workspace = await seedWorkspace({ repoPrefix: "composer-measured-items-" });
   const agent = await workspace.client.createAgent({
@@ -165,7 +212,7 @@ export async function withToggleAndWatcherComposerItems(
     path.join(directory, "paseo-plugin.json"),
     JSON.stringify({ id: ONE_TOGGLE_PLUGIN_ID, requirements: pluginRequirements }),
   );
-  await writeFile(path.join(directory, "index.client.tsx"), ONE_TOGGLE_PLUGIN_SOURCE);
+  await writeFile(path.join(directory, "index.client.tsx"), pluginSource);
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
@@ -229,6 +276,14 @@ export async function withToggleAndWatcherComposerItems(
           });
           expect(changes).toBeLessThanOrEqual(1);
         }),
+      openInlinePicker: () =>
+        test.step("open the plugin picker from the toolbar", async () => {
+          await toolbar(page).getByRole("button", { name: PICKER_NAME, exact: true }).click();
+          await expect(page.getByTestId("combobox-desktop-container")).toBeVisible();
+        }),
+      expectPickerClosed: () =>
+        test.step("the plugin picker has closed", () =>
+          expect(page.getByTestId("combobox-desktop-container")).toHaveCount(0)),
     });
   } finally {
     await client.removePlugin(ONE_TOGGLE_PLUGIN_ID);
