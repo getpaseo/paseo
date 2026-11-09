@@ -21,6 +21,8 @@ export const darkHighlightColors: Record<HighlightStyle, string> = {
   meta: "#8b949e",
   heading: "#79c0ff",
   link: "#a5d6ff",
+  diffAddition: "#3fb950",
+  diffDeletion: "#f85149",
 };
 
 export const lightHighlightColors: Record<HighlightStyle, string> = {
@@ -44,4 +46,6 @@ export const lightHighlightColors: Record<HighlightStyle, string> = {
   meta: "#6e7781",
   heading: "#0550ae",
   link: "#0a3069",
+  diffAddition: "#1a7f37",
+  diffDeletion: "#cf222e",
 };

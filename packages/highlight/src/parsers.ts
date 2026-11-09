@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -79,6 +80,9 @@ const languagesByExtension: Record<string, Language> = {
   swift: StreamLanguage.define(swift),
   // Dart
   dart: StreamLanguage.define(dart),
+  // Diff / patch (unified diff format)
+  diff: StreamLanguage.define(diff),
+  patch: StreamLanguage.define(diff),
   // C#
   cs: csharpLanguage,
   // Nix
