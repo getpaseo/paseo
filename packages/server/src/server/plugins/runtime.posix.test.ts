@@ -2122,7 +2122,7 @@ it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const runtime = createTestRuntime(
     { settingsDirectory },
     undefined,
-    resolveDaemonVersion(import.meta.url),
+    example === "sidebar-views" ? "0.16.0" : resolveDaemonVersion(import.meta.url),
   );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));

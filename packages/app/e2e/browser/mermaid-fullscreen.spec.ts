@@ -1,6 +1,8 @@
 import { test } from "../support/fixtures";
 import {
   closeDiagramFullscreen,
+  expectInlineDiagramFitsViewport,
+  toggleDiagramSourceAndVerifyControls,
   closeDiagramFullscreenFromOutside,
   expectCompletedDiagram,
   expectFullscreenDiagram,
@@ -21,6 +23,36 @@ const MERMAID_DIAGRAM = [
   "```",
 ].join("\n");
 
+test("bounds a tall inline diagram", async ({ page }) => {
+  test.setTimeout(120_000);
+  const diagram = [
+    "```mermaid",
+    "flowchart TD",
+    ...Array.from({ length: 30 }, (_, i) => `N${i} --> N${i + 1}`),
+    "```",
+  ].join("\n");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "mermaid-tall-",
+    title: "Tall Mermaid",
+    featureValues: {
+      mockStreamingAssistantResponse: diagram,
+      mockStreamingAssistantIntervalMs: 10,
+    },
+  });
+  try {
+    await openAgentRoute(page, agent);
+    await requestDiagram(agent);
+    await waitForDiagramTurnToComplete(agent);
+    await expectCompletedDiagram(page, ["N0", "N30"]);
+    await expectInlineDiagramFitsViewport(page);
+    await openDiagramFullscreen(page);
+    await expectFullscreenDiagram(page, ["N0", "N30"]);
+    await closeDiagramFullscreen(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("opens a Mermaid diagram fullscreen and closes it again", async ({ page }) => {
   test.setTimeout(120_000);
 
@@ -38,6 +70,10 @@ test("opens a Mermaid diagram fullscreen and closes it again", async ({ page }) 
       await requestDiagram(agent);
       await waitForDiagramTurnToComplete(agent);
       await expectCompletedDiagram(page, ["Start", "Ship"]);
+    });
+
+    await test.step("Source toggles preserve the diagram and exclude hidden controls", async () => {
+      await toggleDiagramSourceAndVerifyControls(page);
     });
 
     await test.step("The toolbar opens the diagram fullscreen", async () => {

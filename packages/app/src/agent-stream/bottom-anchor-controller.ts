@@ -65,7 +65,6 @@ interface BottomAnchorControllerDriver {
     pendingVerification: AttemptContext | null;
     blockedReason: BottomAnchorBlockedReason | null;
   };
-  resetForAgent: () => void;
   applyRouteRequest: (request: BottomAnchorRouteRequest | null) => void;
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
   beginUserScroll: () => void;
@@ -480,17 +479,6 @@ function createBottomAnchorControllerDriver(
         blockedReason,
       };
     },
-    resetForAgent() {
-      lastRouteRequestKey = null;
-      pendingRequest = null;
-      blockedReason = null;
-      cancelPendingAttempt();
-      stickyMeasurementRevision = 0;
-      lastVerifiedStickyMeasurementRevision = 0;
-      isUserScrollActive = false;
-      mode = "sticky-bottom";
-      input.onModeChange("sticky-bottom");
-    },
     applyRouteRequest(request) {
       if (!request) {
         return;
@@ -740,10 +728,6 @@ export function useBottomAnchorController(input: {
       cancelFrame: (handle) => cancelScheduledAnimationFrame(handle),
     });
   }
-
-  useEffect(() => {
-    driverRef.current?.resetForAgent();
-  }, [input.agentId]);
 
   useEffect(() => {
     driverRef.current?.applyRouteRequest(input.routeRequest);
