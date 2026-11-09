@@ -25,6 +25,7 @@ import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/me
 import type { MessageReceipts } from "./message-receipts/index.js";
 import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
+import pLimit from "p-limit";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
@@ -369,6 +370,9 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
+
+/** Simultaneous one-shot git reads for workspaces no watcher covers. */
+const WORKSPACE_GIT_WARM_UP_CONCURRENCY = 2;
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -873,6 +877,9 @@ export class Session {
   private workspaceGitObserverReconcileTail: Promise<void> = Promise.resolve();
   /** A liveness read that started before the current reconcile needs its own run afterwards. */
   private workspaceGitObserverReconcileRequested = false;
+  /** Directories with a one-shot git read in flight for a workspace that is not watched. */
+  private readonly workspaceGitWarmUpCwds = new Set<string>();
+  private readonly workspaceGitWarmUpLimit = pLimit(WORKSPACE_GIT_WARM_UP_CONCURRENCY);
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
     string,
@@ -7338,13 +7345,18 @@ export class Session {
     this.pruneExpiredWorkspaceObserverTouches();
     const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
     const wanted = this.wantsEvent("checkout_status_update");
-    const live = wanted ? await this.listLiveWorkspaceObservationTargets(explicitlySubscribed) : [];
+    const needsGitData = wanted || this.delivery.hasDemand("workspaces");
+    const targets = needsGitData ? await this.workspaceDirectory.listObservationTargets() : [];
+    const live = wanted
+      ? await this.listLiveWorkspaceObservationTargets(targets, explicitlySubscribed)
+      : [];
     // A terminal-triggered check can outlive the session. cleanup() disposed the observer, so
     // registering here would revive watches for a dead session and keep them running.
     if (this.isCleanedUp) return;
     this.workspaceGitObserver.reconcileObservers(
       wanted ? [...explicitlySubscribed, ...live] : explicitlySubscribed,
     );
+    if (needsGitData) this.fillGitDataForUnwatchedWorkspaces(targets, live);
   }
 
   private pruneExpiredWorkspaceObserverTouches(): void {
@@ -7372,9 +7384,9 @@ export class Session {
   }
 
   private async listLiveWorkspaceObservationTargets(
+    targets: readonly WorkspaceObservationTarget[],
     subscribed: Iterable<Pick<WorkspaceDescriptorPayload, "id">>,
   ): Promise<WorkspaceObservationTarget[]> {
-    const targets = await this.workspaceDirectory.listObservationTargets();
     if (targets.length === 0) return [];
     const subscribedWorkspaceIds = new Set(Array.from(subscribed, (workspace) => workspace.id));
     const [lastUserMessageTimes, liveTerminalWorkspaceIds] = await Promise.all([
@@ -7451,6 +7463,45 @@ export class Session {
   private hasKnownOpenPullRequest(cwd: string): boolean {
     const pullRequest = this.workspaceRuntimeStore.get(cwd)?.forge.pullRequest;
     return pullRequest?.state.toLowerCase() === "open";
+  }
+
+  /**
+   * A workspace with no watcher receives no snapshots, so its list row has no branch, dirty
+   * count or pull-request badge until something opens it. Read each unwatched directory once
+   * to fill the runtime store its descriptor reads. The one-shot read registers no listener,
+   * so no watcher starts, and the target releases after its idle TTL.
+   */
+  private fillGitDataForUnwatchedWorkspaces(
+    targets: readonly WorkspaceObservationTarget[],
+    liveTargets: readonly WorkspaceObservationTarget[],
+  ): void {
+    const liveWorkspaceIds = new Set(liveTargets.map((target) => target.id));
+    for (const target of targets) {
+      if (liveWorkspaceIds.has(target.id) || target.workspaceKind === "directory") continue;
+      void this.fillGitDataForWorkspace(target);
+    }
+  }
+
+  private fillGitDataForWorkspace(target: WorkspaceObservationTarget): Promise<void> {
+    const cwd = target.workspaceDirectory;
+    if (this.workspaceRuntimeStore.get(cwd) || this.workspaceGitWarmUpCwds.has(cwd)) {
+      return Promise.resolve();
+    }
+    this.workspaceGitWarmUpCwds.add(cwd);
+    return this.workspaceGitWarmUpLimit(async () => {
+      try {
+        await this.workspaceGitService.getSnapshot(cwd);
+        if (this.isCleanedUp) return;
+        await this.emitWorkspaceUpdateForWorkspaceId(target.id);
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, workspaceId: target.id, cwd },
+          "Failed to read git state for an unwatched workspace",
+        );
+      } finally {
+        this.workspaceGitWarmUpCwds.delete(cwd);
+      }
+    });
   }
 
   /**
