@@ -5254,6 +5254,65 @@ test("logs configured runtime generation in connection transition events", async
   }
 });
 
+test("closing a client while subscription releases are in flight reports only the disposal", async () => {
+  const mock = createMockTransport();
+  let transportsCreated = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      transportsCreated += 1;
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const subscriptions = ["/tmp/one", "/tmp/two"].map((cwd) =>
+    client.observeCheckoutDiff(cwd, { mode: "uncommitted" }),
+  );
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(2));
+  for (const [index, frame] of [...mock.sent].entries()) {
+    const request = parseSentFrame(frame);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_checkout_diff_response",
+        payload: {
+          subscriptionId: `checkout-sub-${index}`,
+          cwd: request.cwd,
+          files: [],
+          error: null,
+          requestId: request.requestId,
+        },
+      }),
+    );
+  }
+  await Promise.all(subscriptions.map((subscription) => subscription.ready));
+
+  // The host runtime releases its handlers and closes the previous client without waiting.
+  const releases = subscriptions.map((subscription) =>
+    subscription.release().catch(() => undefined),
+  );
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(4));
+
+  const statuses: string[] = [];
+  client.subscribeConnectionStatus((state) => statuses.push(state.status));
+  statuses.length = 0;
+
+  await client.close();
+  await Promise.all(releases);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(statuses).toEqual(["disposed"]);
+  expect(client.lastError).toBeNull();
+  expect(transportsCreated).toBe(1);
+});
+
 test("subscribes to checkout diff updates via RPC handshake", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

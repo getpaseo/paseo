@@ -1412,12 +1412,16 @@ export class DaemonClient {
       ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
+      const transport = this.transport;
       try {
         await this.sendCorrelatedSessionRequest({
           message: { type: "subscription.release.request", subscriptionId },
           responseType: "subscription.release.response",
         });
       } catch (error) {
+        // close() rejects in-flight requests after dropping the transport. That failure says
+        // nothing about a live connection, and rethrowing it would abort close() midway.
+        if (this.transport !== transport) return;
         this.disposeTransport(1001, "Subscription release failed");
         this.scheduleReconnect({ reason: "Subscription release failed" });
         throw error;
@@ -1935,18 +1939,34 @@ export class DaemonClient {
       });
     }
   }
-  async openHostLink(channelId: string): Promise<string> {
+  openHostLink(channelId: string): Promise<string>;
+  openHostLink(
+    channelId: string,
+    options: { flowControl: true },
+  ): Promise<{ routeId: string; flowControl: boolean }>;
+  async openHostLink(
+    channelId: string,
+    options?: { flowControl: true },
+  ): Promise<string | { routeId: string; flowControl: boolean }> {
     this.requireConnectedHosts();
     if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
       throw Object.assign(new Error("Update the destination daemon"), {
         code: "unsupported_capability",
       });
-    return (
-      await this.sendCorrelatedSessionRequest({
-        message: { type: "hosts.link.open.request", channelId },
-        responseType: "hosts.link.open.response",
-      })
-    ).routeId;
+    const response = await this.sendCorrelatedSessionRequest({
+      message: {
+        type: "hosts.link.open.request",
+        channelId,
+        ...(options?.flowControl ? { flowControl: true } : {}),
+      },
+      responseType: "hosts.link.open.response",
+    });
+    return options?.flowControl
+      ? { routeId: response.routeId, flowControl: response.flowControl === true }
+      : response.routeId;
+  }
+  acknowledgeHostLink(routeId: string, sequence: number): Promise<void> {
+    return this.sendSessionMessageStrict({ type: "hosts.link.ack.request", routeId, sequence });
   }
   sendHostFrame(routeId: string, data: string | Uint8Array): Promise<void> {
     if (typeof data === "string") {

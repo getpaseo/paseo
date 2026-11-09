@@ -11,6 +11,7 @@ const INBOUND_PERMISSION = {
   "hosts.update.request": "tunnel.manage",
   "hosts.remove.request": "tunnel.manage",
   "hosts.link.open.request": null,
+  "hosts.link.ack.request": null,
   "hosts.route.open.request": null,
   "hosts.route.frame.request": null,
   "hosts.route.close.request": null,
