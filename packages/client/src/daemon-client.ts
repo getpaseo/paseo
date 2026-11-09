@@ -1400,12 +1400,16 @@ export class DaemonClient {
       ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
+      const transport = this.transport;
       try {
         await this.sendCorrelatedSessionRequest({
           message: { type: "subscription.release.request", subscriptionId },
           responseType: "subscription.release.response",
         });
       } catch (error) {
+        // close() rejects in-flight requests after dropping the transport. That failure says
+        // nothing about a live connection, and rethrowing it would abort close() midway.
+        if (this.transport !== transport) return;
         this.disposeTransport(1001, "Subscription release failed");
         this.scheduleReconnect({ reason: "Subscription release failed" });
         throw error;
