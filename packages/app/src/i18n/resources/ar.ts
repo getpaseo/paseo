@@ -1351,7 +1351,6 @@ export const ar: TranslationResources = {
         archiveWorkspace: "أرشفة مساحة العمل",
         showTabs: "إظهار علامات التبويب",
         hideTabs: "إخفاء علامات التبويب",
-        noOpenTabs: "لا توجد علامات تبويب مفتوحة",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         archiving: "أرشفة...",
         hiding: "إخفاء...",

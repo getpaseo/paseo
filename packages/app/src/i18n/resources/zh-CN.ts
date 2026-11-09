@@ -1341,7 +1341,6 @@ export const zhCN: TranslationResources = {
         archiveWorkspace: "归档工作区",
         showTabs: "显示标签页",
         hideTabs: "隐藏标签页",
-        noOpenTabs: "没有打开的标签页",
         hideFromSidebar: "从侧边栏隐藏",
         archiving: "正在归档...",
         hiding: "正在隐藏...",

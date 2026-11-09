@@ -44,6 +44,14 @@ export function selectSidebarWorkspaceTabs({
   return { tabs, activeTabId };
 }
 
+/**
+ * A row only offers its tabs when there is a choice to make: with one tab, opening the
+ * workspace already lands on it.
+ */
+export function hasSidebarWorkspaceTabsDisclosure(tabCount: number): boolean {
+  return tabCount > 1;
+}
+
 /** Adds the key if absent and removes it if present, returning a new set. */
 export function toggleExpandedWorkspaceKey(
   expanded: ReadonlySet<string>,

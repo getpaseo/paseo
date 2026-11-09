@@ -1365,7 +1365,6 @@ export const ja: TranslationResources = {
         archiveWorkspace: "ワークスペースをアーカイブ",
         showTabs: "タブを表示",
         hideTabs: "タブを非表示",
-        noOpenTabs: "開いているタブはありません",
         hideFromSidebar: "サイドバーから非表示",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",

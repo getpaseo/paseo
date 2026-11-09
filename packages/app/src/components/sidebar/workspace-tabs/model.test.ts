@@ -5,7 +5,11 @@ import {
   normalizeLayout,
 } from "@/stores/workspace-layout-actions";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
-import { selectSidebarWorkspaceTabs, toggleExpandedWorkspaceKey } from "./model";
+import {
+  hasSidebarWorkspaceTabsDisclosure,
+  selectSidebarWorkspaceTabs,
+  toggleExpandedWorkspaceKey,
+} from "./model";
 
 function tab(tabId: string, target: WorkspaceTabTarget) {
   return { tabId, target, createdAt: 1 };
@@ -101,5 +105,13 @@ describe("toggleExpandedWorkspaceKey", () => {
     const expanded = toggleExpandedWorkspaceKey(new Set(), "server:a");
     expect([...expanded]).toEqual(["server:a"]);
     expect([...toggleExpandedWorkspaceKey(expanded, "server:a")]).toEqual([]);
+  });
+});
+
+describe("hasSidebarWorkspaceTabsDisclosure", () => {
+  it("offers the tabs only when there is more than one", () => {
+    expect(hasSidebarWorkspaceTabsDisclosure(0)).toBe(false);
+    expect(hasSidebarWorkspaceTabsDisclosure(1)).toBe(false);
+    expect(hasSidebarWorkspaceTabsDisclosure(2)).toBe(true);
   });
 });

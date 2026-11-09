@@ -1358,7 +1358,6 @@ export const ko: TranslationResources = {
         archiveWorkspace: "워크스페이스 보관",
         showTabs: "탭 표시",
         hideTabs: "탭 숨기기",
-        noOpenTabs: "열린 탭 없음",
         hideFromSidebar: "사이드바에서 숨기기",
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",

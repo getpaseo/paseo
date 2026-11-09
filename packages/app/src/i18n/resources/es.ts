@@ -1387,7 +1387,6 @@ export const es: TranslationResources = {
         archiveWorkspace: "Archivar espacio de trabajo",
         showTabs: "Mostrar pestañas",
         hideTabs: "Ocultar pestañas",
-        noOpenTabs: "No hay pestañas abiertas",
         hideFromSidebar: "Ocultar de la barra lateral",
         archiving: "Archivando...",
         hiding: "Ocultación...",

@@ -7,10 +7,6 @@ import { mapLayout } from "@/components/ui/control-geometry";
 import { isWeb } from "@/constants/platform";
 import { density, densityIconBox } from "@/styles/density";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import {
-  selectExplorerSidebarPaneId,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import {
@@ -20,7 +16,8 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { useIsSidebarWorkspaceTabsExpanded } from "./expansion";
-import { selectSidebarWorkspaceTabs } from "./model";
+import { hasSidebarWorkspaceTabsDisclosure } from "./model";
+import { useSidebarWorkspaceTabs } from "./use-workspace-tabs";
 
 interface SidebarWorkspaceTabsProps {
   serverId: string;
@@ -43,30 +40,16 @@ function SidebarWorkspaceTabList({
   workspaceKey,
   inStatusGroup = false,
 }: SidebarWorkspaceTabsProps) {
-  const { t } = useTranslation();
-  const layoutKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-  const layout = useWorkspaceLayoutStore((state) =>
-    layoutKey ? (state.layoutByWorkspace[layoutKey] ?? null) : null,
-  );
-  const explorerPaneId = useWorkspaceLayoutStore((state) =>
-    layoutKey ? selectExplorerSidebarPaneId(state, layoutKey) : null,
-  );
-  const { tabs, activeTabId } = useMemo(
-    () => selectSidebarWorkspaceTabs({ layout, explorerPaneId }),
-    [layout, explorerPaneId],
-  );
-  const listStyle = inStatusGroup ? styles.listInStatusGroup : styles.list;
-
-  if (tabs.length === 0) {
-    return (
-      <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
-        <Text style={styles.emptyText}>{t("sidebar.workspace.actions.noOpenTabs")}</Text>
-      </View>
-    );
-  }
+  const { tabs, activeTabId } = useSidebarWorkspaceTabs(serverId, workspaceId);
+  // The disclosure leaves with the second-to-last tab; the list goes with it, and comes back
+  // expanded when a second tab opens again.
+  if (!hasSidebarWorkspaceTabsDisclosure(tabs.length)) return null;
 
   return (
-    <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
+    <View
+      style={inStatusGroup ? styles.listInStatusGroup : styles.list}
+      testID={`sidebar-workspace-tabs-${workspaceKey}`}
+    >
       {tabs.map((tab) => (
         <WorkspaceTabPresentationResolver
           key={tab.key}
@@ -231,11 +214,6 @@ const styles = StyleSheet.create((theme) => {
       height: 8,
       borderRadius: theme.borderRadius.full,
       backgroundColor: theme.colors.foregroundMuted,
-    },
-    emptyText: {
-      paddingVertical: theme.spacing[1],
-      fontSize: theme.fontSize.sm,
-      color: theme.colors.foregroundMuted,
     },
   };
 });

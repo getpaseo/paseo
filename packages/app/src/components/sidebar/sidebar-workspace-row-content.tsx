@@ -39,6 +39,7 @@ import { bySizing } from "@/components/ui/control-geometry";
 import {
   SidebarWorkspaceTabsDisclosure,
   TABS_DISCLOSURE_POINTER_FOOTPRINT,
+  TABS_DISCLOSURE_TOUCH_WIDTH,
 } from "@/components/sidebar/workspace-tabs/disclosure";
 
 const needsInputColorMapping = (theme: Theme) => ({
@@ -339,11 +340,11 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     alignItems: "flex-end",
     justifyContent: "flex-start",
   },
-  // Touch: the kebab's 18 plus the disclosure's 32pt box beside it. Pointer only reserves for
-  // trailing content, and the disclosure overlays the title on hover there instead.
+  // Touch: the kebab's 18 plus the disclosure beside it. Pointer only reserves for trailing
+  // content, and the disclosure overlays the title on hover there instead.
   trailingActionSlotReservedWithTabsDisclosure: {
     position: "relative",
-    minWidth: bySizing({ touch: 18 + 32, pointer: 18 }),
+    minWidth: bySizing({ touch: 18 + TABS_DISCLOSURE_TOUCH_WIDTH, pointer: 18 }),
     minHeight: 20,
     flexShrink: 0,
     alignItems: "flex-end",
@@ -468,7 +469,7 @@ export function SidebarWorkspaceTrailingActionOverlay({
   scrimBackdrop,
   workspaceKey,
   onArchiveButtonPress,
-  showTabsDisclosure = false,
+  tabsDisclosureCount = null,
   children,
 }: {
   visible: boolean;
@@ -481,15 +482,16 @@ export function SidebarWorkspaceTrailingActionOverlay({
    */
   onArchiveButtonPress?: () => void;
   /**
-   * The row's tabs disclosure, leftmost. On touch it is permanent like the kebab, so the slot
-   * reserves its width (`reserveTabsDisclosure`); on pointer it overlays the title on hover.
+   * The row's open tab count, to show its tabs disclosure leftmost; null leaves it out. On touch
+   * it is permanent like the kebab, so the slot reserves its width (`reserveTabsDisclosure`);
+   * on pointer it overlays the title on hover.
    */
-  showTabsDisclosure?: boolean;
+  tabsDisclosureCount?: number | null;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
   const archiveFootprint = onArchiveButtonPress ? ARCHIVE_BUTTON_FOOTPRINT : 0;
-  const disclosureFootprint = showTabsDisclosure ? TABS_DISCLOSURE_POINTER_FOOTPRINT : 0;
+  const disclosureFootprint = tabsDisclosureCount === null ? 0 : TABS_DISCLOSURE_POINTER_FOOTPRINT;
   return (
     <>
       {scrimBackdrop ? (
@@ -500,7 +502,12 @@ export function SidebarWorkspaceTrailingActionOverlay({
         />
       ) : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>
-        {showTabsDisclosure ? <SidebarWorkspaceTabsDisclosure workspaceKey={workspaceKey} /> : null}
+        {tabsDisclosureCount === null ? null : (
+          <SidebarWorkspaceTabsDisclosure
+            workspaceKey={workspaceKey}
+            tabCount={tabsDisclosureCount}
+          />
+        )}
         {onArchiveButtonPress ? (
           <SidebarWorkspaceArchiveButton
             workspaceKey={workspaceKey}

@@ -20,6 +20,8 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
+import { useSidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
+import { hasSidebarWorkspaceTabsDisclosure } from "@/components/sidebar/workspace-tabs/model";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
@@ -1029,8 +1031,13 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
+  const { tabs } = useSidebarWorkspaceTabs(workspace.serverId, workspace.workspaceId);
+  const tabsDisclosureCount = hasSidebarWorkspaceTabsDisclosure(tabs.length) ? tabs.length : null;
   return (
-    <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth} reserveTabsDisclosure>
+    <SidebarWorkspaceTrailingActionSlot
+      reserveWidth={reserveSlotWidth}
+      reserveTabsDisclosure={tabsDisclosureCount !== null}
+    >
       <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
         <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
       </SidebarWorkspaceTrailingActionBase>
@@ -1039,7 +1046,7 @@ function StatusWorkspaceActionSlot({
         scrimBackdrop={showScrim ? backdrop : undefined}
         workspaceKey={workspace.workspaceKey}
         onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
-        showTabsDisclosure
+        tabsDisclosureCount={tabsDisclosureCount}
       >
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu

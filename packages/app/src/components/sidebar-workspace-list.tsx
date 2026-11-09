@@ -156,6 +156,8 @@ import { useSidebarRowItems } from "@/components/sidebar/display-preferences/mod
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { bySizing } from "@/components/ui/control-geometry";
 import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
+import { useSidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
+import { hasSidebarWorkspaceTabsDisclosure } from "@/components/sidebar/workspace-tabs/model";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -663,6 +665,8 @@ function WorkspaceRowRightGroup({
     showShortcut,
   });
   const kebab = useOpenKebabMenuVisibility(showKebabInSlot);
+  const { tabs } = useSidebarWorkspaceTabs(workspace.serverId, workspace.workspaceId);
+  const tabsDisclosureCount = hasSidebarWorkspaceTabsDisclosure(tabs.length) ? tabs.length : null;
 
   return (
     <>
@@ -670,7 +674,10 @@ function WorkspaceRowRightGroup({
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
       ) : null}
       {renderSlot ? (
-        <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth} reserveTabsDisclosure>
+        <SidebarWorkspaceTrailingActionSlot
+          reserveWidth={reserveSlotWidth}
+          reserveTabsDisclosure={tabsDisclosureCount !== null}
+        >
           <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
@@ -679,7 +686,7 @@ function WorkspaceRowRightGroup({
             scrimBackdrop={showScrim ? backdrop : undefined}
             workspaceKey={workspace.workspaceKey}
             onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
-            showTabsDisclosure
+            tabsDisclosureCount={tabsDisclosureCount}
           >
             {onArchive ? (
               <SidebarWorkspaceMenu
