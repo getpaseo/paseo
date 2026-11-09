@@ -17,14 +17,10 @@ import {
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
-import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useTopBand } from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
-const HeaderSafeArea = withUnistyles(WindowChromeSafeArea, (theme) => ({
-  horizontalPadding: theme.spacing[3],
-}));
 
 const NO_SHORTCUT: ShortcutKey[] = [];
 
@@ -49,7 +45,7 @@ interface CompactHeaderProps {
  * same in flow and floating over content (see `FloatingHeaderLayout`, whose fade gives the icons
  * contrast). Its height matches the old flat header, so anything
  * offset by the header height still lines up. In a window's top band it takes the top bar's
- * place, like the full header, and keeps clear of the status region as it does of window controls.
+ * place, like the full header. The column hosting it reserves any window-chrome corner it owns.
  */
 export function CompactHeader({
   navigation,
@@ -63,17 +59,20 @@ export function CompactHeader({
   const insets = useSafeAreaInsets();
   const inTopBand = useTopBand() !== null;
   const rootStyle = useMemo(
-    () => ({
-      paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
-      marginLeft: insets.left,
-      marginRight: insets.right,
-    }),
+    () => [
+      styles.root,
+      {
+        paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
+        marginLeft: insets.left,
+        marginRight: insets.right,
+      },
+    ],
     [inTopBand, insets.top, insets.left, insets.right],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
-      <HeaderSafeArea placement="inline" style={rootStyle}>
+      <View style={rootStyle}>
         <View style={inTopBand ? styles.topBandRow : styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
@@ -88,7 +87,7 @@ export function CompactHeader({
           </View>
           {actions ? <View style={styles.island}>{actions}</View> : null}
         </View>
-      </HeaderSafeArea>
+      </View>
     </IconButtonChromeProvider>
   );
 }
@@ -147,6 +146,9 @@ function BackButton({ onBack }: { onBack?: () => void }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  root: {
+    paddingHorizontal: theme.spacing[3],
+  },
   row: {
     height: HEADER_INNER_HEIGHT_MOBILE,
     flexDirection: "row",
