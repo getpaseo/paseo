@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  pluginCombobox: {
+    searching: "Recherche…",
+    empty: "Aucun résultat",
+    failed: "Échec de la recherche : {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -383,6 +388,24 @@ export const fr: TranslationResources = {
       next: "Suivant",
       answerPlaceholder: "Saisissez votre réponse…",
       otherPlaceholder: "Autre…",
+    },
+    backgroundWork: {
+      pillOne: "1 tâche en arrière-plan",
+      pillMany: "{{count}} tâches en arrière-plan",
+      notRunning: "N’est plus en cours",
+      dismiss: "Fermer",
+      stop: "Arrêter",
+      stopping: "Arrêt…",
+      stopError: "Impossible de confirmer l’arrêt.",
+      label: "Arrière-plan",
+      title: "Travail en arrière-plan",
+      waiting: "En attente des détails",
+      error: "Impossible de charger le travail en arrière-plan",
+      retry: "Réessayer",
+      running: "Travail en arrière-plan en cours",
+      shell: "Shell",
+      monitor: "Surveillance",
+      other: "Autre travail",
     },
     todo: {
       title: "Tâches",
@@ -1190,6 +1213,14 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Impossible de charger la vue de la barre latérale.",
+      useDefault: "Utiliser la vue par défaut",
+      readFailed: "Impossible de charger votre préférence de vue de la barre latérale.",
+      agentUnavailable: "Cet agent n’est plus disponible",
+      terminalUnavailable: "Ce terminal n’est plus disponible",
+      projectUnavailable: "Ce projet n’est plus disponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       needsInput: "Attend une réponse",
@@ -1266,6 +1297,7 @@ export const fr: TranslationResources = {
       hosts: "Hôtes",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+      moreActions: "Plus d’actions",
     },
     footer: {
       usage: "Utilisation",
@@ -1370,6 +1402,9 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        archived: "Espace de travail archivé",
+        undoArchive: "Annuler",
+        undoArchiveFailed: "Impossible d’annuler l’archivage",
       },
     },
   },
@@ -1639,6 +1674,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
+    failedToLoad: "Impossible de charger les branches. Rouvrez le sélecteur pour réessayer.",
     triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",
@@ -1663,7 +1699,11 @@ export const fr: TranslationResources = {
     loadingCommands: "Chargement des commandes…",
     noFiles: "Aucun fichier ou répertoire trouvé",
     noCommands: "Aucune commande trouvée",
-    failedToLoad: "Échec du chargement",
+    loadingProviderCommands: "Chargement des commandes {{provider}}…",
+    commandsFailed: "Impossible de charger les commandes",
+    providerCommandsFailed: "Impossible de charger les commandes {{provider}}",
+    filesFailed: "Impossible de rechercher les fichiers",
+    skillTag: "Skill",
     chooseProjectForCommands: "Choisissez un projet pour afficher les commandes",
     chooseModelForCommands: "Sélectionnez un modèle pour afficher les commandes",
   },
@@ -2601,6 +2641,13 @@ export const fr: TranslationResources = {
         description: "Afficher un plan pour naviguer entre les prompts",
       },
       sidebar: {
+        view: {
+          title: "Vue de la barre latérale",
+          label: "Vue",
+          default: "Vue par défaut",
+          unavailable:
+            "La vue sélectionnée est indisponible ou désactivée. La vue par défaut est affichée.",
+        },
         header: {
           title: "En-tête",
           description:

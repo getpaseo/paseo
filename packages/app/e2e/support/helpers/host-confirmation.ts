@@ -1,7 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
-
 export interface LinkedHost {
   serverId: string;
   relayEndpoint: string;
@@ -31,31 +29,17 @@ export async function openPairingLink(page: Page, link: string): Promise<void> {
   await page.goto(link);
 }
 
-/** Saves a relay host before the app loads, as if it had been paired in an earlier session. */
-export async function saveLinkedHostBeforeLoad(page: Page, host: LinkedHost): Promise<void> {
-  await page.goto("/");
-  const nowIso = new Date().toISOString();
-  const connectionId = `relay:${host.relayEndpoint}`;
-  const savedHost = {
-    serverId: host.serverId,
-    label: host.serverId,
-    connections: [
-      {
-        id: connectionId,
-        type: "relay",
-        relayEndpoint: host.relayEndpoint,
-        useTls: false,
-        daemonPublicKeyB64: host.daemonPublicKeyB64,
-      },
-    ],
-    preferredConnectionId: connectionId,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-  await page.evaluate(({ key, hosts }) => localStorage.setItem(key, JSON.stringify(hosts)), {
-    key: EXTRA_HOSTS_KEY,
-    hosts: [savedHost],
-  });
+/** Reopens a link from a fresh document while retaining hosts saved through the UI. */
+export async function reopenPairingLinkWithSavedHosts(page: Page, link: string): Promise<void> {
+  for (const target of ["/", link]) {
+    // The fixture otherwise replaces the registry on every document load.
+    await page.evaluate(() => {
+      const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+      if (!nonce) throw new Error("Expected the e2e seed nonce before reopening a pairing link.");
+      localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
+    });
+    await page.goto(target);
+  }
 }
 
 export function hostConfirmation(page: Page): Locator {

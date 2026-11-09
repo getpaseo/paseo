@@ -23,6 +23,8 @@ export class ChunkedTransport {
     private readonly io: {
       frameBytes: number;
       supportsDrain?: boolean;
+      /** Writes are admitted synchronously in order; promises track only their drain. */
+      supportsConcurrentWrites?: boolean;
       send: (frame: Frame, waitForDrain: boolean) => void | Promise<void>;
       deliver: (frame: Frame) => void;
       onActivity?: () => void;
@@ -46,9 +48,11 @@ export class ChunkedTransport {
     const chunk =
       this.enabled && this.io.supportsDrain !== false && byteLength > this.io.frameBytes;
     if (this.closed) throw new Error("Transport closed");
+    let started = false;
     const write = () => {
       if (this.closed) throw new Error("Transport closed");
-      this.activeBytes = byteLength;
+      started = true;
+      this.activeBytes += byteLength;
       // A synchronous rejection did not admit a frame. Only accepted writes can
       // fail the connection; queued admission failures still belong to their sender.
       const result = chunk
@@ -76,27 +80,31 @@ export class ChunkedTransport {
       result = this.pending ? this.pending.then(write) : write();
     } catch (error) {
       this.queuedBytes -= byteLength;
-      this.activeBytes = 0;
+      if (started) this.activeBytes -= byteLength;
       throw error;
     }
     if (!result) {
       this.queuedBytes -= byteLength;
-      this.activeBytes = 0;
+      if (started) this.activeBytes -= byteLength;
       return Promise.resolve();
     }
     const completion = Promise.resolve(result).finally(() => {
       this.queuedBytes -= byteLength;
-      this.activeBytes = 0;
+      if (started) this.activeBytes -= byteLength;
     });
-    const tail = completion.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.pending = tail;
-    void tail.then(() => {
-      if (this.pending === tail) this.pending = undefined;
-      return undefined;
-    });
+    // Ordinary writes already entered an ordered writer and can use its bounded
+    // window. Chunk sequences remain a barrier so their frames never interleave.
+    if (chunk || !this.io.supportsConcurrentWrites) {
+      const tail = completion.then(
+        () => undefined,
+        () => undefined,
+      );
+      this.pending = tail;
+      void tail.then(() => {
+        if (this.pending === tail) this.pending = undefined;
+        return undefined;
+      });
+    }
     return completion;
   }
 

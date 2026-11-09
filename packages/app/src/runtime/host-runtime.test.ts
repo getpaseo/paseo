@@ -430,6 +430,20 @@ function agentPermission(id: string): AgentPermissionRequest {
   return { id, provider: "codex", name: id, kind: "tool", title: id };
 }
 
+const relayPrimary: HostConnection = {
+  id: "relay:relay.paseo.sh:443",
+  type: "relay",
+  relayEndpoint: "relay.paseo.sh:443",
+  daemonPublicKeyB64: "pk_test",
+};
+
+const relayAlternate: HostConnection = {
+  id: "relay:relay-next.paseo.sh:443",
+  type: "relay",
+  relayEndpoint: "relay-next.paseo.sh:443",
+  daemonPublicKeyB64: "pk_test",
+};
+
 function makeHost(input?: Partial<HostProfile>): HostProfile {
   const direct: HostConnection = {
     id: "direct:lan:6767",
@@ -1564,6 +1578,233 @@ describe("HostRuntimeController", () => {
       switched = controller.getSnapshot().activeConnectionId === "relay:relay.paseo.sh:443";
     }
     expect(switched).toBe(true);
+  });
+
+  it("keeps the live connection while one alternate sample is re-read at active ticks", async () => {
+    // Replays the recorded Android sequence: both relays probed at startup, the alternate
+    // measured once, then only the active connection is re-read every ten seconds.
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 1053,
+      [relayAlternate.id]: 251,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start();
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    const clientsAfterStart = clients.length;
+
+    await vi.advanceTimersByTimeAsync(10_500);
+    activeClient.heartbeatReportsRtt(376);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(clients.length).toBe(clientsAfterStart);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().client).toBe(activeClient);
+    expect(activeClient.isDisposed()).toBe(false);
+    await controller.stop();
+  });
+
+  it("does not hold the previous socket's RTT against a reconnected active connection", async () => {
+    // Replays the recorded foreground recovery: the active client reconnects on its own while an
+    // alternate probe is in flight. The recovered socket has no heartbeat RTT yet.
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 392,
+    };
+    let connectGate: Promise<void> | null = null;
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        connectToDaemon: async (input) => {
+          if (connectGate) await connectGate;
+          return baseDeps.connectToDaemon(input);
+        },
+      },
+    });
+
+    await controller.start();
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(403);
+    await vi.advanceTimersByTimeAsync(150_500);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "liveness_timeout" });
+    activeClient.setConnectionState({ status: "connecting", attempt: 2 });
+    activeClient.heartbeatReportsRtt(null);
+    latencies[relayAlternate.id] = 280;
+    const alternateConnect = createDeferred<void>();
+    connectGate = alternateConnect.promise;
+    await vi.advanceTimersByTimeAsync(2_800);
+    activeClient.setConnectionState({ status: "connected" });
+    await vi.advanceTimersByTimeAsync(500);
+    alternateConnect.resolve();
+    connectGate = null;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(controller.getSnapshot().probeByConnectionId.get(relayAlternate.id)).toEqual({
+      status: "available",
+      latencyMs: 280,
+    });
+    const clientsAfterProbe = clients.length;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(clients.length).toBe(clientsAfterProbe);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().client).toBe(activeClient);
+    expect(activeClient.isDisposed()).toBe(false);
+    await controller.stop();
+  });
+
+  it("starts the switch streak over when the active socket reconnects", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 15,
+      "relay:relay.paseo.sh:443": 60,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    activeClient.heartbeatReportsRtt(95);
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    }
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "network changed" });
+    activeClient.setConnectionState({ status: "connected" });
+    activeClient.heartbeatReportsRtt(95);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe("relay:relay.paseo.sh:443");
+    await controller.stop();
+  });
+
+  it("ends the switch streak when a fresh probe of the alternate fails", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 15,
+      "relay:relay.paseo.sh:443": 60,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(95);
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    }
+
+    latencies["relay:relay.paseo.sh:443"] = new Error("relay unreachable");
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().probeByConnectionId.get("relay:relay.paseo.sh:443")).toEqual({
+      status: "unavailable",
+      latencyMs: null,
+    });
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe("relay:relay.paseo.sh:443");
+    await controller.stop();
+  });
+
+  it("restarts the streak when a different candidate becomes the fastest fresh sample", async () => {
+    useHostRuntimeClock();
+    const direct: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const host = makeHost({
+      connections: [direct, relayPrimary, relayAlternate],
+      preferredConnectionId: direct.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [direct.id]: 15,
+      [relayPrimary.id]: 60,
+      [relayAlternate.id]: 70,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(95);
+
+    latencies[relayPrimary.id] = 30;
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+    }
+
+    latencies[relayAlternate.id] = 20;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+    await controller.stop();
   });
 
   it("exposes one snapshot with active connection and status from same source", async () => {
