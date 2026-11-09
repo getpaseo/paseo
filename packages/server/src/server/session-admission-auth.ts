@@ -42,7 +42,13 @@ export async function resolveSessionAdmission(input: {
   }
   if (credential.kind === "pairingToken") {
     return input.deviceCredentials?.consumeToken(credential.token)
-      ? { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } }
+      ? {
+          admission: {
+            principalId: "owner",
+            permissions: OWNER_PERMISSIONS,
+            viaPairingToken: true,
+          },
+        }
       : { rejection: "incorrect_password" };
   }
   return (await compare(credential.password, passwordHash))

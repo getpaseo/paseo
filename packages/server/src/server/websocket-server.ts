@@ -155,6 +155,7 @@ export interface ExternalSocketMetadata {
 
 export interface SessionAdmission {
   credentialId?: string;
+  viaPairingToken?: boolean;
   principalId: string;
   permissions: readonly DaemonPermission[];
   hubExecutionAgents?: HubExecutionAgents;
@@ -566,6 +567,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly wss: WebSocketServer;
   private readonly socketCredentials = new Map<object, string>();
   private readonly revokedSockets = new WeakSet<WebSocketLike>();
+  private readonly pairingTokenSockets = new WeakSet<object>();
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
@@ -1657,12 +1659,17 @@ export class VoiceAssistantWebSocketServer {
     return new Session({
       deviceAccess: this.deviceCredentials
         ? {
-            issue: (source, label) =>
-              this.deviceCredentials!.issue(
+            issue: async (source, label) => {
+              const result = await this.deviceCredentials!.issue(
                 label,
                 this.credentialAuthority(source),
                 !!this.passwordHash,
-              ),
+              );
+              // A token-admitted socket becomes the issued device, so revoking it closes this socket.
+              if (result.credential && this.pairingTokenSockets.has(source))
+                this.socketCredentials.set(source, result.credential.id);
+              return result;
+            },
             list: (source) => this.deviceCredentials!.list(this.socketCredentials.get(source)),
             mintToken: (source) =>
               this.deviceCredentials!.mintToken(
@@ -1948,6 +1955,7 @@ export class VoiceAssistantWebSocketServer {
     }
     if (pending.admission?.credentialId)
       this.socketCredentials.set(ws, pending.admission.credentialId);
+    if (pending.admission.viaPairingToken) this.pairingTokenSockets.add(ws);
     return pending.admission;
   }
 
