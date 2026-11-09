@@ -202,6 +202,25 @@ describe("agent composer focus", () => {
     expect(focused).toEqual([undefined]);
   });
 
+  it("focuses after the commit that revealed the input has applied a pending prompt", async () => {
+    openSession(agent());
+    const model = composer({ reveal() {} });
+    const focusing = model.focus({ selection: { start: 0, end: 5 } });
+    let text = "";
+    const textWhenFocused: string[] = [];
+    model.attachInput({
+      ...mountedInput({ revealed: true }).input,
+      focus: async () => {
+        textWhenFocused.push(text);
+      },
+    });
+    text = "HELLO";
+
+    await focusing;
+
+    expect(textWhenFocused).toEqual(["HELLO"]);
+  });
+
   it("waits for a retained input to come on screen before focusing it", async () => {
     openSession(agent());
     let reveals = 0;

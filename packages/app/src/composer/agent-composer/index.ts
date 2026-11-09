@@ -15,7 +15,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady, type DraftRecord } from "@/stores/draft-store/state";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { UserComposerAttachment } from "@/attachments/types";
-import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { navigateToAgentComposer } from "@/utils/navigate-to-agent";
 
 /** The mounted composer's input. While attached, prompt commands go through it. */
 export interface MountedComposerInput {
@@ -236,7 +236,11 @@ export function createAgentComposer(
   function focusIfRevealed(input: MountedComposerInput) {
     if (!pendingFocus || !input.isRevealed()) return;
     const { options, settle } = takePendingFocus()!;
-    input.focus(options).then(settle.resolve, settle.reject);
+    // Attaching runs in a commit's effects, and a prompt set alongside this request can be applied
+    // by a later effect in that commit. A selection has to see that text.
+    queueMicrotask(() => {
+      input.focus(options).then(settle.resolve, settle.reject);
+    });
   }
 
   function unheld() {
@@ -355,7 +359,7 @@ export function agentComposer(serverId: string, agentId: string): AgentComposer 
     composer = createAgentComposer(serverId, agentId, {
       queryClient: singletonQueryClient,
       onUnheld: releaseReleasableComposers,
-      reveal: () => navigateToAgent({ serverId, agentId }),
+      reveal: () => navigateToAgentComposer({ serverId, agentId }),
     });
     composers.set(key, composer);
   }

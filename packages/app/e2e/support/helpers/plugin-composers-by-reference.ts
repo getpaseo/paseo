@@ -4,10 +4,12 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { openCommandCenter } from "./command-center";
-import { openAgentRoute } from "./mock-agent";
+import { openAgentRoute, seedMockAgentWorkspace } from "./mock-agent";
 import { connectNewWorkspaceDaemonClient, openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
+import { expectNoSheetOpen, expectOpenTabCount } from "./sheet";
+import { seedSubagent } from "./subagents";
 import { getServerId } from "./server-id";
 import { createAgentTabFromMenu, ensureExplorerSidebar } from "./workspace-tabs";
 
@@ -455,6 +457,84 @@ export default function contribute(client) {
     });
   } finally {
     await client.removePlugin("held-composer");
+    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+    await workspace.cleanup();
+  }
+}
+
+type FocusAgentGlobal = typeof globalThis & {
+  focusAgent?: (agentId: string) => Promise<void>;
+};
+
+export async function withPluginFocusingASubagent(
+  page: Page,
+  run: (author: {
+    openParentAgent(): Promise<void>;
+    focusSubagent(): Promise<void>;
+    expectSubagentTabReadyToType(): Promise<void>;
+  }) => Promise<void>,
+) {
+  const workspace = await seedMockAgentWorkspace({
+    repoPrefix: "focus-subagent-",
+    title: "Focus parent",
+  });
+  const child = await seedSubagent(
+    { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
+    { parentId: workspace.agentId, title: "Focus child" },
+  );
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-focus-subagent-"));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "focus-subagent", requirements: pluginRequirements }),
+  );
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `export default function contribute(client) {
+  globalThis.focusAgent = (agentId) => client.composers({ agentId })[0].focus();
+  return () => {};
+}`,
+  );
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize(COMPACT);
+    await gotoAppShell(page);
+    await run({
+      openParentAgent: () =>
+        test.step("open the parent agent on a phone", async () => {
+          await openAgentRoute(page, {
+            workspaceId: workspace.workspaceId,
+            agentId: workspace.agentId,
+          });
+          await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
+          await expectOpenTabCount(page, 1);
+          await page.waitForFunction(() => (globalThis as FocusAgentGlobal).focusAgent);
+        }),
+      focusSubagent: () =>
+        test.step("focus the subagent, which has no tab", async () => {
+          const result = await page.evaluate(
+            (agentId) =>
+              (globalThis as FocusAgentGlobal).focusAgent?.(agentId).then(
+                () => "focused",
+                (error: Error) => error.message,
+              ),
+            child.id,
+          );
+          expect(result).toBe("focused");
+        }),
+      expectSubagentTabReadyToType: () =>
+        test.step("the subagent is a tab with the cursor in its composer", async () => {
+          await expectNoSheetOpen(page);
+          await expectOpenTabCount(page, 2);
+          await expect(prompt(page)).toBeFocused();
+        }),
+    });
+  } finally {
+    await client.removePlugin("focus-subagent");
     await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
     await client.close();
     await rm(directory, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import {
   CHECKLIST,
   withComposerToolsExample,
   withPluginFocusingAComposer,
+  withPluginFocusingASubagent,
   withPluginHoldingNewWorkspaceComposer,
   withPluginWritingToAnotherWorkspace,
 } from "../support/helpers/plugin-composers-by-reference";
@@ -114,5 +115,14 @@ test("focus rejects on a New workspace composer the user has left", async ({ pag
     await author.expectHeldComposerFocusResult("focused");
     await author.openSettings();
     await author.expectHeldComposerFocusResult("The composer is not on screen.");
+  });
+});
+
+test("focus opens a compact subagent as a tab with its composer", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingASubagent(page, async (author) => {
+    await author.openParentAgent();
+    await author.focusSubagent();
+    await author.expectSubagentTabReadyToType();
   });
 });
