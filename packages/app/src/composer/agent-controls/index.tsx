@@ -21,9 +21,10 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
+import type { Theme } from "@/styles/theme";
 import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -67,6 +68,7 @@ import {
   bySizing,
   toolbarGlyphColor,
   type ToolbarGlyphs,
+  type ToolbarGlyphTone,
   TOUCH_ICON_SIZE,
   toolbarContentSlot,
   toolbarSlot,
@@ -224,29 +226,40 @@ function getModeProviderDefinitions(modeControl: AgentModeControlValue | null) {
   return modeControl?.providerDefinitions ?? EMPTY_AGENT_PROVIDER_DEFINITIONS;
 }
 
+const ThemedSettings2 = withUnistyles(Settings2);
+
 function getFeatureIconColor(
-  feature: AgentFeature,
-  palette: {
-    blue: { 400: string };
-    green: { 400: string };
-    yellow: { 400: string };
-  },
-  restColor: string,
+  featureId: string,
+  active: boolean,
+  theme: Theme,
+  restTone: ToolbarGlyphTone,
 ): string {
-  if (!isFeatureActive(feature)) {
-    return restColor;
+  if (!active) {
+    return toolbarGlyphColor(theme, restTone);
   }
 
-  switch (getFeatureHighlightColor(feature.id)) {
+  switch (getFeatureHighlightColor(featureId)) {
     case "blue":
-      return palette.blue[400];
+      return theme.colors.palette.blue[400];
     case "green":
-      return palette.green[400];
+      return theme.colors.palette.green[400];
     case "yellow":
-      return palette.yellow[400];
+      return theme.colors.palette.yellow[400];
     default:
-      return restColor;
+      return toolbarGlyphColor(theme, restTone);
   }
+}
+
+function useFeatureIconColor(
+  feature: AgentFeature,
+  restTone: ToolbarGlyphTone,
+): (theme: Theme) => string {
+  const { id } = feature;
+  const active = isFeatureActive(feature);
+  return useCallback(
+    (theme: Theme) => getFeatureIconColor(id, active, theme, restTone),
+    [active, id, restTone],
+  );
 }
 
 type ActiveSheet = "thinking" | "features" | null;
@@ -922,7 +935,6 @@ interface DesktopAgentControlsContentProps {
 const DESKTOP_SEARCH_THRESHOLD = 6;
 
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const {
     provider,
@@ -978,6 +990,11 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const modelToolbar = useMemo(
     () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
     [glyphs, presentation.showCarets],
+  );
+  const settingsIconTone = glyphs.icon.tone;
+  const settingsIconUniProps = useCallback(
+    (theme: Theme) => ({ color: toolbarGlyphColor(theme, settingsIconTone) }),
+    [settingsIconTone],
   );
   const featuresSheetHeader = useMemo<SheetHeader>(
     () => ({ title: t("agentControls.features.title") }),
@@ -1099,10 +1116,10 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             testID="agent-controls-features"
           >
             <ComposerToolbarGlyph role="icon">
-              <Settings2
+              <ThemedSettings2
                 size={glyphs.icon.size}
                 strokeWidth={glyphs.icon.strokeWidth}
-                color={toolbarGlyphColor(theme, glyphs.icon.tone)}
+                uniProps={settingsIconUniProps}
               />
             </ComposerToolbarGlyph>
           </Pressable>
@@ -1331,9 +1348,8 @@ function DesktopFeatureItem({
   onSetFeature?: (featureId: string, value: unknown) => void;
   onActionComplete?: () => void;
 }) {
-  const { theme } = useUnistyles();
   const { glyphs } = useComposerControlLayout();
-  const restColor = toolbarGlyphColor(theme, glyphs.icon.tone);
+  const featureIconColor = useFeatureIconColor(feature, glyphs.icon.tone);
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
 
@@ -1374,7 +1390,7 @@ function DesktopFeatureItem({
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
             icon={FeatureIcon}
-            iconColor={getFeatureIconColor(feature, theme.colors.palette, restColor)}
+            iconColor={featureIconColor}
             surface="toolbar"
             label={feature.label}
             showToolbarLabel={false}
@@ -1405,7 +1421,7 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
-              iconColor={getFeatureIconColor(feature, theme.colors.palette, restColor)}
+              iconColor={featureIconColor}
               surface="toolbar"
               label={feature.label}
               value={selectedOption?.label ?? feature.label}
@@ -1450,7 +1466,7 @@ function SheetFeatureItem({
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
   onSetFeature?: (featureId: string, value: unknown) => void;
 }) {
-  const { theme } = useUnistyles();
+  const featureIconColor = useFeatureIconColor(feature, "muted");
   const { t } = useTranslation();
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
@@ -1488,11 +1504,7 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
-          iconColor={getFeatureIconColor(
-            feature,
-            theme.colors.palette,
-            theme.colors.foregroundMuted,
-          )}
+          iconColor={featureIconColor}
           surface="sheet"
           label={feature.label}
           value={feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
@@ -1525,11 +1537,7 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
-          iconColor={getFeatureIconColor(
-            feature,
-            theme.colors.palette,
-            theme.colors.foregroundMuted,
-          )}
+          iconColor={featureIconColor}
           surface="sheet"
           label={feature.label}
           value={selectedOption?.label ?? feature.label}

@@ -11,6 +11,18 @@ import type { ForgeSearchClient } from "@/git/use-forge-search-query";
 import type { ForgeSearchItem, ForgeSearchResponse } from "@getpaseo/protocol/messages";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 
+// Counts calls through to the real extractor so the test can prove the hook does not rescan
+// the draft on renders that leave the text unchanged.
+const forgeRefExtractions = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/git/forge-refs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/git/forge-refs")>();
+  const extractForgeRefs: typeof actual.extractForgeRefs = (text, remote) => {
+    forgeRefExtractions.count += 1;
+    return actual.extractForgeRefs(text, remote);
+  };
+  return { ...actual, extractForgeRefs };
+});
+
 type ForgeSearchPayload = ForgeSearchResponse["payload"];
 
 const remoteUrl = "git@github.com:acme/paseo.git";
@@ -169,6 +181,28 @@ async function flushDebounce() {
 }
 
 describe("useComposerForgeAutoAttach", () => {
+  it("does not rescan the draft for forge refs on renders that leave the text unchanged", () => {
+    vi.useFakeTimers();
+    const client = createSearchClient([]);
+    const { result, rerender } = renderHook(() => useHarness(client), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setText(
+        "Review https://github.com/acme/paseo/pull/101 and https://github.com/acme/paseo/issues/202",
+      );
+    });
+    forgeRefExtractions.count = 0;
+
+    for (let render = 0; render < 10; render += 1) {
+      rerender();
+    }
+
+    expect(forgeRefExtractions.count).toBe(0);
+    vi.useRealTimers();
+  });
+
   it("adds a matching pasted GitHub PR URL as a composer attachment", async () => {
     vi.useFakeTimers();
     const client = createSearchClient([pr101]);
