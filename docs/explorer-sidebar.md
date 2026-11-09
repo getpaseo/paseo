@@ -126,8 +126,13 @@ keeps Explorer underneath and closing the sheet uncovers it. Semantic navigation
 actual destination before revealing it, including deduplicated targets.
 
 Compact overlay selection and saved dock visibility are independent. Folding changes geometry,
-not either mode’s visibility intent. Native workspace retention remains one workspace; web retains
-up to ten with its existing inactive TTL.
+not either mode’s visibility intent. Native retention follows the display: a non-compact,
+tablet-sized screen (shortest side ≥ 800 points) keeps three workspaces warm, anything else keeps
+one, and web retains up to ten with its existing inactive TTL. It reads the screen rather than the
+window so the keyboard cannot change retention mid-session. A compact layout keeps one because its
+sheets present on the app overlay host and only leave with their workspace, so a retained one would
+cover wherever the user went next. `screens/workspace/workspace-deck-retention.ts` owns the
+thresholds.
 
 PR discovery belongs to the active workspace: split layouts discover while active, and other
 layouts discover while Explorer is active. The rail requests summary status; selected visible PR

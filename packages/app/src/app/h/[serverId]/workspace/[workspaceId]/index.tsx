@@ -3,6 +3,8 @@ import { useNavigation } from "expo-router/react-navigation";
 import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { useScreenShortestSide } from "@/hooks/use-screen-shortest-side";
 import { RetainedPanel } from "@/components/retained-panel";
 import {
   type ActiveWorkspaceSelection,
@@ -148,6 +150,9 @@ function HostWorkspaceRouteContent() {
 
 function WorkspaceDeck() {
   const activeSelection = useActiveWorkspaceSelection();
+  // Screen, not window: the keyboard shrinks the window and must not re-decide retention.
+  const shortestSide = useScreenShortestSide();
+  const isCompact = useIsCompactFormFactor();
   const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
     activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
   );
@@ -164,9 +169,13 @@ function WorkspaceDeck() {
         currentEntries: retainedSelections,
         activeSelection,
         now: reconciliationNow,
-        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
+        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({
+          isNative,
+          isCompact,
+          shortestSide,
+        }),
       }),
-    [activeSelection, reconciliationNow, retainedSelections],
+    [activeSelection, reconciliationNow, retainedSelections, shortestSide, isCompact],
   );
   const renderedSelections = useMemo(
     () =>
@@ -201,12 +210,16 @@ function WorkspaceDeck() {
           currentEntries: current,
           activeSelection,
           now: Date.now(),
-          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
+          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({
+            isNative,
+            isCompact,
+            shortestSide,
+          }),
         }),
       );
     }, expirationDelay + 1);
     return () => clearTimeout(timeout);
-  }, [activeSelection, nextRetainedSelections, reconciliationNow]);
+  }, [activeSelection, nextRetainedSelections, reconciliationNow, shortestSide, isCompact]);
 
   return (
     <RenderProfile id="WorkspaceDeck">
