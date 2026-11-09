@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ComposerKeyPressEvent } from "@/composer/input/input";
-import { ComposerRecall } from "@/composer/recall";
+import { ComposerRecall, shouldEditNewestQueuedMessage } from "@/composer/recall";
 
 const SENT = ["add tests", "fix the auth bug"];
 
@@ -105,5 +105,33 @@ describe("ComposerRecall", () => {
         () => SENT,
       ),
     ).toBeNull();
+  });
+});
+
+describe("shouldEditNewestQueuedMessage", () => {
+  const queued = { queuedCount: 2, hasAttachments: false };
+
+  it("takes Up in an empty composer while something is queued", () => {
+    expect(shouldEditNewestQueuedMessage(press("ArrowUp", ""), queued)).toBe(true);
+  });
+
+  it("leaves Up to recall when nothing is queued", () => {
+    expect(shouldEditNewestQueuedMessage(press("ArrowUp", ""), { ...queued, queuedCount: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("never replaces a draft", () => {
+    expect(shouldEditNewestQueuedMessage(press("ArrowUp", "draft"), queued)).toBe(false);
+    expect(
+      shouldEditNewestQueuedMessage(press("ArrowUp", ""), { ...queued, hasAttachments: true }),
+    ).toBe(false);
+  });
+
+  it("ignores other keys and modified Up", () => {
+    expect(shouldEditNewestQueuedMessage(press("ArrowDown", ""), queued)).toBe(false);
+    expect(shouldEditNewestQueuedMessage(press("ArrowUp", "", { hasModifier: true }), queued)).toBe(
+      false,
+    );
   });
 });

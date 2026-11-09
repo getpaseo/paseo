@@ -135,7 +135,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
-import { ComposerRecall } from "@/composer/recall";
+import { ComposerRecall, shouldEditNewestQueuedMessage } from "@/composer/recall";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -2030,10 +2030,24 @@ function ComposerContentImpl({
     ],
   );
 
-  // An open autocomplete owns the arrows; otherwise they may recall sent messages.
+  // An open autocomplete owns the arrows; otherwise Up may edit the newest queued
+  // message, and the arrows may recall sent messages.
   const handleCommandKeyPress = useCallback(
     (event: ComposerKeyPressEvent) => {
       if (autocompleteRef.current?.onKeyPress(event)) return true;
+      const queued = queueWriter.read(agentId);
+      const newestQueued = queued.at(-1);
+      if (
+        newestQueued &&
+        shouldEditNewestQueuedMessage(event, {
+          queuedCount: queued.length,
+          hasAttachments: selectedAttachments.length > 0,
+        })
+      ) {
+        event.preventDefault();
+        handleEditQueuedMessage(newestQueued.id);
+        return true;
+      }
       const recalledText = recall.handleKeyPress(event, () =>
         selectAgentSentMessages(useSessionStore.getState().sessions[serverId], agentId),
       );
@@ -2042,7 +2056,15 @@ function ComposerContentImpl({
       replaceUserInput(recalledText);
       return true;
     },
-    [agentId, recall, replaceUserInput, serverId],
+    [
+      agentId,
+      handleEditQueuedMessage,
+      queueWriter,
+      recall,
+      replaceUserInput,
+      selectedAttachments.length,
+      serverId,
+    ],
   );
 
   const cancelButtonStyle = useCallback(
