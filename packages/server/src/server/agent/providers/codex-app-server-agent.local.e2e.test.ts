@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 
 import { AgentManager } from "../agent-manager.js";
@@ -218,6 +218,33 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 
 describe("Codex app-server provider (local e2e)", () => {
   test.runIf(isCodexInstalled())(
+    "concurrent import scans initialize successfully in a fresh shared Codex home",
+    async () => {
+      const artifacts = path.resolve(".artifacts");
+      mkdirSync(artifacts, { recursive: true });
+      const root = mkdtempSync(path.join(artifacts, "codex-concurrent-startup-"));
+      try {
+        for (let round = 0; round < 4; round++) {
+          const codexHome = path.join(root, String(round));
+          mkdirSync(codexHome);
+          const provider = new CodexAppServerAgentClient(createTestLogger(), {
+            env: { CODEX_HOME: codexHome },
+          });
+          const results = await Promise.allSettled(
+            Array.from({ length: 24 }, () => provider.listImportableSessions({ limit: 1 })),
+          );
+          expect(results).toEqual(
+            Array.from({ length: 24 }, () => ({ status: "fulfilled", value: [] })),
+          );
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test.runIf(isCodexInstalled())(
     "reloads a persisted idle thread repeatedly without overlapping writers",
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-reload-cwd-"));
@@ -386,7 +413,7 @@ describe("Codex app-server provider (local e2e)", () => {
         );
 
         try {
-          await session.setFeature?.("plan_mode", true);
+          await session.applyOptions!({ plan_mode: true });
 
           const events: AgentStreamEvent[] = [];
           session.subscribe((event) => {

@@ -1,8 +1,8 @@
 # Agent stream disclosures
 
 Expanding or collapsing something in the chat timeline (a turn's summary line, a tool-call group,
-a tool call's inline details, a todo card) keeps the tapped trigger at the same screen y in the
-first painted frame. No animation.
+a tool call's inline details, a todo card, a long user message's show more, a plan card) keeps the
+tapped trigger at the same screen y in the first painted frame. No animation.
 
 ## The contract
 
@@ -14,12 +14,20 @@ const handleToggle = () => hold(() => setExpanded((value) => !value));
 ```
 
 `view.tsx` wraps every timeline row in `DisclosureRow`, which routes `hold` to the strategy's
-`holdRow(rowId, apply)` (`packages/app/src/agent-stream/disclosure.tsx`). Outside a timeline row,
-`apply` runs as is. The strategy owns when `apply` runs and how the row keeps its place.
+`holdRow(rowId, apply, triggerEdge)` (`packages/app/src/agent-stream/disclosure.tsx`). Outside a
+timeline row, `apply` runs as is. The strategy owns when `apply` runs and how the row keeps its place.
+A toggle that calls `setState` directly skips the hold: on Android the expanded content paints
+over the next row for a frame before the list learns the new size.
+
+`triggerEdge` names the edge of the row the trigger sits on, and the strategy keeps that edge in
+place. Header triggers sit on the top edge, the default. A long user message's show more sits under
+the text it opens, so `MessagePreview` passes `{ triggerEdge: "bottom" }`: the text grows and shrinks
+above the trigger, and the rows below stay put.
 
 Following output:
 
-- A hold always detaches the bottom anchor controller (`holdForDisclosure`).
+- A hold detaches the bottom anchor controller (`holdForDisclosure`), except a bottom-edge hold on
+  native while following: there the end pin already keeps the row's bottom in place.
 - When the hold ends, the controller re-sticks only if the list sits at its end and no user scroll
   owns the viewport (`releaseDisclosure({ isAtEnd })`). Expanding at the bottom therefore leaves
   the list detached with the scroll-to-bottom pill showing; collapsing back to the end resumes
@@ -33,13 +41,16 @@ ends at its end and the trigger moves by the difference.
 
 ## Web
 
-`holdRow` pins the row in the reading anchor and runs `apply`; the next reading reconcile restores
-the row's top after layout, before paint (`strategy-web.tsx`).
+`holdRow` pins the row's trigger edge in the reading anchor and runs `apply`; the next reading
+reconcile restores that edge after layout, before paint (`strategy-web.tsx`). The pin records the
+scroll offset it was taken at, because the browser clamps `scrollTop` when a collapse shrinks the
+content past the offset, before the reconcile reads it. Restoring from the clamped offset would
+apply the shrink twice.
 
 ## Native
 
 On compact layouts, tool calls and tool-call groups open a sheet instead of expanding, so they do
-not hold. Summary lines and todo cards expand inline.
+not hold. Summary lines, todo cards, plan cards and show more expand inline.
 
 The timeline is a LegendList in forward order: one `data` array of history rows followed by the
 live head, oldest first (`strategy-native.tsx`). LegendList keeps a row in place across a size
@@ -51,14 +62,14 @@ toggle; its applied commit took up to 3.5 s of JS on a long turn.
 
 One owner keeps the scroll offset at any moment:
 
-| State                  | Owner                                                                                     |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| Before rows are placed | LegendList's initial scroll to the end. It keeps the rows hidden until they are measured. |
-| Following the end      | The end pin (`native-end-pin.tsx`).                                                       |
-| Disclosure hold        | LegendList's `maintainVisibleContentPosition`, restoring only the held row.               |
-| User scroll            | The finger. The controller detaches at drag start.                                        |
-| Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                   |
-| Keyboard motion        | Nobody. The keyboard translates the list with the composer and leaves the offset alone.   |
+| State                  | Owner                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Before rows are placed | LegendList's initial scroll to the end. It keeps the rows hidden until they are measured.                         |
+| Following the end      | The end pin (`native-end-pin.tsx`), also for a bottom-edge hold.                                                  |
+| Disclosure hold        | LegendList's `maintainVisibleContentPosition` on the hold's anchor row, or the end pin for the last row's bottom. |
+| User scroll            | The finger. The controller detaches at drag start.                                                                |
+| Detached               | LegendList's `maintainVisibleContentPosition` on the first visible row.                                           |
+| Keyboard motion        | Nobody. The keyboard translates the list with the composer and leaves the offset alone.                           |
 
 The end pin is a zero-height view at the bottom of the content and the content's first native
 child, with React Native's `maintainVisibleContentPosition` set to `{ minIndexForVisible: 0 }`. The
@@ -78,15 +89,38 @@ jumps by the keyboard height after the keyboard settles.
 
 ### The hold
 
-`holdRow(rowId, apply)` runs in the toggle's event:
+`holdRow(rowId, apply, triggerEdge)` runs in the toggle's event:
 
-1. Mark the row held and detach the controller (`holdForDisclosure`). The pin goes away and
-   LegendList's `maintainVisibleContentPosition` takes over, restoring only the held row
-   (`shouldRestorePosition`). Upstream LegendList anchors only rows from the first fully visible
-   one down, and a size change with no data change keeps the first row in view whatever
+1. Pick the anchor and detach the controller (`holdForDisclosure`). LegendList restores row
+   tops only, so a top-edge hold anchors the toggled row and a bottom-edge hold anchors the row
+   below it, whose top is the toggled row's bottom (`disclosureAnchor`). The pin goes away
+   and LegendList's `maintainVisibleContentPosition` takes over, restoring only the anchor row
+   (`shouldRestorePosition`). A bottom-edge hold while following skips this step: the end pin
+   keeps the content end, and the row's bottom with it, in the frame the new height mounts.
+
+   A bottom-edge hold on the last row, such as a prompt the agent has not answered yet, has no
+   row below it: its bottom is the content end (the running indicator is the list footer, not a
+   row). The hold mounts the end pin while detached, and `apply` runs a frame later. The pin
+   anchors only once it is mounted, and a pin that mounts in the same commit as the new height
+   anchors nothing. The pin's commit mounts before that frame's JS callbacks run, so `apply`'s
+   commit mounts with the pin already in place. The pin keeps the distance from the end, and each
+   content size change clamps it to the scroll room left, so the hold re-sticks if the list was
+   at its end when tapped or a collapse used up the room. The release tracks that distance
+   instead of reading the offset: the new content size reaches JS before the pin's scroll does.
+   A reply landing below the row ends the pin in the commit that mounts the reply, so the reply
+   grows below the row and the trigger stays where it was. A reply that lands before `apply` runs
+   moves the hold to the reply's row.
+
+   Upstream LegendList anchors only rows from the first fully visible one down to the last fully
+   visible one, and a size change with no data change keeps the first row in view whatever
    `shouldRestorePosition` says. A row cut off at the top would then let the row below it hold
-   instead, moving the trigger by the row's size change. The LegendList patch counts rows cut off
-   at the top as in view and applies `shouldRestorePosition` to size changes too.
+   instead, and a bottom-edge anchor just under the viewport would not hold at all. The LegendList
+   patch counts the rows cut off at the top, and the row just past the bottom, as in view and
+   applies `shouldRestorePosition` to size changes too. It also drops LegendList's Android clamp
+   prediction: the scroll view clamps after the adjustment
+   ([scroll view corrections](#scroll-view-corrections)), so the prediction moved a collapse near
+   the end to the end.
+
 2. Run `apply`.
 3. Call the row's `useSyncLayout` trigger. The toggle changes the row from its own state, so
    LegendList's container does not re-render and would learn the new height from `onLayout` a task
@@ -130,7 +164,7 @@ With every turn collapsed, flinging from a cold open into history did not blank 
 
 ### LegendList patch
 
-`patches/@legendapp+list+3.7.1.patch` carries ten changes for the timeline. Its header lists
+`patches/@legendapp+list+3.7.1.patch` carries twelve changes for the timeline. Its header lists
 them by purpose, and
 [legend-list #593](https://github.com/LegendApp/legend-list/issues/593) reports each upstream.
 Drop a hunk when the installed LegendList ships its fix.
