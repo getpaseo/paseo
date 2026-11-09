@@ -404,7 +404,7 @@ async function fetchWorkspaceStatuses(
 }
 
 test.describe("Workspace model restart regressions", () => {
-  test("browser-created same-cwd workspace preserves restarted agent status and migrated tab ownership", async ({
+  test("browser-created same-cwd workspace preserves repaired restart status and migrated tab ownership", async ({
     page,
     baseURL,
   }) => {
@@ -423,8 +423,12 @@ test.describe("Workspace model restart regressions", () => {
         .toMatchObject({
           id: LEGACY_AGENT_ID,
           workspaceId: seeded.workspaceA,
-          status: "running",
+          status: "closed",
         });
+
+      await expect
+        .poll(() => fetchWorkspaceStatuses(client, [seeded.workspaceA, seeded.workspaceB]))
+        .toEqual({ [seeded.workspaceA]: "done", [seeded.workspaceB]: "done" });
 
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
       await waitForSidebarHydration(page);
@@ -472,14 +476,10 @@ test.describe("Workspace model restart regressions", () => {
           ]),
         )
         .toMatchObject({
+          [seeded.workspaceA]: "done",
           [seeded.workspaceB]: "done",
           [createdWorkspaceId]: "done",
         });
-
-      // The restarted provider session may settle while the browser creates the sibling. Its
-      // initial running status is asserted above; this phase verifies that ownership never moves.
-      const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
-      expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
 
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,

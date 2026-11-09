@@ -22,7 +22,7 @@ type AgentSkillsClient = Pick<
   "close" | "connect" | "getAgentSkillsStatus" | "saveAgentSkillsSelection"
 >;
 
-export type SkillTargetName = "agents" | "claude" | "codex";
+export type SkillTargetName = "agents" | "claude";
 
 export interface AgentSkillsSandbox {
   available: string[];
@@ -30,6 +30,7 @@ export interface AgentSkillsSandbox {
   daemon: IsolatedHostDaemon;
   home: string;
   targets: Record<SkillTargetName, string>;
+  codexSkillsDir: string;
   blockAgentsDirectory(): Promise<void>;
   unblockAgentsDirectory(): Promise<void>;
   close(): Promise<void>;
@@ -63,8 +64,8 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
   const targets = {
     agents: path.join(home, ".agents", "skills"),
     claude: path.join(home, ".claude", "skills"),
-    codex: path.join(home, ".codex", "skills"),
   };
+  const codexSkillsDir = path.join(home, ".codex", "skills");
 
   return {
     available,
@@ -72,6 +73,7 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
     daemon,
     home,
     targets,
+    codexSkillsDir,
     blockAgentsDirectory: async () => {
       await mkdir(path.dirname(targets.agents), { recursive: true });
       await writeFile(targets.agents, "not a directory", "utf8");
@@ -152,7 +154,7 @@ export async function chooseCustomSkills(page: Page, selected: string[]): Promis
   await all.click();
   const keep = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    if (!keep.has(name)) await page.getByRole("checkbox", { name, exact: true }).click();
+    if (!keep.has(name)) await skillSwitch(page, name).click();
   }
   await expectSkillChoices(page, selected);
 }
@@ -174,7 +176,7 @@ export async function cancelSkillSelection(page: Page): Promise<void> {
 }
 
 export async function toggleSkill(page: Page, name: string): Promise<void> {
-  await page.getByRole("checkbox", { name, exact: true }).click();
+  await skillSwitch(page, name).click();
 }
 
 export function answerNextRemovalWarning(
@@ -196,6 +198,7 @@ export async function expectInstalledSkills(
   for (const directory of Object.values(sandbox.targets)) {
     await expect.poll(() => readInstalledSkills(directory)).toEqual([...expected].sort());
   }
+  await expect.poll(() => readInstalledSkills(sandbox.codexSkillsDir)).toEqual([]);
 }
 
 export async function expectSavedSelection(
@@ -219,15 +222,21 @@ export async function expectSkillFile(
 export async function expectSkillChoices(page: Page, selected: string[]): Promise<void> {
   const expected = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    await expect(page.getByRole("checkbox", { name, exact: true })).toBeChecked({
+    await expect(skillSwitch(page, name)).toBeChecked({
       checked: expected.has(name),
     });
   }
 }
 
+/** One bundled skill's switch in the picker; "All skills" sits outside the list. */
+function skillSwitch(page: Page, name: string) {
+  return page.getByTestId("skill-selection-list-card").getByRole("switch", { name, exact: true });
+}
+
 async function listSkillChoices(page: Page): Promise<string[]> {
   return page
-    .getByRole("checkbox")
+    .getByTestId("skill-selection-list-card")
+    .getByRole("switch")
     .evaluateAll((elements) =>
       elements
         .map((element) => element.getAttribute("aria-label") ?? "")

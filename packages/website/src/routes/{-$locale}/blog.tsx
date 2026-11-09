@@ -1,0 +1,14 @@
+import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { SiteShell } from "~/components/site-shell";
+
+export const Route = createFileRoute("/{-$locale}/blog")({
+  component: BlogLayout,
+});
+
+function BlogLayout() {
+  return (
+    <SiteShell width="default">
+      <Outlet />
+    </SiteShell>
+  );
+}

@@ -24,7 +24,9 @@ import type { Parser } from "@lezer/common";
 import type { LRParser } from "@lezer/lr";
 import { csharpLanguage } from "./csharp/language.js";
 import { astroParser } from "./astro/parser.js";
+import { vueParser } from "./vue/parser.js";
 import { nixLanguage } from "./nix/language.js";
+import { hclLanguage } from "./hcl/language.js";
 import { parser as svelteBaseParser } from "./svelte/parser.js";
 import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 
@@ -79,6 +81,8 @@ const languagesByExtension: Record<string, Language> = {
   ),
   // Astro
   astro: new Language(defineLanguageFacet(), astroParser),
+  // Vue
+  vue: language(vueParser, markupComments),
   // XML
   xml: language(xmlParser, markupComments),
   // Java
@@ -102,6 +106,10 @@ const languagesByExtension: Record<string, Language> = {
   cs: csharpLanguage,
   // Nix
   nix: nixLanguage,
+  // Terraform / HCL
+  tf: hclLanguage,
+  tfvars: hclLanguage,
+  hcl: hclLanguage,
   // Elixir
   ex: language(elixirParser, hashComments),
   exs: language(elixirParser, hashComments),

@@ -1,3 +1,13 @@
+import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import pino from "pino";
+import { createPaseoDaemon } from "../bootstrap.js";
+import { loadConfig } from "../config.js";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { EventEmitter, once } from "node:events";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,6 +24,59 @@ const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+test.each(["React Native", "native"])(
+  "provider readiness works with %s AbortController",
+  async (runtime) => {
+    const require = createRequire(import.meta.url);
+    const reactNativeRequire = createRequire(require.resolve("react-native/package.json"));
+    const { AbortController: ReactNativeAbortController } = reactNativeRequire(
+      "abort-controller/dist/abort-controller",
+    );
+    const bundle = await build({
+      entryPoints: [fileURLToPath(new URL("../../../../client/src/index.ts", import.meta.url))],
+      bundle: true,
+      write: false,
+      format: "iife",
+      globalName: "paseoSdk",
+      platform: "browser",
+    });
+    // A separate runtime starts with React Native's real abort implementation.
+    // Node's globals and the daemon's runtime remain unchanged.
+    const sdk: typeof import("@getpaseo/client") = runInNewContext(
+      `${bundle.outputFiles[0]!.text}\npaseoSdk`,
+      {
+        AbortController: runtime === "React Native" ? ReactNativeAbortController : AbortController,
+        setTimeout,
+        clearTimeout,
+        queueMicrotask,
+        TextEncoder,
+        TextDecoder,
+      },
+    );
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const api = sdk.createPaseoApi(client);
+    try {
+      await client.connect();
+      const snapshot = await api.providers.waitForReady({ cwd: daemon.staticDir });
+      expect(snapshot.entries.length).toBeGreaterThan(0);
+      expect(snapshot.entries.every((entry) => entry.status !== "loading")).toBe(true);
+      const waiting = api.providers.waitForReady({ cwd: daemon.staticDir });
+      const canceled = expect(waiting).rejects.toThrow(/disposed|released/);
+      await api.dispose();
+      await canceled;
+      const { diagnostic } = await client.collectDiagnostics();
+      expect(diagnostic).toContain("Source registrations: 0");
+      expect(diagnostic).toContain("Producer listeners: 0");
+      expect(() => api.providers.waitForReady()).toThrow("disposed");
+    } finally {
+      await api.dispose();
+      await client.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("plugin handlers create workspaces and agents through their Paseo API", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-plugin-"));
@@ -138,6 +201,51 @@ export default function contribute(server: PluginServerContext) {
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
+  }
+}, 60_000);
+
+test("password-protected config reload preserves startup auth and session construction does not read config", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-protected-config-reload-"));
+  roots.push(home);
+  const password = "synthetic-audit-password";
+  const config = loadConfig(home, { env: { PASEO_PASSWORD: password, PASEO_RELAY_ENABLED: "0" } });
+  const daemon = await createPaseoDaemon(
+    {
+      ...config,
+      listen: "127.0.0.1:0",
+      mcpEnabled: false,
+      agentClients: createTestAgentClients(),
+      staticDir: home,
+    },
+    pino({ level: "silent" }),
+  );
+  await daemon.start();
+  const target = daemon.getListenTarget();
+  if (target?.type !== "tcp") throw new Error("Expected TCP daemon");
+  const connect = () =>
+    new DaemonClient({ url: `ws://127.0.0.1:${target.port}/ws`, password, appVersion: "0.4.0" });
+  const client = connect();
+  const replacement = connect();
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    const configPath = path.join(home, "config.json");
+    await writeFile(configPath, JSON.stringify({ daemon: { browserTools: { enabled: true } } }));
+    const { result: reloaded, blockingMs } = await measureMainThreadWork(
+      "daemon config reload main-thread work",
+      () => client.reloadDaemonConfig(),
+    );
+    expect(reloaded.appliedPaths).toContain("daemon.browserTools.enabled");
+    expect(blockingMs).toBeLessThan(50);
+    expect((await client.getDaemonConfig()).config.browserTools.enabled).toBe(true);
+    // A new physical session uses ready daemon state; corrupt config is reported only by an explicit read.
+    await writeFile(configPath, "invalid JSON");
+    await replacement.connect();
+    await replacement.fetchAgents({ subscribe: {} });
+    await expect(replacement.reloadDaemonConfig()).rejects.toThrow("Invalid JSON");
+  } finally {
+    await Promise.all([client.close(), replacement.close()]);
+    await daemon.stop();
   }
 }, 60_000);
 
@@ -408,3 +516,24 @@ export default function contribute(server: PluginServerContext) {
     await daemon.close();
   }
 }, 60_000);
+
+test("keeps reload and enable responsive while compiling a real plugin", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-responsive-plugin-"));
+  roots.push(directory);
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("./test-fixtures/compile-responsiveness.e2e.ts", import.meta.url)),
+      directory,
+    ],
+    { timeout: 20_000 },
+  );
+  process.stderr.write(stderr);
+  const results = z
+    .array(z.object({ blockingMs: z.number() }))
+    .length(2)
+    .parse(JSON.parse(stdout));
+  for (const result of results) expect(result.blockingMs).toBeLessThan(20);
+});

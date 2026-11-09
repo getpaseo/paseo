@@ -1,14 +1,24 @@
+import { createContext, useCallback, useContext } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import {
+  bySizing,
+  controlSizingForLayout,
+  ICON_BUTTON_SIZES,
+  TOUCH_ICON_SIZE,
+  type SizingValue,
+} from "@/components/ui/control-geometry";
 import { ICON_SIZE } from "@/styles/theme";
 
 export { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/ui/icon-color";
 
 export type IconButtonChromeSize = "large" | "small";
 
-const SMALL_ICON_BUTTON_SIZE = 20;
-const COMPACT_SMALL_ICON_BUTTON_SIZE = 32;
+// Touch-sized, every icon button is one target with one glyph size.
+const GLYPH_SIZES = {
+  large: { touch: TOUCH_ICON_SIZE.md, pointer: ICON_SIZE.md },
+  small: { touch: TOUCH_ICON_SIZE.md, pointer: ICON_SIZE.sm },
+} satisfies Record<IconButtonChromeSize, SizingValue>;
 
 export interface IconButtonChromeState {
   hovered?: boolean;
@@ -19,7 +29,7 @@ export interface IconButtonChromeState {
 
 function resolveIconButtonFrame(size: IconButtonChromeSize, compact: boolean) {
   if (size === "large") return styles.large;
-  return compact ? styles.smallCompact : styles.small;
+  return controlSizingForLayout(compact) === "touch" ? styles.smallTouch : styles.small;
 }
 
 interface IconButtonChromeOptions {
@@ -27,7 +37,38 @@ interface IconButtonChromeOptions {
   state?: IconButtonChromeState;
   compact?: boolean;
   disabled?: boolean;
+  /** A circular hitbox and highlight, for buttons inside a pill-shaped container. */
+  round?: boolean;
   style?: StyleProp<ViewStyle>;
+}
+
+const IconButtonChromeContext = createContext<"default" | "header-island">("default");
+
+/** A container owns the chrome of its icon actions, including custom menu and badge triggers. */
+export const IconButtonChromeProvider = IconButtonChromeContext.Provider;
+
+/** The same state callback works with Pressable, TooltipTrigger, and DropdownMenuTrigger. */
+export function useIconButtonChromeStyle({
+  size,
+  compact,
+  disabled,
+  round,
+  style,
+  active,
+}: Omit<IconButtonChromeOptions, "state"> & { active?: boolean }) {
+  const scope = useContext(IconButtonChromeContext);
+  return useCallback(
+    (state: IconButtonChromeState) =>
+      iconButtonChromeStyle({
+        size: scope === "header-island" ? "large" : size,
+        compact,
+        disabled,
+        round: scope === "header-island" || round,
+        style,
+        state: { ...state, active: active || state.active },
+      }),
+    [scope, size, compact, disabled, round, style, active],
+  );
 }
 
 /** Shared hitbox and interaction chrome for icon-only header and toolbar controls. */
@@ -36,11 +77,13 @@ export function iconButtonChromeStyle({
   state,
   compact = false,
   disabled = false,
+  round = false,
   style,
 }: IconButtonChromeOptions): StyleProp<ViewStyle> {
   const highlighted = state?.active || state?.hovered || state?.pressed || state?.open;
   return [
     resolveIconButtonFrame(size, compact),
+    round ? styles.round : null,
     style,
     highlighted ? styles.highlighted : null,
     disabled ? styles.disabled : null,
@@ -56,24 +99,17 @@ export function iconButtonChromeFrameStyle(
 }
 
 export function iconButtonChromeGlyphSize(size: IconButtonChromeSize, compact = false): number {
-  if (size === "large") return ICON_SIZE.md;
-  return compact ? 18 : 14;
+  return GLYPH_SIZES[size][controlSizingForLayout(compact)];
 }
 
 export function smallIconButtonChromeFrameSize(compact = false): number {
-  return compact ? COMPACT_SMALL_ICON_BUTTON_SIZE : SMALL_ICON_BUTTON_SIZE;
+  return ICON_BUTTON_SIZES.small[controlSizingForLayout(compact)];
 }
 
 const styles = StyleSheet.create((theme) => ({
   large: {
-    width: {
-      xs: 32,
-      md: HEADER_CONTROL_HEIGHT,
-    },
-    height: {
-      xs: 32,
-      md: HEADER_CONTROL_HEIGHT,
-    },
+    width: bySizing(ICON_BUTTON_SIZES.large),
+    height: bySizing(ICON_BUTTON_SIZES.large),
     padding: 0,
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
@@ -83,8 +119,8 @@ const styles = StyleSheet.create((theme) => ({
     outlineColor: "transparent",
   },
   small: {
-    width: SMALL_ICON_BUTTON_SIZE,
-    height: SMALL_ICON_BUTTON_SIZE,
+    width: ICON_BUTTON_SIZES.small.pointer,
+    height: ICON_BUTTON_SIZES.small.pointer,
     padding: 0,
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
@@ -93,9 +129,9 @@ const styles = StyleSheet.create((theme) => ({
     outlineWidth: 0,
     outlineColor: "transparent",
   },
-  smallCompact: {
-    width: COMPACT_SMALL_ICON_BUTTON_SIZE,
-    height: COMPACT_SMALL_ICON_BUTTON_SIZE,
+  smallTouch: {
+    width: ICON_BUTTON_SIZES.small.touch,
+    height: ICON_BUTTON_SIZES.small.touch,
     padding: 0,
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
@@ -103,6 +139,9 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     outlineWidth: 0,
     outlineColor: "transparent",
+  },
+  round: {
+    borderRadius: theme.borderRadius.full,
   },
   highlighted: {
     backgroundColor: theme.colors.interactionHighlight,

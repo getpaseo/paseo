@@ -8,8 +8,7 @@ import {
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { resetDraftAgentCommandsForCheckout } from "@/hooks/agent-commands-query";
-import { expireWorkingDiffComparisons } from "@/git/working-diff-comparison";
+import { resetDraftAgentCommandsForCheckout } from "@/agent-commands/cache";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
@@ -18,21 +17,15 @@ export interface CheckoutStatusClient {
   getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
 }
 
-// Checkout status enters the app through exactly two doors: daemon pushes
-// (applyCheckoutStatusUpdateFromEvent) and query fetches (fetchCheckoutStatus). Both run
-// the dirty-state reactions, so they hold regardless of which screens are mounted.
-
 export async function fetchCheckoutStatus({
   client,
-  serverId,
   cwd,
 }: {
   client: CheckoutStatusClient;
   serverId: string;
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
-  const payload = await client.getCheckoutStatus(cwd);
-  expireWorkingDiffComparisons({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
+  const payload = normalizeCheckoutBaseRef(await client.getCheckoutStatus(cwd));
   return payload;
 }
 
@@ -63,7 +56,7 @@ export function applyCheckoutStatusUpdateFromEvent({
   serverId: string;
   message: CheckoutStatusUpdate;
 }): void {
-  const { payload } = message;
+  const payload = normalizeCheckoutBaseRef(message.payload);
   const prStatus = payload.prStatus
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
@@ -77,11 +70,6 @@ export function applyCheckoutStatusUpdateFromEvent({
   }
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
-  });
-  expireWorkingDiffComparisons({
-    serverId,
-    cwd: payload.cwd,
-    isDirty: payload.isGit && payload.isDirty,
   });
 
   if (!prStatus) {
@@ -98,6 +86,13 @@ export function applyCheckoutStatusUpdateFromEvent({
   if (hasPrStatusChanged(previous, prStatus)) {
     void invalidatePrPaneTimelineForCheckout(queryClient, { serverId, cwd: prStatus.cwd });
   }
+}
+
+function normalizeCheckoutBaseRef<T extends CheckoutStatusPayload>(payload: T): T {
+  // COMPAT(workspaceBaseBranch): hosts <= v0.11.2 only send the display ref; remove after 2027-10-14.
+  return !payload.isGit || payload.baseRefExact === undefined
+    ? payload
+    : { ...payload, baseRef: payload.baseRefExact };
 }
 
 // requestId changes on every emission and carries no PR state.

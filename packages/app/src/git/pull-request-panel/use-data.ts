@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { usePullRequestConnection } from "@/git/pull-request-connection";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
@@ -20,7 +20,7 @@ type PullRequestTimeline = PullRequestTimelineResponse["payload"];
 export interface UsePrPaneDataOptions {
   serverId: string;
   cwd: string;
-  enabled?: boolean;
+  enabled: boolean;
   timelineEnabled?: boolean;
 }
 
@@ -166,7 +166,7 @@ export interface SelectPrPaneStateInput {
 export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataResult {
   const identity = extractPrRepoIdentity(input.status);
   const data =
-    identity.prNumber === null || !input.timelineEnabled
+    identity.prNumber === null
       ? null
       : mapPrPaneData(input.status, input.timelinePayload, undefined, input.forge ?? "github");
   const statusRefreshing = input.statusIsFetching && !input.statusIsLoading;
@@ -198,12 +198,11 @@ export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataR
 export function usePrPaneData({
   serverId,
   cwd,
-  enabled = true,
+  enabled,
   timelineEnabled = enabled,
 }: UsePrPaneDataOptions): UsePrPaneDataResult {
   const { t } = useTranslation();
-  const daemonClient = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { client: daemonClient, isConnected } = usePullRequestConnection(serverId);
   const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
   const status = checkoutPrStatus.status;
   const identity = extractPrRepoIdentity(status);
