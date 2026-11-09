@@ -165,7 +165,7 @@ export function ProjectStatusIndicator({
   );
 }
 
-function ProjectStatusBadge({
+export function ProjectStatusBadge({
   content,
   statusBucket,
   backdrop,
