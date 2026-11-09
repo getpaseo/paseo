@@ -104,6 +104,12 @@ export interface UsageQueryState {
   isFetching: boolean;
 }
 
+export function sortUsageReports(reports: readonly UsageReportEntry[]): UsageReportEntry[] {
+  return [...reports].sort(
+    (a, b) => a.sourceLabel.localeCompare(b.sourceLabel) || a.id.localeCompare(b.id),
+  );
+}
+
 export function resolveUsageView(
   input: {
     enabled?: boolean;
@@ -129,7 +135,8 @@ export function resolveUsageView(
   if (input.enabled === false)
     return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
   if (query?.data) {
-    return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
+    const reports = sortUsageReports(query.data);
+    return { kind: "ready", reports, isRefreshing: query.isFetching };
   }
   if (query?.error) {
     return {

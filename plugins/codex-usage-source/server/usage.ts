@@ -235,7 +235,7 @@ export async function fetchUsage(
   const balance = usage.credits?.balance;
   return {
     status: "available",
-    planLabel: usage.plan_type,
+    planLabel: usage.plan_type?.replace(/^./, (first) => first.toUpperCase()),
     windows,
     balances:
       balance === undefined
