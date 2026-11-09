@@ -117,9 +117,7 @@ export function useAgentProfilePicker(
           modelId: resolved.modelId,
           modeId: resolved.modeId,
           thinkingOptionId: resolved.thinkingOptionId,
-          ...(Object.keys(resolved.featureValues).length > 0
-            ? { featureValues: resolved.featureValues }
-            : {}),
+          ...(Object.keys(resolved.options).length > 0 ? { options: resolved.options } : {}),
         }),
       ).catch((error) => {
         console.warn("[useAgentProfilePicker] persist profile selection failed", error);

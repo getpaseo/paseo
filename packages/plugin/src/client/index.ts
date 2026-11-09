@@ -82,6 +82,20 @@ export {
   useProjects,
   useTerminals,
 } from "./client-state.js";
+export { useComposer, useComposers } from "./composer.js";
+export type {
+  PluginComposer,
+  PluginComposerAttachment,
+  PluginComposerItemContribution,
+  PluginComposerItemProps,
+  PluginComposerSelector,
+} from "./composer.js";
+export { useNewWorkspace } from "./new-workspace.js";
+export type {
+  PluginNewWorkspace,
+  PluginNewWorkspaceItemContribution,
+  PluginNewWorkspaceItemProps,
+} from "./new-workspace.js";
 export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
 export type {
   PluginSubscribeOptions,

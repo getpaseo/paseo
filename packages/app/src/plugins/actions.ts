@@ -1,3 +1,4 @@
+import { pluginComposersSource } from "./composer-items/source";
 import { getPluginClientApi } from "./client-state/api";
 import { callPluginRpc } from "@getpaseo/plugin/client/host";
 import type {
@@ -41,6 +42,7 @@ export function createPluginCapabilities(
       navigation.openSettings(plugin.id, screenId);
     },
     openScreen,
+    composers: (selector) => pluginComposersSource(plugin).resolve(selector),
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     openSurface: (screenId) => openScreen({ screenId }),
   };
