@@ -5,7 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { openCommandCenter } from "./command-center";
 import { openAgentRoute } from "./mock-agent";
-import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { connectNewWorkspaceDaemonClient, openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
 import { getServerId } from "./server-id";
@@ -260,7 +260,7 @@ export default function contribute(client) {
         kind: "action",
         async onPress() {
           for (const composer of client.composers({ agentId: ${targetId} })) {
-            await composer.insertText("HELLO");
+            composer.insertText("HELLO");
             await composer.focus();
           }
         },
@@ -391,3 +391,73 @@ export default function contribute(client) {
 }
 
 export { CHECKLIST };
+
+type HeldComposerGlobal = typeof globalThis & {
+  heldComposer?: { focus(): Promise<void> };
+};
+
+export async function withPluginHoldingNewWorkspaceComposer(
+  page: Page,
+  run: (author: {
+    openNewWorkspace(): Promise<void>;
+    openSettings(): Promise<void>;
+    expectHeldComposerFocusResult(result: string): Promise<void>;
+  }) => Promise<void>,
+) {
+  const workspace = await seedWorkspace({ repoPrefix: "held-composer-", title: "Held composer" });
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-held-composer-"));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "held-composer", requirements: pluginRequirements }),
+  );
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `import { useComposer } from "@getpaseo/plugin/client";
+
+function Holder() {
+  globalThis.heldComposer = useComposer();
+  return null;
+}
+
+export default function contribute(client) {
+  client.addComposerItem({ id: "holder", Component: Holder });
+  return () => {};
+}`,
+  );
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize(WIDE);
+    await gotoAppShell(page);
+    await run({
+      openNewWorkspace: () =>
+        test.step("open the New workspace composer", async () => {
+          await openGlobalNewWorkspaceComposer(page);
+          await page.waitForFunction(() => (globalThis as HeldComposerGlobal).heldComposer);
+        }),
+      openSettings: () =>
+        test.step("push Settings over the New workspace screen", async () => {
+          await page.getByTestId("sidebar-settings").filter({ visible: true }).click();
+          await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+        }),
+      expectHeldComposerFocusResult: (result) =>
+        test.step(`the held composer's focus() reports ${result}`, async () => {
+          const actual = await page.evaluate(() =>
+            (globalThis as HeldComposerGlobal).heldComposer?.focus().then(
+              () => "focused",
+              (error: Error) => error.message,
+            ),
+          );
+          expect(actual).toBe(result);
+        }),
+    });
+  } finally {
+    await client.removePlugin("held-composer");
+    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+    await workspace.cleanup();
+  }
+}

@@ -3,6 +3,7 @@ import {
   CHECKLIST,
   withComposerToolsExample,
   withPluginFocusingAComposer,
+  withPluginHoldingNewWorkspaceComposer,
   withPluginWritingToAnotherWorkspace,
 } from "../support/helpers/plugin-composers-by-reference";
 
@@ -103,5 +104,15 @@ test("focus closes the compact Explorer panel covering the composer", async ({ p
     await author.pressPanelFocusButton();
     await author.expectExplorerPanelClosed();
     await author.expectComposerFocused();
+  });
+});
+
+test("focus rejects on a New workspace composer the user has left", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginHoldingNewWorkspaceComposer(page, async (author) => {
+    await author.openNewWorkspace();
+    await author.expectHeldComposerFocusResult("focused");
+    await author.openSettings();
+    await author.expectHeldComposerFocusResult("The composer is not on screen.");
   });
 });
