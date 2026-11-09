@@ -9,6 +9,7 @@ import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./workspace-ui";
 
 const RESULT_TITLE = "Example conversation";
+const PLUGIN_ID = "test-attachment-source";
 
 interface AttachmentSourceActions {
   openShortcut(): Promise<void>;
@@ -34,15 +35,17 @@ export async function withAttachmentSourceFixture(
     const previousConfig = await pluginClient.getDaemonConfig();
     const plugin = await copyPluginFixture(options?.fixtureName ?? "attachment-source");
     cleanupSteps.unshift(() => plugin.cleanup());
-
     cleanupSteps.unshift(() =>
       pluginClient.patchDaemonConfig({
         pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
       }),
     );
+    cleanupSteps.unshift(async () => {
+      const source = (await pluginClient.getDaemonConfig()).config.plugins?.[PLUGIN_ID];
+      if (source?.path === plugin.directory) await pluginClient.removePlugin(PLUGIN_ID);
+    });
     await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
     await pluginClient.installDirectoryPlugin(plugin.directory);
-    cleanupSteps.unshift(() => pluginClient.removePlugin("test-attachment-source"));
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
