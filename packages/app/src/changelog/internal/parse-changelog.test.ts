@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatChangelogDate,
   parseChangelog,
+  releasesUpTo,
   type ChangelogRelease,
   type ChangelogSection,
 } from "./parse-changelog";
@@ -269,6 +270,49 @@ describe("formatChangelogDate", () => {
   it("shows anything else as authored", () => {
     expect(formatChangelogDate("September 8, 2026")).toBe("September 8, 2026");
     expect(formatChangelogDate("")).toBe("");
+  });
+});
+
+describe("releasesUpTo", () => {
+  const releases = parseChangelog(
+    [
+      "## Unreleased",
+      "## 0.11.0-beta.10 - 2026-10-04",
+      "## 0.11.0-beta.3 - 2026-10-02",
+      "## 0.11.0-beta.2 - 2026-10-01",
+      "## 0.10.3 - 2026-10-02",
+      "## 0.10.2 - 2026-09-30",
+    ].join("\n"),
+  );
+  const versionsUpTo = (installed: string | null) =>
+    releasesUpTo(releases, installed).map((release) => release.version);
+
+  it("hides betas ahead of a stable install", () => {
+    expect(versionsUpTo("0.10.3")).toEqual(["Unreleased", "0.10.3", "0.10.2"]);
+  });
+
+  it("shows a beta install its own release and everything before it", () => {
+    expect(versionsUpTo("v0.11.0-beta.3")).toEqual([
+      "Unreleased",
+      "0.11.0-beta.3",
+      "0.11.0-beta.2",
+      "0.10.3",
+      "0.10.2",
+    ]);
+  });
+
+  it("orders prerelease numbers numerically", () => {
+    expect(versionsUpTo("0.11.0-beta.10")).toContain("0.11.0-beta.10");
+    expect(versionsUpTo("0.11.0-beta.9")).not.toContain("0.11.0-beta.10");
+  });
+
+  it("leaves only non-version headings for an install older than every release", () => {
+    expect(versionsUpTo("0.1.0")).toEqual(["Unreleased"]);
+  });
+
+  it("shows everything when the installed version is unknown", () => {
+    expect(versionsUpTo(null)).toHaveLength(releases.length);
+    expect(versionsUpTo("dev")).toHaveLength(releases.length);
   });
 });
 
