@@ -15,15 +15,20 @@ supervisor (paseo.pid) ──► daemon worker ──► launcher ──► term
 - The worker exits on its own when it has no controller and no terminals, on `shutdown`, on SIGTERM (killing its terminals), and when its record disappears (a deleted `$PASEO_HOME`: nobody can ever reach it again).
 - Its stderr goes to `$PASEO_HOME/terminal-worker.log`. No pipe to the daemon survives the daemon.
 
+The worker retains a fixed 10,000 history rows plus the screen in its existing xterm. Replay uses `@xterm/addon-serialize` 0.14 against headless xterm 6; no second cell grid or lifetime byte log is retained. The serializer boundary owns cursor position, visibility and explicit program-selected presentation; the addon alone does not preserve all three. An unset program style leaves each client’s configured cursor defaults intact. It also restores SGR mouse encoding: the addon preserves mouse tracking but omits its encoding, so switching away and back otherwise sends legacy wheel reports that Copilot CLI cannot use. These missing modes require xterm's internal services because its public modes API omits them. Standard modes come from the serializer; the existing input-mode tracker retains protocol modes such as Kitty and Win32 input. Commit that tracker with parsed output so replay bytes and metadata describe the same cut.
+
 Which triggers keep terminals and which close them is owned by the stop reason (`keepTerminals`) that flows from the request through the supervisor to `stop()`. The kill side always ends in the reaper (`terminal-worker-reaper.ts`), the only path that signals terminal processes outside a connected daemon.
 
 ## Record, socket and secret
 
-The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its identity (birth time + command line carrying `--paseo-terminal-worker <recordId>`), protocol version, socket path, a random secret, the copy it runs from, and each terminal program's pid and birth time.
+The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its pid, protocol version, socket path, random secret, runtime copy and terminal programs. One daemon holds the home's pid lock. Its records and sockets belong to that home.
 
-- The first frame on the socket must be `hello` with the secret; anything else closes the connection. Anyone who connects can type into every shell, so the record is `0600`, the unix socket `0600` in a `0700` directory.
-- Unix socket paths have a byte budget (103 on macOS, 107 on Linux). Dev homes under worktrees blow it, so `terminal-worker-socket-path.ts` tries `$PASEO_HOME/terminal-worker/sock/`, then `$TMPDIR/paseo-<uid>/`, then `/tmp/paseo-<uid>/`, and accepts an existing directory only if it is a real `0700` directory owned by you. It never chmods a shared root.
-- Cleanup signals a process only when its birth time matches the record. Birth times come from `ps -o lstart` with `LC_ALL=C` (it follows `LC_TIME` otherwise) and from `Win32_Process.CreationDate`. A missing birth time is "unknown", never matched by command text: a shell that ran `exec` keeps its pid and birth time but not its argv.
+- The first frame must be `hello` with the secret; anything else closes the connection. Anyone authenticated can type into every shell, so the record and Unix socket are `0600` inside a `0700` directory.
+- New socket names include the record id. A stale record whose pid belongs to a newer worker cannot reach that newer worker. Existing records keep their recorded paths. Legacy paths use only the home and pid, so force-killing through one also requires successful authentication. A legacy socket that cannot authenticate stays unconfirmed.
+- A missing pid or refused socket retires the record without signaling the worker. An accepting socket identifies the live worker. Cleanup asks it to shut down, then probes again before force-killing it after the grace period (`taskkill /T` on Windows). An inconclusive probe counts toward the worker limit and is retried on the next start or stop without signaling it.
+- Workers never query their own birth time or command line. Readers accept legacy identity fields but ignore them. Daemons through 0.15.1 report new records unreadable and cannot adopt them.
+- Windows terminal programs have no recorded birth time and terminal lifecycle operations never launch PowerShell. Linux and macOS retain program birth-time checks through `ps` with `LC_ALL=C`; Linux also walks sessions to find surviving jobs.
+- Unix socket paths have a byte budget (103 on macOS, 107 on Linux). Long dev homes use an owner-only fallback under `$TMPDIR/paseo-<uid>/` or `/tmp/paseo-<uid>/`. An existing directory must be a real `0700` directory owned by you; a shared root is never chmodded.
 - A kill cleanup that cannot confirm every process gone writes `closing-<recordId>.json` beside the worker record. The worker rewrites its own record whenever a terminal starts or exits, so the kill intent has to live in a file it never writes. A closing record is never adopted; the next stop or start retries it.
 - An unreadable record of either kind makes `daemon status` and a kill restart fail with its path: a kill cleanup that met it could not check what it names, and leaves nothing else behind. A read that fails with `EPERM`, `EBUSY` or `EACCES` is retried for 250ms first: on Windows, opening a record while the worker renames its new copy over it fails that way for a moment.
 
@@ -38,11 +43,23 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 | two or more older                  | shuts it down; its terminals close (logged)                                                                                                                 |
 | newer, or a version it cannot read | leaves it running, undriven; `list_terminals` and `create_terminal` answer `rpc_error` `terminal_worker_incompatible`, and `paseo daemon status` prints why |
 
-Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run. The count comes from the records, so an unreachable or unidentified worker counts, and so does one a cleanup could not confirm gone. When two run, the daemon starts with no current worker, and the first terminal created after one of them exits launches it.
+Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run. The count comes from the records, so an unreachable worker counts, as does one whose socket probe is inconclusive, and one a cleanup could not confirm gone. When two run, the daemon starts with no current worker, and the first terminal created after one of them exits launches it.
 
-**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. When you bump the version, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
+**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. Protocol 5 hard cuts unreleased protocols 1 through 4, including the acknowledgement-based replay contract: those workers are obsolete and close. For future versions, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 
 Tests stand up other versions with `PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE`, read by the worker. It is test-only.
+
+## Display replay
+
+The worker keeps the headless xterm model and generates ANSI. A replay request emits begin metadata (dimensions, retained history, revision and input modes), at most 64 KiB per data chunk, and end. Live output keeps flowing independently during replay. Capture is synchronous with PTY callbacks; flush the output coalescer before the cut so a later batch never includes bytes already in replay. Retained-history metadata counts the worker history before the request limit.
+
+ConPTY renders a console rather than forwarding every program escape sequence unchanged. A program write callback does not establish that its hidden cursor move or input modes reached the worker. Test exact ANSI fidelity at the serializer boundary; PTY integration compares the initial replay plus committed observed output at the capture cut, including startup modes.
+
+The worker paces replay writes on its local socket; the daemon synchronously queues each event into the application's bounded transport. App network delivery does not extend the worker's request deadline. There is no per-chunk acknowledgement or second replay delivery queue in the daemon. The physical application transport owns its 64 MiB high-water close, so a backed-up app cannot hold worker capture open. Each daemon viewer still holds at most 4 MiB of live output during capture, then drops revisions already present in the worker replay. Capture failure and tail overflow affect only that viewer; PTYs and healthy viewers keep running.
+
+Live traffic that fills the shared worker socket beyond 4 MiB disconnects the stalled controller. Reconnection adopts the surviving sessions and requests fresh replay for existing streams. Readiness does not require a revision: adoption announces readiness without one, while the replay capture supplies the revision used for deduplication.
+
+The SDK advertises `terminal_chunked_replay` only because it decodes begin/data/end. Capable clients receive these events directly; the daemon collects one Restore frame only for older ANSI clients. The SDK normalizes an older host's single Restore into the same lifecycle. Capture stays a worker request; bootstrap readiness uses `hasOutput`, not a transported grid.
 
 ## Running from its own copy
 

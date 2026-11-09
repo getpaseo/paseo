@@ -6,6 +6,7 @@ import {
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
   selectAgentTimelineState,
+  selectAgentUnsettledTurn,
   useSessionStore,
   type AgentTimelineCursorState,
   type AgentTimelineState,
@@ -21,12 +22,14 @@ import {
 } from "@/utils/agent-initialization";
 import {
   createSessionAgentStreamReducerQueue,
+  deriveAgentStreamTurnLiveness,
   type AgentStreamReducerEvent,
   type ProcessTimelineResponseOutput,
   processTimelineResponse,
 } from "./session-stream-reducers";
 import { isTimelineResumeSnapshotAuthoritative } from "./timeline-sync-plan";
 import { replaceWithCanonicalStream } from "@/types/stream";
+import type { TurnLivenessTransition } from "./turn-liveness";
 
 export interface TimelineReplicaStorage {
   readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined>;
@@ -38,6 +41,7 @@ async function prepareCachedTimeline(input: {
   agentId: string;
   storage: TimelineReplicaStorage;
   prepareAgent: (agentId: string) => Promise<void>;
+  isTurnSettled: () => boolean;
 }): Promise<CachedTimeline | undefined> {
   const before = useSessionStore.getState().sessions[input.serverId];
   const beforeTimeline = selectAgentTimelineState(before, input.agentId);
@@ -85,6 +89,7 @@ async function prepareCachedTimeline(input: {
     newer: false,
     synchronized: false,
     acknowledgedClientMessageIds: replacement.acknowledgedClientMessageIds,
+    unsettledTurn: input.isTurnSettled() ? undefined : stored.unsettledTurn,
   });
   return stored;
 }
@@ -94,11 +99,16 @@ export interface TimelineReplica {
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
   readRange(agentId: string): AgentTimelineCursorState | undefined;
   timelineUpdated(agentId: string): void;
+  catchUpOwed(agentId: string): void;
+  catchUpSettled(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
   private readonly cachedRanges = new Map<string, AgentTimelineCursorState>();
   private readonly preparations = new Map<string, Promise<void>>();
+  // A cache read in flight still carries the turn as it was saved. Once the catch-up has
+  // settled, that turn must not come back with the cached messages.
+  private readonly settledDuringPreparation = new Set<string>();
 
   constructor(
     private readonly serverId: string,
@@ -121,6 +131,7 @@ class TimelineReplicaOwner implements TimelineReplica {
     const preparation = this.load(agentId).finally(() => {
       if (this.preparations.get(agentId) === preparation) {
         this.preparations.delete(agentId);
+        this.settledDuringPreparation.delete(agentId);
       }
     });
     this.preparations.set(agentId, preparation);
@@ -133,6 +144,7 @@ class TimelineReplicaOwner implements TimelineReplica {
       agentId,
       storage: this.storage,
       prepareAgent: this.prepareAgent,
+      isTurnSettled: () => this.settledDuringPreparation.has(agentId),
     });
     if (!stored) return;
     if (stored.range) {
@@ -159,7 +171,20 @@ class TimelineReplicaOwner implements TimelineReplica {
       items: [...timeline.items, ...(session?.agentStreamHead.get(agentId) ?? [])],
       range: timeline.status === "synced" ? timeline.range : null,
       hasOlder: timeline.status === "synced" && timeline.older === "available",
+      unsettledTurn: selectAgentUnsettledTurn(session, agentId),
     });
+  }
+
+  catchUpOwed(agentId: string): void {
+    this.settledDuringPreparation.delete(agentId);
+    const store = useSessionStore.getState();
+    const openTurn = selectAgentUnsettledTurn(store.sessions[this.serverId], agentId);
+    if (openTurn) store.setAgentTimelineUnsettledTurn(this.serverId, agentId, openTurn);
+  }
+
+  catchUpSettled(agentId: string): void {
+    if (this.preparations.has(agentId)) this.settledDuringPreparation.add(agentId);
+    useSessionStore.getState().setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
   }
 }
 
@@ -238,6 +263,7 @@ function commitProcessedTimeline(input: {
     });
   }
   store.markAgentHistorySynchronized(serverId, agentId);
+  if (synchronized) store.setAgentTimelineUnsettledTurn(serverId, agentId, null);
 }
 
 function finalizeProcessedTimeline(input: {
@@ -328,8 +354,11 @@ export interface ViewedTimelineSyncPorts {
    * demanded set. Disconnect and backgrounding keep the obligation and do not report here.
    */
   onCatchUpEnded(agentId: string): void;
+  /** The chat stopped receiving every row, so a catch-up is owed before it is current again. */
+  onCatchUpOwed(agentId: string): void;
+  /** The owed catch-up reached current or failed. The chat can take the true turn status. */
+  onCatchUpSettled(agentId: string): void;
   reportError(error: unknown): void;
-  schedule(task: () => void, delayMs: number): () => void;
 }
 
 export type ViewedTimelineStatus = "ready" | "pending" | "error" | "retrying";
@@ -357,12 +386,17 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
-  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded"
+  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded" | "onCatchUpOwed" | "onCatchUpSettled"
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
   applyTimelineResponse(payload: TimelineResponsePayload): void;
-  enqueueStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
+  /**
+   * Accepts one live stream event. Content is coalesced to the next frame; a turn boundary
+   * commits the turn's queued content before its liveness changes, so the view never shows
+   * a finished turn without its final reply.
+   */
+  applyStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
   flushStreamAgent(agentId: string): void;
 }
 
@@ -371,6 +405,7 @@ export function createViewedTimelineOwner(input: {
   replica: TimelineReplica;
   replaceDemandedAgentIds: (agentIds: string[]) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
+  applyTurnLiveness: (agentId: string, transitions: readonly TurnLivenessTransition[]) => void;
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
   const forcedTailReplacements = new Set<string>();
@@ -389,6 +424,8 @@ export function createViewedTimelineOwner(input: {
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
     onCatchUpEnded: (agentId) =>
       useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
+    onCatchUpOwed: (agentId) => input.replica.catchUpOwed(agentId),
+    onCatchUpSettled: (agentId) => input.replica.catchUpSettled(agentId),
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
     serverId: input.serverId,
@@ -410,8 +447,13 @@ export function createViewedTimelineOwner(input: {
       });
       if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
-    enqueueStreamEvent(agentId, event) {
+    applyStreamEvent(agentId, event) {
       streamQueue.enqueue(agentId, event);
+      const turnLiveness = deriveAgentStreamTurnLiveness([event]);
+      if (turnLiveness.length === 0) return;
+      streamQueue.flushAgent(agentId);
+      input.applyTurnLiveness(agentId, turnLiveness);
+      input.replica.timelineUpdated(agentId);
     },
     flushStreamAgent(agentId) {
       streamQueue.flushAgent(agentId);
@@ -423,25 +465,13 @@ export function createViewedTimelineOwner(input: {
   };
 }
 
-const RETRY_DELAY_MS = 1_000;
-const MAX_RETRY_DELAY_MS = 30_000;
-
 type CatchUpStatus = "running" | "complete" | "error";
 
 interface CatchUpState {
   generation: number;
   status: CatchUpStatus;
   request?: ProjectedTimelineForwardFetchPlan;
-  cancelRetry?: () => void;
-  retryDelayMs?: number;
 }
-
-const getNextRetryDelayMs = (previousDelayMs: number | undefined): number => {
-  if (previousDelayMs == null) {
-    return RETRY_DELAY_MS;
-  }
-  return Math.min(previousDelayMs * 2, MAX_RETRY_DELAY_MS);
-};
 
 function isSameCatchUpRequest(
   left: ProjectedTimelineForwardFetchPlan | undefined,
@@ -472,9 +502,7 @@ function decideCatchUp(input: {
     }
     return "replace";
   }
-  return input.current.status === "running" || input.current.status === "complete"
-    ? "keep"
-    : "replace";
+  return "keep";
 }
 
 function normalizeAgentIds(agentIds: string[]): string[] {
@@ -494,8 +522,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const visibilityCatchUpPending = new Set<string>();
   const visibilityCatchUpErrors = new Map<string, string>();
-  // User-initiated retries only. Background retries stay silent; a retry the user asked for
-  // owes them a pending state until it settles.
+  // A user-initiated retry owes a pending state until it settles.
   const manualRetries = new Set<string>();
   const loadedCache = new Set<string>();
   const cacheLoads = new Map<string, Promise<void>>();
@@ -511,8 +538,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let acknowledged: string[] = [];
   let membershipGeneration = 0;
   let membershipNeedsRetry = false;
-  let membershipRetryDelayMs: number | undefined;
-  let cancelMembershipRetry: (() => void) | null = null;
   // Chats this session has opened. Visibility is the only way in, so an agent is never
   // subscribed — and never resumed on the daemon — until the user actually opens it.
   // Membership then survives hiding, workspace switches, backgrounding and reconnect;
@@ -543,6 +568,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const wasPending = visibilityCatchUpPending.delete(agentId);
     const hadError = visibilityCatchUpErrors.delete(agentId);
     const wasRetrying = manualRetries.delete(agentId);
+    ports.onCatchUpSettled(agentId);
     ports.onCatchUpEnded(agentId);
     if (wasPending || hadError || wasRetrying) notifyListeners();
   };
@@ -551,6 +577,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const message = error instanceof Error ? error.message : String(error);
     let changed = false;
     for (const agentId of agentIds) {
+      ports.onCatchUpSettled(agentId);
       if (manualRetries.delete(agentId)) changed = true;
       if (visibilityCatchUpPending.delete(agentId)) changed = true;
       if (visibilityCatchUpErrors.get(agentId) !== message) {
@@ -561,9 +588,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (changed) notifyListeners();
   };
 
+  const markCatchUpOwed = (agentId: string) => {
+    visibilityCatchUpPending.add(agentId);
+    ports.onCatchUpOwed(agentId);
+  };
+
   const cancelCatchUp = (agentId: string) => {
     catchUpGenerations.set(agentId, (catchUpGenerations.get(agentId) ?? 0) + 1);
-    catchUps.get(agentId)?.cancelRetry?.();
     catchUps.delete(agentId);
     pendingCatchUps.delete(agentId);
   };
@@ -607,19 +638,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       setVisibilityCatchUpReady(agentId);
     } catch (error) {
       if (catchUps.get(agentId)?.generation === generation) {
-        const nextRetryDelayMs = getNextRetryDelayMs(catchUps.get(agentId)?.retryDelayMs);
-        const cancelRetry = ports.schedule(() => {
-          const current = catchUps.get(agentId);
-          if (current?.generation !== generation || current.status !== "error") return;
-          startCatchUp(agentId);
-        }, nextRetryDelayMs);
-        catchUps.set(agentId, {
-          generation,
-          status: "error",
-          request,
-          cancelRetry,
-          retryDelayMs: nextRetryDelayMs,
-        });
+        catchUps.set(agentId, { generation, status: "error", request });
         setVisibilityCatchUpError([agentId], error);
         ports.reportError(error);
       }
@@ -686,17 +705,9 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (decision === "keep") {
       return;
     }
-    current?.cancelRetry?.();
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
-    const retryDelayMs =
-      supersede || current?.status !== "error" ? undefined : current.retryDelayMs;
-    catchUps.set(agentId, {
-      generation,
-      status: "running",
-      request: nextRequest,
-      retryDelayMs,
-    });
+    catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingCatchUps.delete(agentId);
     void fetchUntilCurrent(
       agentId,
@@ -715,7 +726,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     for (const agentId of ordered) {
       const pendingCatchUp = pendingCatchUps.get(agentId);
       const current = catchUps.get(agentId);
-      // Completion of a different chat must not bypass a failed chat's backoff or
+      // Completion of a different chat must not bypass a failed chat's error or
       // supersede an in-flight tail that owns its parked gap recovery.
       if (current && !(current.status === "complete" && pendingCatchUp)) continue;
       startCatchUp(agentId, {
@@ -741,42 +752,31 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     } catch (error) {
       if (disposed || !connected || generation !== membershipGeneration) return;
       membershipNeedsRetry = true;
+      acknowledged = [];
+      for (const agentId of requested) cancelCatchUp(agentId);
       setVisibilityCatchUpError(requested, error);
-      cancelMembershipRetry?.();
-      const nextRetryDelayMs = getNextRetryDelayMs(membershipRetryDelayMs);
-      cancelMembershipRetry = ports.schedule(() => {
-        cancelMembershipRetry = null;
-        if (disposed || !connected || membershipGeneration !== generation) return;
-        void reconcileMembership();
-      }, nextRetryDelayMs);
-      membershipRetryDelayMs = nextRetryDelayMs;
       ports.reportError(error);
       return;
     }
     if (disposed || !connected || generation !== membershipGeneration) return;
-    cancelMembershipRetry?.();
-    cancelMembershipRetry = null;
-    membershipRetryDelayMs = undefined;
     acknowledged = requested;
     startAcknowledgedCatchUps();
   };
 
   const retryVisibleAgentTimeline = (agentId: string) => {
-    if (!isDesired(agentId) || manualRetries.has(agentId)) return;
+    if (!connected || !isDesired(agentId) || manualRetries.has(agentId)) return;
     const catchUp = catchUps.get(agentId);
     const membershipRetryable = membershipNeedsRetry && connected;
     if (catchUp?.status !== "error" && !membershipRetryable) return;
     manualRetries.add(agentId);
     notifyListeners();
-    if (catchUp?.status === "error") {
-      catchUp.cancelRetry?.();
-      startCatchUp(agentId, { request: catchUp.request, supersede: true });
+    if (membershipRetryable) {
+      void reconcileMembership();
       return;
     }
-    cancelMembershipRetry?.();
-    cancelMembershipRetry = null;
-    membershipRetryDelayMs = undefined;
-    void reconcileMembership();
+    if (catchUp?.status === "error") {
+      startCatchUp(agentId, { request: catchUp.request, supersede: true });
+    }
   };
 
   const commitDesiredMembership = (
@@ -787,7 +787,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (options.resetCatchUpStatus) {
       for (const agentId of nextDesired) {
         if (!visibilityCatchUpPending.has(agentId)) {
-          visibilityCatchUpPending.add(agentId);
+          markCatchUpOwed(agentId);
           statusChanged = true;
         }
         if (visibilityCatchUpErrors.delete(agentId)) statusChanged = true;
@@ -806,19 +806,18 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         visibilityCatchUpPending.delete(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
+        ports.onCatchUpOwed(agentId);
         released.push(agentId);
       }
     }
     for (const agentId of nextDesired) {
       if (!desired.includes(agentId)) {
-        visibilityCatchUpPending.add(agentId);
+        markCatchUpOwed(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
         ensureCacheLoaded(agentId);
       }
     }
-    cancelMembershipRetry?.();
-    cancelMembershipRetry = null;
     desired = nextDesired;
     ports.replaceDemandedAgentIds(desired);
     membershipGeneration += 1;
@@ -869,8 +868,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         return;
       }
       for (const agentId of visibleAgentIds()) {
-        visibilityCatchUpPending.add(agentId);
-        visibilityCatchUpErrors.delete(agentId);
+        if (visibilityCatchUpErrors.has(agentId)) continue;
+        markCatchUpOwed(agentId);
         startCatchUp(agentId, { supersede: true });
       }
       notifyListeners();
@@ -880,9 +879,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       connected = nextConnected;
       if (!connected) {
         commitDesiredMembership(desired, { resetCatchUpStatus: true });
-        cancelMembershipRetry?.();
-        cancelMembershipRetry = null;
-        membershipRetryDelayMs = undefined;
         void observation?.handle.release().catch(ports.reportError);
         observation = null;
         acknowledged = [];
@@ -894,7 +890,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       void reconcileMembership();
     },
     recoverGap(agentId, cursor) {
-      if (!isDesired(agentId)) return;
+      if (!isDesired(agentId) || catchUps.get(agentId)?.status === "error") return;
       startCatchUp(agentId, {
         request: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq }),
         supersede: true,
@@ -904,10 +900,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       disposed = true;
       void observation?.handle.release().catch(ports.reportError);
       observation = null;
-      cancelMembershipRetry?.();
-      cancelMembershipRetry = null;
       membershipNeedsRetry = false;
-      membershipRetryDelayMs = undefined;
       sources.clear();
       membershipGeneration += 1;
       for (const agentId of desired) cancelCatchUp(agentId);

@@ -21,10 +21,16 @@ The invariants are:
 > agent establishes the daemon's current tail in one complete-turn request, with older history reachable
 > through backward pagination.
 
-Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
-to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
-Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
-tool payload.
+Every item is bounded before it enters either delivery path, because a timeline page is one
+WebSocket message and the daemon closes a socket whose outbound buffer passes 64 MiB. Tool calls get
+64 KiB and other items 256 KiB. Over budget, the largest strings are cut to a shared length with a
+`…[truncated 12.3 MB]` marker, and an oversized `data:` URL is replaced by the marker. Strings up
+to 1 KiB stay whole, so ids and paths survive. Arrays drop their trailing elements without a marker
+element, so typed arrays still match the wire schema. Limiting an item twice gives the same item. The
+budget does not bound wide objects or multi-byte text. The same
+bounded item is used for runtime timeline rows and live stream events. Provider history hydration
+applies the same rule so reopening an agent cannot restore an oversized payload. Fetches apply it
+again to assistant and reasoning rows the projection merges from many chunks.
 
 ## Presence is not delivery
 
@@ -63,8 +69,8 @@ Source coverage still includes interleaved tool updates.
 
 Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
 agent messages each start a fallback turn. This deterministic fallback is shared by paging
-and presentation; it cannot recover historical batching or steering. Older history remains
-user-driven by scrolling upward.
+and presentation; it cannot recover historical batching or steering. An underfilled viewport
+loads older history until it fills or history is exhausted. Further history is user-driven.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
@@ -89,9 +95,10 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
 The daemon validates the epoch and locates the projected item at the selected position. A fork
-includes projected items through that checkpoint. If an item spans the checkpoint and changed
-afterward, the daemon refuses that fork with an actionable error: discarded historical payloads
-cannot be reconstructed from sequence metadata. Forking the current context remains available.
+includes projected items through that checkpoint. If an item the fork copies spans the checkpoint
+and changed afterward, the daemon refuses that fork with an actionable error: discarded historical
+payloads cannot be reconstructed from sequence metadata. Plugin cards are not copied, so a card
+updated after the checkpoint does not block it. Forking the current context remains available.
 
 ## Resume behavior
 
@@ -104,6 +111,21 @@ Cached history remains readable during recovery. The chat shows Reconnecting to 
 offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
 certify that the displayed conversation is current. The timeline owner publishes freshness; the
 view renders it without a toast timer or a separate resume workflow.
+
+The turn footer in a chat follows its messages, not the agent status. Turn activity comes from the
+agent directory and messages from the chat's own catch-up, and either can land first. So the timeline
+owner keeps an unsettled turn per chat: the turn its messages were captured during. It is set when a
+catch-up becomes owed while the turn is open, or when cached messages are painted that were saved
+while one was, and it is saved with those messages in the replica. It carries the turn's start time.
+While it is set and the agent reads idle, the chat keeps showing that running turn, with its loader
+and elapsed timer unchanged, and there is no separate catching-up footer. The commit that brings the
+chat current clears it, in the same store write as the rows, so the final messages and the completed
+footer land together. A failed catch-up clears it too, and the footer takes the true status. Losing
+the connection is not a failed catch-up: none can run or fail until the host returns, so the running
+footer stays beside "Reconnecting to host" and the catch-up on reconnect resolves it. Releasing it
+offline would put a completed footer under messages known to be behind. Surfaces outside the timeline (the sidebar, tabs, the composer's stop and send controls) read the true status
+and never see this state. Live delivery needs no hold because `applyStreamEvent` commits queued rows
+before it applies turn liveness.
 
 The draft-create handoff has the same lifetime: the viewed-timeline owner releases it when the sync
 stops owing that chat a catch-up, not when the first authoritative page lands. Releasing it at the

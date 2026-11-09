@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getTransformOrigin, type Rect } from "./anchor";
+import { computePosition, fitSurfaceWidth, getTransformOrigin, type Rect } from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -95,5 +95,28 @@ describe("getTransformOrigin", () => {
   ] as const)("emits a native-ready origin for %s/%s", (placement, alignment, expected) => {
     // Theme updates may reach Fabric without React Native's JS string preprocessing.
     expect(getTransformOrigin(placement, alignment)).toEqual(expected);
+  });
+});
+
+describe("fitSurfaceWidth", () => {
+  it("leaves a surface that fits the display alone, capped at the display", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180 }, 1000)).toEqual({
+      width: 240,
+      minWidth: 180,
+      maxWidth: 984,
+    });
+  });
+
+  it("shrinks a surface wider than a narrow display to the space inside its edge padding", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180, maxWidth: 320 }, 220)).toEqual({
+      width: 204,
+      minWidth: 180,
+      maxWidth: 204,
+    });
+    expect(fitSurfaceWidth({ minWidth: 180 }, 150)).toEqual({
+      width: undefined,
+      minWidth: 134,
+      maxWidth: 134,
+    });
   });
 });

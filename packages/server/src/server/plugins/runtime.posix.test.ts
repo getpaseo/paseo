@@ -1399,6 +1399,44 @@ export default function contribute(server: { registerProvider(provider: Provider
     }
   });
 
+  it("releases a subscription in the plugin when its subscribe times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const directory = await createPlugin(
+        "slow-subscribe",
+        `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      );
+      const child = createReloadChild("slow-subscribe", []);
+      const sent: Array<{ type: string; subscriptionId?: string }> = [];
+      const originalSend = child.send.bind(child);
+      child.send = (message, callback) => {
+        sent.push(message);
+        if (message.type !== "initialize") return originalSend(message, callback);
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({ type: "ready", methods: [], subscriptions: ["feed"], providers: [] }),
+        );
+        return true;
+      };
+      const runtime = createTestRuntime({ spawnChild: () => child });
+      await runtime.startPlugin("slow-subscribe", directory);
+
+      const subscription = runtime.startSubscription("slow-subscribe", "feed", {});
+      const rejection = subscription.ready.catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(rejection).resolves.toMatchObject({
+        message: expect.stringContaining("timed out"),
+      });
+      const subscribe = sent.find((message) => message.type === "subscribe");
+      expect(sent).toContainEqual({
+        type: "unsubscribe",
+        subscriptionId: subscribe?.subscriptionId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("escalates a plugin that ignores graceful shutdown from TERM to KILL", async () => {
     vi.useFakeTimers();
     try {
@@ -1815,7 +1853,7 @@ export function inspect() { void Surface; return {}; }`,
     await runtime.stopAll();
   });
 
-  it("rejects a handler result that does not match its RPC output schema", async () => {
+  it("forwards a handler result for the client to validate against its RPC output schema", async () => {
     const directory = await createPlugin(
       "invalid-output",
       `import { z } from "zod";
@@ -1834,7 +1872,9 @@ export default function contribute(plugin: any) {
 
     await runtime.startPlugin("invalid-output", directory);
 
-    await expect(runtime.invoke("invalid-output", "broken", {})).rejects.toThrow();
+    await expect(runtime.invoke("invalid-output", "broken", {})).resolves.toEqual({
+      value: "wrong",
+    });
     await runtime.stopAll();
   });
 
@@ -2082,7 +2122,7 @@ it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const runtime = createTestRuntime(
     { settingsDirectory },
     undefined,
-    resolveDaemonVersion(import.meta.url),
+    example === "sidebar-views" ? "0.16.0" : resolveDaemonVersion(import.meta.url),
   );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));
