@@ -460,7 +460,7 @@ describe("WorkspaceGitService checkout observation", () => {
     }
   });
 
-  test("re-arms the idle release check while a suspended target probes for its folder", async () => {
+  test("defensively re-arms the idle release check for a suspended target that still counts as busy", async () => {
     let folderExists = true;
     const service = createService(createWatcherHarness(), {
       workspaceFolderExists: vi.fn(async () => folderExists),
@@ -472,7 +472,10 @@ describe("WorkspaceGitService checkout observation", () => {
     try {
       await service.getSnapshot(REPO_CWD);
 
-      // Degraded polling suspends a target whose folder disappeared; this is the same call.
+      // Production cannot reach this state: only degraded polling suspends a target, and that
+      // needs a listener, while the last listener leaving removes the target synchronously. The
+      // test fabricates the suspended target through internals to hold the defensive re-arm in
+      // place; it does not assert reachable behaviour.
       folderExists = false;
       const internals = asInternals<WorkspaceGitServiceInternals>(service);
       const target = internals.workspaceTargets.get(REPO_CWD);
