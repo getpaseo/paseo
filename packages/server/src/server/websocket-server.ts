@@ -1660,6 +1660,9 @@ export class VoiceAssistantWebSocketServer {
       deviceAccess: this.deviceCredentials
         ? {
             issue: async (source, label) => {
+              // One credential per device socket, so revoking it leaves no second key behind.
+              if (this.socketCredentials.has(source))
+                return { credential: null, error: "unsupported_principal" as const };
               const result = await this.deviceCredentials!.issue(
                 label,
                 this.credentialAuthority(source),
