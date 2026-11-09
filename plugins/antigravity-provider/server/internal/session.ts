@@ -5,6 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import type {
   ProviderCatalog,
+  ProviderCommand,
   ProviderConfigChanges,
   ProviderEvent,
   ProviderPersistence,
@@ -15,13 +16,95 @@ import type {
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
-import { getModelContextWindow, validateSelection } from "./catalog.js";
+import {
+  GEMINI_THINKING_OPTIONS,
+  getModelContextWindow,
+  supportsEffort,
+  validateSelection,
+} from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
+const BUILTIN_COMMANDS: readonly ProviderCommand[] = [
+  { name: "plan", description: "Plan carefully before executing a task." },
+  {
+    name: "compact",
+    description: "Compact the conversation now (summarize history to free up the context window).",
+  },
+  {
+    name: "goal",
+    description: "Run until the specified goal is completely finished.",
+  },
+  { name: "grill-me", description: "Interview me to align on a plan." },
+  {
+    name: "learn",
+    description: "Reflect on recent successes or corrections to capture reusable skills or rules.",
+  },
+  { name: "browser", description: "Invoke a browser agent for web tasks." },
+  {
+    name: "schedule",
+    description: "Run an instruction on a recurring schedule or as a one-time timer.",
+  },
+  {
+    name: "usage",
+    description: "Show Antigravity 5-hour and weekly quota usage.",
+  },
+];
+
+function discoverCommands(cwd: string | undefined, homeDir: string): ProviderCommand[] {
+  const seen = new Set<string>();
+  const result: ProviderCommand[] = [];
+  for (const cmd of BUILTIN_COMMANDS) {
+    seen.add(cmd.name);
+    result.push({ ...cmd });
+  }
+  const skillDirs = [
+    ...(cwd ? [path.join(cwd, ".agent", "skills")] : []),
+    path.join(homeDir, ".gemini", "antigravity-cli", "skills"),
+    path.join(homeDir, ".gemini", "antigravity-cli", "builtin", "skills"),
+  ];
+  for (const dir of skillDirs) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const skillMd = path.join(dir, entry.name, "SKILL.md");
+      let raw: string;
+      try {
+        raw = fs.readFileSync(skillMd, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+      let name = entry.name;
+      let description = `Run skill ${entry.name}`;
+      if (fmMatch) {
+        const nameMatch = /^name:\s*(.+)$/m.exec(fmMatch[1]);
+        const descMatch = /^description:\s*(.+)$/m.exec(fmMatch[1]);
+        if (nameMatch) name = nameMatch[1].trim().replace(/^["']|["']$/g, "");
+        if (descMatch) description = descMatch[1].trim().replace(/^["']|["']$/g, "");
+      }
+      if (!seen.has(name)) {
+        seen.add(name);
+        result.push({ name, description });
+      }
+    }
+  }
+  return result;
+}
+
 const persistenceSchema = z
-  .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
+  .object({
+    version: z.literal(1),
+    data: z.object({ conversationId: z.string().min(1) }).strict(),
+  })
   .strict();
 interface Turn {
   id: string;
@@ -54,10 +137,18 @@ interface SavedContextUsage {
   usedTokens: number;
 }
 
+interface ReplayHistoryOptions {
+  conversationId: string | null;
+  sessionId: string;
+  homeDir: string;
+  emit: (event: ProviderEvent) => void;
+}
+
 const transcriptLineSchema = z.object({
   step_index: z.number().optional(),
   type: z.string().optional(),
   content: z.string().optional(),
+  thinking: z.string().optional(),
   created_at: z.string().optional(),
   input_tokens: z.number().optional(),
   cache_read_tokens: z.number().optional(),
@@ -92,12 +183,7 @@ function readTranscriptContent(conversationId: string | null, homeDir: string): 
   }
 }
 
-function replayHistoryFromTranscript(options: {
-  conversationId: string | null;
-  sessionId: string;
-  homeDir: string;
-  emit: (event: ProviderEvent) => void;
-}): void {
+function replayHistoryFromTranscript(options: ReplayHistoryOptions): void {
   const { conversationId, sessionId, homeDir, emit } = options;
   const content = readTranscriptContent(conversationId, homeDir);
   if (!content) return;
@@ -130,24 +216,63 @@ function replayHistoryFromTranscript(options: {
           text,
         },
       });
-    } else if (
-      obj.type === "PLANNER_RESPONSE" &&
-      typeof obj.content === "string" &&
-      obj.content.trim().length > 0
-    ) {
-      emit({
-        type: "timeline.item",
-        sessionId,
-        timestamp: obj.created_at,
-        item: {
-          type: "assistant_message",
-          id: `assistant-${stepKey}`,
-          messageId: `assistant-${stepKey}`,
-          text: obj.content,
-        },
-      });
+    } else if (obj.type === "PLANNER_RESPONSE") {
+      if (typeof obj.thinking === "string" && obj.thinking.trim().length > 0) {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          timestamp: obj.created_at,
+          item: {
+            type: "reasoning",
+            id: `reasoning-${stepKey}`,
+            text: obj.thinking.trim(),
+          },
+        });
+      }
+      if (typeof obj.content === "string" && obj.content.trim().length > 0) {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          timestamp: obj.created_at,
+          item: {
+            type: "assistant_message",
+            id: `assistant-${stepKey}`,
+            messageId: `assistant-${stepKey}`,
+            text: obj.content,
+          },
+        });
+      }
     }
   }
+}
+
+function readStepThinking(
+  conversationId: string | null,
+  stepIndex: number,
+  homeDir: string,
+): string | null {
+  const content = readTranscriptContent(conversationId, homeDir);
+  if (!content) return null;
+  const lines = content.trim().split("\n");
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 15); i--) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const parsed = transcriptLineSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const obj = parsed.data;
+    if (
+      obj.step_index === stepIndex &&
+      typeof obj.thinking === "string" &&
+      obj.thinking.trim().length > 0
+    ) {
+      return obj.thinking.trim();
+    }
+  }
+  return null;
 }
 
 function readLastContextUsage(
@@ -192,7 +317,10 @@ export class Session {
   private readonly reportedDenials = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {
-    this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
+    this.config = {
+      ...options.config,
+      mode: options.config.mode ?? "full-access",
+    };
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
@@ -214,10 +342,13 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    const homeDir = this.resolveHomeDir();
+    this.emit({
+      type: "session.commands",
+      sessionId: this.options.id,
+      commands: discoverCommands(this.config.cwd, homeDir),
+    });
 
-    const homeDir =
-      this.config.env?.HOME ?? this.options.launch?.env?.HOME ?? process.env.HOME ?? os.homedir();
     if (this.options.history === "replay") {
       replayHistoryFromTranscript({
         conversationId: this.conversationId,
@@ -253,11 +384,9 @@ export class Session {
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
-    if (this.state.type === "running")
-      throw new AntigravityError(
-        "Antigravity already has an active turn; wait for it to finish",
-        "TURN_ACTIVE",
-      );
+    if (this.state.type === "running") {
+      await this.interrupt();
+    }
     const { text, nativeText } = await this.promptFiles.encode(prompt);
     await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
@@ -303,6 +432,15 @@ export class Session {
   }
 
   configure(changes: ProviderConfigChanges): void {
+    const nextSettings = { ...this.config.settings };
+    if (changes.settings) {
+      for (const [key, value] of Object.entries(changes.settings)) {
+        if (key !== "sandbox") {
+          throw new AntigravityError(`Unknown Antigravity setting: ${key}`);
+        }
+        nextSettings.sandbox = Boolean(value);
+      }
+    }
     const config = {
       ...this.config,
       model: changes.model === null ? undefined : (changes.model ?? this.config.model),
@@ -311,9 +449,8 @@ export class Session {
         changes.thinkingOption === null
           ? undefined
           : (changes.thinkingOption ?? this.config.thinkingOption),
+      settings: nextSettings,
     };
-    if (changes.settings && Object.keys(changes.settings).length > 0)
-      throw new AntigravityError("Antigravity has no configurable settings");
     validateSelection(config, this.options.catalog());
     this.config = config;
     this.publishConfig();
@@ -465,6 +602,18 @@ export class Session {
       if (step.text_delta) this.item({ type: "assistant_message", id, messageId: id, text });
       if (step.state === "DONE" && step.usage && !turn.usageSteps.has(step.step_index)) {
         turn.usageSteps.add(step.step_index);
+        const thinking = readStepThinking(
+          this.conversationId,
+          step.step_index,
+          this.resolveHomeDir(),
+        );
+        if (thinking) {
+          this.item({
+            type: "reasoning",
+            id: `${turn.id}:reasoning:${step.step_index}`,
+            text: thinking,
+          });
+        }
         turn.usage.inputTokens += step.usage.input_tokens;
         turn.usage.outputTokens += step.usage.output_tokens;
         turn.usage.cachedInputTokens += step.usage.cache_read_tokens;
@@ -538,17 +687,41 @@ export class Session {
     return { version: 1, data: { conversationId: this.conversationId } };
   }
 
+  private resolveHomeDir(): string {
+    return (
+      this.config.env?.HOME ?? this.options.launch?.env?.HOME ?? process.env.HOME ?? os.homedir()
+    );
+  }
+
   private publishConfig(): void {
+    const model = this.config.model;
+    const suffixMatch = model ? /^(gemini-[^]+)-(low|medium|high)$/.exec(model) : null;
+    let defaultEffort: string | undefined;
+    if (suffixMatch) {
+      defaultEffort = suffixMatch[2];
+    } else if (supportsEffort(model)) {
+      defaultEffort = "high";
+    }
+    const inferredEffort = this.config.thinkingOption ?? defaultEffort;
     this.emit({
       type: "session.config",
       sessionId: this.options.id,
       config: {
         model: this.config.model,
         mode: this.config.mode || "full-access",
+        thinkingOption: inferredEffort,
         models: this.options.catalog().models,
         modes: this.options.catalog().modes,
-        thinkingOptions: [],
-        settings: [],
+        thinkingOptions: supportsEffort(model) ? [...GEMINI_THINKING_OPTIONS] : [],
+        settings: [
+          {
+            type: "toggle",
+            id: "sandbox",
+            label: "Sandbox",
+            description: "Run in a sandbox with terminal restrictions enabled (--sandbox)",
+            value: Boolean(this.config.settings?.sandbox),
+          },
+        ],
       },
     });
   }
