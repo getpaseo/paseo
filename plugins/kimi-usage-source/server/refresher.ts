@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-const DEFAULT_INTERVAL_MS = 15_000;
-const DEFAULT_LEAD_MS = 0;
+const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_LEAD_MS = 3 * 60_000;
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
 const MINIMUM_TOKEN_LIFETIME_MS = 60_000;
@@ -236,7 +236,7 @@ export async function refreshKimiCredentialsIfNeeded(
 export function startKimiCredentialRefresh(): () => void {
   const disabled = process.env.PASEO_KIMI_REFRESH_DISABLED === "1";
   const intervalMs = envDuration("PASEO_KIMI_REFRESH_INTERVAL_MS", DEFAULT_INTERVAL_MS, 5_000);
-  const leadMs = envDuration("PASEO_KIMI_REFRESH_LEAD_MS", DEFAULT_LEAD_MS, 0);
+  const leadMs = envDuration("PASEO_KIMI_REFRESH_LEAD_MS", DEFAULT_LEAD_MS, 30_000);
   const abort = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   let running = false;
