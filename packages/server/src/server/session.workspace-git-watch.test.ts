@@ -12,6 +12,7 @@ import type pino from "pino";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { Session, type SessionOptions } from "./session.js";
+import { WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS } from "./session.js";
 import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
@@ -1497,6 +1498,45 @@ describe("live workspace observation", () => {
     });
 
     await session.cleanup();
+  });
+
+  test("does not retry a failed warm-up read on every reconcile", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const failingCwd = "/tmp/failing-workspace";
+      const { session, projects, workspaces, workspaceGitService } =
+        createSessionForWorkspaceGitWatchTests();
+      workspaceGitService.getSnapshot.mockImplementation(async () => {
+        throw new Error("git failed");
+      });
+      seedGitWorkspace({
+        projects,
+        workspaces,
+        projectId: "proj-1",
+        workspaceId: "ws-failing",
+        cwd: failingCwd,
+        name: "failing",
+        updatedAt: OLD,
+      });
+
+      await session.handleMessage({
+        type: "fetch_workspaces_request",
+        requestId: "workspace-list",
+        subscribe: { subscriptionId: "workspace-list" },
+      });
+      await vi.waitFor(() => expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1));
+
+      await reconcileObservers(session);
+      expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(Date.now() + WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS + 1_000);
+      await reconcileObservers(session);
+      expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(2);
+
+      await session.cleanup();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("adds and drops a workspace's watch as its last terminal comes and goes", async () => {
