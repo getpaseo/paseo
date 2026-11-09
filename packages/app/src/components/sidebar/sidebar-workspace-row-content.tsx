@@ -35,6 +35,11 @@ import {
   SidebarWorkspaceArchiveButton,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { bySizing } from "@/components/ui/control-geometry";
+import {
+  SidebarWorkspaceTabsDisclosure,
+  TABS_DISCLOSURE_POINTER_FOOTPRINT,
+} from "@/components/sidebar/workspace-tabs/disclosure";
 
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -334,6 +339,16 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     alignItems: "flex-end",
     justifyContent: "flex-start",
   },
+  // Touch: the kebab's 18 plus the disclosure's 32pt box beside it. Pointer only reserves for
+  // trailing content, and the disclosure overlays the title on hover there instead.
+  trailingActionSlotReservedWithTabsDisclosure: {
+    position: "relative",
+    minWidth: bySizing({ touch: 18 + 32, pointer: 18 }),
+    minHeight: 20,
+    flexShrink: 0,
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+  },
   trailingActionOverlay: {
     position: "absolute",
     top: 0,
@@ -411,23 +426,25 @@ export function resolveTrailingActionVisibility({
   };
 }
 
+function trailingActionSlotStyle(reserveWidth: boolean, reserveTabsDisclosure: boolean) {
+  if (!reserveWidth) return sidebarWorkspaceRowStyles.trailingActionSlot;
+  return reserveTabsDisclosure
+    ? sidebarWorkspaceRowStyles.trailingActionSlotReservedWithTabsDisclosure
+    : sidebarWorkspaceRowStyles.trailingActionSlotReserved;
+}
+
 export function SidebarWorkspaceTrailingActionSlot({
   reserveWidth,
+  reserveTabsDisclosure = false,
   children,
 }: {
   reserveWidth: boolean;
+  /** The overlay carries the tabs disclosure, which a reserved touch slot makes room for. */
+  reserveTabsDisclosure?: boolean;
   children: ReactNode;
 }) {
   return (
-    <View
-      style={
-        reserveWidth
-          ? sidebarWorkspaceRowStyles.trailingActionSlotReserved
-          : sidebarWorkspaceRowStyles.trailingActionSlot
-      }
-    >
-      {children}
-    </View>
+    <View style={trailingActionSlotStyle(reserveWidth, reserveTabsDisclosure)}>{children}</View>
   );
 }
 
@@ -451,6 +468,7 @@ export function SidebarWorkspaceTrailingActionOverlay({
   scrimBackdrop,
   workspaceKey,
   onArchiveButtonPress,
+  showTabsDisclosure = false,
   children,
 }: {
   visible: boolean;
@@ -462,19 +480,27 @@ export function SidebarWorkspaceTrailingActionOverlay({
    * the scrim widens to cover it rather than the slot reserving its width.
    */
   onArchiveButtonPress?: () => void;
+  /**
+   * The row's tabs disclosure, leftmost. On touch it is permanent like the kebab, so the slot
+   * reserves its width (`reserveTabsDisclosure`); on pointer it overlays the title on hover.
+   */
+  showTabsDisclosure?: boolean;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
+  const archiveFootprint = onArchiveButtonPress ? ARCHIVE_BUTTON_FOOTPRINT : 0;
+  const disclosureFootprint = showTabsDisclosure ? TABS_DISCLOSURE_POINTER_FOOTPRINT : 0;
   return (
     <>
       {scrimBackdrop ? (
         <TrailingActionScrim
           backdrop={scrimBackdrop}
-          width={onArchiveButtonPress ? SCRIM_WIDTH + ARCHIVE_BUTTON_FOOTPRINT : SCRIM_WIDTH}
+          width={SCRIM_WIDTH + archiveFootprint + disclosureFootprint}
           testID="sidebar-workspace-trailing-scrim"
         />
       ) : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>
+        {showTabsDisclosure ? <SidebarWorkspaceTabsDisclosure workspaceKey={workspaceKey} /> : null}
         {onArchiveButtonPress ? (
           <SidebarWorkspaceArchiveButton
             workspaceKey={workspaceKey}

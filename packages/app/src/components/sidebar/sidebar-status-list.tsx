@@ -19,6 +19,7 @@ import {
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
@@ -740,6 +741,12 @@ function StatusWorkspaceRowWithMenu({
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
       />
+      <SidebarWorkspaceTabs
+        serverId={workspace.serverId}
+        workspaceId={workspace.workspaceId}
+        workspaceKey={workspace.workspaceKey}
+        inStatusGroup={inStatusGroup}
+      />
       <WorkspaceRenameModal
         visible={isRenameOpen}
         workspace={workspace}
@@ -1023,7 +1030,7 @@ function StatusWorkspaceActionSlot({
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
   return (
-    <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth}>
+    <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth} reserveTabsDisclosure>
       <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
         <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
       </SidebarWorkspaceTrailingActionBase>
@@ -1032,6 +1039,7 @@ function StatusWorkspaceActionSlot({
         scrimBackdrop={showScrim ? backdrop : undefined}
         workspaceKey={workspace.workspaceKey}
         onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
+        showTabsDisclosure
       >
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu
