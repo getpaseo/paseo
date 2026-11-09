@@ -2269,7 +2269,8 @@ export class HostRuntimeStore {
     const { client, hostname } = await this.deps.connectToDaemon({
       host: probeHost,
       connection,
-      pairingToken: offer.pairingToken,
+      // An entered password wins; a rejected single-use token would fail every retry.
+      pairingToken: password ? undefined : offer.pairingToken,
     });
     const profile = await this.upsertHostConnection({
       serverId: offer.serverId,

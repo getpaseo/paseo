@@ -565,6 +565,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly socketCredentials = new Map<object, string>();
+  private readonly revokedSockets = new WeakSet<WebSocketLike>();
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
@@ -1676,6 +1677,8 @@ export class VoiceAssistantWebSocketServer {
               for (const [socket] of this.sessions) {
                 const id = this.socketCredentials.get(socket);
                 if (!id || this.deviceCredentials!.has(id)) continue;
+                // Drop frames now; a peer can ignore the close handshake and keep sending.
+                this.revokedSockets.add(socket);
                 this.hostLinks.get(socket)?.close("permission_denied");
                 this.hostLinks.delete(socket);
                 socket.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Credential revoked");
@@ -2639,16 +2642,19 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private dropsInbound(ws: WebSocketLike): boolean {
+    return (
+      this.revokedSockets.has(ws) ||
+      this.connectionLifecycle === "stopping" ||
+      (this.connectionLifecycle === "starting" && !this.pluginSocketIds.has(ws))
+    );
+  }
+
   private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
   ): void {
-    if (
-      this.connectionLifecycle === "stopping" ||
-      (this.connectionLifecycle === "starting" && !this.pluginSocketIds.has(ws))
-    ) {
-      return;
-    }
+    if (this.dropsInbound(ws)) return;
 
     this.applicationSocketLease.renew(ws);
 
