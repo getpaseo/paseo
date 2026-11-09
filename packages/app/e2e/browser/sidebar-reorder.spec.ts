@@ -77,7 +77,75 @@ async function dragWithoutReordering(rows: Locator): Promise<void> {
   await expect.poll(() => rowTestIds(rows)).toEqual(before);
 }
 
-test("projects and pinned chats reorder while ordinary workspaces stay newest first", async ({
+test("project sections follow the workspace sort across Created and Last prompt", async ({
+  page,
+}) => {
+  const firstProject = await seedWorkspace({ repoPrefix: "sidebar-sort-section-first-" });
+  const secondProject = await seedWorkspace({ repoPrefix: "sidebar-sort-section-second-" });
+
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+
+    const firstAgent = await firstProject.client.createAgent({
+      provider: "mock",
+      cwd: firstProject.repoPath,
+      workspaceId: firstProject.workspaceId,
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+      title: "First section agent",
+    });
+    const secondAgent = await secondProject.client.createAgent({
+      provider: "mock",
+      cwd: secondProject.repoPath,
+      workspaceId: secondProject.workspaceId,
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+      title: "Second section agent",
+    });
+
+    const firstProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(firstProject.projectKey)}`;
+    const secondProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(secondProject.projectKey)}`;
+    const sections = page.locator(
+      `[data-testid="${firstProjectTestId}"], [data-testid="${secondProjectTestId}"]`,
+    );
+
+    // Created seeds both projects in order, so the later section starts on top.
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+
+    // Last prompt falls back to creation time until a human prompt lands.
+    await selectWorkspaceSort(page, "Last prompt");
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+    await promptWorkspace(firstProject, firstAgent.id);
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([firstProjectTestId, secondProjectTestId]);
+    await promptWorkspace(secondProject, secondAgent.id);
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+
+    // Switching modes re-answers the question without leaking the other rule.
+    await selectWorkspaceSort(page, "Created");
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+    await selectWorkspaceSort(page, "Last prompt");
+    await promptWorkspace(firstProject, firstAgent.id);
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([firstProjectTestId, secondProjectTestId]);
+  } finally {
+    await firstProject.cleanup();
+    await secondProject.cleanup();
+  }
+});
+
+test("Manual sorts keep project and pinned chat drag order while automatic sorts stay put", async ({
   page,
 }) => {
   const firstProject = await seedWorkspace({ repoPrefix: "sidebar-reorder-first-" });
@@ -101,10 +169,10 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
 
     const firstProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(firstProject.projectKey)}`;
     const secondProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(secondProject.projectKey)}`;
-    await quickDragFirstRowAfterSecond(
-      page.locator(`[data-testid="${firstProjectTestId}"], [data-testid="${secondProjectTestId}"]`),
-      pressProjectRow,
+    const sections = page.locator(
+      `[data-testid="${firstProjectTestId}"], [data-testid="${secondProjectTestId}"]`,
     );
+
     const firstWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${firstProject.workspaceId}`;
     const secondWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondWorkspace.workspace.id}`;
     const ordinaryRows = page.locator(
@@ -115,6 +183,34 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
       .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
     await dragWithoutReordering(ordinaryRows);
 
+    const firstAgent = await firstProject.client.createAgent({
+      provider: "mock",
+      cwd: firstProject.repoPath,
+      workspaceId: firstProject.workspaceId,
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+      title: "First reorder agent",
+    });
+
+    // Manual unlocks the saved arrangement; automatic sorts override it again.
+    await selectWorkspaceSort(page, "Manual");
+    await quickDragFirstRowAfterSecond(sections, pressProjectRow);
+    await reconnectSidebar(page);
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+
+    await promptWorkspace(firstProject, firstAgent.id);
+    await selectWorkspaceSort(page, "Last prompt");
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([firstProjectTestId, secondProjectTestId]);
+    await selectWorkspaceSort(page, "Manual");
+    await expect
+      .poll(() => rowTestIds(sections))
+      .toEqual([secondProjectTestId, firstProjectTestId]);
+
+    await selectWorkspaceSort(page, "Created");
     await firstProject.client.setWorkspacePinned(firstProject.workspaceId, true);
     await secondProject.client.setWorkspacePinned(secondProject.workspaceId, true);
     const secondProjectWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondProject.workspaceId}`;

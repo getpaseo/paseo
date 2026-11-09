@@ -255,14 +255,22 @@ export function composeWorkspaceStructure(input: {
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
   workspaceOrderByProject?: Readonly<Record<string, string[]>>;
+  workspaceSort?: WorkspaceSort;
 }): WorkspaceStructure {
   if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
   }
 
+  // A stored arrangement is a Manual-sort answer. Automatic sorts decide section order from
+  // workspace recency, so the arrangement must not override it; callers that don't sort keep it.
+  const storedProjectOrder =
+    input.workspaceSort === undefined || input.workspaceSort === "manual"
+      ? input.projectOrder
+      : EMPTY_WORKSPACE_KEYS;
+
   const orderedProjects = applyStoredOrdering({
     items: input.projects,
-    storedOrder: input.projectOrder,
+    storedOrder: storedProjectOrder,
     getKey: (project) => project.viewKey,
   });
 

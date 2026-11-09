@@ -224,3 +224,89 @@ test("time ties use workspace identity so renaming cannot move Created rows", ()
     buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" })[0].workspaceKeys,
   ).toEqual(["h:a", "h:b"]);
 });
+
+test("automatic sorts order project sections by their most recent workspace", () => {
+  const stale = project({ id: "stale", key: "stale", root: "/stale", name: "stale" });
+  const fresh = project({ id: "fresh", key: "fresh", root: "/fresh", name: "fresh" });
+  const sessions = [
+    {
+      serverId: "h",
+      projects: [stale, fresh],
+      workspaces: [
+        {
+          ...workspace("ws-stale", "stale", "/stale"),
+          createdAt: new Date("2026-01-01"),
+          lastUserMessageAt: new Date("2026-01-02"),
+        },
+        {
+          ...workspace("ws-fresh", "fresh", "/fresh"),
+          createdAt: new Date("2026-02-01"),
+          lastUserMessageAt: new Date("2026-03-01"),
+        },
+      ],
+    },
+  ];
+
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "lastPrompt" }).map(
+      (item) => item.viewKey,
+    ),
+  ).toEqual(["fresh", "stale"]);
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" }).map(
+      (item) => item.viewKey,
+    ),
+  ).toEqual(["fresh", "stale"]);
+
+  // Once a project's workspace was prompted more recently, the sections follow.
+  sessions[0].workspaces = [sessions[0].workspaces[0]];
+  sessions[0].workspaces[0].lastUserMessageAt = new Date("2026-04-01");
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "lastPrompt" }).map(
+      (item) => item.viewKey,
+    ),
+  ).toEqual(["stale", "fresh"]);
+});
+
+test("projects without workspaces keep name order below prompted ones", () => {
+  const empty = project({ id: "empty", key: "empty", root: "/empty", name: "aaa-empty" });
+  const idle = project({ id: "idle", key: "idle", root: "/idle", name: "zzz-idle" });
+  const sessions = [
+    {
+      serverId: "h",
+      projects: [empty, idle],
+      workspaces: [{ ...workspace("ws-idle", "idle", "/idle"), createdAt: new Date("2026-01-01") }],
+    },
+  ];
+
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" }).map(
+      (item) => item.viewKey,
+    ),
+  ).toEqual(["idle", "empty"]);
+  expect(buildWorkspaceStructureProjects({ sessions }).map((item) => item.viewKey)).toEqual([
+    "empty",
+    "idle",
+  ]);
+});
+
+test("manual sort keeps name order for project sections", () => {
+  const zeta = project({ id: "zeta", key: "zeta", root: "/zeta", name: "zeta" });
+  const alpha = project({ id: "alpha", key: "alpha", root: "/alpha", name: "alpha" });
+  const sessions = [
+    {
+      serverId: "h",
+      projects: [zeta, alpha],
+      workspaces: [
+        { ...workspace("ws-zeta", "zeta", "/zeta"), createdAt: new Date("2026-02-01") },
+        { ...workspace("ws-alpha", "alpha", "/alpha"), createdAt: new Date("2026-01-01") },
+      ],
+    },
+  ];
+
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "manual" }).map(
+      (item) => item.viewKey,
+    ),
+  ).toEqual(["alpha", "zeta"]);
+});

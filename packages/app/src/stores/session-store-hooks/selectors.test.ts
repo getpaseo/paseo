@@ -664,3 +664,39 @@ it("applies manual order only when requested without mutating the automatic base
     "h:a",
   ]);
 });
+
+it("stored project order shapes sections only without an automatic sort", () => {
+  const makeProject = (viewKey: string) => ({
+    viewKey,
+    projectKey: viewKey,
+    projectName: viewKey,
+    projectKind: "git" as const,
+    iconWorkingDir: `/${viewKey}`,
+    hosts: [],
+    workspaceKeys: [`h:${viewKey}`],
+  });
+  // The structure already answered the automatic question: fresh first. The stored
+  // arrangement predates it and still has stale on top.
+  const projects = [makeProject("fresh"), makeProject("stale")];
+  const input = { projects, projectOrder: ["stale", "fresh"] };
+
+  expect(composeWorkspaceStructure(input).projects.map((project) => project.viewKey)).toEqual([
+    "stale",
+    "fresh",
+  ]);
+  expect(
+    composeWorkspaceStructure({ ...input, workspaceSort: "manual" }).projects.map(
+      (project) => project.viewKey,
+    ),
+  ).toEqual(["stale", "fresh"]);
+  expect(
+    composeWorkspaceStructure({ ...input, workspaceSort: "created" }).projects.map(
+      (project) => project.viewKey,
+    ),
+  ).toEqual(["fresh", "stale"]);
+  expect(
+    composeWorkspaceStructure({ ...input, workspaceSort: "lastPrompt" }).projects.map(
+      (project) => project.viewKey,
+    ),
+  ).toEqual(["fresh", "stale"]);
+});

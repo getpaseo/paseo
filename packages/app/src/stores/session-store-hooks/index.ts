@@ -127,8 +127,9 @@ export function useWorkspaceStructure(
         projects,
         projectOrder,
         workspaceOrderByProject,
+        workspaceSort,
       }),
-    [projectOrder, projects, workspaceOrderByProject],
+    [projectOrder, projects, workspaceOrderByProject, workspaceSort],
   );
 }
 
