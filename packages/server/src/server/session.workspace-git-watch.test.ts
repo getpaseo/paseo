@@ -30,6 +30,7 @@ import {
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import type { WorkspaceGitObserverService } from "./session/workspace-git-observer/workspace-git-observer-service.js";
 import { WORKSPACE_LIVENESS_WINDOW_MS } from "./session/workspace-git-observer/workspace-liveness.js";
+import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 
 interface SessionInternals {
   buildWorkspaceDescriptorMap: () => Promise<Map<string, unknown>>;
@@ -137,6 +138,12 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     lifecycle: "initializing" | "idle" | "running" | "error" | "closed";
     labels: Record<string, string>;
   }>;
+  storedAgents?: Array<{
+    id: string;
+    workspaceId?: string;
+    labels: Record<string, string>;
+    archivedAt?: string | null;
+  }>;
   terminalManager?: SessionOptions["terminalManager"];
   workspaceRuntimeStore?: ReturnType<typeof createWorkspaceRuntimeStore>;
   autoArchiveAfterMerge?: boolean;
@@ -227,8 +234,8 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       getAgent: () => null,
     }),
     agentStorage: createStub<SessionOptions["agentStorage"]>({
-      listAll: async () => [],
-      listActive: async () => [],
+      listAll: async () => options?.storedAgents ?? [],
+      listActive: async () => (options?.storedAgents ?? []).filter((record) => !record.archivedAt),
       listByWorkspaces: async () => [],
       lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
       get: async () => null,
@@ -1110,6 +1117,53 @@ describe("live workspace observation", () => {
 
     expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]);
     expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
+
+    await session.cleanup();
+  });
+
+  test("a tab left open by a collected runtime keeps its workspace watched", async () => {
+    const tabLabels = { [getOpenAgentTabLabel("client-1")]: "true" };
+    const tabCwd = "/tmp/tab-workspace";
+    const agents: Array<{
+      workspaceId?: string;
+      lifecycle: "initializing" | "idle" | "running" | "error" | "closed";
+      labels: Record<string, string>;
+    }> = [{ workspaceId: "ws-tab", lifecycle: "running", labels: tabLabels }];
+    const { session, projects, workspaces, workspaceGitService, agentEventListeners } =
+      createSessionForWorkspaceGitWatchTests({
+        agents,
+        storedAgents: [{ id: "agent-tab", workspaceId: "ws-tab", labels: tabLabels }],
+      });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-tab",
+      cwd: tabCwd,
+      name: "tab",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([tabCwd]);
+
+    // The idle clock collects the runtime. The tab stays open, and its label survives on the
+    // stored record, so the workspace is still live without a loaded agent.
+    agents.length = 0;
+    for (const listener of agentEventListeners) {
+      listener({
+        type: "agent_state",
+        agent: { id: "agent-tab", workspaceId: "ws-tab", lifecycle: "closed", labels: tabLabels },
+      });
+    }
+    await reconcileObservers(session);
+
+    expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
+    expect(watchedCwds(workspaceGitService)).toEqual([tabCwd]);
 
     await session.cleanup();
   });
