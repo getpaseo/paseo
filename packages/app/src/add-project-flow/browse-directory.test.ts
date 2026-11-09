@@ -74,6 +74,24 @@ describe("browseForProjectDirectory", () => {
     expect(updates).toEqual([{ projects: { lastBrowseDirectory: "/Users/me/Developer" } }]);
   });
 
+  it.each([
+    ["a POSIX root", "/", "/"],
+    ["a directory directly under the POSIX root", "/srv", "/"],
+    ["a POSIX name containing a backslash", "/Users/me/app\\demo", "/Users/me"],
+    ["a Windows drive root", "C:\\", "C:\\"],
+    ["a directory directly under a drive root", "C:\\foo", "C:\\"],
+    ["a nested Windows directory", "C:\\Users\\me\\app", "C:\\Users\\me"],
+    ["a UNC share root", "\\\\server\\share", "\\\\server\\share"],
+    ["a directory directly under a UNC share", "\\\\server\\share\\app", "\\\\server\\share\\"],
+  ])("remembers the right folder for %s", async (_name, picked, remembered) => {
+    const { dialog } = createDialog(picked);
+    const { updates, updateSettings } = createSettingsRecorder();
+
+    await browseForProjectDirectory({ projects: NO_DIRECTORIES, updateSettings, dialog });
+
+    expect(updates).toEqual([{ projects: { lastBrowseDirectory: remembered } }]);
+  });
+
   it("does not rewrite the last folder when it has not changed", async () => {
     const { dialog } = createDialog("/Users/me/Developer/app");
     const { updates, updateSettings } = createSettingsRecorder();
