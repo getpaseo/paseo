@@ -1,3 +1,4 @@
+import { DAEMON_PERMISSIONS } from "@getpaseo/protocol/messages";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppStateStatus } from "react-native";
 import {
@@ -55,6 +56,26 @@ it("requests the managed connection credential through desktop main without a we
 class FakeDaemonClient {
   supportsBackgroundWorkspaces(): boolean {
     return false;
+  }
+  deviceCredentials = false;
+  credentialPermissions: readonly (typeof DAEMON_PERMISSIONS)[number][] = [];
+  issuedCredentials = 0;
+  savedDeviceCredential: HostProfile["deviceCredential"];
+  async issueDeviceCredential() {
+    this.issuedCredentials++;
+    return {
+      requestId: "test-issue",
+      credential: {
+        id: "dc_runtime",
+        secret: "test-secret",
+        label: "test",
+        createdAt: "2026-11-10T00:00:00.000Z",
+      },
+      error: null,
+    };
+  }
+  setDeviceCredential(credential: HostProfile["deviceCredential"]) {
+    this.savedDeviceCredential = credential;
   }
   relaySecurityFloor: "legacy" | "protected" | undefined = undefined;
   private state: ConnectionState = { status: "idle" };
@@ -188,7 +209,9 @@ class FakeDaemonClient {
       serverId: "srv_test",
       hostname: "test",
       version: this.daemonVersion,
+      permissions: [...this.credentialPermissions],
       features: {
+        deviceCredentials: this.deviceCredentials,
         ownedSubscriptions: this.ownedSubscriptions,
         connectedHosts: this.connectedHosts,
       },
@@ -5164,3 +5187,44 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
     expect(store.getHosts()).toHaveLength(0);
   });
 });
+
+it.each(["directTcp", "routed"] as const)(
+  "enrolls an admitted %s host once without reconnecting",
+  async (type) => {
+    const connection: HostConnection =
+      type === "routed"
+        ? { id: "via:origin", type: "routed", originServerId: "srv_origin" }
+        : { id: "direct:fixture", type: "directTcp", endpoint: "localhost:7777" };
+    const host = makeHost({ connections: [connection], preferredConnectionId: connection.id });
+    const clients: FakeDaemonClient[] = [];
+    const deps = makeDeps({}, clients);
+    const originalCreate = deps.createClient;
+    deps.createClient = (input) => {
+      const client = originalCreate(input);
+      const fake = clients[clients.length - 1]!;
+      fake.deviceCredentials = true;
+      fake.credentialPermissions = DAEMON_PERMISSIONS;
+      return client;
+    };
+    const saved = createDeferred<HostProfile["deviceCredential"]>();
+    const controller = new HostRuntimeController({
+      host,
+      deps,
+      onDeviceCredentialChanged: async (credential) => {
+        saved.resolve(credential);
+      },
+    });
+    try {
+      await controller.activateConnection({ connectionId: connection.id });
+      const credential = await saved.promise;
+      expect(credential).toEqual({ id: "dc_runtime", secret: "test-secret" });
+      await controller.updateHost({ ...host, deviceCredential: credential });
+      clients[0]!.daemonRestartsAs("0.15.4");
+      expect(clients).toHaveLength(1);
+      expect(clients[0]!.issuedCredentials).toBe(1);
+      expect(clients[0]!.connectCalls).toBe(1);
+    } finally {
+      await controller.stop();
+    }
+  },
+);

@@ -1,3 +1,6 @@
+import Constants from "expo-constants";
+import { Platform } from "react-native";
+import { DAEMON_PERMISSIONS } from "@getpaseo/protocol/messages";
 import { createHostPluginClientBundleStore } from "@/plugins/client-bundles";
 import { watchdog } from "@/watchdog";
 import { createHostLogger } from "./host-logger";
@@ -208,6 +211,7 @@ export interface HostRuntimeControllerDeps {
     runtimeGeneration: number;
   }) => DaemonClient;
   connectToDaemon: (input: {
+    pairingToken?: string;
     host: HostProfile;
     connection: HostConnection;
     timeoutMs?: number;
@@ -594,6 +598,17 @@ function createDefaultDeps(
         providerSnapshots: "wire",
         createPluginClientBundleStore: createHostPluginClientBundleStore,
         ...(host.password ? { password: host.password } : {}),
+        deviceCredential: connection.type === "routed" ? undefined : host.deviceCredential,
+        onDeviceCredentialRejected: () => {
+          void getHostRuntimeStore()
+            .setHostDeviceCredential(host.serverId, undefined)
+            .catch(() => {
+              createHostLogger(() => host.serverId).warn(
+                {},
+                "Failed to remove revoked device credential",
+              );
+            });
+        },
         localCredential: () => readDesktopManagedLocalCredential(connection),
       } satisfies Omit<DaemonClientConfig, "url">;
       if (connection.type === "routed") {
@@ -656,7 +671,7 @@ function createDefaultDeps(
         },
       });
     },
-    connectToDaemon: async ({ host, connection, timeoutMs }) => {
+    connectToDaemon: async ({ host, connection, timeoutMs, pairingToken }) => {
       if (connection.type === "routed") {
         const origin = resolveOrigin(connection.originServerId);
         if (!origin?.isConnected)
@@ -684,8 +699,20 @@ function createDefaultDeps(
         }
       }
       return connectToDaemon(connection, {
+        pairingToken,
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(host.password ? { password: host.password } : {}),
+        deviceCredential: host.deviceCredential,
+        onDeviceCredentialRejected: () => {
+          void getHostRuntimeStore()
+            .setHostDeviceCredential(host.serverId, undefined)
+            .catch(() => {
+              createHostLogger(() => host.serverId).warn(
+                {},
+                "Failed to remove revoked device credential",
+              );
+            });
+        },
         localCredential: () => readDesktopManagedLocalCredential(connection),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
@@ -738,14 +765,20 @@ export class HostRuntimeController {
   private probeRequestVersion = 0;
   private probeCycleInFlight: Promise<void> | null = null;
   private readonly authRejectedConnectionIds = new Set<string>();
+  private readonly enrollmentAttempts = new WeakSet<DaemonClient>();
+  private readonly onDeviceCredentialChanged:
+    | ((credential: HostProfile["deviceCredential"]) => Promise<void>)
+    | null;
 
   constructor(input: {
     host: HostProfile;
     deps?: HostRuntimeControllerDeps;
+    onDeviceCredentialChanged?: (credential: HostProfile["deviceCredential"]) => Promise<void>;
     onReconcileServerId?: (oldId: string, newId: string) => void;
     onRelayProtectedSecurityNegotiated?: (input: RelaySecurityPin) => void;
   }) {
     this.host = input.host;
+    this.onDeviceCredentialChanged = input.onDeviceCredentialChanged ?? null;
     this.deps = input.deps ?? createDefaultDeps();
     this.onReconcileServerId = input.onReconcileServerId ?? null;
     this.onRelayProtectedSecurityNegotiated = input.onRelayProtectedSecurityNegotiated ?? null;
@@ -1526,7 +1559,10 @@ export class HostRuntimeController {
           void failConnection(new DaemonAuthenticationError(client.authFailureReason));
           return;
         }
-        if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
+        if (state.status === "connected") {
+          this.learnRelaySecurity(client, connection.id);
+          void this.enrollDevice(client);
+        }
         // Switch evidence belongs to the socket it was measured against.
         if (state.status !== "connected") this.resetSwitchCandidate();
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
@@ -1539,6 +1575,27 @@ export class HostRuntimeController {
       });
     } catch (error) {
       await failConnection(error);
+    }
+  }
+
+  private async enrollDevice(client: DaemonClient): Promise<void> {
+    const info = client.getLastServerInfoMessage();
+    const canIssue =
+      info?.features?.deviceCredentials &&
+      DAEMON_PERMISSIONS.every((permission) => info.permissions?.includes(permission));
+    if (!canIssue || this.host.deviceCredential || this.enrollmentAttempts.has(client)) return;
+    this.enrollmentAttempts.add(client);
+    try {
+      const label = `${Constants.deviceName ?? "Paseo"} (${Platform.OS})`;
+      const result = await client.issueDeviceCredential(label);
+      if (!result.credential) return;
+      const { id, secret } = result.credential;
+      const deviceCredential = { id, secret };
+      await this.onDeviceCredentialChanged?.(deviceCredential);
+      this.host = { ...this.host, deviceCredential };
+      client.setDeviceCredential(deviceCredential);
+    } catch {
+      createHostLogger(() => this.host.serverId).warn({}, "Failed to save device credential");
     }
   }
 
@@ -2156,7 +2213,9 @@ export class HostRuntimeStore {
     if (target === "openProject") {
       const { offer, password } = parseOfferConnectionUrl(url);
       if (!(await this.confirmLink(offer))) return { status: "cancelled" };
-      const profile = await this.upsertConnectionFromOffer(offer, undefined, password);
+      const profile = offer.pairingToken
+        ? (await this.probeAndUpsertOffer(offer, password)).profile
+        : await this.upsertConnectionFromOffer(offer, undefined, password);
       return { status: "connected", serverId: profile.serverId };
     }
     const pairing = this.beginLinkPairing();
@@ -2207,9 +2266,18 @@ export class HostRuntimeStore {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    const { client, hostname } = await this.deps.connectToDaemon({ host: probeHost, connection });
-    await client.close().catch(() => undefined);
-    const profile = await this.upsertConnectionFromOffer(offer, hostname ?? undefined, password);
+    const { client, hostname } = await this.deps.connectToDaemon({
+      host: probeHost,
+      connection,
+      pairingToken: offer.pairingToken,
+    });
+    const profile = await this.upsertHostConnection({
+      serverId: offer.serverId,
+      connection,
+      label: hostname ?? undefined,
+      password,
+      existingClient: client,
+    });
     return { profile, serverId: offer.serverId, hostname };
   }
 
@@ -2251,6 +2319,13 @@ export class HostRuntimeStore {
     );
     this.setHostsAndSync(next);
     await this.persistHosts();
+  }
+
+  async setHostDeviceCredential(
+    serverId: string,
+    deviceCredential: HostProfile["deviceCredential"],
+  ): Promise<void> {
+    await this.updateHost(serverId, (host) => ({ ...host, deviceCredential }));
   }
 
   async renameHost(serverId: string, label: string): Promise<void> {
@@ -2449,6 +2524,8 @@ export class HostRuntimeStore {
       const controller = new HostRuntimeController({
         host,
         deps: this.deps,
+        onDeviceCredentialChanged: (credential) =>
+          this.setHostDeviceCredential(host.serverId, credential),
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
         onRelayProtectedSecurityNegotiated: (pin) => void this.pinRelayProtectedSecurity(pin),
       });

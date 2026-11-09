@@ -256,10 +256,7 @@ function compatibleBearerPassword(password: string | null): string | null {
   return password && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(password) ? password : null;
 }
 
-type HelloAuth =
-  | { kind: "password"; password: string }
-  | { kind: "localCredential"; token: string }
-  | undefined;
+type HelloAuth = import("@getpaseo/protocol/messages").WSHelloMessage["auth"];
 
 export type DaemonAuthFailureReason = "password_required" | "incorrect_password";
 
@@ -291,12 +288,16 @@ function chooseConnectionAuth(
   const password = normalizePassword(config.password);
   let helloAuth: HelloAuth;
   if (localCredential) helloAuth = { kind: "localCredential", token: localCredential };
+  else if (config.pairingToken) helloAuth = { kind: "pairingToken", token: config.pairingToken };
+  else if (config.deviceCredential)
+    helloAuth = { kind: "deviceCredential", ...config.deviceCredential };
   else if (password) helloAuth = { kind: "password", password };
   const headers: Record<string, string> = {};
-  const compatibleBearer = localCredential ? null : compatibleBearerPassword(password);
+  const helloOnly = localCredential || config.deviceCredential || config.pairingToken;
+  const compatibleBearer = helloOnly ? null : compatibleBearerPassword(password);
   // COMPAT(headerAuth): added in v0.9.1, remove after 2027-03-24.
   if (compatibleBearer) headers.Authorization = `Bearer ${compatibleBearer}`;
-  else if (!localCredential && config.authHeader) headers.Authorization = config.authHeader;
+  else if (!helloOnly && config.authHeader) headers.Authorization = config.authHeader;
   return {
     helloAuth,
     headers,
@@ -445,6 +446,9 @@ export interface DaemonClientConfig {
   appVersion?: string;
   runtimeGeneration?: number | null;
   password?: string;
+  deviceCredential?: Pick<Extract<HelloAuth, { kind: "deviceCredential" }>, "id" | "secret">;
+  pairingToken?: string;
+  onDeviceCredentialRejected?: () => void;
   localCredential?: () => string | undefined | Promise<string | undefined>;
   authHeader?: string;
   suppressSendErrors?: boolean;
@@ -818,6 +822,7 @@ export interface DaemonStatusOptions {
   timeout?: number;
 }
 export interface DaemonPairingOfferOptions {
+  includePairingToken?: boolean;
   requestId?: string;
   timeout?: number;
 }
@@ -1698,6 +1703,22 @@ export class DaemonClient {
             this.pendingGenericTransportErrorTimeout = null;
           }
           this.authFailureReasonValue ??= authFailureFromLegacyClose(event);
+          const invalidHello =
+            event && typeof event === "object" && "code" in event && event.code === 4002;
+          const rejectedDevice =
+            this.helloAuth?.kind === "deviceCredential" &&
+            (this.authFailureReasonValue === "incorrect_password" || invalidHello);
+          if (rejectedDevice) {
+            this.config.deviceCredential = undefined;
+            this.config.onDeviceCredentialRejected?.();
+            this.helloAuth = undefined;
+            this.authFailureReasonValue = null;
+            this.lastErrorValue = null;
+            this.disposeTransport();
+            this.updateConnectionState({ status: "disconnected" });
+            void this.attemptConnect();
+            return;
+          }
           // An endpoint security policy close cannot be fixed by retrying.
           const securityFailure = describeEndpointSecurityClose(event);
           if (securityFailure) this.setReconnectEnabled(false);
@@ -6100,6 +6121,44 @@ export class DaemonClient {
     });
   }
 
+  setDeviceCredential(credential: DaemonClientConfig["deviceCredential"]): void {
+    this.config.deviceCredential = credential;
+  }
+
+  private requireDeviceCredentials(): void {
+    if (!this.lastServerInfoMessage?.features?.deviceCredentials) {
+      throw new Error("Update this host to manage device credentials");
+    }
+  }
+
+  async issueDeviceCredential(label: string) {
+    this.requireDeviceCredentials();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "access.device_credentials.issue.request", label },
+      responseType: "access.device_credentials.issue.response",
+    });
+  }
+
+  async listDeviceCredentials() {
+    this.requireDeviceCredentials();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "access.device_credentials.list.request" },
+        responseType: "access.device_credentials.list.response",
+      })
+    ).credentials;
+  }
+
+  async revokeDeviceCredential(id: string) {
+    this.requireDeviceCredentials();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "access.device_credentials.revoke.request", id },
+        responseType: "access.device_credentials.revoke.response",
+      })
+    ).revoked;
+  }
+
   async getDaemonPairingOffer(
     options?: DaemonPairingOfferOptions,
   ): Promise<DaemonPairingOfferPayload> {
@@ -6107,6 +6166,9 @@ export class DaemonClient {
       requestId: options?.requestId,
       message: {
         type: "daemon.get_pairing_offer.request",
+        ...(this.lastServerInfoMessage?.features?.deviceCredentials
+          ? { includePairingToken: options?.includePairingToken }
+          : {}),
       },
       responseType: "daemon.get_pairing_offer.response",
       timeout: options?.timeout,
@@ -7904,6 +7966,7 @@ export class DaemonClient {
           this.chunkedTransport.enabled =
             serverInfo.features?.binaryChunkingV1 === true &&
             this.config.capabilities?.[CLIENT_CAPS.binaryChunkingV1] !== false;
+        this.config.pairingToken = undefined;
         this.lastServerInfoMessage = serverInfo;
         this.destinationServerId = serverInfo.serverId;
         this.connectionFailure = undefined;

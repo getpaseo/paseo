@@ -536,3 +536,40 @@ describe("resolveActiveHostServerId", () => {
     ).toBe("srv_local");
   });
 });
+
+describe("device credential storage", () => {
+  it("retains the revocable credential across registry load and connection upsert", () => {
+    const deviceCredential = { id: "dc_test", secret: "test-secret" };
+    const connection: HostConnection = {
+      id: "direct:test",
+      type: "directTcp",
+      endpoint: "localhost:7777",
+    };
+    const profile = normalizeStoredHostProfile({
+      ...makeHost("srv_device"),
+      connections: [connection],
+      deviceCredential,
+    });
+    expect(profile?.deviceCredential).toEqual(deviceCredential);
+    if (!profile) throw new Error("Profile rejected");
+    const nextCredential = { id: "dc_rotated", secret: "rotated-secret" };
+    const profiles = upsertHostConnectionInProfiles({
+      profiles: [profile],
+      serverId: profile.serverId,
+      connection,
+      deviceCredential: nextCredential,
+    });
+    expect(profiles[0]?.deviceCredential).toEqual(nextCredential);
+    expect(normalizeStoredHostProfile(profiles[0])?.deviceCredential).toEqual(nextCredential);
+  });
+
+  it("rejects an invalid stored credential rather than silently losing it", () => {
+    expect(
+      normalizeStoredHostProfile({
+        ...makeHost("srv_device"),
+        connections: [{ id: "direct:test", type: "directTcp", endpoint: "localhost:7777" }],
+        deviceCredential: { id: "", secret: "x" },
+      }),
+    ).toBeNull();
+  });
+});

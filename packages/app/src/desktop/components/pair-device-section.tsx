@@ -56,11 +56,15 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     queryKey: daemonPairingOfferQueryKey(serverId),
     queryFn: async () => {
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      return client.getDaemonPairingOffer();
+      return client.getDaemonPairingOffer({
+        includePairingToken: serverFeatures?.deviceCredentials === true,
+      });
     },
     enabled: supportsPairingRpc && Boolean(client && isConnected),
     dataShape: "value",
-    staleTimeMs: 5 * 60 * 1000,
+    staleTimeMs: 0,
+    gcTime: 0,
+    refetchInterval: 9 * 60 * 1000,
     retry: 1,
   });
 

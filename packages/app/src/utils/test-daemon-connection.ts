@@ -123,12 +123,29 @@ export function getConnectionAuthFailureReason(error: unknown): DaemonAuthFailur
 function resolveConnectionCredentials(
   connection: HostConnection,
   options:
-    | { password?: string; localCredential?: DaemonClientConfig["localCredential"] }
+    | Pick<
+        DaemonClientConfig,
+        | "password"
+        | "localCredential"
+        | "deviceCredential"
+        | "pairingToken"
+        | "onDeviceCredentialRejected"
+      >
     | undefined,
-): Pick<DaemonClientConfig, "password" | "localCredential"> {
+): Pick<
+  DaemonClientConfig,
+  | "password"
+  | "localCredential"
+  | "deviceCredential"
+  | "pairingToken"
+  | "onDeviceCredentialRejected"
+> {
   const password = options?.password;
   return {
     ...(password ? { password } : {}),
+    deviceCredential: options?.deviceCredential,
+    pairingToken: options?.pairingToken,
+    onDeviceCredentialRejected: options?.onDeviceCredentialRejected,
     ...(options?.localCredential ? { localCredential: options.localCredential } : {}),
   };
 }
@@ -141,6 +158,9 @@ export async function buildClientConfig(
     trace?: DaemonClientConfig["trace"];
     createPluginClientBundleStore?: DaemonClientConfig["createPluginClientBundleStore"];
     password?: string;
+    deviceCredential?: DaemonClientConfig["deviceCredential"];
+    pairingToken?: string;
+    onDeviceCredentialRejected?: () => void;
     localCredential?: DaemonClientConfig["localCredential"];
   } = {},
   deps: Pick<
@@ -292,6 +312,9 @@ interface ProbeOptions {
   serverId?: string;
   timeoutMs?: number;
   password?: string;
+  deviceCredential?: DaemonClientConfig["deviceCredential"];
+  pairingToken?: string;
+  onDeviceCredentialRejected?: () => void;
   localCredential?: DaemonClientConfig["localCredential"];
   capabilities?: DaemonClientConfig["capabilities"];
   trace?: DaemonClientConfig["trace"];
