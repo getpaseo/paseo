@@ -234,6 +234,22 @@ describe("toPluginComposer", () => {
     expect(Object.isFrozen(agent.metadata)).toBe(false);
   });
 
+  it("hands out attachment items a plugin cannot change", () => {
+    const { agent } = fakeAgent("draft");
+    const { input, state } = fakeInput();
+    const handedIn = { ...issue };
+    compose(agent, input).addAttachment({ sourceId: "issues", item: handedIn });
+    // The draft keeps its own copy, so the object the plugin handed in is not the draft's.
+    handedIn.title = "Changed after adding";
+
+    const [attachment] = compose(agent, input).attachments;
+
+    expect(attachment.item).toEqual(issue);
+    expect(Object.isFrozen(attachment.item)).toBe(true);
+    const [stored] = state.attachments;
+    expect(stored.kind === "plugin_resource" && Object.isFrozen(stored.item)).toBe(false);
+  });
+
   it("adds and removes the plugin's own attachments only", () => {
     const { agent } = fakeAgent("agent");
     const other: UserComposerAttachment = {

@@ -35,7 +35,7 @@ export function toPluginComposer(input: {
     prompt: state.prompt,
     attachments: state.attachments.flatMap((attachment) =>
       attachment.kind === "plugin_resource" && attachment.pluginId === plugin.id
-        ? [{ sourceId: attachment.sourceId, item: attachment.item }]
+        ? [{ sourceId: attachment.sourceId, item: cloneAndFreeze(attachment.item) }]
         : [],
     ),
     // Provider options are JSON on the wire.
@@ -59,7 +59,8 @@ export function toPluginComposer(input: {
           sourceTitle: plugin.i18n.resolve(source.title, plugin.locale),
           sourceIcon: source.icon,
         },
-        item,
+        // The draft's own copy: the plugin keeps the object it handed in.
+        { ...item },
       );
       model.changeAttachments((current) =>
         current.some((candidate) => isPluginAttachment(candidate, plugin.id, sourceId, item.id))
