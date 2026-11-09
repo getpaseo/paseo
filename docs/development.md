@@ -593,7 +593,17 @@ rerun passes only by landing elsewhere.
 
 To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
-replace that version in the lockfile and report the URL to npm so they purge it.
+replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
+version in root `overrides`. Report the URL to npm so they purge it.
+
+A lockfile regeneration is itself how new bad versions enter: the pkijs fix re-resolved the
+electron-builder tree and pulled in `semver` 5.7.3 and 6.3.2, published two days earlier, and
+5.7.3 then failed the same way. After editing `overrides`, run `npm install --package-lock-only`
+and check that the changed `resolved` lines in `package-lock.json` are only the ones you meant.
+
+A per-parent override such as `"tiny-async-pool": { "semver": "5.7.2" }` applies to that
+parent's whole subtree, so it can also downgrade a grandchild that needs a different major. Key
+the child by range (`{ "semver@^5": "5.7.2" }`) so only matching edges are replaced.
 
 ## ACP provider catalog versions
 

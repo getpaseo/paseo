@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getAutocompleteFallbackIndex,
   getAutocompleteNextIndex,
@@ -31,38 +31,22 @@ export function useAutocomplete<
   TOption,
   TKeyPressEvent extends AutocompleteKeyPressEvent = AutocompleteKeyPressEvent,
 >(input: UseAutocompleteInput<TOption, TKeyPressEvent>): UseAutocompleteResult<TKeyPressEvent> {
-  const [selectedIndex, setSelectedIndex] = useState(-1);
-  const previousQueryRef = useRef("");
+  // The user's choice, tied to the query it was made for. The shown index is resolved from it
+  // during render, so a list never paints its first frame without a selection: the popover only
+  // measures once a non-empty list has one.
+  const [choice, setChoice] = useState<{ index: number; query: string } | null>(null);
+  const itemCount = input.isVisible ? input.options.length : 0;
+  const selectedIndex = resolveSelectedIndex({
+    choice,
+    query: input.query,
+    itemCount,
+    optionsPosition: input.optionsPosition,
+  });
 
+  // A choice belongs to one search. Until this clears it, the query check above ignores it.
   useEffect(() => {
-    if (!input.isVisible) {
-      previousQueryRef.current = input.query;
-      setSelectedIndex(-1);
-      return;
-    }
-
-    const queryChanged = previousQueryRef.current !== input.query;
-    previousQueryRef.current = input.query;
-
-    setSelectedIndex((current) => {
-      if (input.options.length === 0) {
-        return -1;
-      }
-
-      const fallbackIndex = getAutocompleteFallbackIndex(
-        input.options.length,
-        input.optionsPosition,
-      );
-
-      if (queryChanged) {
-        return fallbackIndex;
-      }
-      if (current < 0 || current >= input.options.length) {
-        return fallbackIndex;
-      }
-      return current;
-    });
-  }, [input.isVisible, input.options.length, input.query, input.optionsPosition]);
+    setChoice(null);
+  }, [input.isVisible, input.query]);
 
   const onKeyPress = useCallback(
     (event: TKeyPressEvent) => {
@@ -70,41 +54,22 @@ export function useAutocomplete<
         return false;
       }
 
-      if (event.key === "ArrowUp") {
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         event.preventDefault();
-        setSelectedIndex((current) =>
-          getAutocompleteNextIndex({
-            currentIndex: current,
+        setChoice({
+          index: getAutocompleteNextIndex({
+            currentIndex: selectedIndex,
             itemCount: input.options.length,
-            key: "ArrowUp",
+            key: event.key,
           }),
-        );
-        return true;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSelectedIndex((current) =>
-          getAutocompleteNextIndex({
-            currentIndex: current,
-            itemCount: input.options.length,
-            key: "ArrowDown",
-          }),
-        );
+          query: input.query,
+        });
         return true;
       }
 
       if (event.key === "Tab" || event.key === "Enter") {
         event.preventDefault();
-        const fallbackIndex = getAutocompleteFallbackIndex(
-          input.options.length,
-          input.optionsPosition,
-        );
-        const resolvedIndex =
-          selectedIndex >= 0 && selectedIndex < input.options.length
-            ? selectedIndex
-            : fallbackIndex;
-        const selectedOption = input.options[resolvedIndex];
+        const selectedOption = input.options[selectedIndex];
         if (selectedOption) {
           input.onSelectOption(selectedOption, event);
         }
@@ -126,4 +91,22 @@ export function useAutocomplete<
     selectedIndex,
     onKeyPress,
   };
+}
+
+function resolveSelectedIndex(input: {
+  choice: { index: number; query: string } | null;
+  query: string;
+  itemCount: number;
+  optionsPosition?: AutocompleteOptionsPosition;
+}): number {
+  const { choice } = input;
+  if (
+    choice &&
+    choice.query === input.query &&
+    choice.index >= 0 &&
+    choice.index < input.itemCount
+  ) {
+    return choice.index;
+  }
+  return getAutocompleteFallbackIndex(input.itemCount, input.optionsPosition);
 }

@@ -1,3 +1,4 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { Modal } from "@/components/ui/modal";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,11 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { isWeb } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import {
-  OverlayLayerProvider,
-  useGlobalWebOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 
@@ -145,7 +142,7 @@ export function HostChooserModal() {
   const inputRef = useRef<EditingTextInputHandle>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && request != null);
+  const modalLayer = useGlobalOverlayLayer("modal", request != null);
 
   const requestHosts = useMemo(() => {
     if (!request) return [];
@@ -186,8 +183,8 @@ export function HostChooserModal() {
     [close, request],
   );
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (
         event.key !== "ArrowDown" &&
         event.key !== "ArrowUp" &&
@@ -227,51 +224,56 @@ export function HostChooserModal() {
     },
     [activeOptionIndex, chooseHost, close, options],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && request != null,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    active: request != null,
     layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
   });
 
   if (!request) return null;
 
   const modal = (
     <Modal visible transparent animationType="fade" onRequestClose={close} testID="host-chooser">
-      <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={close} />
-        <View ref={setWebOverlayScope} style={styles.panel}>
-          <View style={styles.header}>
-            <Text style={styles.title}>{request.title}</Text>
-            <TextInput
-              ref={inputRef}
-              initialValue={query}
-              onChangeText={handleQueryChange}
-              placeholder="Search hosts..."
-              placeholderTextColor={theme.colors.foregroundMuted}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              testID="host-chooser-search"
-            />
-          </View>
-          <ScrollView
-            style={styles.results}
-            contentContainerStyle={styles.resultsContent}
-            keyboardShouldPersistTaps="always"
-            showsVerticalScrollIndicator={false}
-          >
-            {options.length === 0 ? <Text style={styles.emptyText}>No matching hosts</Text> : null}
-            {options.map((host, index) => (
-              <HostChooserRow
-                key={host.serverId}
-                host={host}
-                active={index === activeOptionIndex}
-                onChooseHost={chooseHost}
+      <OverlayLayerProvider layer={modalLayer}>
+        <View style={styles.overlay}>
+          <Pressable style={styles.backdrop} onPress={close} />
+          <View ref={setOverlayScope} style={styles.panel}>
+            <View style={styles.header}>
+              <Text style={styles.title}>{request.title}</Text>
+              <TextInput
+                ref={inputRef}
+                initialValue={query}
+                onChangeText={handleQueryChange}
+                placeholder="Search hosts..."
+                placeholderTextColor={theme.colors.foregroundMuted}
+                style={styles.input}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="host-chooser-search"
               />
-            ))}
-          </ScrollView>
+            </View>
+            <ScrollView
+              style={styles.results}
+              contentContainerStyle={styles.resultsContent}
+              keyboardShouldPersistTaps="always"
+              showsVerticalScrollIndicator={false}
+            >
+              {options.length === 0 ? (
+                <Text style={styles.emptyText}>No matching hosts</Text>
+              ) : null}
+              {options.map((host, index) => (
+                <HostChooserRow
+                  key={host.serverId}
+                  host={host}
+                  active={index === activeOptionIndex}
+                  onChooseHost={chooseHost}
+                />
+              ))}
+            </ScrollView>
+          </View>
         </View>
-      </View>
+      </OverlayLayerProvider>
     </Modal>
   );
 

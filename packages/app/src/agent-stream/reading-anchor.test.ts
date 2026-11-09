@@ -7,7 +7,7 @@ describe("reading anchor", () => {
     anchor.reconcile(0, [{ id: "tool", top: 48, height: 200 }]);
     const replacements = new Map([["tool", "prompt"]]);
     expect(anchor.getRowId(replacements)).toBe("prompt");
-    expect(anchor.project(0, { id: "prompt", top: 1048 }, replacements)).toBe(1000);
+    expect(anchor.project(0, { id: "prompt", top: 1048, height: 100 }, replacements)).toBe(1000);
     // Projection does not consume the correction; an unmounted host keeps the pin.
     expect(anchor.reconcile(0, [], false, replacements)).toBe(0);
     expect(anchor.getRowId()).toBe("tool");
@@ -56,6 +56,35 @@ describe("reading anchor", () => {
     ).toBe(1100);
   });
 
+  it("keeps a pinned row in place instead of the row under the reading line", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    anchor.pin(rows[2]!, "top", 600);
+    // The row being read grows; only the pinned row below it holds its position.
+    expect(
+      anchor.reconcile(600, [rows[0]!, { ...rows[1]!, height: 800 }, { ...rows[2]!, top: 1300 }]),
+    ).toBe(900);
+  });
+
+  it("keeps the bottom of a row pinned by a trigger below its content", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(600, rows);
+    anchor.pin(rows[2]!, "bottom", 600);
+    // The pinned row grows downward; its bottom, where the trigger sits, holds its position.
+    const grown = { ...rows[2]!, height: rows[2]!.height + 300 };
+    expect(anchor.reconcile(600, [rows[0]!, rows[1]!, grown])).toBe(900);
+  });
+
+  it("measures a pinned row's correction from the offset at the toggle", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(900, rows);
+    anchor.pin(rows[2]!, "bottom", 900);
+    // The row shrinks and the browser clamps the offset to the shorter content before the
+    // reconcile reads it.
+    const shrunk = { ...rows[2]!, height: rows[2]!.height - 300 };
+    expect(anchor.reconcile(700, [rows[0]!, rows[1]!, shrunk])).toBe(600);
+  });
+
   it("leaves expansion of the row being read in place", () => {
     const anchor = createReadingAnchor();
     anchor.reconcile(600, rows);
@@ -99,8 +128,8 @@ describe("reading anchor", () => {
   it("projects a prepend range without consuming the correction before layout commits", () => {
     const anchor = createReadingAnchor();
     anchor.reconcile(600, rows);
-    expect(anchor.project(440, { id: "reading", top: 2500 })).toBe(2440);
-    expect(anchor.project(440, { id: "reading", top: 2500 })).toBe(2440);
+    expect(anchor.project(440, { id: "reading", top: 2500, height: 100 })).toBe(2440);
+    expect(anchor.project(440, { id: "reading", top: 2500, height: 100 })).toBe(2440);
     expect(
       anchor.reconcile(
         440,

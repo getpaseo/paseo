@@ -134,7 +134,7 @@ export default function contribute(client) {
 }`;
 }
 
-async function withDirectoryPlugin(options: {
+export async function withDirectoryPlugin(options: {
   pluginId: string;
   source: string;
   run: () => Promise<void>;

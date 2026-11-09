@@ -477,18 +477,29 @@ export async function expectStableHistoryStartGutter(page: Page): Promise<void> 
     .toBe(32);
 }
 
-export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
+/**
+ * Wheels the timeline until `row` is centered, as a reader does. Playwright's own
+ * scroll-into-view is programmatic, which the timeline does not treat as the reader leaving
+ * the bottom: it snaps back to the bottom and can move the row away mid-click.
+ */
+export async function scrollTimelineRowIntoView(page: Page, row: Locator): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-  const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
   const [viewport, target] = await Promise.all([timeline.boundingBox(), row.boundingBox()]);
   if (!viewport || !target) {
-    throw new Error(`Expected a rendered timeline prompt for ${prompt}`);
+    throw new Error("Expected a rendered timeline row");
   }
-  // Programmatic scrolling does not express the user's intent to stop following output.
   await timeline.hover();
   await page.mouse.wheel(0, target.y - viewport.y - (viewport.height - target.height) / 2);
   await expect(row).toBeInViewport({ ratio: 1 });
   await waitForTimelineGeometryToSettle(page);
+}
+
+export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await scrollTimelineRowIntoView(
+    page,
+    timeline.getByTestId("user-message").filter({ hasText: prompt }),
+  );
   await expect
     .poll(async () => (await readTimelineViewport(page)).scrollTop)
     .toBeGreaterThan(HISTORY_START_THRESHOLD_PX);
@@ -564,8 +575,10 @@ export async function expectFoldedTurnAtReadingPosition(page: Page, prompt: stri
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const promptRow = timeline.locator("[data-history-row-id]").filter({ hasText: prompt });
   await expect(promptRow).toBeVisible({ timeout: 15_000 });
-  // The host row carries the folded turn's summary line.
-  await expect(promptRow.getByTestId("turn-summary")).toBeVisible();
+  // The folded turn's summary line is the row under its prompt.
+  const hostId = await promptRow.getAttribute("data-history-row-id");
+  const summaryRow = timeline.locator(`[data-history-row-id="turn-summary:${hostId}"]`);
+  await expect(summaryRow.getByTestId("turn-summary")).toBeVisible();
   await expect
     .poll(
       async () => {

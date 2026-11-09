@@ -5,6 +5,8 @@ export type SubscriptionSnapshot<T> = T & { subscriptionId: string };
 export interface SubscriptionObserver<T> {
   snapshot(snapshot: T): void;
   update(message: SessionOutboundMessage): void;
+  /** A binary frame the host addressed to this subscription; the payload is a view. */
+  binary?(payload: Uint8Array): void;
   error?(error: unknown): void;
 }
 
@@ -20,8 +22,11 @@ interface Registration {
   start(): void;
   disconnected(): void;
   receive(message: SessionOutboundMessage): void;
+  receiveBinary(payload: Uint8Array): void;
   release(): Promise<void>;
 }
+
+type Update = { message: SessionOutboundMessage } | { binary: Uint8Array };
 
 export interface OwnedSubscriptionsHost {
   release(subscriptionId: string): Promise<void>;
@@ -50,7 +55,7 @@ export class OwnedSubscriptions {
     let teardown: Promise<void> | null = null;
     let disposed = false;
     let overflow = false;
-    const buffered: SessionOutboundMessage[] = [];
+    const buffered: Update[] = [];
     const observers = new Set<SubscriptionObserver<SubscriptionSnapshot<T>>>();
     let resolve!: (snapshot: SubscriptionSnapshot<T>) => void;
     let reject!: (error: unknown) => void;
@@ -60,12 +65,10 @@ export class OwnedSubscriptions {
     });
     void ready.catch(() => {});
 
-    const deliver = (
-      observer: SubscriptionObserver<SubscriptionSnapshot<T>>,
-      message?: SessionOutboundMessage,
-    ) => {
+    const deliver = (observer: SubscriptionObserver<SubscriptionSnapshot<T>>, update?: Update) => {
       try {
-        if (message) observer.update(message);
+        if (update && "binary" in update) observer.binary?.(update.binary);
+        else if (update) observer.update(update.message);
         else if (snapshot) observer.snapshot(snapshot);
       } catch (error) {
         this.host.failed(error);
@@ -77,6 +80,13 @@ export class OwnedSubscriptions {
       if (!released) return;
       this.routes.delete(released);
       await this.host.release(released);
+    };
+    const buffer = (update: Update) => {
+      if (buffered.length < MAX_BOOTSTRAP_UPDATES && !overflow) buffered.push(update);
+      else {
+        buffered.length = 0;
+        overflow = true;
+      }
     };
     const registration: Registration = {
       start: () => {
@@ -128,12 +138,14 @@ export class OwnedSubscriptions {
       },
       receive: (message) => {
         if (disposed || ("payload" in message && Object.is(message.payload, snapshot))) return;
-        if (buffered.length < MAX_BOOTSTRAP_UPDATES && !overflow) buffered.push(message);
-        else {
-          buffered.length = 0;
-          overflow = true;
-        }
-        for (const observer of observers) deliver(observer, message);
+        buffer({ message });
+        for (const observer of observers) deliver(observer, { message });
+      },
+      receiveBinary: (payload) => {
+        if (disposed) return;
+        // Bytes wait only for the first observer; retaining them after would hold every frame.
+        if (observers.size === 0) buffer({ binary: payload });
+        for (const observer of observers) deliver(observer, { binary: payload });
       },
       release: () => {
         if (teardown) return teardown;
@@ -142,7 +154,9 @@ export class OwnedSubscriptions {
         observers.clear();
         buffered.length = 0;
         if (id) this.routes.delete(id);
-        reject(new Error("Subscription released"));
+        // A host that already accepted keeps `ready` resolved, even if released in the same tick.
+        if (snapshot) resolve(snapshot);
+        else reject(new Error("Subscription released"));
         teardown = (async () => {
           await pending;
           await releaseId();
@@ -174,7 +188,7 @@ export class OwnedSubscriptions {
             .catch(this.host.failed);
         } else {
           deliver(observer);
-          for (const message of buffered) deliver(observer, message);
+          for (const update of buffered) deliver(observer, update);
         }
         return () => {
           observers.delete(observer);
@@ -203,6 +217,10 @@ export class OwnedSubscriptions {
     const payload = "payload" in message ? message.payload : message;
     if ("subscriptionId" in payload && typeof payload.subscriptionId === "string")
       this.routes.get(payload.subscriptionId)?.receive(message);
+  }
+
+  receiveBinary(subscriptionId: string, payload: Uint8Array): void {
+    this.routes.get(subscriptionId)?.receiveBinary(payload);
   }
 
   restore(): void {

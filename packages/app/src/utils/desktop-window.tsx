@@ -83,6 +83,19 @@ export function intersectWindowChromeCorners(
   );
 }
 
+export function resolveChildWindowChromeCorners(input: {
+  corners: WindowChromeCorners;
+  direction: "horizontal" | "vertical";
+  isFirst: boolean;
+  isLast: boolean;
+}): WindowChromeCorners {
+  if (input.direction === "vertical") return input.isFirst ? input.corners : "none";
+  return intersectWindowChromeCorners(
+    input.corners,
+    windowChromeCornersFromFlags(input.isFirst, input.isLast),
+  );
+}
+
 export function removeWindowChromeCorner(
   corners: WindowChromeCorners,
   corner: WindowChromeCorner,

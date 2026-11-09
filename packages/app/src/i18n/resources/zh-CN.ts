@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  pluginCombobox: {
+    searching: "搜索中…",
+    empty: "无结果",
+    failed: "搜索失败：{{message}}",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -378,6 +383,24 @@ export const zhCN: TranslationResources = {
       next: "下一步",
       answerPlaceholder: "输入你的回答...",
       otherPlaceholder: "其他...",
+    },
+    backgroundWork: {
+      pillOne: "1 个后台任务",
+      pillMany: "{{count}} 个后台任务",
+      notRunning: "已不再运行",
+      dismiss: "关闭",
+      stop: "停止",
+      stopping: "正在停止…",
+      stopError: "无法确认已停止。",
+      label: "后台",
+      title: "后台任务",
+      waiting: "正在等待后台任务详情",
+      error: "无法加载后台任务",
+      retry: "重试",
+      running: "后台任务运行中",
+      shell: "Shell",
+      monitor: "监控",
+      other: "其他任务",
     },
     todo: {
       title: "任务",
@@ -922,6 +945,9 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
@@ -1150,6 +1176,14 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "无法加载侧边栏视图。",
+      useDefault: "使用默认视图",
+      readFailed: "无法加载侧边栏视图偏好设置。",
+      agentUnavailable: "此智能体已不可用",
+      terminalUnavailable: "此终端已不可用",
+      projectUnavailable: "此项目已不可用",
+    },
     statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
       needsInput: "需要输入",
@@ -1225,6 +1259,7 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      moreActions: "更多操作",
     },
     footer: {
       usage: "使用情况",
@@ -1326,6 +1361,9 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        archived: "工作区已归档",
+        undoArchive: "撤销",
+        undoArchiveFailed: "无法撤销归档",
       },
     },
   },
@@ -1525,6 +1563,8 @@ export const zhCN: TranslationResources = {
       cli: {
         statusFailed: "无法检查 CLI 安装状态。",
         installFailed: "无法安装 Paseo CLI。",
+        uninstallFailed: "无法卸载 Paseo CLI。",
+        keptForeign: "已保留一个不是由 Paseo 安装的 paseo 命令。如需卸载，请手动删除。",
       },
     },
   },
@@ -1575,6 +1615,7 @@ export const zhCN: TranslationResources = {
     openPath: "打开路径",
   },
   branchSwitcher: {
+    failedToLoad: "无法加载分支，请重新打开选择器以重试。",
     triggerTooltip: "切换工作区分支",
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
     placeholder: "切换分支...",
@@ -1597,7 +1638,11 @@ export const zhCN: TranslationResources = {
     loadingCommands: "正在加载 commands...",
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
-    failedToLoad: "加载失败",
+    loadingProviderCommands: "正在加载 {{provider}} commands...",
+    commandsFailed: "无法加载 commands",
+    providerCommandsFailed: "无法加载 {{provider}} commands",
+    filesFailed: "无法搜索文件",
+    skillTag: "Skill",
     chooseProjectForCommands: "选择项目以查看命令",
     chooseModelForCommands: "选择模型以查看命令",
   },
@@ -1624,6 +1669,59 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "第 {{current}} 步，共 {{total}} 步",
+      skip: "跳过设置",
+      continue: "继续",
+      finish: "完成",
+      steps: {
+        appearance: {
+          label: "外观",
+          title: "欢迎使用 Paseo",
+          description: "先选择一个外观",
+        },
+        providers: {
+          label: "提供方",
+          title: "你的代理",
+          description: "Paseo 使用这台电脑上已安装的代理 CLI",
+        },
+        projects: {
+          label: "项目",
+          title: "添加项目",
+          description: "你希望代理在哪里工作",
+          addProject: "添加项目",
+          added: "已添加",
+          suggestions: {
+            loading: "正在查找你工作过的文件夹",
+            empty: "未找到最近的项目",
+            lastUsed: "上次使用 {{time}}",
+            addSelected_one: "添加 {{count}} 个项目",
+            addSelected_other: "添加 {{count}} 个项目",
+            adding: "正在添加…",
+            addFailed: "无法添加此文件夹",
+          },
+        },
+        orchestration: {
+          label: "编排",
+          title: "让代理使用 Paseo",
+          description: "让你的代理创建工作区并与其他代理对话",
+        },
+        phone: {
+          label: "移动端",
+          title: "随身带上你的代理",
+          description: "功能完整的原生移动应用让你可以在手机上控制任意一台 Paseo 电脑",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "选择连接方式",
+          connectDocs: "文档",
+          openConnectDocs: "打开连接文档",
+          recommended: "推荐",
+          relay: { title: "中继", hint: "端到端加密，扫描二维码" },
+          tailscale: { title: "Tailscale", hint: "需要一些设置" },
+        },
+      },
+    },
     title: "欢迎使用 Paseo",
     subtitle: "连接你的电脑即可开始",
     actions: {
@@ -1838,6 +1936,8 @@ export const zhCN: TranslationResources = {
       notNow: "暂不",
       directConnectionHint:
         "不使用中继时，请通过 TCP、Tailscale 或其他 VPN 直接连接。不会生成二维码。",
+      tailscaleDocs: "设置 Tailscale",
+      tailscaleDocsAccessibility: "了解如何通过 Tailscale 连接",
       updateRequired: "请更新主机，以便从 Paseo Desktop 启用中继。",
       unavailable: "配对 offer 不可用。",
       hint: "用手机上的 Paseo 扫描此二维码，或复制下方链接。",
@@ -2299,6 +2399,11 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      setup: {
+        label: "首次设置",
+        description: "重新设置外观、提供方、项目和手机配对",
+        action: "再次显示设置",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -2452,6 +2557,12 @@ export const zhCN: TranslationResources = {
         description: "显示用于在提示词之间跳转的大纲",
       },
       sidebar: {
+        view: {
+          title: "侧边栏视图",
+          label: "视图",
+          default: "默认视图",
+          unavailable: "所选视图不可用或已禁用。正在显示默认视图。",
+        },
         header: {
           title: "顶部",
           description: "选择侧边栏顶部显示的项目及其顺序",
@@ -2580,11 +2691,7 @@ export const zhCN: TranslationResources = {
       commandLine: {
         title: "命令行",
         description: "从终端控制 Agent 并运行脚本",
-      },
-      actions: {
-        install: "安装",
-        installing: "正在安装...",
-        installed: "已安装",
+        accessibilityLabel: "安装 Paseo CLI",
       },
     },
     permissions: {
@@ -2662,10 +2769,9 @@ export const zhCN: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "编排 skills",
         title: "编排 skills",
-        description: "教会 Agent 通过 CLI 编排任务",
+        description: "教你的代理如何使用 Paseo 工具",
         updateAvailable: "有更新可用",
         updateTitle: "更新 Paseo skills？",
-        updateFallback: "将内置 skills 同步到你的机器。",
         uninstallTitle: "卸载 Paseo skills？",
         uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
         choose: "选择 skills",
@@ -2682,9 +2788,6 @@ export const zhCN: TranslationResources = {
         uninstallFailed: "无法卸载编排 skills。",
         saveSelectionFailed: "无法保存编排 skills 的选择。",
         actions: {
-          install: "安装",
-          installing: "正在安装...",
-          installed: "已安装",
           update: "更新",
           working: "处理中...",
           remove: "移除",
@@ -2706,6 +2809,7 @@ export const zhCN: TranslationResources = {
           title: "启用 Paseo tools",
           hint: "Agent 将能够管理 worktree、Agent 和计划",
           accessibilityLabel: "注入 Paseo tools",
+          updateFailed: "无法更新 Paseo 工具。",
         },
         systemPrompt: {
           title: "System prompt",

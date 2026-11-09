@@ -22,7 +22,7 @@ Choose one implementation path:
 
 The examples are:
 
-- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, settings, prompts, persistence, child sessions, and a provider-owned timeline renderer;
+- [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, option controls, prompts, persistence, child sessions, and a provider-owned timeline renderer;
 - [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer): an ACP command template with a Zod-validated vendor edit transformer. Replace `example-acp --stdio` with an installed ACP agent before loading it;
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking): a renderer-only plugin that does not implement a provider.
 
@@ -138,7 +138,7 @@ later through `session.config`.
 ## Open a session
 
 `session.open` contains the complete launch configuration: working directory, environment, system
-prompt, MCP servers, tool policy, model, mode, settings, opaque provider options, and persistence
+prompt, MCP servers, tool policy, model, mode, `providerOptions`, and persistence
 preference.
 
 For persisted host-scoped plugin settings, use the handle returned by `server.registerSettings()`.
@@ -177,7 +177,8 @@ emit({
     models,
     modes,
     thinkingOptions,
-    settings: [],
+    controls: [],
+    providerOptions: {},
   },
 });
 emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
@@ -229,10 +230,16 @@ terminal `completed`, `failed`, or `canceled` event.
 At this point the provider is usable: users can select a model, open a session, send a message, and
 see the response.
 
-## Add session-specific composer controls
+## Add composer controls for provider options
 
-Add `session.configure` only when the native agent has settings users should change after opening a
-session. Publish them in `session.config` as toggle or select controls:
+`providerOptions` is the provider's own configuration: one record of JSON values that Paseo
+stores per agent and hands to `session.open`. It includes the defaults a user set in `config.json`
+for your provider. Validate every key you read.
+
+Add `controls` only when users should see and change some of those options in the composer. A
+control draws one top-level key of `providerOptions` as a toggle or a select. It holds no value:
+Paseo reads the value from `providerOptions`. Publish the controls and the values you run with in
+`session.config`:
 
 ```ts
 emit({
@@ -243,35 +250,48 @@ emit({
     models: [{ id: "agent-large", label: "Agent Large" }],
     modes: [],
     thinkingOptions: [],
-    settings: [
-      {
-        type: "toggle",
-        id: "fast",
-        label: "Fast mode",
-        value: nativeSession.fast,
-      },
+    controls: [
+      { type: "toggle", key: "fast", label: "Fast mode", icon: "Zap", defaultValue: false },
       {
         type: "select",
-        id: "approval",
+        key: "approval",
         label: "Approvals",
-        value: nativeSession.approval,
-        options: [
-          { label: "Ask", value: "ask" },
-          { label: "Auto accept", value: "auto" },
+        icon: "Shield",
+        defaultValue: "ask",
+        choices: [
+          { value: "ask", label: "Ask" },
+          { value: "auto", label: "Auto accept" },
         ],
       },
     ],
+    providerOptions: { fast: nativeSession.fast, approval: nativeSession.approval },
   },
 });
 ```
 
-Paseo renders these controls in the composer. A user change arrives as `session.configure`; apply it
-and publish the committed `session.config` before `request.completed`. The provider may change the
-available controls at runtime, including after a model change.
+`icon` is a Lucide icon name. `defaultValue` is what a control shows for a key that has no value.
+Paseo stores every value you report when a session opens or a change is applied, including values
+at the default and values nobody set. The same controls appear in the New workspace screen, in draft
+tabs, and on running agents. Offer a control only for a key you can change on a running session.
+The provider may change its controls at runtime, including after a model change.
 
-`settings` are user-facing controls. `providerOptions` is opaque JSON supplied at session creation
-for provider-specific configuration that Paseo does not render. A provider-specific token budget
-belongs in one of those two places; it is not a dedicated prompt field.
+A change arrives as `session.configure` with `changes.providerOptions` holding only the keys
+that changed, whether or not they have a control. Apply every key and publish the committed
+`session.config` before `request.completed`. Fail the request with `request.failed` and leave
+every key as it was when you cannot apply one, for example a key you read only when a session
+opens. A
+value of `null` returns that key to the provider's default. Publish what the session ended up
+with, not a copy of the request: Paseo stores your published values so the stored options match
+what runs.
+
+If the provider changes an option on its own, for example a model switch turns Fast off, publish
+a new `session.config` with the new values. Paseo stores them and does not set the old ones
+back.
+
+Not every option needs a control. A provider-specific token budget, for example, belongs in
+`providerOptions` and is not a dedicated prompt field. It is delivered in `session.open`, a caller
+can change it on a running agent, and your `session.configure` handler decides whether it can
+apply it live. Report it in `providerOptions` so Paseo stores what runs.
 
 ## Add persistence and replay
 
@@ -467,7 +487,7 @@ export const vendorEdits: AcpTransformer = {
 Test the provider against the real agent, not only mocked frames:
 
 1. install the plugin as a directory source;
-2. confirm its SVG, models, modes, and settings appear;
+2. confirm its SVG, models, modes, and option controls appear;
 3. create a session and complete a real prompt;
 4. exercise permissions, steering, cancellation, persistence, and replay when supported;
 5. render every custom timeline item on desktop and mobile-width layouts;

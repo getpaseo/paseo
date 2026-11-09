@@ -26,7 +26,9 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
-  AgentFeature,
+  AgentOptionControl,
+  JsonValue,
+  ProviderOptions,
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
@@ -74,6 +76,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
+  backgroundWork?: { count: number };
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;
@@ -91,18 +94,23 @@ export interface Agent {
   cwd: string;
   workspaceId?: string;
   model: string | null;
-  features?: AgentFeature[];
+  options?: ProviderOptions;
+  controls?: AgentOptionControl[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
+  /** Background agents stay out of tabs, the subagent track and agent lists. Open them by id. */
+  background?: boolean;
   parentAgentId: string | null;
   labels: Record<string, string>;
+  metadata?: Record<string, JsonValue>;
   projectPlacement?: ProjectPlacementPayload | null;
 }
 
 export interface WorkspaceDescriptor {
+  parentWorkspaceId?: string;
   createdAt: Date | null;
   lastUserMessageAt: Date | null;
   id: string;
@@ -160,6 +168,7 @@ export function normalizeWorkspaceDescriptor(
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     background: payload.background ?? false,
+    parentWorkspaceId: payload.parentWorkspaceId,
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
@@ -260,6 +269,7 @@ interface ExplorerRequestState {
 }
 
 export interface AgentFileExplorerState {
+  listingGeneration: number;
   directories: Map<string, ExplorerDirectory>;
   isLoading: boolean;
   lastError: string | null;
