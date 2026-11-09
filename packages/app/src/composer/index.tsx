@@ -1150,21 +1150,14 @@ interface ComposerVoiceModeButtonProps {
   t: TFunction;
 }
 
-function showsVoiceModeButton(input: {
+/** Whether voice mode can take the trailing disc; MessageInput decides when it does. */
+function offersVoiceMode(input: {
   isVoiceModeForAgent: boolean;
   hasAgent: boolean;
   isAgentRunning: boolean;
-  hasSendableContent: boolean;
   showVoice: boolean;
 }): boolean {
-  // Voice mode holds the trailing disc until there is something to send, then Send takes it.
-  return (
-    input.showVoice &&
-    !input.isVoiceModeForAgent &&
-    input.hasAgent &&
-    !input.isAgentRunning &&
-    !input.hasSendableContent
-  );
+  return input.showVoice && !input.isVoiceModeForAgent && input.hasAgent && !input.isAgentRunning;
 }
 
 function ComposerVoiceModeButton({
@@ -1326,11 +1319,6 @@ function ComposerContentImpl({
   const { finePointer: hasFinePointer } = usePointerCapabilities();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
-  const hasText = useSyncExternalStore(
-    textSource.subscribe,
-    () => textSource.getSnapshot().trim().length > 0,
-    () => textSource.getSnapshot().trim().length > 0,
-  );
   const setUserInput = onChangeText;
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
@@ -2042,8 +2030,6 @@ function ComposerContentImpl({
     ],
   );
 
-  const hasSendableContent = hasText || selectedAttachments.length > 0;
-
   // An open autocomplete owns the arrows; otherwise they may recall sent messages.
   const handleCommandKeyPress = useCallback(
     (event: ComposerKeyPressEvent) => {
@@ -2098,11 +2084,10 @@ function ComposerContentImpl({
 
   const voiceModeContent = useMemo(
     () =>
-      showsVoiceModeButton({
+      offersVoiceMode({
         isVoiceModeForAgent,
         hasAgent,
         isAgentRunning,
-        hasSendableContent,
         showVoice: mode.showVoice,
       }) ? (
         <View style={styles.rightControls}>
@@ -2121,7 +2106,6 @@ function ComposerContentImpl({
       toolbarGlyph,
       handleToggleRealtimeVoice,
       hasAgent,
-      hasSendableContent,
       isAgentRunning,
       isConnected,
       isVoiceModeForAgent,
