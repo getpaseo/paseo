@@ -3538,8 +3538,9 @@ function WorkspaceScreenContent({
   };
   const compactWorkspaceHeader = renderCompactWorkspaceHeader(workspaceCompactHeaderTabs);
   // SplitContainer reserves the corner around its own compact headers; this is the column's.
-  const centerColumnCompactHeader = (
-    <WindowChromeSafeArea placement="inline">{compactWorkspaceHeader}</WindowChromeSafeArea>
+  const centerColumnCompactHeader = useMemo(
+    () => <WindowChromeSafeArea placement="inline">{compactWorkspaceHeader}</WindowChromeSafeArea>,
+    [compactWorkspaceHeader],
   );
   const fullWorkspaceActions = renderCompactWorkspaceHeader(workspaceCompactHeaderTabs, true);
   const desktopSplitContent = useMemo(() => {
