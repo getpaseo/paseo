@@ -30,6 +30,7 @@ import {
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import type { WorkspaceGitObserverService } from "./session/workspace-git-observer/workspace-git-observer-service.js";
 import { WORKSPACE_LIVENESS_WINDOW_MS } from "./session/workspace-git-observer/workspace-liveness.js";
+import type { TerminalsChangedEvent } from "../terminal/terminal-manager.js";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 
 interface SessionInternals {
@@ -243,7 +244,10 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: (listener: (event: unknown) => void) => {
         agentEventListeners.push(listener);
-        return () => {};
+        return () => {
+          const index = agentEventListeners.indexOf(listener);
+          if (index >= 0) agentEventListeners.splice(index, 1);
+        };
       },
       listAgents,
       listProviderSubagentActivity: () => [],
@@ -863,6 +867,48 @@ describe("live workspace observation", () => {
       .sort();
   }
 
+  /**
+   * Drives the terminal-change events the session subscribes to, and counts the terminal
+   * directory reads each one causes, so a test can tell a reconcile from a no-op.
+   */
+  function createTerminalEvents(input: { cwd: string }): {
+    terminalManager: SessionOptions["terminalManager"];
+    terminalList: (workspaceId: string) => TerminalsChangedEvent["terminals"];
+    emit: (terminals: TerminalsChangedEvent["terminals"]) => void;
+    lookups: () => number;
+  } {
+    const listeners: Array<(event: TerminalsChangedEvent) => void> = [];
+    let terminals: TerminalsChangedEvent["terminals"] = [];
+    let lookups = 0;
+    const terminalManager = asTerminalManager({
+      listDirectories: () => [input.cwd],
+      getTerminals: async (cwd: string) => {
+        lookups += 1;
+        return cwd === input.cwd ? [...terminals] : [];
+      },
+      subscribeTerminalsChanged: (listener: (event: TerminalsChangedEvent) => void) => {
+        listeners.push(listener);
+        return () => {
+          const index = listeners.indexOf(listener);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+    });
+    return {
+      terminalManager,
+      terminalList: (workspaceId) => [
+        { id: "terminal-1", name: "bash", cwd: input.cwd, workspaceId, activity: null },
+      ],
+      emit(nextTerminals) {
+        terminals = nextTerminals;
+        for (const listener of listeners) {
+          listener({ cwd: input.cwd, terminals: nextTerminals });
+        }
+      },
+      lookups: () => lookups,
+    };
+  }
+
   function createTerminalManager(input: {
     cwd: string;
     workspaceId: string;
@@ -1364,6 +1410,74 @@ describe("live workspace observation", () => {
     await reconcileObservers(session);
 
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    await session.cleanup();
+  });
+
+  test("adds and drops a workspace's watch as its last terminal comes and goes", async () => {
+    const terminalCwd = "/tmp/terminal-event-workspace";
+    const terminals = createTerminalEvents({ cwd: terminalCwd });
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({ terminalManager: terminals.terminalManager });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-terminal",
+      cwd: terminalCwd,
+      name: "terminal",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    expect(watchedCwds(workspaceGitService)).toEqual([]);
+
+    terminals.emit(terminals.terminalList("ws-terminal"));
+    await vi.waitFor(() => expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]));
+
+    terminals.emit([]);
+    await vi.waitFor(() =>
+      expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0),
+    );
+
+    await session.cleanup();
+  });
+
+  test("a terminal event that only changes titles and activity re-reconciles nothing", async () => {
+    const terminalCwd = "/tmp/terminal-title-workspace";
+    const terminals = createTerminalEvents({ cwd: terminalCwd });
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests({ terminalManager: terminals.terminalManager });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-terminal",
+      cwd: terminalCwd,
+      name: "terminal",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "events-1",
+      events: ["checkout_status_update"],
+    });
+    terminals.emit(terminals.terminalList("ws-terminal"));
+    await vi.waitFor(() => expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]));
+
+    const lookupsAfterReconcile = terminals.lookups();
+    const titledTerminals = terminals.terminalList("ws-terminal");
+    for (const terminal of titledTerminals) terminal.title = "npm test";
+    terminals.emit(titledTerminals);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(terminals.lookups()).toBe(lookupsAfterReconcile);
+    expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]);
+
     await session.cleanup();
   });
 
