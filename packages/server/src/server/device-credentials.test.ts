@@ -81,7 +81,7 @@ describe("device credentials", () => {
         deviceCredentials: store,
       });
     expect(await Promise.all([resolve(), resolve()])).toEqual([
-      { admission: owner },
+      { admission: { ...owner, viaPairingToken: true } },
       { rejection: "incorrect_password" },
     ]);
     const expired = store.mintToken(owner, true)!;
