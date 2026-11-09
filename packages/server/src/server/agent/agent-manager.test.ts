@@ -20,6 +20,8 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
+import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
+import { createForegroundRunRetry } from "./agent-run-state.js";
 import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
@@ -9456,11 +9458,15 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     );
     void firstRun.catch(() => undefined);
     await appServer.waitForRequest("thread/loaded/list");
+    const senderRejection = expect(manager.waitForAgentRunStart(agent.id)).rejects.toThrow(
+      "its prompt was not delivered",
+    );
     const cancel = manager.cancelAgentRun(agent.id);
     await new Promise((resolve) => setTimeout(resolve, 0));
     threadLoaded.resolve({ data: ["thread-1"] });
     await expect(cancel).resolves.toEqual({ status: "settled" });
     await expect(firstRun).resolves.toBeUndefined();
+    await senderRejection;
     expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle", lastError: undefined });
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
     expect(events.map((event) => event.type)).toEqual(["turn_canceled"]);
@@ -9594,6 +9600,207 @@ test("a pending Codex start replaced before reaching Codex rejects its sender's 
     appServer.assertNoErrors();
   } finally {
     firstLoaded.resolve({ data: ["thread-1"] });
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a sender's start wait follows its prompt across a stale-session retry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-start-wait-"));
+  const releaseStart = deferred<void>();
+  class StaleStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      await releaseStart.promise;
+      throw new StaleProviderSessionError("stale-bridge");
+    }
+  }
+  class StaleStartClient extends ResumeTrackingTestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StaleStartSession(config);
+    }
+  }
+  const client = new StaleStartClient();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const startedTurns: AgentStreamEvent[] = [];
+  manager.subscribe((event) => {
+    if (event.type === "agent_stream" && event.event.type === "turn_started") {
+      startedTurns.push(event.event);
+    }
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await startAgentRun(manager, agent.id, "Retry this prompt", logger, {
+      runOptions: { clientMessageId: "stale-start-wait" },
+    });
+    const senderWait = manager.waitForAgentRunStart(agent.id);
+    void senderWait.catch(() => undefined);
+    releaseStart.resolve();
+    await client.waitForRetryStart();
+    await manager.waitForAgentEvent(agent.id);
+    expect(client.resumeOverrides).toHaveLength(1);
+    expect(startedTurns).toHaveLength(1);
+    expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({ text: "Retry this prompt", clientMessageId: "stale-start-wait" }),
+    ]);
+    await expect(senderWait).resolves.toBeUndefined();
+  } finally {
+    releaseStart.resolve();
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["reload", "retry", "stale retry"])(
+  "a sender's start wait rejects when its stale-session %s fails",
+  async (failure) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-start-failure-"));
+    const releaseStart = deferred<void>();
+    class StaleStartSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        await releaseStart.promise;
+        throw new StaleProviderSessionError("stale-bridge");
+      }
+    }
+    class FailedRetrySession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        if (failure === "stale retry") throw new StaleProviderSessionError("retry-bridge");
+        throw new Error("retry failed");
+      }
+    }
+    class FailedRetryClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new StaleStartSession(config);
+      }
+      override async resumeSession(): Promise<AgentSession> {
+        if (failure === "reload") throw new Error("reload failed");
+        return new FailedRetrySession({ provider: "codex", cwd: workdir });
+      }
+    }
+    const manager = new AgentManager({ clients: { codex: new FailedRetryClient() }, logger });
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await startAgentRun(manager, agent.id, "Retry this prompt", logger);
+      const senderWait = manager.waitForAgentRunStart(agent.id);
+      const rejection = expect(senderWait).rejects.toThrow(
+        failure === "retry" ? "retry failed" : "is stale after its plugin reloaded",
+      );
+      releaseStart.resolve();
+      await rejection;
+    } finally {
+      releaseStart.resolve();
+      manager.prepareForShutdown();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flushForShutdown();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("a sender's start wait rejects when Stop cancels its pending stale-session retry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-retry-stop-"));
+  const releaseStart = deferred<void>();
+  const retryEntered = deferred<void>();
+  const retryCanceled = deferred<void>();
+  class StaleStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      await releaseStart.promise;
+      throw new StaleProviderSessionError("stale-bridge");
+    }
+  }
+  class CanceledRetrySession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      retryEntered.resolve();
+      await retryCanceled.promise;
+      throw new AgentTurnStartCanceledError();
+    }
+    override async interrupt(): Promise<void> {
+      retryCanceled.resolve();
+    }
+  }
+  class RetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StaleStartSession(config);
+    }
+    override async resumeSession(): Promise<AgentSession> {
+      return new CanceledRetrySession({ provider: "codex", cwd: workdir });
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new RetryClient() }, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await startAgentRun(manager, agent.id, "Retry this prompt", logger);
+    const senderWait = manager.waitForAgentRunStart(agent.id);
+    const rejection = expect(senderWait).rejects.toThrow("its prompt was not delivered");
+    releaseStart.resolve();
+    await retryEntered.promise;
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await rejection;
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+  } finally {
+    releaseStart.resolve();
+    retryCanceled.resolve();
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a sender's start wait never adopts an unlinked run after a stale start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unlinked-start-"));
+  const releaseStart = deferred<void>();
+  const staleError = new StaleProviderSessionError("stale-bridge");
+  const retry = createForegroundRunRetry();
+  class StaleStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      await releaseStart.promise;
+      throw staleError;
+    }
+  }
+  class RetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StaleStartSession(config);
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new RetryClient() }, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = drainAsyncGenerator(
+      manager.streamAgent(agent.id, "First prompt", undefined, { retry }),
+    );
+    const firstFailure = expect(firstRun).rejects.toBe(staleError);
+    const senderWait = manager.waitForAgentRunStart(agent.id);
+    const rejection = expect(senderWait).rejects.toThrow(staleError.message);
+    releaseStart.resolve();
+    await firstFailure;
+    try {
+      await manager.reloadAgentSession(agent.id);
+      const otherRun = drainAsyncGenerator(manager.streamAgent(agent.id, "Another sender"));
+      await expect(manager.waitForAgentRunStart(agent.id)).resolves.toBeUndefined();
+      await otherRun;
+    } finally {
+      retry.resolve(null);
+    }
+    await rejection;
+    expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual(
+      [],
+    );
+  } finally {
+    releaseStart.resolve();
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();

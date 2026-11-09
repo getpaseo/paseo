@@ -15,11 +15,30 @@ type ForegroundRunStart =
   | { status: "started"; turnId: string }
   | { status: "failed"; error: string };
 
+export interface ForegroundRunStartOptions {
+  retry?: ForegroundRunRetry;
+  retryOf?: ForegroundRunRetry;
+}
+
+export interface ForegroundRunRetry {
+  promise: Promise<PendingForegroundRun | null>;
+  resolve: (run: PendingForegroundRun | null) => void;
+}
+
+export function createForegroundRunRetry(): ForegroundRunRetry {
+  let resolveRetry!: ForegroundRunRetry["resolve"];
+  const promise = new Promise<PendingForegroundRun | null>((resolve) => {
+    resolveRetry = resolve;
+  });
+  return { promise, resolve: resolveRetry };
+}
+
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
   stagedEvents: AgentStreamEvent[];
   start: ForegroundRunStart;
+  retry?: ForegroundRunRetry;
   turnStartedPromise: Promise<void>;
   resolveTurnStarted: () => void;
   settled: boolean;
