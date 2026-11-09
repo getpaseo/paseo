@@ -568,6 +568,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly socketCredentials = new Map<object, string>();
   private readonly revokedSockets = new WeakSet<WebSocketLike>();
   private readonly pairingTokenSockets = new WeakSet<object>();
+  private readonly issuingSockets = new WeakSet<object>();
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
@@ -1660,18 +1661,23 @@ export class VoiceAssistantWebSocketServer {
       deviceAccess: this.deviceCredentials
         ? {
             issue: async (source, label) => {
-              // One credential per device socket, so revoking it leaves no second key behind.
-              if (this.socketCredentials.has(source))
+              // One credential per device socket and one issue in flight, so revoke leaves no spare key.
+              if (this.socketCredentials.has(source) || this.issuingSockets.has(source))
                 return { credential: null, error: "unsupported_principal" as const };
-              const result = await this.deviceCredentials!.issue(
-                label,
-                this.credentialAuthority(source),
-                !!this.passwordHash,
-              );
-              // A token-admitted socket becomes the issued device, so revoking it closes this socket.
-              if (result.credential && this.pairingTokenSockets.has(source))
-                this.socketCredentials.set(source, result.credential.id);
-              return result;
+              this.issuingSockets.add(source);
+              try {
+                const result = await this.deviceCredentials!.issue(
+                  label,
+                  this.credentialAuthority(source),
+                  !!this.passwordHash,
+                );
+                // A token-admitted socket becomes the issued device, so revoking it closes it.
+                if (result.credential && this.pairingTokenSockets.has(source))
+                  this.socketCredentials.set(source, result.credential.id);
+                return result;
+              } finally {
+                this.issuingSockets.delete(source);
+              }
             },
             list: (source) => this.deviceCredentials!.list(this.socketCredentials.get(source)),
             mintToken: (source) =>
