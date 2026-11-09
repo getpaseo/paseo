@@ -7358,7 +7358,7 @@ export class Session {
       this.agentDirectory.workspaceLastUserMessageTimes(targets.map((target) => target.id)),
       this.listLiveTerminalWorkspaceIds(),
     ]);
-    const agentLiveness = this.listAgentWorkspaceLiveness();
+    const agentLiveness = await this.listAgentWorkspaceLiveness();
     const autoArchiveAfterMerge = this.daemonConfigStore.get().autoArchiveAfterMerge === true;
     const now = Date.now();
 
@@ -7385,13 +7385,24 @@ export class Session {
     });
   }
 
-  private listAgentWorkspaceLiveness(): AgentWorkspaceLiveness {
+  /**
+   * Loaded runtimes are the only agent signal that can change without touching storage. Open-tab
+   * labels outlive the runtime: the idle clock collects a runnable agent and leaves its record and
+   * its open tab behind, so they have to be read from the stored records as well. Reading them from
+   * storage does not load a runtime.
+   */
+  private async listAgentWorkspaceLiveness(): Promise<AgentWorkspaceLiveness> {
     const loadedWorkspaceIds = new Set<string>();
     const openTabWorkspaceIds = new Set<string>();
     for (const agent of this.agentManager.listAgents({ includeInternal: true })) {
       if (!agent.workspaceId) continue;
       if (agent.lifecycle !== "closed") loadedWorkspaceIds.add(agent.workspaceId);
       if (hasOpenAgentTab(agent.labels)) openTabWorkspaceIds.add(agent.workspaceId);
+    }
+    for (const record of await this.agentStorage.listActive()) {
+      if (record.workspaceId && hasOpenAgentTab(record.labels)) {
+        openTabWorkspaceIds.add(record.workspaceId);
+      }
     }
     return { loadedWorkspaceIds, openTabWorkspaceIds };
   }
@@ -7441,7 +7452,16 @@ export class Session {
    * events. Reconcile only when the workspaces they cover change.
    */
   private reconcileObserversAfterAgentChange(): void {
-    const liveness = this.listAgentWorkspaceLiveness();
+    void this.reconcileObserversAfterAgentChangeRun().catch((error) => {
+      this.sessionLogger.warn(
+        { err: error },
+        "Failed to re-evaluate workspace git observation after agent change",
+      );
+    });
+  }
+
+  private async reconcileObserversAfterAgentChangeRun(): Promise<void> {
+    const liveness = await this.listAgentWorkspaceLiveness();
     const next = liveness.loadedWorkspaceIds;
     const previous = this.loadedAgentWorkspaceIds;
     this.loadedAgentWorkspaceIds = next;
@@ -7450,12 +7470,7 @@ export class Session {
       !sameWorkspaceIdSet(this.openAgentTabWorkspaceIds, liveness.openTabWorkspaceIds);
     this.openAgentTabWorkspaceIds = liveness.openTabWorkspaceIds;
     if (previous && !openTabChanged && sameWorkspaceIdSet(previous, next)) return;
-    void this.reconcileWorkspaceGitObservers().catch((error) => {
-      this.sessionLogger.warn(
-        { err: error },
-        "Failed to re-evaluate workspace git observation after agent change",
-      );
-    });
+    await this.reconcileWorkspaceGitObservers();
   }
 
   private seedWorkspaceSubscriptionSnapshot(
