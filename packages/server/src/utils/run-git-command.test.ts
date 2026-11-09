@@ -507,7 +507,6 @@ describe("runGitCommand", () => {
         command: "git",
         args: ["status", "--short"],
         cwd: process.cwd(),
-        cwdExists: true,
         timeout: 30_000,
         maxOutputBytes: 20 * 1024 * 1024,
         acceptExitCodes: [0, 1],
@@ -520,7 +519,6 @@ describe("runGitCommand", () => {
         command: "git",
         args: ["status", "--short"],
         cwd: process.cwd(),
-        cwdExists: true,
         durationMs: expect.any(Number),
         exitCode: 0,
         signal: null,
@@ -530,6 +528,9 @@ describe("runGitCommand", () => {
       }),
       "Git command closed",
     );
+    for (const [record] of trace.mock.calls) {
+      expect(record).not.toHaveProperty("cwdExists");
+    }
   });
 
   it("rejects non-zero exit codes that are not accepted and frees the slot", async () => {

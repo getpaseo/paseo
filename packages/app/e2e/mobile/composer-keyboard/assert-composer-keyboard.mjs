@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import process from "node:process";
 import sharp from "sharp";
+import { resolveAutocompletePlacement } from "./autocomplete-placement.mjs";
 
 const [, , command, ...args] = process.argv;
 
@@ -115,11 +116,14 @@ if (command === "stream-moved") {
     `Composer contained: top=${composer.top}, header=${viewport.top}, bottom=${composer.bottom}, keyboard=${imeTopArgument}\n`,
   );
 } else if (command === "rect") {
+  // A trailing `*` matches the first identifier with that prefix.
   const [snapshotPath, identifier, edge] = args;
   const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
+  const prefix = identifier.endsWith("*") ? identifier.slice(0, -1) : null;
   const node = snapshot.data.nodes.find(
     (candidate) =>
       candidate.identifier === identifier ||
+      (prefix !== null && candidate.identifier?.startsWith(prefix)) ||
       candidate.label === identifier ||
       (identifier === "editable" && candidate.type.endsWith("EditText")),
   );
@@ -231,6 +235,27 @@ if (command === "stream-moved") {
   const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
   if (!snapshot.data.nodes.some((candidate) => candidate.label === expected)) {
     throw new Error(`Missing exact text in ${snapshotPath}: ${expected}`);
+  }
+} else if (command === "autocomplete-best") {
+  // Prints the center of the expected best match after checking its placement
+  // against the composer in the reference snapshot.
+  const [snapshotPath, referencePath, expected, imeTopArgument] = args;
+  const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
+  const reference = JSON.parse(await fs.readFile(referencePath, "utf8"));
+  const best = resolveAutocompletePlacement(snapshot, {
+    expected,
+    keyboardTop: imeTopArgument ? Number(imeTopArgument) : undefined,
+    reference,
+  });
+  process.stdout.write(`${best.x} ${best.y}\n`);
+} else if (command === "composer-text") {
+  // Accessibility drops a trailing space, so compare without it.
+  const [snapshotPath, expected] = args;
+  const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
+  const input = snapshot.data.nodes.find((candidate) => candidate.type.endsWith("EditText"));
+  const text = input?.value ?? input?.label ?? "";
+  if (text.trimEnd() !== expected.trimEnd()) {
+    throw new Error(`Composer text ${JSON.stringify(text)}, expected ${JSON.stringify(expected)}`);
   }
 } else if (command === "same-region") {
   const [firstPath, secondPath, topArgument, heightArgument, failureMessage] = args;

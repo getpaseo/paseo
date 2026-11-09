@@ -1,14 +1,15 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
-import { Text, View, type ViewStyle } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import {
-  buttonIconSize,
+  controlIconSize,
   createControlGeometry,
-  type ButtonControlSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 import { DropdownMenuTrigger, type DropdownMenuTriggerProps } from "@/components/ui/dropdown-menu";
+import { useContainedControlSize } from "@/components/ui/control-size";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
@@ -21,7 +22,7 @@ interface DropdownTriggerProps extends Omit<DropdownMenuTriggerProps, "children"
   children: string;
   /** Icon or swatch before the label. */
   leading?: ReactNode;
-  size?: ButtonControlSize;
+  size?: ControlSize;
 }
 
 /**
@@ -32,20 +33,13 @@ interface DropdownTriggerProps extends Omit<DropdownMenuTriggerProps, "children"
 export function DropdownTrigger({
   children,
   leading,
-  size = "sm",
+  size: sizeProp,
   disabled,
   ...props
 }: DropdownTriggerProps): ReactElement {
-  let sizeStyle: ViewStyle;
-  if (size === "xs") {
-    sizeStyle = styles.xs;
-  } else if (size === "md") {
-    sizeStyle = styles.md;
-  } else if (size === "lg") {
-    sizeStyle = styles.lg;
-  } else {
-    sizeStyle = styles.sm;
-  }
+  const containedSize = useContainedControlSize();
+  const size = sizeProp ?? containedSize ?? "md";
+  const sizeStyle = size === "sm" ? styles.sm : styles.md;
   const triggerStyle = useCallback(
     ({ pressed }: { pressed: boolean }) => [
       styles.base,
@@ -55,7 +49,7 @@ export function DropdownTrigger({
     ],
     [disabled, sizeStyle],
   );
-  const labelStyle = useMemo(() => [styles.label, size === "xs" && styles.labelXs], [size]);
+  const labelStyle = useMemo(() => [styles.label, size === "sm" && styles.labelSm], [size]);
 
   return (
     <DropdownMenuTrigger {...props} disabled={disabled} style={triggerStyle}>
@@ -64,7 +58,7 @@ export function DropdownTrigger({
         {children}
       </Text>
       <View style={styles.chevron}>
-        <ThemedChevronDown size={buttonIconSize[size]} uniProps={chevronColorMapping} />
+        <ThemedChevronDown size={controlIconSize[size]} uniProps={chevronColorMapping} />
       </View>
     </DropdownMenuTrigger>
   );
@@ -81,10 +75,8 @@ const styles = StyleSheet.create((theme) => {
       borderColor: theme.colors.borderAccent,
       backgroundColor: "transparent",
     },
-    xs: geometry.buttonXs,
     sm: geometry.buttonSm,
     md: geometry.buttonMd,
-    lg: geometry.buttonLg,
     pressed: {
       opacity: 0.85,
     },
@@ -94,9 +86,9 @@ const styles = StyleSheet.create((theme) => {
     label: {
       flexShrink: 1,
       color: theme.colors.foreground,
-      ...geometry.buttonText,
+      ...geometry.buttonTextMd,
     },
-    labelXs: geometry.buttonTextXs,
+    labelSm: geometry.buttonTextSm,
     chevron: {
       transform: [{ translateY: 1 }],
     },

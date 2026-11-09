@@ -634,6 +634,26 @@ describe("workspace message schemas", () => {
     ]);
   });
 
+  test("preserves informational workspace parentage in directory updates", () => {
+    const workspace = {
+      id: "child",
+      parentWorkspaceId: "parent",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "child",
+      status: "done",
+      activityAt: null,
+    };
+    expect(WorkspaceDescriptorPayloadSchema.parse(workspace).parentWorkspaceId).toBe("parent");
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...workspace, parentWorkspaceId: undefined })
+        .parentWorkspaceId,
+    ).toBeUndefined();
+  });
+
   test("parses legacy workspace descriptors without workspaceDirectory", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "workspace_update",

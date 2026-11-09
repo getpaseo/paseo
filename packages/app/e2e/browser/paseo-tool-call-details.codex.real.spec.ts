@@ -84,7 +84,7 @@ test.describe("real Codex Paseo tool-call presentation", () => {
         expectedText: ["Prompt", GREETING, "Greeting child", "codex/gpt-5.4-mini", "Result"],
       });
       await captureToolCall(page, testInfo, {
-        label: "Send agent prompt",
+        label: "Send message",
         artifact: "send-prompt-presentation",
         expectedText: ["Prompt", GREETING, "Agent", "Result"],
       });

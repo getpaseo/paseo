@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { realpathSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -35,6 +37,8 @@ export type { WorkspaceSetupDaemonClient };
 export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemonClient> {
   const client = await connectDaemonClient<WorkspaceSetupDaemonClient>({
     clientIdPrefix: "workspace-setup",
+    // COMPAT(workspaceSetupObservation): legacy streaming coverage; remove after 2027-04-19.
+    capabilities: { workspace_setup_observation: false },
   });
   // Establish demand before a caller can launch setup. Client close releases it.
   try {
@@ -325,4 +329,74 @@ export async function waitForWorkspaceSetupProgress(
       resolve(message.payload);
     });
   });
+}
+
+/** Observe the browser's actual setup membership without requesting any output. */
+export function observeSetupPanelTraffic(page: Page) {
+  const subscriptions: Array<{ workspaceId: string; subscriptionId: string }> = [];
+  const releases = new Set<string>();
+  const requests: string[] = [];
+  let legacySetupDemand = false;
+  const outputWorkspaces: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const frame = JSON.parse(String(payload));
+      if (frame.type !== "session") return;
+      if (frame.message?.type === "subscription.release.request")
+        releases.add(frame.message.subscriptionId);
+      if (frame.message?.type === "workspace.setup.subscribe.request")
+        requests.push(frame.message.workspaceId);
+      if (
+        frame.message?.type === "session.events.set_subscription.request" &&
+        frame.message.events.includes("workspace_setup_progress")
+      )
+        legacySetupDemand = true;
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const frame = JSON.parse(String(payload));
+      if (frame.type !== "session") return;
+      if (frame.message?.type === "workspace.setup.subscribe.response")
+        subscriptions.push(frame.message.payload);
+      if (frame.message?.type === "workspace_setup_progress")
+        outputWorkspaces.push(frame.message.payload.workspaceId);
+    });
+  });
+  return {
+    async expectNoDemand() {
+      expect(requests).toEqual([]);
+      expect(legacySetupDemand).toBe(false);
+      expect(subscriptions).toEqual([]);
+      expect(outputWorkspaces).toEqual([]);
+    },
+    async expectSubscribed(workspaceId: string, count: number) {
+      await expect.poll(() => subscriptions.length).toBe(count);
+      expect(subscriptions[count - 1].workspaceId).toBe(workspaceId);
+      expect(requests).toEqual(Array(count).fill(workspaceId));
+    },
+    async expectReleased(index: number) {
+      await expect.poll(() => releases.has(subscriptions[index].subscriptionId)).toBe(true);
+    },
+  };
+}
+
+export function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
+  return detail.commands.map((command) => command.log).join("\n");
+}
+
+/** Hold this isolated daemon's terminal worker so script exit cannot race a layout change. */
+export async function pauseWorkspaceTerminalWorker(terminalId: string): Promise<() => void> {
+  const home = process.env.E2E_PASEO_HOME;
+  if (!home) throw new Error("Missing isolated E2E home");
+  const directory = path.join(home, "terminal-worker");
+  for (const name of await readdir(directory)) {
+    if (!name.endsWith(".json")) continue;
+    const record = JSON.parse(await readFile(path.join(directory, name), "utf8")) as {
+      pid: number;
+      terminals: Array<{ id: string }>;
+    };
+    if (!record.terminals.some((terminal) => terminal.id === terminalId)) continue;
+    process.kill(record.pid, "SIGSTOP");
+    return () => process.kill(record.pid, "SIGCONT");
+  }
+  throw new Error(`No isolated terminal worker owns ${terminalId}`);
 }

@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { SquareTerminal } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import type { Theme } from "@/styles/theme";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -17,7 +17,7 @@ function ProviderProfileIcon({
   size: number;
   color?: string;
 }) {
-  const Icon = getProviderIcon(iconKey);
+  const Icon = useProviderIcon(iconKey);
   return <Icon size={size} color={color} />;
 }
 

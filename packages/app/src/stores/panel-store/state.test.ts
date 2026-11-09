@@ -1,12 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { subscribeMobilePanelSelection } from "@/mobile-panels/selection";
+import { beforeEach, describe, expect, it } from "vitest";
+import { usePanelStore } from ".";
 import {
-  buildExplorerCheckoutKey,
-  resolveExplorerTabForCheckout,
-  type ExplorerTab,
-} from "@/stores/explorer-tab-memory";
-import {
-  buildOpenFileExplorerPatch,
-  buildToggleFileExplorerPatch,
   DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
   selectIsAgentListOpen,
@@ -22,80 +17,9 @@ function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState
       agentListOpen: false,
       focusModeEnabled: false,
     },
-    explorerTab: "changes",
-    explorerTabByCheckout: {},
     ...overrides,
   };
 }
-
-describe("panel-store explorer tab resolution", () => {
-  const serverId = "server-1";
-  const cwd = "/tmp/repo";
-
-  it("defaults to changes for git checkouts", () => {
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {},
-      }),
-    ).toBe("changes");
-  });
-
-  it("defaults to files for non-git checkouts", () => {
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: false,
-        explorerTabByCheckout: {},
-      }),
-    ).toBe("files");
-  });
-
-  it("restores a stored files tab for git checkouts", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {
-          [key]: "files",
-        },
-      }),
-    ).toBe("files");
-  });
-
-  it("falls back to default when stored tab is invalid", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {
-          [key]: "terminals" as unknown as ExplorerTab,
-        },
-      }),
-    ).toBe("changes");
-  });
-
-  it("coerces stored changes to files for non-git checkouts", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: false,
-        explorerTabByCheckout: {
-          [key]: "changes",
-        },
-      }),
-    ).toBe("files");
-  });
-});
 
 describe("panel-store migration", () => {
   it("defaults hidden-file visibility to showing hidden files", () => {
@@ -191,57 +115,110 @@ describe("panel-store visibility selectors", () => {
   });
 });
 
-describe("panel-store compact file explorer actions", () => {
-  it("opens the compact explorer and resolves the tab from the explicit checkout", () => {
-    const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
-    const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    const state = makePanelState({
-      explorerTab: "changes",
-      explorerTabByCheckout: { [key]: "files" },
-    });
+it("discards obsolete checkout selection while preserving other panel preferences", () => {
+  const state = migratePanelState(
+    { explorerTab: "files", explorerTabByCheckout: { checkout: "changes" }, sidebarWidth: 400 },
+    16,
+  );
+  expect(state).not.toHaveProperty("explorerTab");
+  expect(state).not.toHaveProperty("explorerTabByCheckout");
+  expect(state.sidebarWidth).toBe(400);
+});
 
-    const patch = buildOpenFileExplorerPatch(state, checkout);
-
-    expect(patch.mobilePanel).toEqual({ target: "file-explorer", revision: 1 });
-    expect(patch.explorerTab).toBe("files");
+describe("panel-store wide navigation overlay", () => {
+  it("subscribes with the current selection and observes future commands until unsubscribe", () => {
+    usePanelStore.getState().showMobileAgent();
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "hidden" });
+    const published = usePanelStore.getState().mobilePanel;
+    const received: (typeof published)[] = [];
+    const unsubscribe = subscribeMobilePanelSelection((selection) => received.push(selection));
+    try {
+      expect(received).toEqual([published]);
+      usePanelStore.getState().showMobileAgentList();
+      expect(received).toEqual([published, usePanelStore.getState().mobilePanel]);
+      unsubscribe();
+      const before = [...received];
+      usePanelStore.getState().showMobileAgent();
+      expect(received).toEqual(before);
+    } finally {
+      unsubscribe();
+    }
   });
 
-  it("toggles the explorer closed without changing the active tab", () => {
-    const state = makePanelState({
-      mobilePanel: { target: "file-explorer", revision: 1 },
-      explorerTab: "files",
-    });
-
-    const patch = buildToggleFileExplorerPatch(state, {
-      serverId: "server-1",
-      cwd: "/tmp/repo",
-      isGit: true,
-    });
-
-    expect(patch).toEqual({ mobilePanel: { target: "agent", revision: 2 } });
+  beforeEach(() => {
+    const panels = usePanelStore.getState();
+    panels.showMobileAgent();
+    panels.closeDesktopAgentList();
   });
 
-  it("coerces changes to files for a non-git checkout", () => {
-    const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: false };
-    const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    const state = makePanelState({
-      explorerTab: "changes",
-      explorerTabByCheckout: { [key]: "changes" },
-    });
+  it.each([
+    ["openDesktopAgentList", () => usePanelStore.getState().openDesktopAgentList()],
+    ["toggleDesktopAgentList", () => usePanelStore.getState().toggleDesktopAgentList()],
+    [
+      "openAgentListForLayout",
+      () => usePanelStore.getState().openAgentListForLayout({ isCompact: false }),
+    ],
+    [
+      "toggleAgentListForLayout",
+      () => usePanelStore.getState().toggleAgentListForLayout({ isCompact: false }),
+    ],
+  ])("drops the overlay target when %s docks the sidebar", (_name, dock) => {
+    usePanelStore.getState().showMobileAgentList();
 
-    expect(buildOpenFileExplorerPatch(state, checkout).explorerTab).toBe("files");
+    dock();
+
+    expect(usePanelStore.getState().desktop.agentListOpen).toBe(true);
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   });
 
-  it("opens with the default files tab for an explicit non-git checkout with no stored tab", () => {
-    const state = makePanelState({ explorerTab: "changes", explorerTabByCheckout: {} });
+  it("drops the overlay target once the sidebar is no longer presented as an overlay", () => {
+    usePanelStore.getState().showMobileAgentList();
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "overlay" });
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent-list");
 
-    const patch = buildOpenFileExplorerPatch(state, {
-      serverId: "server-1",
-      cwd: "/tmp/non-git",
-      isGit: false,
-    });
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "dock" });
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
 
-    expect(patch.mobilePanel).toEqual({ target: "file-explorer", revision: 1 });
-    expect(patch.explorerTab).toBe("files");
+    usePanelStore.getState().showMobileAgentList();
+    usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "hidden" });
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   });
+
+  it.each(["dock", "hidden"] as const)(
+    "invalidates an opening swipe when presentation becomes %s before its target commits",
+    (presentation) => {
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "overlay" });
+      const startedRevision = usePanelStore.getState().mobilePanel.revision;
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: presentation });
+
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+      expect(usePanelStore.getState().mobilePanel.revision).toBeGreaterThan(startedRevision);
+    },
+  );
+
+  it.each(["overlay", "hidden"] as const)(
+    "keeps the compact explorer target when the compact sidebar becomes %s",
+    (leftSidebar) => {
+      usePanelStore.getState().showMobileFileExplorer();
+
+      usePanelStore.getState().applyPanelLayout({ isCompact: true, leftSidebar });
+
+      expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
+    },
+  );
+
+  it.each(["overlay", "dock", "hidden"] as const)(
+    "drops the compact explorer target when the layout widens with a %s sidebar",
+    (leftSidebar) => {
+      usePanelStore.getState().showMobileFileExplorer();
+      const openedRevision = usePanelStore.getState().mobilePanel.revision;
+
+      usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar });
+
+      expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+      expect(usePanelStore.getState().mobilePanel.revision).toBeGreaterThan(openedRevision);
+    },
+  );
 });

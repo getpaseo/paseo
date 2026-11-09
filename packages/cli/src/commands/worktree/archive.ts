@@ -2,6 +2,7 @@ import path from "path";
 import type { Command } from "commander";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { resolveRepositoryDirectory } from "./repository-directory.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -31,6 +32,7 @@ export const archiveSchema: OutputSchema<WorktreeArchiveResult> = {
 
 export interface WorktreeArchiveOptions extends CommandOptions {
   host?: string;
+  cwd?: string;
 }
 
 export type WorktreeArchiveCommandResult = SingleResult<WorktreeArchiveResult>;
@@ -49,6 +51,7 @@ export async function runArchiveCommandWithDeps(
   deps: { connectToDaemon: typeof connectToDaemon },
 ): Promise<WorktreeArchiveCommandResult> {
   const host = getDaemonHost({ target: options.daemonTarget });
+  const cwd = resolveRepositoryDirectory(options);
 
   // Validate arguments
   if (!nameArg || nameArg.trim().length === 0) {
@@ -76,7 +79,7 @@ export async function runArchiveCommandWithDeps(
 
   try {
     // Get the list of worktrees first to resolve the name
-    const listResponse = await client.getPaseoWorktreeList({});
+    const listResponse = await client.getPaseoWorktreeList({ cwd });
 
     if (listResponse.error) {
       const error: CommandError = {

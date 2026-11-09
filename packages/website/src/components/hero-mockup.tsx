@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DEFAULT_MOCKUP_STATE,
   DESIGN_HEIGHT,
@@ -10,12 +11,10 @@ import {
   ScaledMockup,
 } from "~/components/mockup";
 
-const ALT =
-  "Paseo desktop app with coding agents, a conversation, and a code diff open side by side";
-
 const PILL_TRANSITION = { duration: 0.34, ease: [0.22, 0.61, 0.36, 1] as const };
 
 export function HeroMockup() {
+  const { t } = useTranslation();
   const [state, setState] = useState<MockupStateId>(DEFAULT_MOCKUP_STATE);
 
   return (
@@ -23,10 +22,10 @@ export function HeroMockup() {
       <div className="mb-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2">
         {MOCKUP_STATES.map((option) => (
           <StatePill
-            key={option.id}
-            id={option.id}
-            label={option.label}
-            selected={option.id === state}
+            key={option}
+            id={option}
+            label={t(`landing.mockup.${option}`)}
+            selected={option === state}
             onSelect={setState}
           />
         ))}
@@ -36,7 +35,7 @@ export function HeroMockup() {
         width={DESIGN_WIDTH}
         height={DESIGN_HEIGHT}
         borderRadius={18}
-        label={ALT}
+        label={t("landing.mockup.alt")}
         className="ring-1 ring-white/10"
       >
         <MockupWindow state={state} />

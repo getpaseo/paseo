@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 
 function workspaceRowTestId(workspaceId: string): string {
@@ -72,4 +73,76 @@ test.describe("Sidebar workspace rename", () => {
       await workspace.cleanup();
     }
   });
+});
+
+async function toggleBackgroundWorkspaces(page: Page): Promise<void> {
+  await page.getByLabel("Display preferences", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Show background", exact: true }).click();
+  await page.keyboard.press("Escape");
+}
+
+async function expectWorkspaceInSidebar(page: Page, workspaceId: string): Promise<void> {
+  // Rows have no single accessible role: their nested title and actions share this container.
+  await expect(page.getByTestId(workspaceRowTestId(workspaceId))).toBeVisible({ timeout: 30_000 });
+}
+
+async function expectWorkspaceHidden(page: Page, workspaceId: string): Promise<void> {
+  await expect(page.getByTestId(workspaceRowTestId(workspaceId))).toHaveCount(0);
+}
+
+async function reconnectApp(page: Page): Promise<void> {
+  await page.reload();
+  await expect(page.getByLabel("Display preferences", { exact: true })).toBeVisible();
+}
+
+async function expectWorkerOpen(page: Page): Promise<void> {
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Background reviewer", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Background review prompt", { exact: true }).first()).toBeVisible();
+}
+
+test("background workspace stays directly accessible across sidebar toggles and reconnect", async ({
+  page,
+}, testInfo) => {
+  const workspace = await seedWorkspace({
+    repoPrefix: "sidebar-background-",
+    title: "Background review",
+    background: true,
+  });
+  try {
+    const worker = await workspace.client.createAgent({
+      provider: "mock",
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Background reviewer",
+      initialPrompt: "Background review prompt",
+      model: "e2e-fast-stream",
+      modeId: "load-test",
+    });
+    await test.step("Default sidebar hides background work", async () => {
+      await gotoAppShell(page);
+      await expectWorkspaceHidden(page, workspace.workspaceId);
+    });
+    await test.step("Show background exposes the fully replicated workspace", async () => {
+      await toggleBackgroundWorkspaces(page);
+      await expectWorkspaceInSidebar(page, workspace.workspaceId);
+      await reconnectApp(page);
+      await expectWorkspaceInSidebar(page, workspace.workspaceId);
+    });
+    await test.step("Direct agent navigation survives hiding and reconnect", async () => {
+      await toggleBackgroundWorkspaces(page);
+      await expectWorkspaceHidden(page, workspace.workspaceId);
+      await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: worker.id });
+      await expectWorkerOpen(page);
+      await expectWorkspaceHidden(page, workspace.workspaceId);
+      await reconnectApp(page);
+      await expectWorkerOpen(page);
+      await expectWorkspaceHidden(page, workspace.workspaceId);
+      await page.screenshot({ path: testInfo.outputPath("background-direct-open.png") });
+    });
+  } finally {
+    await workspace.cleanup();
+  }
 });

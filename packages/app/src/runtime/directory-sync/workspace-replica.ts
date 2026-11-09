@@ -14,6 +14,7 @@ import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   clearWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -82,7 +83,12 @@ export class WorkspaceDirectoryReplica {
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): DirectoryReplicaMutation[] {
-    return workspaces.flatMap((workspace) => this.upsertWorkspace(workspace));
+    // Creation responses and progress snapshots can arrive after live updates.
+    // They seed missing rows; the directory owns rows it has already received.
+    return workspaces.flatMap((workspace) => {
+      if (this.workspaces.has(workspace.id)) return [];
+      return this.upsertWorkspace(workspace);
+    });
   }
 
   acceptProject(project: ProjectDescriptor): DirectoryReplicaMutation[] {
@@ -102,6 +108,16 @@ export class WorkspaceDirectoryReplica {
         workspaces.set(workspaceId, workspace);
       }
     }
+    // A snapshot taken while an undo runs can predate the restore; the host publishes the row.
+    for (const [workspaceId, workspace] of this.workspaces) {
+      if (
+        !workspaces.has(workspaceId) &&
+        shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId })
+      ) {
+        workspaces.set(workspaceId, workspace);
+      }
+    }
+    for (const workspace of workspaces.values()) this.applySetupStatus(workspace);
     this.workspaces = workspaces;
     this.projects = new Map(snapshot.projects);
     this.rebuildProjectIndex();
@@ -167,6 +183,12 @@ export class WorkspaceDirectoryReplica {
       kind: "remove";
     },
   ): DirectoryReplicaMutation[] {
+    // The archive this remove reports is being undone; the host publishes the restored row.
+    if (
+      shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId: delta.id })
+    ) {
+      return [];
+    }
     this.deleteWorkspace(delta.id);
     const mutations: DirectoryReplicaMutation[] = [
       { kind: "workspace", type: "delete", id: delta.id },
@@ -198,7 +220,16 @@ export class WorkspaceDirectoryReplica {
     return [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }];
   }
 
+  private applySetupStatus(workspace: WorkspaceDescriptor): void {
+    useWorkspaceSetupStore.getState().applySetupStatus({
+      serverId: this.serverId,
+      workspaceId: workspace.id,
+      status: workspace.setupStatus ?? null,
+    });
+  }
+
   private setWorkspace(workspace: WorkspaceDescriptor): void {
+    this.applySetupStatus(workspace);
     const previous = this.workspaces.get(workspace.id);
     if (previous?.projectId !== workspace.projectId) {
       this.workspaceIdsByProject.get(previous?.projectId ?? "")?.delete(workspace.id);

@@ -52,7 +52,6 @@ function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: strin
       workspace: { workspaceId: args.createdWorkspaceId, cwd: workspaceCwd },
       repoRoot: args.repoRoot,
       created: true,
-      setupContinuation: { kind: "agent" as const, startAfterAgentCreate: () => {} },
     }) as unknown as CreatePaseoWorktreeWorkflowResult;
 }
 
@@ -70,6 +69,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
       getAgent: vi.fn(() => snapshot),
       tryRunOutOfBand: vi.fn(() => false),
       hasInFlightRun: vi.fn(() => false),
+      reloadStalePluginSession: async () => {},
       streamAgent,
       waitForAgentRunStart: vi.fn(async () => undefined),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -87,7 +87,6 @@ test("session create forwards clientMessageId to the initial prompt run options"
     labels: {},
     provisionalTitle: null,
     firstAgentContext: { attachments: [] },
-    buildSessionConfig: async (config) => ({ sessionConfig: config }),
   });
 
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
@@ -170,7 +169,6 @@ test("session create validates the requested mode against the provider's modes",
       labels: {},
       provisionalTitle: null,
       firstAgentContext: { attachments: [] },
-      buildSessionConfig: async (config) => ({ sessionConfig: config }),
     }),
   ).rejects.toThrow("Invalid mode 'plan'");
 
@@ -195,7 +193,7 @@ test("session create applies the resolved mode from the provider create config",
   const stub = createProviderSnapshotManagerStub();
   stub.resolveCreateConfig.mockResolvedValue({
     modeId: "build",
-    featureValues: { auto_accept: true },
+    providerOptions: { auto_accept: true },
   });
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
@@ -214,13 +212,12 @@ test("session create applies the resolved mode from the provider create config",
     labels: {},
     provisionalTitle: null,
     firstAgentContext: { attachments: [] },
-    buildSessionConfig: async (config) => ({ sessionConfig: config }),
   });
 
   expect(createAgent).toHaveBeenCalledWith(
     expect.objectContaining({
       modeId: "build",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     }),
     undefined,
     expect.anything(),
@@ -257,7 +254,6 @@ test("mcp create accepts provider-only internal input and leaves model undefined
     workspaceId: "ws-create-test",
     title: "provider default",
     initialPrompt: "hello",
-    background: true,
     notifyOnFinish: false,
   });
 
@@ -293,47 +289,11 @@ test("session create stamps the requested workspaceId when no worktree setup run
         labels: {},
         provisionalTitle: null,
         firstAgentContext: { attachments: [] },
-        buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
     );
 
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-source");
-  } finally {
-    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
-  }
-});
-
-test("session create stamps the new worktree's workspaceId when a setup continuation runs", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const agentManager = createRealAgentManager(storage);
-
-  try {
-    const { snapshot } = await createAgentCommand(
-      {
-        agentManager,
-        agentStorage: storage,
-        logger,
-        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-      },
-      {
-        kind: "session",
-        config: { provider: "codex", cwd: workdir },
-        workspaceId: "ws-source",
-        labels: {},
-        provisionalTitle: null,
-        firstAgentContext: { attachments: [] },
-        buildSessionConfig: async (config) => ({
-          sessionConfig: config,
-          setupContinuation: { kind: "agent", startAfterAgentCreate: () => {} },
-          createdWorkspaceId: "ws-new-worktree",
-        }),
-      },
-    );
-
-    const stored = await storage.get(snapshot.id);
-    expect(stored?.workspaceId).toBe("ws-new-worktree");
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
@@ -355,7 +315,6 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
         labels: {},
         provisionalTitle: null,
         firstAgentContext: { attachments: [] },
-        buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
     );
 
@@ -375,7 +334,6 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
         provider: "codex/gpt-5.4",
         title: "child",
         initialPrompt: "do the thing",
-        background: true,
         notifyOnFinish: false,
         callerAgentId: parent.id,
         worktree: { worktreeName: "feature", baseBranch: "main" },
@@ -424,7 +382,6 @@ test("mcp create exposes the created worktree before dispatching the initial pro
         cwd: workdir,
         title: "worktree callback",
         initialPrompt: "Say done.",
-        background: true,
         notifyOnFinish: false,
         worktree: { worktreeName: "feature", baseBranch: "main" },
         onCreated: ({ agentId, createdWorktree: callbackWorktree }) => {
@@ -464,7 +421,6 @@ test("session create keeps the prompt title after the initial prompt settles", a
         labels: {},
         provisionalTitle: title,
         firstAgentContext: { attachments: [] },
-        buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
     );
 
@@ -502,7 +458,6 @@ test("session create keeps an explicit title after the initial prompt settles", 
         labels: {},
         provisionalTitle: title,
         firstAgentContext: { attachments: [] },
-        buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
     );
 
@@ -516,4 +471,47 @@ test("session create keeps an explicit title after the initial prompt settles", 
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
+});
+
+test("session create with an internal config skips provider session persistence", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+  const input = {
+    kind: "session" as const,
+    workspaceId: "ws-create-test",
+    labels: {},
+    provisionalTitle: null,
+    firstAgentContext: { attachments: [] },
+  };
+
+  await createAgentCommand(dependencies, {
+    ...input,
+    config: { provider: "codex", cwd: "/tmp/paseo-create-test", internal: true },
+  });
+  await createAgentCommand(dependencies, {
+    ...input,
+    config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+  });
+
+  expect(createAgent).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ provider: "codex", internal: true }),
+    undefined,
+    expect.objectContaining({ persistSession: false }),
+  );
+  expect(createAgent.mock.calls[1]?.[0]).not.toHaveProperty("internal");
+  expect(createAgent.mock.calls[1]?.[2]).not.toHaveProperty("persistSession");
 });

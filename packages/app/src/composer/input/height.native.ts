@@ -7,6 +7,8 @@ interface ComposerHeightArgs {
   textareaRef: RefObject<unknown>;
   minHeight: number;
   maxHeight: number;
+  onRenderedLinesChange?: (lines: number) => void;
+  presentationKey?: boolean;
 }
 
 export function useComposerHeight({

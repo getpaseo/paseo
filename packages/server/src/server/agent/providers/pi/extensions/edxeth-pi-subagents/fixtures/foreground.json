@@ -1,0 +1,156 @@
+{
+  "provenance": {
+    "package": "edxeth/pi-subagents",
+    "version": "2.9.2",
+    "sourceCommit": "cf6dbf41c17986f3882e6804a68e8fb8282d25e6",
+    "piVersion": "0.87.1",
+    "captureDate": "2026-10-21"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_0bc6fc2213cd49aa92950947bde5dd8a|fc_0a0ca4aa78cd296a016ad8b88d018481919eadbf09eb191a1a",
+      "toolName": "subagent",
+      "args": {
+        "agent": "marker",
+        "name": "fixture-marker",
+        "title": "Fixture marker verification",
+        "task": "Return only PASEO_EDXETH_UPSTREAM_OK"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_0bc6fc2213cd49aa92950947bde5dd8a|fc_0a0ca4aa78cd296a016ad8b88d018481919eadbf09eb191a1a",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Sub-agent \"fixture-marker\" completed (7s).\n\nPASEO_EDXETH_UPSTREAM_OK\n\nSession: /tmp/paseo-edxeth-fixture/foreground/child-session.jsonl\nResume: pi --session /tmp/paseo-edxeth-fixture/foreground/child-session.jsonl\n\nSub-agent context: 2K/372K tokens (0%) used at finish."
+          }
+        ],
+        "details": {
+          "id": "dd7f94e8",
+          "name": "fixture-marker",
+          "agent": "marker",
+          "status": "completed",
+          "mode": "background",
+          "parentClosePolicy": "terminate",
+          "deliveryState": "awaited",
+          "async": false,
+          "autoExit": true,
+          "exitCode": 0,
+          "elapsed": 7,
+          "outputTokens": 49,
+          "contextTokens": 1777,
+          "contextWindow": 372000,
+          "summary": "PASEO_EDXETH_UPSTREAM_OK",
+          "sessionFile": "/tmp/paseo-edxeth-fixture/foreground/child-session.jsonl"
+        }
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_0bc6fc2213cd49aa92950947bde5dd8a|fc_0a0ca4aa78cd296a016ad8b88d018481919eadbf09eb191a1a",
+          "name": "subagent",
+          "arguments": {
+            "agent": "marker",
+            "name": "fixture-marker",
+            "title": "Fixture marker verification",
+            "task": "Return only PASEO_EDXETH_UPSTREAM_OK"
+          }
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "usage": {
+        "input": 3256,
+        "output": 43,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 3299,
+        "cost": {
+          "input": 0.013023999999999999,
+          "output": 0.0008600000000000001,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.013883999999999999
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1792587912428,
+      "responseId": "resp_0a0ca4aa78cd296a016ad8b88bd52881918cbb9b8326b3060a",
+      "rawStopReason": "completed"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_0bc6fc2213cd49aa92950947bde5dd8a|fc_0a0ca4aa78cd296a016ad8b88d018481919eadbf09eb191a1a",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Sub-agent \"fixture-marker\" completed (7s).\n\nPASEO_EDXETH_UPSTREAM_OK\n\nSession: /tmp/paseo-edxeth-fixture/foreground/child-session.jsonl\nResume: pi --session /tmp/paseo-edxeth-fixture/foreground/child-session.jsonl\n\nSub-agent context: 2K/372K tokens (0%) used at finish."
+        }
+      ],
+      "details": {
+        "id": "dd7f94e8",
+        "name": "fixture-marker",
+        "agent": "marker",
+        "status": "completed",
+        "mode": "background",
+        "parentClosePolicy": "terminate",
+        "deliveryState": "awaited",
+        "async": false,
+        "autoExit": true,
+        "exitCode": 0,
+        "elapsed": 7,
+        "outputTokens": 49,
+        "contextTokens": 1777,
+        "contextWindow": 372000,
+        "summary": "PASEO_EDXETH_UPSTREAM_OK",
+        "sessionFile": "/tmp/paseo-edxeth-fixture/foreground/child-session.jsonl"
+      },
+      "isError": false,
+      "timestamp": 1792587924671
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "DONE"
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "usage": {
+        "input": 388,
+        "output": 5,
+        "cacheRead": 3072,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 3465,
+        "cost": {
+          "input": 0.001552,
+          "output": 0.0001,
+          "cacheRead": 0.0012288000000000002,
+          "cacheWrite": 0,
+          "total": 0.0028808
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1792587924675,
+      "responseId": "resp_0a0ca4aa78cd296a016ad8b896af2c81919c0ef586dd50f2f0",
+      "rawStopReason": "completed"
+    }
+  ]
+}
