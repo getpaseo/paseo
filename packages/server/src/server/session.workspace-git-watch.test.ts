@@ -169,6 +169,10 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     unsubscribe: ReturnType<typeof vi.fn>;
   }>;
   setAutoArchiveAfterMerge: (enabled: boolean) => void;
+  livenessReads: {
+    listAgents: ReturnType<typeof vi.fn>;
+    listActiveAgentRecords: ReturnType<typeof vi.fn>;
+  };
 } {
   let autoArchiveAfterMerge = options?.autoArchiveAfterMerge ?? false;
   const configListeners = new Set<(config: { autoArchiveAfterMerge: boolean }) => void>();
@@ -219,6 +223,10 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   };
 
   const agentEventListeners: Array<(event: unknown) => void> = [];
+  const listAgents = vi.fn(() => options?.agents ?? []);
+  const listActiveAgentRecords = vi.fn(async () =>
+    (options?.storedAgents ?? []).filter((record) => !record.archivedAt),
+  );
 
   const session = new Session({
     workspaceRuntimeStore,
@@ -237,13 +245,13 @@ function createSessionForWorkspaceGitWatchTests(options?: {
         agentEventListeners.push(listener);
         return () => {};
       },
-      listAgents: () => options?.agents ?? [],
+      listAgents,
       listProviderSubagentActivity: () => [],
       getAgent: () => null,
     }),
     agentStorage: createStub<SessionOptions["agentStorage"]>({
       listAll: async () => options?.storedAgents ?? [],
-      listActive: async () => (options?.storedAgents ?? []).filter((record) => !record.archivedAt),
+      listActive: listActiveAgentRecords,
       listByWorkspaces: async () => [],
       lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
       get: async () => null,
@@ -338,6 +346,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     agentEventListeners,
     subscriptions,
     setAutoArchiveAfterMerge,
+    livenessReads: { listAgents, listActiveAgentRecords },
   };
 }
 
@@ -1399,6 +1408,47 @@ describe("live workspace observation", () => {
 
     expect(peakInFlight).toBe(2);
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(3);
+    await session.cleanup();
+  });
+
+  test("a session that does not project checkout status runs no liveness scans on agent events", async () => {
+    const agents = [{ workspaceId: "ws-idle", lifecycle: "idle" as const, labels: {} }];
+    const { session, projects, workspaces, agentEventListeners, livenessReads } =
+      createSessionForWorkspaceGitWatchTests({ agents });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-idle",
+      cwd: "/tmp/idle-workspace",
+      name: "idle",
+      updatedAt: OLD,
+    });
+
+    // A modern client owns its subscriptions, so nothing is implicitly delivered: this session
+    // watches agents only and never projects checkout status.
+    const source = {};
+    asInternals<{ delivery: { attach: (socket: object, modern: boolean) => void } }>(
+      session,
+    ).delivery.attach(source, true);
+    await session.handleMessage(
+      {
+        type: "fetch_agents_request",
+        requestId: "agents",
+        subscribe: {},
+      },
+      source,
+    );
+    expect(agentEventListeners.length).toBeGreaterThan(0);
+    const listAgentsCalls = livenessReads.listAgents.mock.calls.length;
+    const listActiveCalls = livenessReads.listActiveAgentRecords.mock.calls.length;
+
+    for (const listener of agentEventListeners) {
+      listener({ type: "agent_removed", agentId: "agent-1" });
+    }
+
+    expect(livenessReads.listAgents).toHaveBeenCalledTimes(listAgentsCalls);
+    expect(livenessReads.listActiveAgentRecords).toHaveBeenCalledTimes(listActiveCalls);
     await session.cleanup();
   });
 });

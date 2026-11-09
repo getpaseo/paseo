@@ -7535,6 +7535,9 @@ export class Session {
   }
 
   private async reconcileObserversAfterAgentChangeRun(): Promise<void> {
+    // Agent state changes arrive constantly. Only a session that projects checkout status uses
+    // the liveness these scans feed, so skip both record scans for every other session.
+    if (!this.wantsEvent("checkout_status_update")) return;
     const liveness = await this.listAgentWorkspaceLiveness();
     const next = liveness.loadedWorkspaceIds;
     const previous = this.loadedAgentWorkspaceIds;
