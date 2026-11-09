@@ -1,7 +1,8 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
-import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import type { CheckoutDiffSnapshot } from "./diff-snapshot";
+import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 
-type DiffPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
+type DiffPayload = CheckoutDiffSnapshot;
 
 /** File identity owns text-model reuse. Never reconstruct the hunk/token graph. */
 export function retainDiffFiles(
@@ -30,6 +31,7 @@ export function shareCheckoutDiff(previous: unknown, incoming: unknown): DiffPay
     error === old.error &&
     old.cwd === next.cwd &&
     old.requestId === next.requestId &&
+    old.entries === next.entries &&
     old.diffTooLarge === next.diffTooLarge
     ? old
     : { ...next, files, error };

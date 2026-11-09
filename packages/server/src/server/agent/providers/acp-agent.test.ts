@@ -1,10 +1,10 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -99,11 +99,32 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    signal: AbortSignal;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+}
+
+function openPromptConnection(
+  prompt: (...args: unknown[]) => Promise<unknown>,
+): ACPSessionInternals["connection"] {
+  return {
+    prompt: prompt as ACPSessionInternals["connection"]["prompt"],
+    signal: new AbortController().signal,
+  };
+}
+
+function terminalEvents(events: AgentStreamEvent[]): AgentStreamEvent[] {
+  return events.filter(
+    (event) =>
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled",
+  );
 }
 
 interface ACPModelSelectionInternals {
@@ -119,6 +140,7 @@ interface ACPModelSelectionInternals {
 }
 
 interface ACPConfiguredOverrideInternals {
+  applySessionState(response: SessionStateResponse): void;
   sessionId: string | null;
   connection: {
     setSessionMode: (input: { sessionId: string; modeId: string }) => Promise<void>;
@@ -198,7 +220,7 @@ function createSessionWithConfig(
     provider?: string;
     modeId?: string | null;
     model?: string | null;
-    featureValues?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
@@ -208,7 +230,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
-      featureValues: config.featureValues,
+      providerOptions: config.providerOptions,
     },
     {
       provider: config.provider ?? "claude-acp",
@@ -300,19 +322,20 @@ function selectConfigOption(
 
 function createCopilotSessionWithConfig(
   modeId?: string | null,
-  featureValues?: Record<string, unknown>,
+  providerOptions?: Record<string, unknown>,
+  defaultCommand: string[] = ["copilot", "--acp"],
 ): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "copilot",
       cwd: "/tmp/paseo-acp-test",
       modeId: modeId ?? undefined,
-      ...(featureValues ? { featureValues } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
     },
     {
       provider: "copilot",
       logger: createTestLogger(),
-      defaultCommand: ["copilot", "--acp"],
+      defaultCommand,
       defaultModes: COPILOT_MODES,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
@@ -423,6 +446,24 @@ function prepareConfiguredOverrideSession(
     configOptions: options.configOptions ?? [],
   }));
   const internals = asInternals<ACPConfiguredOverrideInternals>(session);
+  const availableModes = options.availableModes ?? [];
+  const modes =
+    availableModes.length > 0
+      ? {
+          currentModeId: options.currentMode ?? availableModes[0]!.id,
+          availableModes: availableModes.map((mode) => ({
+            id: mode.id,
+            label: mode.label,
+            description: mode.description,
+            name: mode.label,
+          })),
+        }
+      : undefined;
+  internals.applySessionState({
+    sessionId: "session-1",
+    modes,
+    configOptions: options.configOptions ?? [],
+  });
   internals.sessionId = "session-1";
   internals.connection = {
     setSessionMode,
@@ -480,7 +521,7 @@ test("ACP setModel only uses config-option fallback when the matching select cho
 
   setSessionConfigOption.mockClear();
 
-  await expect(session.setModel("new-provider-model")).resolves.toBeUndefined();
+  await expect(session.setModel("new-provider-model")).resolves.toEqual({ model: "sonnet" });
   expect(childLogger.warn).toHaveBeenCalledWith(
     { value: "new-provider-model" },
     expect.stringContaining("is not a valid claude-acp model config option"),
@@ -1498,7 +1539,7 @@ describe("ACPAgentSession Zed parity", () => {
   test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {
     const session = createSessionWithConfig({
       provider: "cursor-acp",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     const events: Array<{ type: string }> = [];
 
@@ -1530,7 +1571,7 @@ describe("ACPAgentSession Zed parity", () => {
   test("does not auto-accept ACP chooser requests", async () => {
     const session = createSessionWithConfig({
       provider: "kimi-acp",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     const events: AgentStreamEvent[] = [];
 
@@ -1583,11 +1624,8 @@ describe("ACPAgentSession Zed parity", () => {
     internals.sessionId = "session-1";
     internals.connection = {};
 
-    await session.setFeature("auto_accept", true);
+    await session.applyOptions({ auto_accept: true });
 
-    expect(session.features).toContainEqual(
-      expect.objectContaining({ type: "toggle", id: "auto_accept", value: true }),
-    );
     await expect(
       session.requestPermission({
         sessionId: "session-1",
@@ -1605,7 +1643,7 @@ describe("ACPAgentSession Zed parity", () => {
   });
 
   test("surfaces an ACP permission when auto-accept has no allow option", async () => {
-    const session = createSessionWithConfig({ featureValues: { auto_accept: true } });
+    const session = createSessionWithConfig({ providerOptions: { auto_accept: true } });
     const events: Array<{ type: string; request?: { id: string } }> = [];
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
     session.subscribe((event) => events.push(event as { type: string; request?: { id: string } }));
@@ -1765,35 +1803,18 @@ describe("ACPAgentSession Zed parity", () => {
     const internals = asInternals<ACPSessionInternals>(session);
     internals.configOptions = [copilotAgentConfigOption("")];
 
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        value: false,
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ type: "toggle", key: "auto_accept" }),
       {
         type: "select",
-        id: "agent",
+        key: "agent",
         label: "Agent",
         description: "Use a Copilot custom agent profile",
         tooltip: "Select Copilot agent",
         icon: undefined,
-        value: "",
-        options: [
-          {
-            id: "",
-            label: "Default",
-            description: undefined,
-            isDefault: true,
-            metadata: undefined,
-          },
-          {
-            id: "Probe Agent",
-            label: "Probe Agent",
-            description: "Temporary probe agent",
-            isDefault: false,
-            metadata: undefined,
-          },
+        choices: [
+          { value: "", label: "Default", description: undefined },
+          { value: "Probe Agent", label: "Probe Agent", description: "Temporary probe agent" },
         ],
       },
     ]);
@@ -1816,15 +1837,9 @@ describe("ACPAgentSession Zed parity", () => {
       configId: "agent",
       value: "Probe Agent",
     });
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        id: "auto_accept",
-        value: false,
-      }),
-      expect.objectContaining({
-        id: "agent",
-        value: "Probe Agent",
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ key: "auto_accept" }),
+      expect.objectContaining({ key: "agent" }),
     ]);
   });
 
@@ -1838,23 +1853,172 @@ describe("ACPAgentSession Zed parity", () => {
       connection: { setSessionConfigOption },
     });
 
-    await session.setFeature("agent", "Probe Agent");
+    await session.applyOptions({ agent: "Probe Agent" });
 
     expect(setSessionConfigOption).toHaveBeenCalledWith({
       sessionId: "session-1",
       configId: "agent",
       value: "Probe Agent",
     });
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        id: "auto_accept",
-        value: false,
-      }),
-      expect.objectContaining({
-        id: "agent",
-        value: "Probe Agent",
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ key: "auto_accept" }),
+      expect.objectContaining({ key: "agent" }),
     ]);
+  });
+});
+
+describe("ACPAgentSession options against an ACP agent", () => {
+  const fakeAgentPath = fileURLToPath(new URL("./test-utils/fake-acp-agent.mjs", import.meta.url));
+  const sessions: ACPAgentSession[] = [];
+
+  afterEach(async () => {
+    await Promise.all(sessions.splice(0).map((session) => session.close()));
+  });
+
+  function thoughtOption(currentValue: string): SessionConfigOption {
+    return {
+      id: "thought",
+      name: "Thinking",
+      category: "thought_level",
+      type: "select",
+      currentValue,
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    };
+  }
+
+  async function openSession(input: {
+    agent?: string;
+    scenario?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<{ session: ACPAgentSession; optionEvents: AgentStreamEvent[] }> {
+    const scenario = {
+      options: [copilotAgentConfigOption(input.agent ?? ""), thoughtOption("low")],
+      ...input.scenario,
+    };
+    await mkdir("/tmp/paseo-acp-test", { recursive: true });
+    const session = createCopilotSessionWithConfig(null, input.providerOptions, [
+      process.execPath,
+      fakeAgentPath,
+      JSON.stringify(scenario),
+    ]);
+    sessions.push(session);
+    const optionEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "options_changed") optionEvents.push(event);
+    });
+    await session.initializeNewSession();
+    return { session, optionEvents };
+  }
+
+  test("a select the agent opened differently from the options is the open patch, not an event", async () => {
+    const { session, optionEvents } = await openSession({
+      providerOptions: { agent: "Probe Agent" },
+      scenario: { answers: { agent: "" } },
+    });
+
+    expect(session.openOptionsPatch).toEqual({ agent: "" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a select the agent opened with that nobody set is in the open patch", async () => {
+    const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
+
+    expect(session.openOptionsPatch).toEqual({ agent: "Probe Agent" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a notification that arrives before the open write is answered is not an event", async () => {
+    const { session, optionEvents } = await openSession({
+      providerOptions: { agent: "Probe Agent" },
+      scenario: { onWrite: "notify-first" },
+    });
+
+    expect(session.openOptionsPatch).toEqual({});
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("applying a patch returns the selects that ended up different and emits nothing", async () => {
+    const { session, optionEvents } = await openSession({ scenario: { answers: { agent: "" } } });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({ agent: "" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a notification that arrives before the apply write is answered is not an event", async () => {
+    const { session, optionEvents } = await openSession({ scenario: { onWrite: "notify-first" } });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({});
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a rejected apply reports what the agent moved before refusing, since nothing is stored", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { onWrite: "notify-then-reject" },
+    });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).rejects.toThrow(/write refused/);
+    expect(optionEvents).toEqual([
+      { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+    ]);
+  });
+
+  test("a removal writes the select's empty choice and returns it, since the options hold what the session runs", async () => {
+    const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
+
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({ agent: "" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a removal of a select already on its empty choice returns that choice too", async () => {
+    const { session } = await openSession({ agent: "" });
+
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({ agent: "" });
+  });
+
+  test("rejects a live auto_accept the creation schema would reject, and writes nothing", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { onWrite: "notify-then-reject" },
+    });
+
+    await expect(
+      session.applyOptions({ auto_accept: "yes", agent: "Probe Agent" }),
+    ).rejects.toThrow(/auto_accept/);
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("forwards a select the agent changes on its own", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { moves: { thought: { agent: "Probe Agent" } } },
+    });
+
+    await session.setThinkingOption("high");
+
+    await vi.waitFor(() =>
+      expect(optionEvents).toEqual([
+        { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+      ]),
+    );
+  });
+
+  test("a select that appears after startup is reported with its native value", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: {
+        options: [thoughtOption("low")],
+        adds: { thought: [copilotAgentConfigOption("Probe Agent")] },
+      },
+    });
+    expect(session.openOptionsPatch).toEqual({});
+
+    await session.setThinkingOption("high");
+
+    await vi.waitFor(() =>
+      expect(optionEvents).toEqual([
+        { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+      ]),
+    );
   });
 });
 
@@ -2084,14 +2248,14 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: { provider_feature: "kept" },
+        providerOptions: { provider_feature: "kept" },
         parent: null,
         unattended: true,
         availableModes: [],
       }),
     ).toEqual({
       modeId: undefined,
-      featureValues: { provider_feature: "kept", auto_accept: true },
+      providerOptions: { provider_feature: "kept", auto_accept: true },
     });
   });
 
@@ -2106,12 +2270,12 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: { auto_accept: false },
+        providerOptions: { auto_accept: false },
         parent: null,
         unattended: true,
         availableModes: [],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: false } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: false } });
   });
 
   test("maps an unattended cross-provider parent to ACP Auto Accept", () => {
@@ -2125,7 +2289,7 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: {
           provider: "claude",
           modeId: "bypassPermissions",
@@ -2134,7 +2298,7 @@ describe("ACPAgentClient config features", () => {
         unattended: false,
         availableModes: [{ id: "agent", label: "Agent" }],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: true } });
   });
 
   test("treats Auto Accept as an unattended ACP configuration", () => {
@@ -2150,7 +2314,7 @@ describe("ACPAgentClient config features", () => {
         config: {
           provider: "generic-acp",
           cwd: "/tmp/acp-features",
-          featureValues: { auto_accept: true },
+          providerOptions: { auto_accept: true },
         },
         availableModes: [],
       }),
@@ -2165,22 +2329,20 @@ describe("ACPAgentClient config features", () => {
     });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "generic-acp",
         cwd: "/tmp/acp-features",
-        featureValues: { auto_accept: true },
+        providerOptions: { auto_accept: true },
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        label: "Auto Accept",
-        value: true,
-      }),
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
+      ],
+      options: { auto_accept: true },
+    });
   });
 
-  test("derives features from configured ACP select options", async () => {
+  test("derives controls from configured ACP select options", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
@@ -2205,27 +2367,26 @@ describe("ACPAgentClient config features", () => {
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
     });
 
+    // The select nobody set reads as the agent opened it.
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "copilot",
         cwd: "/tmp/acp-features",
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        value: false,
-      }),
-      expect.objectContaining({
-        type: "select",
-        id: "agent",
-        value: "Probe Agent",
-        options: [
-          expect.objectContaining({ id: "", label: "Default", isDefault: false }),
-          expect.objectContaining({ id: "Probe Agent", label: "Probe Agent", isDefault: true }),
-        ],
-      }),
-    ]);
+    ).resolves.toEqual({
+      controls: [
+        expect.objectContaining({ type: "toggle", key: "auto_accept" }),
+        expect.objectContaining({
+          type: "select",
+          key: "agent",
+          choices: [
+            expect.objectContaining({ value: "", label: "Default" }),
+            expect.objectContaining({ value: "Probe Agent", label: "Probe Agent" }),
+          ],
+        }),
+      ],
+      options: { agent: "Probe Agent" },
+    });
   });
 });
 
@@ -3053,7 +3214,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string });
@@ -3091,7 +3252,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3140,7 +3301,7 @@ describe("ACPAgentSession", () => {
     const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3167,7 +3328,7 @@ describe("ACPAgentSession", () => {
     const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3211,7 +3372,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3272,7 +3433,7 @@ describe("ACPAgentSession", () => {
     const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3311,7 +3472,7 @@ describe("ACPAgentSession", () => {
     const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3364,7 +3525,7 @@ describe("ACPAgentSession", () => {
     const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3413,7 +3574,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string; error?: string });
@@ -3446,7 +3607,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
     session.subscribe((event) => events.push(event));
 
     const { turnId } = await session.startTurn([
@@ -3551,6 +3712,148 @@ describe("ACPAgentSession", () => {
       error: expect.not.stringContaining("[object Object]"),
     });
   });
+
+  function fakeACPAgent(prompt: Agent["prompt"]): Agent {
+    return {
+      async initialize() {
+        return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+      },
+      async newSession() {
+        return { sessionId: "session-1" };
+      },
+      prompt,
+      async authenticate() {},
+      async cancel() {},
+    };
+  }
+
+  async function connectInMemoryACPAgent(
+    agent: Agent,
+    options: { closeAfterPromptResponse?: boolean } = {},
+  ): Promise<{
+    agentConnection: AgentSideConnection;
+    connection: ClientSideConnection;
+    sessionId: string;
+    closeTransport: () => Promise<void>;
+  }> {
+    const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+    const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+    const agentOutput = agentToClient.writable.getWriter();
+    const decoder = new TextDecoder();
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(
+        new WritableStream<Uint8Array>({
+          async write(chunk) {
+            await agentOutput.write(chunk);
+            if (options.closeAfterPromptResponse && decoder.decode(chunk).includes("stopReason")) {
+              await agentOutput.close();
+            }
+          },
+        }),
+        clientToAgent.readable,
+      ),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    await connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "Paseo test", version: "dev" },
+    });
+    const { sessionId } = await connection.newSession({
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [],
+    });
+    return {
+      agentConnection,
+      connection,
+      sessionId,
+      closeTransport: () => agentOutput.close(),
+    };
+  }
+
+  test("startTurn fails instead of hanging when the ACP connection has closed", async () => {
+    const agent = await connectInMemoryACPAgent(
+      fakeACPAgent(async () => ({ stopReason: "end_turn" })),
+    );
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals<ACPSessionInternals>(session).sessionId = agent.sessionId;
+    asInternals<ACPSessionInternals>(session).connection = agent.connection;
+
+    await agent.closeTransport();
+    await agent.connection.closed;
+
+    await expect(session.startTurn("second")).rejects.toThrow("ACP agent disconnected");
+    expect(events.some((event) => event.type === "turn_started")).toBe(false);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  }, 2_000);
+
+  test("a prompt whose ACP transport closes mid-turn fails the turn", async () => {
+    let promptReceived!: () => void;
+    const received = new Promise<void>((resolve) => {
+      promptReceived = resolve;
+    });
+    const agent = await connectInMemoryACPAgent(
+      fakeACPAgent(() => {
+        promptReceived();
+        return new Promise(() => {});
+      }),
+    );
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals<ACPSessionInternals>(session).sessionId = agent.sessionId;
+    asInternals<ACPSessionInternals>(session).connection = agent.connection;
+
+    const { turnId } = await session.startTurn("hello");
+    await received;
+    await agent.closeTransport();
+
+    await vi.waitFor(
+      () =>
+        expect(terminalEvents(events)).toEqual([
+          expect.objectContaining({
+            type: "turn_failed",
+            turnId,
+            error: "ACP agent disconnected",
+          }),
+        ]),
+      { timeout: 1_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(terminalEvents(events)).toHaveLength(1);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  }, 3_000);
+
+  test("a turn answered just before its ACP transport closes still completes", async () => {
+    const agent = await connectInMemoryACPAgent(
+      fakeACPAgent(async () => ({ stopReason: "end_turn" })),
+      { closeAfterPromptResponse: true },
+    );
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals<ACPSessionInternals>(session).sessionId = agent.sessionId;
+    asInternals<ACPSessionInternals>(session).connection = agent.connection;
+
+    const { turnId } = await session.startTurn("hello");
+    await agent.connection.closed;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_completed", turnId }),
+    ]);
+  }, 3_000);
 });
 
 interface ACPCloseInternals {
@@ -3997,7 +4300,7 @@ describe("ACPAgentClient probe cleanup", () => {
       terminateProcess: terminator.terminate,
     });
 
-    await client.listFeatures({ provider: "copilot", cwd: "/tmp/acp-features" });
+    await client.listControls({ provider: "copilot", cwd: "/tmp/acp-features" });
 
     expect(closeSession).toHaveBeenCalledWith({ sessionId: "feature-probe-session" });
     expect(terminator.terminated).toContain(child);
@@ -4488,6 +4791,109 @@ describe("ACPAgentSession close() with an unresponsive provider", () => {
     expect(await settlesWithin(provider.session.close(), 8_000)).toBe(true);
     expect(isProcessAlive(pid)).toBe(false);
   }, 15_000);
+});
+
+const EXITING_ACP_AGENT = `
+import { Readable, Writable } from "node:stream";
+const { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } = await import(process.env.ACP_SDK_URL);
+new AgentSideConnection(
+  () => ({
+    async initialize() {
+      return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+    },
+    async newSession() {
+      return { sessionId: "exiting-session" };
+    },
+    async authenticate() {},
+    async cancel() {},
+    async prompt({ prompt }) {
+      if (prompt[0]?.text === "crash") {
+        process.stderr.write("fixture crash\\n");
+        process.exit(3);
+      }
+      setTimeout(() => process.exit(0), 100);
+      return { stopReason: "end_turn" };
+    },
+  }),
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
+`;
+
+describe("ACPAgentSession after its provider process exits", () => {
+  let dir: string | null = null;
+  let session: ACPAgentSession | null = null;
+
+  afterEach(async () => {
+    await session?.close();
+    session = null;
+    if (dir) await rm(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  async function startExitingProvider(): Promise<ACPAgentSession> {
+    dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-exiting-"));
+    const agentScript = path.join(dir, "agent.mjs");
+    await writeFile(agentScript, EXITING_ACP_AGENT);
+    session = new ACPAgentSession(
+      { provider: "exiting-acp", cwd: dir },
+      {
+        provider: "exiting-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, agentScript],
+        defaultModes: [],
+        capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
+        launchEnv: {
+          ACP_SDK_URL: pathToFileURL(
+            createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+          ).href,
+        },
+      },
+    );
+    await session.initializeNewSession();
+    return session;
+  }
+
+  test("startTurn after the provider exits while idle fails instead of hanging", async () => {
+    const provider = await startExitingProvider();
+    const events: AgentStreamEvent[] = [];
+    provider.subscribe((event) => events.push(event));
+    const internals = asInternals<{ child: ChildProcess; connection: ClientSideConnection }>(
+      provider,
+    );
+    const { child, connection } = internals;
+
+    const { turnId } = await provider.startTurn("first");
+    await vi.waitFor(() =>
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({ type: "turn_completed", turnId }),
+      ]),
+    );
+    if (child.exitCode === null) await once(child, "exit");
+    await connection.closed;
+
+    await expect(provider.startTurn("second")).rejects.toThrow(
+      "ACP agent disconnected (exit code 0)",
+    );
+    expect(terminalEvents(events)).toHaveLength(1);
+  }, 10_000);
+
+  test("a provider that crashes mid-turn still reports its exit status", async () => {
+    const provider = await startExitingProvider();
+    const events: AgentStreamEvent[] = [];
+    provider.subscribe((event) => events.push(event));
+
+    const { turnId } = await provider.startTurn("crash");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1), { timeout: 3_000 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({
+        type: "turn_failed",
+        turnId,
+        error: "ACP agent exited unexpectedly (3)",
+      }),
+    ]);
+  }, 10_000);
 });
 
 // An ACP agent that advertises two models (or none, with ACP_ADVERTISE_MODELS=none) but,
