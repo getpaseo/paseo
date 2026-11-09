@@ -112,6 +112,21 @@ offline, then Updating messages until authoritative catch-up completes. Socket c
 certify that the displayed conversation is current. The timeline owner publishes freshness; the
 view renders it without a toast timer or a separate resume workflow.
 
+The turn footer in a chat follows its messages, not the agent status. Turn activity comes from the
+agent directory and messages from the chat's own catch-up, and either can land first. So the timeline
+owner keeps an unsettled turn per chat: the turn its messages were captured during. It is set when a
+catch-up becomes owed while the turn is open, or when cached messages are painted that were saved
+while one was, and it is saved with those messages in the replica. It carries the turn's start time.
+While it is set and the agent reads idle, the chat keeps showing that running turn, with its loader
+and elapsed timer unchanged, and there is no separate catching-up footer. The commit that brings the
+chat current clears it, in the same store write as the rows, so the final messages and the completed
+footer land together. A failed catch-up clears it too, and the footer takes the true status. Losing
+the connection is not a failed catch-up: none can run or fail until the host returns, so the running
+footer stays beside "Reconnecting to host" and the catch-up on reconnect resolves it. Releasing it
+offline would put a completed footer under messages known to be behind. Surfaces outside the timeline (the sidebar, tabs, the composer's stop and send controls) read the true status
+and never see this state. Live delivery needs no hold because `applyStreamEvent` commits queued rows
+before it applies turn liveness.
+
 The draft-create handoff has the same lifetime: the viewed-timeline owner releases it when the sync
 stops owing that chat a catch-up, not when the first authoritative page lands. Releasing it at the
 first page leaves a chat this client just created looking hydrated but still catching up, which
