@@ -13,6 +13,15 @@ interface RecalledMessage {
 export class ComposerRecall {
   private recalled: RecalledMessage | null = null;
 
+  /**
+   * Stops treating the composer's text as recalled. Call it when the composer is
+   * filled from elsewhere, such as a queued message taken back for editing, which
+   * can hold the same text as the last recalled message; Down would clear it.
+   */
+  forget(): void {
+    this.recalled = null;
+  }
+
   /** True while the composer shows a recalled message the user has not edited. */
   isShowing(text: string): boolean {
     return this.recalled !== null && this.recalled.text === text;

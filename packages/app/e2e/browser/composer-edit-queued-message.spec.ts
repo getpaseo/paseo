@@ -50,4 +50,33 @@ test.describe("Editing a queued message from the keyboard", () => {
       await agent.cleanup();
     }
   });
+
+  test("Down keeps a recalled message that was queued and taken back", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const sent = "Keep this turn running while a recalled message is queued.";
+    const agent = await startRunningMockAgent(page, {
+      prefix: `edit-recalled-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: sent,
+    });
+    try {
+      // Recall the sent prompt and queue it again.
+      await fillComposerDraft(page, "");
+      await composerLocator(page).press("ArrowUp");
+      await expectComposerDraft(page, sent);
+      await sendDraftToQueue(page);
+      await expect(queuedCount(page)).toHaveCount(1);
+
+      // Take it back, then Down: it is being edited now, not recalled.
+      await composerLocator(page).press("ArrowUp");
+      await expectComposerDraft(page, sent);
+      await expect(queuedCount(page)).toHaveCount(0);
+      await composerLocator(page).press("ArrowDown");
+      await expectComposerDraft(page, sent);
+    } finally {
+      await agent.cleanup();
+    }
+  });
 });

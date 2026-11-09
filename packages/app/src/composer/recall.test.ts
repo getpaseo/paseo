@@ -81,6 +81,18 @@ describe("ComposerRecall", () => {
     expect(composer.press("ArrowDown")).toBeNull();
   });
 
+  it("forgets the recalled message when the composer is filled from elsewhere", () => {
+    const composer = composerWithRecall();
+    composer.press("ArrowUp");
+    expect(composer.text).toBe("add tests");
+    // Sent (or queued), then the same text taken back for editing.
+    composer.type("");
+    composer.type("add tests");
+    composer.recall.forget();
+    expect(composer.press("ArrowDown")).toBeNull();
+    expect(composer.text).toBe("add tests");
+  });
+
   it("moves between lines of a multi-line message before changing message", () => {
     const composer = composerWithRecall(["first line\nsecond line", "older"]);
     composer.press("ArrowUp");
