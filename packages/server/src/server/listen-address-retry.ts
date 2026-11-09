@@ -56,8 +56,15 @@ export const systemListenAddressRetryClock: ListenAddressRetryClock = {
   sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 };
 
+/**
+ * How long a daemon keeps retrying an unavailable listen address. Anything that waits for the
+ * daemon to become ready, such as the desktop launcher, has to wait at least this long on top of
+ * its normal startup time, or it gives up while the daemon is still recovering.
+ */
+export const LISTEN_ADDRESS_RETRY_MAX_WAIT_MS = 60_000;
+
 export const defaultListenAddressRetryPolicy: ListenAddressRetryPolicy = {
-  maxWaitMs: 60_000,
+  maxWaitMs: LISTEN_ADDRESS_RETRY_MAX_WAIT_MS,
   delay: (attempt) => Math.min(500 * 2 ** (attempt - 1), 5_000),
 };
 

@@ -6,6 +6,7 @@ import {
   resolvePaseoHome,
   startDaemonInstance,
   DaemonInstanceError,
+  LISTEN_ADDRESS_RETRY_MAX_WAIT_MS,
   stopDaemonInstance,
   readDaemonInstance,
   isSameDaemonInstance,
@@ -281,6 +282,11 @@ function assertBuiltInDaemonManagementEnabled(settings: DesktopSettings): void {
   }
 }
 
+// Normal startup, plus the window in which the daemon retries a listen address that is not up
+// yet (for example a Tailscale IP). If this ran out first, the app would register no host for a
+// daemon that recovers a moment later and show a startup error until the user retried.
+const DESKTOP_DAEMON_START_TIMEOUT_MS = 30_000 + LISTEN_ADDRESS_RETRY_MAX_WAIT_MS;
+
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
 
@@ -315,7 +321,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   try {
     await startDaemonInstance({
       home,
-      timeoutMs: 30_000,
+      timeoutMs: DESKTOP_DAEMON_START_TIMEOUT_MS,
       ...invocation,
       env: { ...invocation.env, PASEO_CLI: getBundledCliShimPath() },
       mode: "managed",
