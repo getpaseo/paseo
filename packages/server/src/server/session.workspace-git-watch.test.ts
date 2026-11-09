@@ -1413,6 +1413,58 @@ describe("live workspace observation", () => {
     await session.cleanup();
   });
 
+  test("does not serve the warm-up snapshot as current to a checkout status request", async () => {
+    const quietCwd = "/tmp/warmed-workspace";
+    const { session, emitted, projects, workspaces, workspaceGitService, workspaceRuntimeStore } =
+      createSessionForWorkspaceGitWatchTests();
+    // Mirrors the service: a target with no listener keeps the snapshot of its last read and
+    // returns it again unless the caller forces a read.
+    let branch = "at-startup";
+    workspaceGitService.hasWorkspaceListener = vi.fn(() => false);
+    workspaceGitService.getSnapshot.mockImplementation(
+      async (cwd: string, options?: { force?: boolean }) => {
+        if (options?.force) branch = "current";
+        const snapshot = createWorkspaceRuntimeSnapshot(cwd, { git: { currentBranch: branch } });
+        workspaceRuntimeStore.set(snapshot);
+        return snapshot;
+      },
+    );
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-warmed",
+      cwd: quietCwd,
+      name: "warmed",
+      updatedAt: OLD,
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+    await vi.waitFor(() => expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1));
+
+    await session.handleMessage({
+      type: "checkout_status_request",
+      cwd: quietCwd,
+      requestId: "status-1",
+    });
+
+    expect(workspaceGitService.getSnapshot).toHaveBeenLastCalledWith(quietCwd, {
+      force: true,
+      reason: "checkout-status-request",
+    });
+    const statusResponse = emitted.find((message) => message.type === "checkout_status_response");
+    expect(statusResponse?.payload).toMatchObject({
+      currentBranch: "current",
+      requestId: "status-1",
+    });
+
+    await session.cleanup();
+  });
+
   test("adds and drops a workspace's watch as its last terminal comes and goes", async () => {
     const terminalCwd = "/tmp/terminal-event-workspace";
     const terminals = createTerminalEvents({ cwd: terminalCwd });

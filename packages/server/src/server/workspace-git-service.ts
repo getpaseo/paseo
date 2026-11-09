@@ -213,6 +213,11 @@ export interface WorkspaceGitService {
 
   /** Publishes computed snapshot changes independently of workspace UI subscriptions. */
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
+  /**
+   * True while a workspace listener holds this directory open. A target with no listener keeps
+   * only the snapshot of its last read, which may be arbitrarily old.
+   */
+  hasWorkspaceListener(cwd: string): boolean;
   getCheckout(
     cwd: string,
     options?: WorkspaceGitCheckoutReadOptions,
@@ -741,6 +746,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.snapshotUpdatedListeners.delete(listener);
       },
     };
+  }
+
+  hasWorkspaceListener(cwd: string): boolean {
+    return (this.workspaceTargets.get(resolve(cwd))?.listeners.size ?? 0) > 0;
   }
 
   getMetrics(): WorkspaceGitServiceMetrics {

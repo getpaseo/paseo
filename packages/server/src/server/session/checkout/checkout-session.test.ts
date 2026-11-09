@@ -249,6 +249,54 @@ describe("CheckoutSession", () => {
       ]);
     });
 
+    it("forces a fresh read when no listener watches the checkout", async () => {
+      const snapshotCalls: Array<{ cwd: string; options: unknown }> = [];
+      const { checkout, emitted } = makeCheckoutSession({
+        git: {
+          hasWorkspaceListener: () => false,
+          getSnapshot: async (cwd, options) => {
+            snapshotCalls.push({ cwd, options });
+            return createGitSnapshot(cwd, "fresh");
+          },
+        },
+      });
+
+      await checkout.handleStatusRequest({
+        type: "checkout_status_request",
+        cwd: "/repo",
+        requestId: "r-unwatched",
+      });
+
+      expect(snapshotCalls).toEqual([
+        { cwd: "/repo", options: { force: true, reason: "checkout-status-request" } },
+      ]);
+      expect(emitted[0]).toMatchObject({
+        type: "checkout_status_response",
+        payload: { currentBranch: "fresh", requestId: "r-unwatched" },
+      });
+    });
+
+    it("reads a watched checkout without forcing", async () => {
+      const snapshotCalls: Array<{ cwd: string; options: unknown }> = [];
+      const { checkout } = makeCheckoutSession({
+        git: {
+          hasWorkspaceListener: () => true,
+          getSnapshot: async (cwd, options) => {
+            snapshotCalls.push({ cwd, options });
+            return createGitSnapshot(cwd, "main");
+          },
+        },
+      });
+
+      await checkout.handleStatusRequest({
+        type: "checkout_status_request",
+        cwd: "/repo",
+        requestId: "r-watched",
+      });
+
+      expect(snapshotCalls).toEqual([{ cwd: "/repo", options: undefined }]);
+    });
+
     it("emits an error status response when the git snapshot read fails", async () => {
       const { checkout, emitted } = makeCheckoutSession({
         git: {
