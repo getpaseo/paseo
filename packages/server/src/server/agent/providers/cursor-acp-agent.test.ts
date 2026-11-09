@@ -1,12 +1,14 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import { zSessionNotification } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi, type MockInstance } from "vitest";
 
 import { ACPAgentSession } from "./acp-agent.js";
 import type { SpawnedACPProcess, SessionStateResponse } from "./acp-agent.js";
-import type { AgentSessionConfig } from "../agent-sdk-types.js";
+import type { AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
 import { CURSOR_FAST_FEATURE_OPTION, CursorACPAgentClient } from "./cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -38,6 +40,54 @@ function fastConfigOption(currentValue: "false" | "true"): SessionConfigOption {
       { value: "true", name: "Fast" },
     ],
   };
+}
+
+const SUBAGENT_SPAWNED_UPDATE = {
+  sessionUpdate: "subagent_spawned",
+  subagentSessionId: "child-1",
+  name: "general",
+  task: "report",
+  capabilities: {},
+  _meta: { cursor: { toolCallId: "call-1", agentId: "child-1" } },
+};
+const SUBAGENT_STATE_UPDATE = {
+  sessionUpdate: "subagent_state_update",
+  subagentSessionId: "child-1",
+  state: "completed",
+  _meta: { cursor: { toolCallId: "call-1", agentId: "child-1" } },
+};
+
+function sdkRejectsSessionUpdate(update: Record<string, unknown>): boolean {
+  return !zSessionNotification.safeParse({ sessionId: "session-1", update }).success;
+}
+const sdkRejectsSubagentSpawned = sdkRejectsSessionUpdate(SUBAGENT_SPAWNED_UPDATE);
+const sdkRejectsSubagentState = sdkRejectsSessionUpdate(SUBAGENT_STATE_UPDATE);
+const unfilteredSdkErrorCount = Number(sdkRejectsSubagentSpawned) + Number(sdkRejectsSubagentState);
+
+function expectForwardedVariants(
+  sessionUpdate: MockInstance<(...args: unknown[]) => Promise<void>>,
+): void {
+  const variants = sessionUpdate.mock.calls.map(([params]) => {
+    const update = (params as { update?: { sessionUpdate?: unknown } } | undefined)?.update;
+    return update?.sessionUpdate;
+  });
+  if (!sdkRejectsSubagentSpawned) {
+    expect(variants).toContain("subagent_spawned");
+  }
+  if (!sdkRejectsSubagentState) {
+    expect(variants).toContain("subagent_state_update");
+  }
+}
+
+function expectUnfilteredSdkDiagnostics(consoleError: MockInstance<typeof console.error>): void {
+  expect(consoleError).toHaveBeenCalledTimes(unfilteredSdkErrorCount);
+  const logged = consoleError.mock.calls.map((args) => JSON.stringify(args)).join("\n");
+  if (sdkRejectsSubagentSpawned) {
+    expect(logged).toContain("subagent_spawned");
+  }
+  if (sdkRejectsSubagentState) {
+    expect(logged).toContain("subagent_state_update");
+  }
 }
 
 describe("CursorACPAgentClient model discovery", () => {
@@ -410,19 +460,165 @@ async function withFakeACPAgent(
 }
 
 const fakeACPAgentScript = `
+const fs = require("node:fs");
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 function write(message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 }
+function update(updatePayload) {
+  write({ method: "session/update", params: { sessionId: "session-1", update: updatePayload } });
+}
 rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
+    if (process.env.FAKE_ACP_CAPTURE) {
+      fs.writeFileSync(process.env.FAKE_ACP_CAPTURE, JSON.stringify(message.params));
+    }
     write({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? 1, agentCapabilities: {} } });
   } else if (message.method === "session/new") {
     write({ id: message.id, result: { sessionId: "session-1" } });
+  } else if (message.method === "session/prompt") {
+    update(${JSON.stringify(SUBAGENT_SPAWNED_UPDATE)});
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "child report" } });
+    update(${JSON.stringify(SUBAGENT_STATE_UPDATE)});
+    write({ id: message.id, result: { stopReason: "end_turn" } });
   } else if (message.id !== undefined) {
     write({ id: message.id, result: {} });
   }
 });
 `;
+
+async function assertCursorSubagentWire(
+  command: [string, ...string[]],
+  cwd: string,
+): Promise<void> {
+  const capturePath = path.join(cwd, "initialize.json");
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const client = new CursorACPAgentClient({
+      logger: createTestLogger(),
+      command,
+      env: { FAKE_ACP_CAPTURE: capturePath },
+    });
+    const session = await client.createSession({ provider: "acp", cwd });
+    const sessionUpdate = vi.spyOn(
+      session as unknown as { sessionUpdate: (...args: unknown[]) => Promise<void> },
+      "sessionUpdate",
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.run("spawn a subagent");
+      const captured = JSON.parse(readFileSync(capturePath, "utf8")) as {
+        clientCapabilities: { _meta: Record<string, unknown> };
+      };
+      expect(captured.clientCapabilities._meta).toEqual({
+        parameterizedModelPicker: true,
+        subagents: {},
+      });
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(
+        events.filter(
+          (event) => event.type === "timeline" && event.item.type === "assistant_message",
+        ),
+      ).toEqual([
+        expect.objectContaining({ item: expect.objectContaining({ text: "child report" }) }),
+      ]);
+      // The filter must only drop what the schema rejects; accepted variants still reach the
+      // client handler.
+      expectForwardedVariants(sessionUpdate);
+    } finally {
+      sessionUpdate.mockRestore();
+      await session.close().catch(() => {});
+    }
+  } finally {
+    consoleError.mockRestore();
+  }
+}
+
+async function assertGenericAgentKeepsSubagentUpdates(
+  command: [string, ...string[]],
+  cwd: string,
+): Promise<void> {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
+    const session = await client.createSession({ provider: "acp", cwd });
+    const sessionUpdate = vi.spyOn(
+      session as unknown as { sessionUpdate: (...args: unknown[]) => Promise<void> },
+      "sessionUpdate",
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.run("spawn a subagent");
+      // The installed schema decides which variants the unfiltered stream reports. Accepted ones
+      // must still reach the client handler, not just stay silent.
+      expectUnfilteredSdkDiagnostics(consoleError);
+      expectForwardedVariants(sessionUpdate);
+      expect(
+        events.filter(
+          (event) => event.type === "timeline" && event.item.type === "assistant_message",
+        ),
+      ).toEqual([
+        expect.objectContaining({ item: expect.objectContaining({ text: "child report" }) }),
+      ]);
+    } finally {
+      sessionUpdate.mockRestore();
+      await session.close().catch(() => {});
+    }
+  } finally {
+    consoleError.mockRestore();
+  }
+}
+
+async function assertDisabledCapabilityKeepsSubagentUpdates(
+  command: [string, ...string[]],
+  cwd: string,
+  subagents: false | null,
+): Promise<void> {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command,
+      clientCapabilityMeta: { subagents },
+    });
+    const session = await client.createSession({ provider: "acp", cwd });
+    const sessionUpdate = vi.spyOn(
+      session as unknown as { sessionUpdate: (...args: unknown[]) => Promise<void> },
+      "sessionUpdate",
+    );
+    try {
+      await session.run("spawn a subagent");
+      // A disabled value is not an advertised capability, so the stream must not filter.
+      expectUnfilteredSdkDiagnostics(consoleError);
+      expectForwardedVariants(sessionUpdate);
+    } finally {
+      sessionUpdate.mockRestore();
+      await session.close().catch(() => {});
+    }
+  } finally {
+    consoleError.mockRestore();
+  }
+}
+
+describe("CursorACPAgentClient ACP capabilities", () => {
+  test("advertises subagents on initialize and filters the vendor updates they produce", async () => {
+    await withFakeACPAgent(assertCursorSubagentWire);
+  });
+
+  test("does not filter vendor updates for a client that did not advertise them", async () => {
+    await withFakeACPAgent(assertGenericAgentKeepsSubagentUpdates);
+  });
+
+  test.each([false, null] as const)(
+    "does not filter vendor updates when subagents is %s",
+    async (subagents) => {
+      await withFakeACPAgent((command, cwd) =>
+        assertDisabledCapabilityKeepsSubagentUpdates(command, cwd, subagents),
+      );
+    },
+  );
+});
