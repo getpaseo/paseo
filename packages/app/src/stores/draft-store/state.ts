@@ -187,6 +187,15 @@ export function isCanonicalDraftInput(value: unknown): value is CanonicalDraftIn
   return CanonicalDraftInputSchema.safeParse(value).success;
 }
 
+/** Adds content handed in from outside the composer after whatever the user already wrote. */
+export function appendToDraftInput(draft: DraftInput, addition: DraftInput): DraftInput {
+  const text =
+    draft.text.length > 0 && addition.text.length > 0
+      ? `${draft.text}\n\n${addition.text}`
+      : draft.text || addition.text;
+  return { text, attachments: [...draft.attachments, ...addition.attachments] };
+}
+
 export function toDraftInputIfReady(
   record: DraftRecord | null | undefined,
 ): DraftInput | undefined {

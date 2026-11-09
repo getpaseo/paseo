@@ -144,7 +144,65 @@ describe("useAgentInputDraft live contract", () => {
       drafts: {},
       createModalDraft: null,
       attachmentFocusRequestByDraftKey: {},
+      externalTextRevisionByDraftKey: {},
     });
+  });
+
+  it("shows text and files shared from another app in a composer that is already mounted", async () => {
+    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
+    const draftKey = "agent:host-1:agent-1";
+    const sharedDeck: ComposerAttachment = {
+      kind: "file",
+      attachment: {
+        type: "uploaded_file",
+        id: "upload-1",
+        fileName: "deck.pptx",
+        mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        size: 2048,
+        path: "/tmp/paseo/uploads/upload-1/deck.pptx",
+      },
+    };
+
+    function getLatest(): ReturnType<typeof useAgentInputDraft> {
+      if (!latest) {
+        throw new Error("Expected hook result");
+      }
+      return latest;
+    }
+
+    function Probe() {
+      latest = useAgentInputDraft({ draftKey });
+      return null;
+    }
+
+    const container = document.getElementById("root");
+    if (!container) {
+      throw new Error("Missing root container");
+    }
+    const root = createTestRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <Probe />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      getLatest().replaceText("Summarize this");
+    });
+    const focusRequestBefore = getLatest().attachmentFocusRequestId;
+
+    await act(async () => {
+      await useDraftStore.getState().appendDraftInput({
+        draftKey,
+        addition: { text: "https://example.com/spec", attachments: [sharedDeck] },
+      });
+    });
+
+    expect(getLatest().textReplacement.kind).toBe("replace");
+    expect(getLatest().textReplacement.text).toBe("Summarize this\n\nhttps://example.com/spec");
+    expect(getLatest().attachments).toEqual([sharedDeck]);
+    expect(getLatest().attachmentFocusRequestId).toBe(focusRequestBefore + 1);
   });
 
   it("hydrates persisted text and attachments and returns draft-mode composer state for a caller-provided key", async () => {

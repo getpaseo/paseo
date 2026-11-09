@@ -2038,6 +2038,15 @@ export const ptBR: TranslationResources = {
     shareFile: "Compartilhar arquivo",
     shareFileNamed: "Compartilhar {{fileName}}",
   },
+  shareIntake: {
+    title: "Adicionar a um agente",
+    searchPlaceholder: "Pesquisar agentes e espaços de trabalho",
+    agents: "Agentes",
+    newAgent: "Novo agente em um espaço de trabalho",
+    empty: "Ainda não há agentes nem espaços de trabalho",
+    readFailed: "Não foi possível ler os arquivos compartilhados",
+    deliverFailed: "Não foi possível adicionar o que você compartilhou",
+  },
   menu: {
     backdrop: "Fundo do menu",
   },

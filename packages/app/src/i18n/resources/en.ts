@@ -2030,6 +2030,15 @@ export const en = {
     shareFile: "Share file",
     shareFileNamed: "Share {{fileName}}",
   },
+  shareIntake: {
+    title: "Add to an agent",
+    searchPlaceholder: "Search agents and workspaces",
+    agents: "Agents",
+    newAgent: "New agent in a workspace",
+    empty: "No agents or workspaces yet",
+    readFailed: "Couldn't read the shared files",
+    deliverFailed: "Couldn't add what you shared",
+  },
   menu: {
     backdrop: "Menu backdrop",
   },

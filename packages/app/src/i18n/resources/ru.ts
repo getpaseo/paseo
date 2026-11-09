@@ -2038,6 +2038,15 @@ export const ru: TranslationResources = {
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
   },
+  shareIntake: {
+    title: "Добавить в агента",
+    searchPlaceholder: "Поиск агентов и рабочих пространств",
+    agents: "Агенты",
+    newAgent: "Новый агент в рабочем пространстве",
+    empty: "Пока нет агентов и рабочих пространств",
+    readFailed: "Не удалось прочитать общие файлы",
+    deliverFailed: "Не удалось добавить то, чем вы поделились",
+  },
   menu: {
     backdrop: "Фон меню",
   },

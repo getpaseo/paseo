@@ -207,6 +207,13 @@
         "react-native-reanimated",
         "react-native-worklets"
       ]
+    },
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-sharing"
+        ]
+      }
     }
   },
   "reanimated": {

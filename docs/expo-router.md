@@ -151,6 +151,10 @@ export` warnings and pollutes the route tree.
 Put shared route policy in `src/navigation`, `src/utils`, stores, or another
 non-route directory.
 
+`src/app/+native-intent.tsx` is a router hook, not a route. Every native URL
+passes through it before matching, and it drops the URL a share from another
+app opens ([share intake](share-intake.md)).
+
 ## Native Stack
 
 Keep workspace identity and retention outside native-stack `getId` and
