@@ -944,10 +944,16 @@ describe("the turn footer changes together with its messages", () => {
     owner.dispose();
   });
 
-  it("a newer turn replaces the held one so the timer follows it", async () => {
-    const newerTurn = { turnId: "turn-2", startedAt: new Date("2026-08-26T09:59:30.000Z") };
+  it.each([
+    { host: "that reports turn ids", olderTurnId: "turn-1", newerTurnId: "turn-2" },
+    { host: "without turn ids", olderTurnId: null, newerTurnId: null },
+  ])("on a host $host, a newer turn replaces the held one so the timer follows it", async (ids) => {
+    const newerTurn = { turnId: ids.newerTurnId, startedAt: new Date("2026-08-26T09:59:30.000Z") };
     const owner = createChat("Half");
-    agentIsRunning();
+    setTurn({
+      type: "snapshot",
+      activeTurn: { turnId: ids.olderTurnId, startedAt: OPEN_TURN.startedAt },
+    });
     await connectAndCatchUp(owner);
     owner.replaceVisibleAgentIds("test", []);
     owner.replaceOpenTabAgentIds([]);

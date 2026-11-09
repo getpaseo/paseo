@@ -402,7 +402,12 @@ function withUnsettledTurn(
   agentId: string,
   turn: UnsettledTurn,
 ): Map<string, UnsettledTurn> {
-  if (current.get(agentId)?.turnId === turn.turnId) return current;
+  const held = current.get(agentId);
+  // COMPAT(agentTurnIdentity): added in v0.2.6, remove after 2027-01-31 once daemon floor >= v0.2.6.
+  // Hosts without turn ids report null for every turn, so only the start time tells two turns apart.
+  if (held?.turnId === turn.turnId && held?.startedAt?.getTime() === turn.startedAt?.getTime()) {
+    return current;
+  }
   const next = new Map(current);
   next.set(agentId, turn);
   return next;
