@@ -6099,7 +6099,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: liveAgentManager({ setAgentFeature: vi.fn().mockResolvedValue(undefined) }),
+      agentManager: liveAgentManager({ setAgentOptions: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -6123,7 +6123,7 @@ describe("agent config setters", () => {
     const session = createSessionForTest({
       messages,
       agentManager: liveAgentManager({
-        setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")),
+        setAgentOptions: vi.fn().mockRejectedValue(new Error("feature boom")),
       }),
     });
 

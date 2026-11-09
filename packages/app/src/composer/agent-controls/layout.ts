@@ -26,6 +26,8 @@ export interface ComposerControlPresence {
   hasThinking: boolean;
   hasMode: boolean;
   features: readonly ComposerFeatureControlPresence[];
+  /** Plugin composer items. Each is budgeted like a select with a short label. */
+  pluginItems: number;
   fontScale: number;
 }
 
@@ -72,6 +74,7 @@ export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarG
 }
 
 const DENSITY_HYSTERESIS = 12;
+const PLUGIN_ITEM_LABEL = "Plugin item";
 /** The model label's narrowest useful width: enough for the model family, such as "GPT-6…". */
 const MODEL_FAMILY_LABEL_WIDTH = 56;
 
@@ -119,7 +122,9 @@ function resolveCondensedFloor(
   if (controls.hasModel) widths.push(chrome + 60 * fontScale);
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(chrome + 96 * fontScale);
-  if (controls.features.length > 0) widths.push(geometry.controlSize);
+  if (controls.features.length > 0 || controls.pluginItems > 0) {
+    widths.push(geometry.controlSize);
+  }
   return sumControlWidths(widths, geometry);
 }
 
@@ -137,6 +142,11 @@ function resolveFullFloor(
   for (const feature of controls.features) {
     widths.push(resolveFeatureControlWidth(feature, fontScale, geometry));
   }
+  for (let index = 0; index < controls.pluginItems; index++) {
+    widths.push(
+      resolveFeatureControlWidth({ type: "select", label: PLUGIN_ITEM_LABEL }, fontScale, geometry),
+    );
+  }
   return sumControlWidths(widths, geometry);
 }
 
@@ -152,7 +162,9 @@ function resolveTightFloor(
   }
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(geometry.controlSize);
-  if (controls.features.length > 0) widths.push(geometry.controlSize);
+  if (controls.features.length > 0 || controls.pluginItems > 0) {
+    widths.push(geometry.controlSize);
+  }
   return sumControlWidths(widths, geometry);
 }
 

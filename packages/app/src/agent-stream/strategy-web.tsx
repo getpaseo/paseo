@@ -82,6 +82,8 @@ const initialFillStyle: CSSProperties = {
   pointerEvents: "none",
 };
 
+// Rows and the live auxiliary (turn footer, pending permissions) center their content with
+// `alignSelf`, which only applies inside a flex container.
 const streamRowStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -416,6 +418,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
               {
                 id: String(measurement.key),
                 top: measurement.start,
+                height: measurement.size,
               },
               props.readingRowReplacements,
             )
@@ -1170,11 +1173,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
-      holdRow: (rowId, apply) => {
+      holdRow: (rowId, apply, triggerEdge) => {
         cancelPendingStickToBottom();
         setFollowOutput(false);
         const row = measureRows()?.find((candidate) => candidate.id === rowId);
-        if (row) readingAnchor.pin(row);
+        const scrollTop = scrollContainerRef.current?.scrollTop;
+        if (row && scrollTop !== undefined) readingAnchor.pin(row, triggerEdge, scrollTop);
         disclosurePendingRef.current = true;
         apply();
       },
@@ -1362,7 +1366,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
               ...mountedRows,
             ]}
           </div>
-          <div ref={auxiliaryRef}>{liveAuxiliary}</div>
+          <div ref={auxiliaryRef} style={streamRowStyle}>
+            {liveAuxiliary}
+          </div>
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>

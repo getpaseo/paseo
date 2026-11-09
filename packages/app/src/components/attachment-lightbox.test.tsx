@@ -11,6 +11,7 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
+    opacity: { 50: 0.5 },
     borderRadius: { full: 999, md: 6, lg: 8 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400" },

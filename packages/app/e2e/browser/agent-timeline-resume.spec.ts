@@ -13,10 +13,17 @@ import {
 import {
   commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
-  expectOneResumeCheckWithoutTail,
+  expectResumeAnsweredWithoutFetch,
   expectResumeOverflowFallsBackToOneTail,
+  hideTabAndReturn,
   rememberTimelineRequestCounts,
+  releaseHeldCatchUp,
+  restoreUnchangedViewedTimeline,
+  restoreViewedTimelineHoldingCatchUp,
   restoreViewedTimelineWithHeldResponse,
+  waitForResumeAnswer,
+  reopenAppWatchingForUpdatingToast,
+  watchForUpdatingToast,
 } from "../support/helpers/timeline-resume";
 
 test.describe("Agent timeline resume", () => {
@@ -42,7 +49,9 @@ test.describe("Agent timeline resume", () => {
     }
   });
 
-  test("an unchanged resume leaves a scrolled-up timeline untouched", async ({ page }) => {
+  test("returning to an unchanged chat shows no update and leaves it untouched", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const gate = await installDaemonWebSocketGate(page);
     const agent = await seedLongMockAgentTimeline({ turns: 30 });
@@ -51,13 +60,65 @@ test.describe("Agent timeline resume", () => {
       await expectTimelinePromptVisible(page, agent.newestPrompt);
       await scrollTimelinePromptIntoView(page, agent.initialTailAnchorPrompt);
       const presentation = await rememberTimelinePresentation(page, agent.initialTailAnchorPrompt);
-      const requests = rememberTimelineRequestCounts(gate);
+
+      await test.step("back from the background", async () => {
+        const requests = rememberTimelineRequestCounts(gate);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page);
+
+        await hideTabAndReturn(page);
+        await waitForResumeAnswer(gate, requests);
+
+        await expectNoUpdatingToast();
+        await expectTimelinePresentationUnchanged(page, presentation);
+        expectResumeAnsweredWithoutFetch(gate, requests);
+      });
+
+      await test.step("back from a dropped connection", async () => {
+        const requests = rememberTimelineRequestCounts(gate);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page);
+
+        await disconnectViewedTimeline(page, gate);
+        await restoreUnchangedViewedTimeline(page, gate);
+
+        await expectNoUpdatingToast();
+        await expectTimelinePresentationUnchanged(page, presentation);
+        expectResumeAnsweredWithoutFetch(gate, requests);
+      });
+
+      await test.step("back from reopening the app", async () => {
+        const requests = rememberTimelineRequestCounts(gate);
+
+        const expectNoUpdatingToast = await reopenAppWatchingForUpdatingToast(page);
+        await waitForResumeAnswer(gate, requests);
+        await expectTimelinePromptVisible(page, agent.newestPrompt);
+
+        await expectNoUpdatingToast();
+        expectResumeAnsweredWithoutFetch(gate, requests);
+      });
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("returning to a changed chat reports the update and shows the new messages", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedLongMockAgentTimeline({ turns: 3 });
+    try {
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      const presentation = await rememberTimelinePresentation(page, agent.newestPrompt);
 
       await disconnectViewedTimeline(page, gate);
-      await restoreViewedTimelineWithHeldResponse(page, gate);
+      const background = await commitTimelineTurnsWhileDisconnected(agent, 1);
+      await restoreViewedTimelineHoldingCatchUp(page, gate);
 
       await expectTimelinePresentationUnchanged(page, presentation);
-      expectOneResumeCheckWithoutTail(gate, requests);
+      await releaseHeldCatchUp(page, gate);
+      await expectTimelinePromptVisible(page, background.newestPrompt);
     } finally {
       gate.restore();
       await agent.cleanup();

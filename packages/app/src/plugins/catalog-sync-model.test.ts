@@ -150,6 +150,7 @@ function harness() {
         },
         openScreen() {},
         openSurface() {},
+        composers: () => [],
         async playAudio() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),
