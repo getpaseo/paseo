@@ -41,6 +41,7 @@ async function prepareCachedTimeline(input: {
   agentId: string;
   storage: TimelineReplicaStorage;
   prepareAgent: (agentId: string) => Promise<void>;
+  isTurnSettled: () => boolean;
 }): Promise<CachedTimeline | undefined> {
   const before = useSessionStore.getState().sessions[input.serverId];
   const beforeTimeline = selectAgentTimelineState(before, input.agentId);
@@ -88,7 +89,7 @@ async function prepareCachedTimeline(input: {
     newer: false,
     synchronized: false,
     acknowledgedClientMessageIds: replacement.acknowledgedClientMessageIds,
-    unsettledTurn: stored.unsettledTurn,
+    unsettledTurn: input.isTurnSettled() ? undefined : stored.unsettledTurn,
   });
   return stored;
 }
@@ -98,11 +99,16 @@ export interface TimelineReplica {
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
   readRange(agentId: string): AgentTimelineCursorState | undefined;
   timelineUpdated(agentId: string): void;
+  catchUpOwed(agentId: string): void;
+  catchUpSettled(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
   private readonly cachedRanges = new Map<string, AgentTimelineCursorState>();
   private readonly preparations = new Map<string, Promise<void>>();
+  // A cache read in flight still carries the turn as it was saved. Once the catch-up has
+  // settled, that turn must not come back with the cached messages.
+  private readonly settledDuringPreparation = new Set<string>();
 
   constructor(
     private readonly serverId: string,
@@ -125,6 +131,7 @@ class TimelineReplicaOwner implements TimelineReplica {
     const preparation = this.load(agentId).finally(() => {
       if (this.preparations.get(agentId) === preparation) {
         this.preparations.delete(agentId);
+        this.settledDuringPreparation.delete(agentId);
       }
     });
     this.preparations.set(agentId, preparation);
@@ -137,6 +144,7 @@ class TimelineReplicaOwner implements TimelineReplica {
       agentId,
       storage: this.storage,
       prepareAgent: this.prepareAgent,
+      isTurnSettled: () => this.settledDuringPreparation.has(agentId),
     });
     if (!stored) return;
     if (stored.range) {
@@ -165,6 +173,18 @@ class TimelineReplicaOwner implements TimelineReplica {
       hasOlder: timeline.status === "synced" && timeline.older === "available",
       unsettledTurn: selectAgentUnsettledTurn(session, agentId),
     });
+  }
+
+  catchUpOwed(agentId: string): void {
+    this.settledDuringPreparation.delete(agentId);
+    const store = useSessionStore.getState();
+    const openTurn = selectAgentUnsettledTurn(store.sessions[this.serverId], agentId);
+    if (openTurn) store.setAgentTimelineUnsettledTurn(this.serverId, agentId, openTurn);
+  }
+
+  catchUpSettled(agentId: string): void {
+    if (this.preparations.has(agentId)) this.settledDuringPreparation.add(agentId);
+    useSessionStore.getState().setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
   }
 }
 
@@ -404,13 +424,8 @@ export function createViewedTimelineOwner(input: {
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
     onCatchUpEnded: (agentId) =>
       useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
-    onCatchUpOwed: (agentId) => {
-      const store = useSessionStore.getState();
-      const openTurn = selectAgentUnsettledTurn(store.sessions[input.serverId], agentId);
-      if (openTurn) store.setAgentTimelineUnsettledTurn(input.serverId, agentId, openTurn);
-    },
-    onCatchUpSettled: (agentId) =>
-      useSessionStore.getState().setAgentTimelineUnsettledTurn(input.serverId, agentId, null),
+    onCatchUpOwed: (agentId) => input.replica.catchUpOwed(agentId),
+    onCatchUpSettled: (agentId) => input.replica.catchUpSettled(agentId),
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
     serverId: input.serverId,

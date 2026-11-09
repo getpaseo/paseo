@@ -59,6 +59,10 @@ function createOwner(
     hasNewer: false,
     endCursor: null,
   }),
+  observe: ViewedTimelineOwnerPorts["observe"] = () => ({
+    ready: Promise.resolve(),
+    release: async () => undefined,
+  }),
 ): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
@@ -72,7 +76,7 @@ function createOwner(
     drainQueuedAgentMessage: () => undefined,
     applyTurnLiveness,
     ports: {
-      observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+      observe,
       readCursor: () => undefined,
       fetchPage,
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
@@ -967,6 +971,63 @@ describe("the turn footer changes together with its messages", () => {
     expect(recorder.commits.find((commit) => commit.replies.length > 0)?.footer).toBe("updating");
     owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
     expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  async function subscriptionRefusedDuringCacheRead(): Promise<{
+    owner: ViewedTimelineOwner;
+    finishCacheRead(): void;
+  }> {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    idleSnapshotArrives();
+    let resolveRead: (timeline: CachedTimeline) => void = () => undefined;
+    const owner = createOwner(
+      {
+        readTimeline: () => new Promise((resolve) => (resolveRead = resolve)),
+        commitTimeline: () => undefined,
+      },
+      undefined,
+      undefined,
+      () => ({
+        ready: Promise.reject(new Error("subscription refused")),
+        release: async () => undefined,
+      }),
+    );
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    owner.setConnected(true);
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+    return {
+      owner,
+      finishCacheRead: () =>
+        resolveRead({
+          agentId: AGENT_ID,
+          items: [item("reply-1", "Half", 4)],
+          range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+          hasOlder: false,
+          unsettledTurn: { turnId: "turn-1" },
+        }),
+    };
+  }
+
+  it("first paint from cache: a catch-up that failed during the cache read keeps the true status", async () => {
+    const { owner, finishCacheRead } = await subscriptionRefusedDuringCacheRead();
+
+    finishCacheRead();
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("first paint from cache: a catch-up owed again during the cache read shows updating", async () => {
+    const { owner, finishCacheRead } = await subscriptionRefusedDuringCacheRead();
+    owner.setConnected(false);
+
+    finishCacheRead();
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(footer()).toBe("updating");
     owner.dispose();
   });
 
