@@ -30,6 +30,12 @@ interface KnownReport {
   label?: string;
 }
 
+interface LoginIdentity {
+  id: string;
+  label?: string;
+  generation: number;
+}
+
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
@@ -58,6 +64,8 @@ export class UsageSourceRegistry {
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
+  private readonly identities = new Map<string, LoginIdentity>();
+  private discoveries = 0;
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -85,6 +93,8 @@ export class UsageSourceRegistry {
     for (const key of this.successful.keys())
       if (key.startsWith(`${id}:`)) this.successful.delete(key);
     for (const key of this.pending.keys()) if (key.startsWith(`${id}:`)) this.pending.delete(key);
+    for (const key of this.identities.keys())
+      if (key.startsWith(`${id}:`)) this.identities.delete(key);
   }
 
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
@@ -94,12 +104,14 @@ export class UsageSourceRegistry {
     let ids: string[];
     let reports = this.known;
     if (options.agentId !== undefined) {
-      ids = await this.discoverAgent(options.agentId);
+      ids = await this.discoverAgent(options.agentId, options.forceRefresh);
       reports = this.byAgent.get(options.agentId)?.reports ?? new Map();
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
+      const generation = ++this.discoveries;
       this.defaults = await this.discover({ kind: "global" }, this.defaults);
+      this.rebindLogins(this.defaults, generation);
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
@@ -124,7 +136,7 @@ export class UsageSourceRegistry {
     this.mergeKnown();
   }
 
-  private async discoverAgent(agentId: string): Promise<string[]> {
+  private async discoverAgent(agentId: string, forceRefresh = false): Promise<string[]> {
     if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
     if (!session) {
@@ -137,7 +149,8 @@ export class UsageSourceRegistry {
       previous?.sessionKey === session.sessionKey &&
       previous.provider === session.provider &&
       previous.model === session.model;
-    if (sameScope) return [...previous.reports.keys()];
+    if (sameScope && !forceRefresh) return [...previous.reports.keys()];
+    const generation = ++this.discoveries;
     const reports = await this.discover({
       kind: "session",
       provider: session.provider,
@@ -152,8 +165,41 @@ export class UsageSourceRegistry {
       model: session.model,
       reports,
     });
+    this.rebindLogins(reports, generation);
     this.mergeKnown();
     return [...reports.keys()];
+  }
+
+  private rebindLogins(fresh: Map<string, KnownReport>, generation: number): void {
+    // The newest-started discovery owns a shared login, even if an older one finishes later.
+    for (const [id, report] of fresh) {
+      for (const login of report.logins) {
+        const key = `${report.source.id}:${loginKey(login)}`;
+        if ((this.identities.get(key)?.generation ?? 0) <= generation)
+          this.identities.set(key, { id, label: report.label, generation });
+      }
+    }
+    for (const reports of [this.defaults, ...[...this.byAgent.values()].map((a) => a.reports)]) {
+      const rebound = new Map<string, KnownReport>();
+      for (const [id, report] of reports) {
+        for (const login of report.logins) {
+          const owner = this.identities.get(`${report.source.id}:${loginKey(login)}`);
+          const identity =
+            reports === fresh && (owner?.generation ?? 0) <= generation ? undefined : owner;
+          const currentId = identity?.id ?? id;
+          const current = rebound.get(currentId);
+          if (current) current.logins.push(login);
+          else
+            rebound.set(currentId, {
+              source: report.source,
+              label: identity ? identity.label : report.label,
+              logins: [login],
+            });
+        }
+      }
+      reports.clear();
+      for (const [id, report] of rebound) reports.set(id, report);
+    }
   }
 
   private mergeKnown(): void {
