@@ -1,7 +1,7 @@
 # TH1-2410 STATUS
 
-- Branch `th1-2410-device-credentials` on upstream main ab64bebe1; supersedes hteo1337/paseo#9 (stale base, different model).
-- Done: spec (handoffs/TH1-2410/SPEC.md, Linear document on TH1-2410), sent to Teo for review.
-- Next: Sol implements protocol + daemon + test, then client + app; Opus reviews; adversarial + security-auditor review; draft PR.
-- Decisions: owner-only issuing, full-owner credentials, no password binding (PASEO_PASSWORD rehash), credential in HostProfile.
-- Open: Teo's answers to the spec's three questions. No merge, no daemon restart.
+- Branch `th1-2410-device-credentials`; commits c03e957f4 (daemon/protocol) and 22da439f6 (client/app) on spec 5c11feaa0.
+- Verification: new bootstrap-auth tests fail on 5c11feaa0 code (2 failed, 14 passed) and pass on HEAD (bootstrap-auth + device-credentials: 20 passed); typecheck, lint, format pass.
+- Next: Sol review, adversarial review, security-auditor; then draft PR. Teo merges.
+- Decisions: owner-only issuing, full-owner credentials, no password binding, credential stored in HostProfile.
+- Open: Teo's review of the spec's three questions. No merge, no daemon restart.
