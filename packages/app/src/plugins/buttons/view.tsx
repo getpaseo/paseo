@@ -2,7 +2,11 @@ import type {
   ResolvedPluginButtonBehavior as PluginButtonBehavior,
   ResolvedPluginButtonMenuEntry as PluginButtonMenuEntry,
 } from "./validation";
-import type { PluginButtonIcon, PluginHostProps } from "@getpaseo/plugin/client";
+import type {
+  PluginButtonContext,
+  PluginButtonIcon,
+  PluginHostProps,
+} from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   useCallback,
@@ -46,13 +50,18 @@ import {
 } from "../popover";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
-import { buttonMatches, type RegisteredPluginButton } from "./model";
+import {
+  buttonMatches,
+  globalButtonMatches,
+  type GlobalButtonPlacement,
+  type RegisteredPluginButton,
+} from "./model";
 import { pluginButtonStore } from "./store";
 import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
-  props: PluginHostProps & RegisteredPluginButton["context"];
+  props: PluginHostProps & PluginButtonContext;
   environment: PluginEnvironment;
   toast: ReturnType<typeof useToast>;
 }
@@ -75,6 +84,40 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
   ];
 }
 
+/** Toolbar and vertical bar buttons show only their icon. */
+const ICON_ONLY_PLACEMENTS: ReadonlySet<RegisteredPluginButton["placement"]> = new Set([
+  "composer-toolbar",
+  "vertical-bar",
+]);
+/** Composer buttons open their surface above, toward the transcript. */
+const OPENS_ABOVE_PLACEMENTS: ReadonlySet<RegisteredPluginButton["placement"]> = new Set([
+  "composer",
+  "composer-toolbar",
+]);
+
+function placementButtonStyle(
+  placement: RegisteredPluginButton["placement"],
+  compact: boolean,
+  disabled: boolean,
+  state: IconButtonChromeState,
+) {
+  if (placement === "composer-toolbar") {
+    return iconButtonChromeStyle({ size: "small", compact, disabled, round: true, state });
+  }
+  if (placement === "vertical-bar") {
+    return iconButtonChromeStyle({ size: "large", compact, disabled, round: true, state });
+  }
+  if (placement === "composer") {
+    return [
+      composerPillStyles.body,
+      styles.button,
+      (state.hovered || state.pressed || state.open) && styles.active,
+      disabled && styles.disabled,
+    ];
+  }
+  return headerButtonStyle(compact, state, disabled);
+}
+
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <PluginEnvironmentProvider environment={view.environment}>{children}</PluginEnvironmentProvider>
@@ -83,7 +126,8 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
 
 function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
   const color = view.props.theme.colors.foregroundMuted;
-  const size = view.entry.placement === "composer" ? 14 : 16;
+  const size =
+    view.entry.placement === "header" || view.entry.placement === "vertical-bar" ? 16 : 14;
   const Icon = pluginIconComponent(icon);
   return (
     <View
@@ -245,16 +289,18 @@ function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
   const composer = entry.placement === "composer";
+  const toolbar = ICON_ONLY_PLACEMENTS.has(entry.placement);
+  const opensAbove = OPENS_ABOVE_PLACEMENTS.has(entry.placement);
   const disabled = button.disabled || entry.pending;
   const expanded = button.behavior.kind !== "action";
   // A chevron marks a button that opens something. Composer pills keep their label on compact and
   // open their surface above, so theirs points up and shows at every width; compact headers drop
   // the label and the chevron with it.
-  const chevron = expanded && (composer || !props.layout.compact);
+  const chevron = expanded && !toolbar && (composer || !props.layout.compact);
   const Chevron = composer ? ChevronUp : ChevronDown;
   let label = button.label;
   if (composer) label = button.label ?? button.title;
-  else if (props.layout.compact) label = undefined;
+  else if (toolbar || props.layout.compact) label = undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
   const setOpen = useCallback(
     (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
@@ -262,15 +308,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
   );
   const buttonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
-      composer
-        ? [
-            composerPillStyles.body,
-            styles.button,
-            (hovered || pressed || entry.open) && styles.active,
-            disabled && styles.disabled,
-          ]
-        : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+      placementButtonStyle(entry.placement, props.layout.compact, disabled, {
+        hovered,
+        pressed,
+        open: entry.open,
+      }),
+    [entry.placement, disabled, entry.open, props.layout.compact],
   );
   const contents = (
     <>
@@ -337,9 +380,9 @@ function ButtonControl({ view }: { view: ButtonView }) {
       {expanded ? (
         <PluginPopoverSurface
           sheetTitle={button.title}
-          side={composer ? "top" : "bottom"}
+          side={opensAbove ? "top" : "bottom"}
           align={composer ? "start" : "end"}
-          offset={composer ? 12 : 4}
+          offset={opensAbove ? 12 : 4}
           pages={pages}
         >
           <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />
@@ -382,6 +425,7 @@ function createButtonView({
   compact,
   hostLabel,
   theme,
+  renderContext,
 }: {
   entry: RegisteredPluginButton;
   client: ReturnType<typeof useHostRuntimeClient>;
@@ -389,8 +433,12 @@ function createButtonView({
   compact: boolean;
   hostLabel: string;
   theme: PluginTheme;
+  /** The composer a global toolbar button renders in. */
+  renderContext?: PluginButtonContext;
 }): ButtonView | null {
   if (!client) return null;
+  const context = entry.context.context === "global" ? renderContext : entry.context;
+  if (!context) return null;
   return {
     entry,
     toast,
@@ -400,7 +448,7 @@ function createButtonView({
       state: createPluginClientStateSource(entry.installation.serverId),
     },
     props: {
-      ...entry.context,
+      ...context,
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
       layout: { compact, platform: resolvePluginPlatform() },
@@ -413,17 +461,19 @@ function PluginButtonHost({
   compact,
   hostLabel,
   theme,
+  renderContext,
 }: {
   entry: RegisteredPluginButton;
   compact: boolean;
   hostLabel: string;
   theme: PluginTheme;
+  renderContext?: PluginButtonContext;
 }) {
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
   const view = useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, compact, hostLabel, theme, renderContext }),
+    [entry, client, toast, compact, hostLabel, theme, renderContext],
   );
   const renderError = useCallback(
     (error: string) => <BrokenButton title={entry.button.title} error={error} compact={compact} />,
@@ -586,6 +636,92 @@ export function PluginComposerPills({
       uniProps={pluginThemeMapping}
     />
   ));
+}
+
+function useGlobalButtons(placement: GlobalButtonPlacement, serverId: string) {
+  const all = useSyncExternalStore(
+    pluginButtonStore.subscribe,
+    pluginButtonStore.getSnapshot,
+    pluginButtonStore.getSnapshot,
+  );
+  return useMemo(
+    () => all.filter((entry) => globalButtonMatches(entry, placement, serverId)),
+    [all, placement, serverId],
+  );
+}
+
+function GlobalButtons({
+  placement,
+  serverId,
+  renderContext,
+  compact,
+}: {
+  placement: GlobalButtonPlacement;
+  serverId: string;
+  renderContext: PluginButtonContext;
+  compact: boolean;
+}) {
+  const entries = useGlobalButtons(placement, serverId);
+  const hosts = useHosts();
+  const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
+  return entries.map((entry) => (
+    <ThemedPluginButton
+      key={entry.key}
+      entry={entry}
+      compact={compact}
+      hostLabel={hostLabel}
+      renderContext={renderContext}
+      uniProps={pluginThemeMapping}
+    />
+  ));
+}
+
+/** Plugin icon buttons in a composer toolbar, beside the context meter. */
+export function PluginComposerToolbarButtons({
+  serverId,
+  workspaceId,
+  agentId,
+  compact,
+}: {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  compact: boolean;
+}) {
+  const renderContext = useMemo<PluginButtonContext>(
+    () => ({ context: "agent", workspaceId, agentId }),
+    [workspaceId, agentId],
+  );
+  return (
+    <GlobalButtons
+      placement="composer-toolbar"
+      serverId={serverId}
+      renderContext={renderContext}
+      compact={compact}
+    />
+  );
+}
+
+/** Plugin icon buttons in a folded iPhone's vertical bar, below the workspace actions. */
+export function PluginVerticalBarButtons({
+  serverId,
+  workspaceId,
+}: {
+  serverId: string;
+  workspaceId: string;
+}) {
+  const renderContext = useMemo<PluginButtonContext>(
+    () => ({ context: "workspace", workspaceId }),
+    [workspaceId],
+  );
+  return (
+    <GlobalButtons
+      placement="vertical-bar"
+      serverId={serverId}
+      renderContext={renderContext}
+      compact
+    />
+  );
 }
 
 /**

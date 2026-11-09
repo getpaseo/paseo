@@ -9,12 +9,18 @@ export interface WindowLayout {
   bounds: WindowLayoutRect;
   verticalBarEdge: "none" | "leading" | "trailing";
   verticalBar: WindowLayoutRect | null;
+  /** The status bar's frame in window coordinates, or null where the system reports none. */
+  statusBar?: WindowLayoutRect | null;
+  /** "disabled" while the app has turned the vertical bar off; absent on older builds. */
+  verticalBarBehavior?: "automatic" | "disabled";
   /**
    * Points from the window's bottom edge to where a bottom bar rests, or null where
    * the system has no bottom bar guide. Zero is a measured value.
    */
   bottomClearance?: number | null;
   divisions: WindowLayoutRect[];
+  /** Regions system elements draw over, in window coordinates; absent on older builds. */
+  occlusions?: WindowLayoutRect[];
 }
 
 /** The window's measured bottom clearance replaces the rectangular safe-area bottom. */
@@ -26,6 +32,54 @@ export function resolveSafeAreaInsets<Insets extends { bottom: number }>(
   return typeof clearance === "number" && clearance !== systemInsets.bottom
     ? { ...systemInsets, bottom: clearance }
     : systemInsets;
+}
+
+/** Gap between a header beside the status bar and the status bar's leading edge. */
+const STATUS_BAR_GAP = 8;
+
+/**
+ * With the vertical bar off, a status bar drawn as a pill at the top right leaves the rest of the
+ * top row free: the header moves into it, ending before the pill. A full-width status bar, or none,
+ * keeps the header below the top inset.
+ */
+export function resolveHeaderBesideStatusBar(
+  layout: WindowLayout | null,
+  rowHeight: number,
+): { top: number; right: number } | null {
+  if (!layout || layout.verticalBarBehavior !== "disabled") return null;
+  const bar = resolveTopRightPill(layout);
+  if (!bar) return null;
+  const width = layout.bounds.width;
+  return {
+    top: Math.max(0, bar.y + (bar.height - rowHeight) / 2),
+    right: Math.max(0, width - bar.x) + STATUS_BAR_GAP,
+  };
+}
+
+/** Below this much of the window's height, an element counts as part of the top row. */
+const TOP_ROW_LIMIT = 120;
+
+function isTopRightPill(frame: WindowLayoutRect, width: number): boolean {
+  return (
+    frame.width > 0 && frame.width < width * 0.6 && frame.x >= width / 2 && frame.y < TOP_ROW_LIMIT
+  );
+}
+
+/**
+ * The status pill at the top right: the occluded region UIKit reports there, else a status bar
+ * frame that is itself a pill. iOS can report the status bar as a full-width strip.
+ */
+function resolveTopRightPill(layout: WindowLayout): WindowLayoutRect | null {
+  const width = layout.bounds.width;
+  const pills = (layout.occlusions ?? []).filter((frame) => isTopRightPill(frame, width));
+  if (pills.length > 0) {
+    const x = Math.min(...pills.map((frame) => frame.x));
+    const y = Math.min(...pills.map((frame) => frame.y));
+    const maxY = Math.max(...pills.map((frame) => frame.y + frame.height));
+    return { x, y, width: width - x, height: maxY - y };
+  }
+  const bar = layout.statusBar;
+  return bar && isTopRightPill(bar, width) ? bar : null;
 }
 
 export interface DesktopDivisionLayout {

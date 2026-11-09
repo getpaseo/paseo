@@ -41,6 +41,11 @@ import type {
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
+import {
+  getVerticalBar,
+  setVerticalBarBehavior,
+  subscribeVerticalBar,
+} from "@/window-layout/vertical-bar";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
@@ -115,6 +120,8 @@ export type PluginClientRuntime = Pick<
   | "subscribe"
   | "addComposerPill"
   | "addHeaderButton"
+  | "addComposerToolbarButton"
+  | "addVerticalBarButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
 // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
@@ -553,6 +560,14 @@ export function runPluginClientBundle(
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addHeaderButton(contribution));
     },
+    addComposerToolbarButton(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addComposerToolbarButton(contribution));
+    },
+    addVerticalBarButton(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addVerticalBarButton(contribution));
+    },
   };
   const runtimeRequire = (name: string): unknown => {
     // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
@@ -568,6 +583,11 @@ export function runPluginClientBundle(
         useSettings: (definition: import("@getpaseo/plugin").SettingsDefinition) =>
           useSettings(definition, id),
         openExternalUrl,
+        useVerticalBar: () =>
+          React.useSyncExternalStore(subscribeVerticalBar, getVerticalBar, getVerticalBar),
+        getVerticalBar,
+        subscribeVerticalBar,
+        setVerticalBarBehavior,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
         useHosts: () =>
           React.useSyncExternalStore(

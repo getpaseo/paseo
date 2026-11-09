@@ -11,7 +11,11 @@ import {
   type InlinePathTarget,
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
+import {
+  useWindowLayout,
+  resolveWorkspaceActionPlacement,
+  useVerticalBarDisabled,
+} from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
@@ -55,6 +59,7 @@ import { FloatingHeaderLayout } from "@/components/floating-header";
 import { StreamTopOverlayProvider, supportsStreamTopOverlay } from "@/agent-stream/top-overlay";
 import {
   CompactWorkspaceHeader,
+  CompactWorkspaceTabStrip,
   MobileWorkspaceTabSwitcher,
 } from "@/screens/workspace/compact-workspace-header";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
@@ -884,9 +889,14 @@ function resolveCompactHeaderLayout(input: {
   header: ReactNode;
   activeTab: WorkspaceTabDescriptor | null;
   composerFullscreen: boolean;
+  /** With a folded iPhone's vertical bar off, the header sits in the flow, on its own background. */
+  verticalBarDisabled: boolean;
 }): { header: ReactNode; floating: boolean } {
   if (input.composerFullscreen) return { header: null, floating: false };
-  return { header: input.header, floating: floatsHeaderOverContent(input.activeTab) };
+  return {
+    header: input.header,
+    floating: !input.verticalBarDisabled && floatsHeaderOverContent(input.activeTab),
+  };
 }
 
 function shouldShowWorkspaceScreenHeader(input: {
@@ -3436,11 +3446,27 @@ function WorkspaceScreenContent({
   );
   // Without a pane's tabs (above a split) the header carries workspace controls only: split panes
   // keep their tab rails.
+  // A folded iPhone with its vertical bar off gives the header a full-width row for tabs.
+  const verticalBarDisabled = useVerticalBarDisabled();
+  const renderWorkspaceTabStrip = useCallback(
+    (paneTabs: WorkspaceCompactHeaderTabs) => (
+      <CompactWorkspaceTabStrip
+        tabs={paneTabs.tabs}
+        activeTabKey={paneTabs.activeTabKey}
+        serverId={normalizedServerId}
+        workspaceId={normalizedWorkspaceId}
+        onSelectTab={handleSelectSwitcherTab}
+      />
+    ),
+    [normalizedServerId, normalizedWorkspaceId, handleSelectSwitcherTab],
+  );
   const renderCompactWorkspaceHeader = useCallback(
     (paneTabs: WorkspaceCompactHeaderTabs | null, actionsOnly = false) => {
       const tabSwitcher = paneTabs ? renderWorkspaceTabSwitcher(paneTabs) : null;
+      const tabStrip = paneTabs && verticalBarDisabled ? renderWorkspaceTabStrip(paneTabs) : null;
       return (
         <CompactWorkspaceHeader
+          tabStrip={tabStrip}
           headerVariant={actionsOnly ? "full" : "compact"}
           actionsActive={isRouteFocused && (!isMobile || workspacePanelActive)}
           tabSwitcher={tabSwitcher}
@@ -3449,6 +3475,7 @@ function WorkspaceScreenContent({
           subtitle={workspaceHeaderSubtitle}
           isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
           serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
           onToggleExplorer={handleToggleExplorerSidebar}
           explorerToggleLabel={explorerSidebarToggleLabel}
           explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
@@ -3477,6 +3504,8 @@ function WorkspaceScreenContent({
     },
     [
       renderWorkspaceTabSwitcher,
+      verticalBarDisabled,
+      renderWorkspaceTabStrip,
       isFocusModeEnabled,
       toggleFocusMode,
       canOpenImportSheet,
@@ -3621,6 +3650,7 @@ function WorkspaceScreenContent({
     header: compactWorkspaceHeader,
     activeTab: activeTabDescriptor,
     composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
+    verticalBarDisabled: useVerticalBarDisabled(),
   });
 
   // Compact sheets escape to the app overlay host, above both sidebars.

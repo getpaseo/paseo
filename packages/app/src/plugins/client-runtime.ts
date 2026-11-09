@@ -33,6 +33,12 @@ export function createPluginClientRuntime(
     addHeaderButton(contribution) {
       return pluginButtonStore.addHeaderButton(installation, contribution);
     },
+    addComposerToolbarButton(contribution) {
+      return pluginButtonStore.addComposerToolbarButton(installation, contribution);
+    },
+    addVerticalBarButton(contribution) {
+      return pluginButtonStore.addVerticalBarButton(installation, contribution);
+    },
     openPanel(panelId, options) {
       openClientPanel({ installation, state, panelId, options });
     },
