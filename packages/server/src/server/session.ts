@@ -373,6 +373,10 @@ const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "
 
 /** Simultaneous one-shot git reads for workspaces no watcher covers. */
 const WORKSPACE_GIT_WARM_UP_CONCURRENCY = 2;
+/** How long a failed one-shot read keeps that directory out of the warm-up. */
+export const WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS = 5 * 60_000;
+/** Directories remembered as failing, so a stuck repository cannot grow the map without bound. */
+const WORKSPACE_GIT_WARM_UP_FAILURE_LIMIT = 100;
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -879,6 +883,8 @@ export class Session {
   private workspaceGitObserverReconcileRequested = false;
   /** Directories with a one-shot git read in flight for a workspace that is not watched. */
   private readonly workspaceGitWarmUpCwds = new Set<string>();
+  /** When each directory's last one-shot read failed, so it is not retried on every reconcile. */
+  private readonly workspaceGitWarmUpFailures = new Map<string, number>();
   private readonly workspaceGitWarmUpLimit = pLimit(WORKSPACE_GIT_WARM_UP_CONCURRENCY);
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
@@ -1656,6 +1662,7 @@ export class Session {
     if (!demanded && !this.wantsEvent("checkout_status_update")) return;
     // An on-demand watch counts as activity, so the next reconcile keeps it for the window.
     this.workspaceObserverTouchTimes.set(workspace.workspaceId, Date.now());
+    this.workspaceGitWarmUpFailures.delete(workspace.cwd);
     this.workspaceGitObserver.syncObservers([descriptor]);
   }
 
@@ -7476,6 +7483,10 @@ export class Session {
     liveTargets: readonly WorkspaceObservationTarget[],
   ): void {
     const liveWorkspaceIds = new Set(liveTargets.map((target) => target.id));
+    // A live directory is either watched or touched, so an earlier failure no longer applies.
+    for (const target of liveTargets) {
+      this.workspaceGitWarmUpFailures.delete(target.workspaceDirectory);
+    }
     // One directory can back several workspace records and the read is shared by directory, so
     // collect every record that shares it instead of emitting for whichever was seen first.
     const workspaceIdsByCwd = new Map<string, string[]>();
@@ -7494,6 +7505,11 @@ export class Session {
     if (this.workspaceRuntimeStore.get(cwd) || this.workspaceGitWarmUpCwds.has(cwd)) {
       return Promise.resolve();
     }
+    const failedAt = this.workspaceGitWarmUpFailures.get(cwd);
+    if (failedAt !== undefined) {
+      if (Date.now() - failedAt < WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS) return Promise.resolve();
+      this.workspaceGitWarmUpFailures.delete(cwd);
+    }
     this.workspaceGitWarmUpCwds.add(cwd);
     return this.workspaceGitWarmUpLimit(async () => {
       try {
@@ -7501,6 +7517,7 @@ export class Session {
         if (this.isCleanedUp) return;
         await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
       } catch (error) {
+        this.recordWorkspaceGitWarmUpFailure(cwd);
         this.sessionLogger.warn(
           { err: error, workspaceIds, cwd },
           "Failed to read git state for an unwatched workspace",
@@ -7509,6 +7526,20 @@ export class Session {
         this.workspaceGitWarmUpCwds.delete(cwd);
       }
     });
+  }
+
+  /**
+   * A directory whose git commands fail fails them again on the next run. Remember the failure
+   * for a while so a stuck repository is retried on that timer, not on every reconcile.
+   */
+  private recordWorkspaceGitWarmUpFailure(cwd: string): void {
+    this.workspaceGitWarmUpFailures.delete(cwd);
+    while (this.workspaceGitWarmUpFailures.size >= WORKSPACE_GIT_WARM_UP_FAILURE_LIMIT) {
+      const oldest = this.workspaceGitWarmUpFailures.keys().next().value;
+      if (oldest === undefined) break;
+      this.workspaceGitWarmUpFailures.delete(oldest);
+    }
+    this.workspaceGitWarmUpFailures.set(cwd, Date.now());
   }
 
   /**
