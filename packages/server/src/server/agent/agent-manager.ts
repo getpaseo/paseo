@@ -2511,9 +2511,17 @@ export class AgentManager {
         const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
         const resolved = this.effectiveOptionsFor(agent.provider, set);
         sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
+        const modelBefore = agent.runtimeInfo?.model;
         ended = (await agent.session.applyOptions(sent)) ?? {};
         // Changes the provider made on its own while applying are older than its final answer.
         await this.drainSessionEvents(agentId);
+        await this.refreshRuntimeInfo(agent, { emit: false });
+        // An option can choose the model too, as an fx connection does. Reopening the agent on
+        // the earlier preference would send that model to the new connection.
+        const modelAfter = agent.runtimeInfo?.model;
+        if (agent.config.model && modelAfter && modelAfter !== modelBefore) {
+          agent.config.model = modelAfter;
+        }
       }
       this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
       this.updateEffectiveOptions({ agent, sent, reported: ended });
