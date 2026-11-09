@@ -122,6 +122,7 @@ test("focus opens a compact subagent as a tab with its composer", async ({ page 
   test.setTimeout(120_000);
   await withPluginFocusingASubagent(page, async (author) => {
     await author.openParentAgent();
+    await author.openExplorer();
     await author.focusSubagent();
     await author.expectSubagentTabReadyToType();
   });

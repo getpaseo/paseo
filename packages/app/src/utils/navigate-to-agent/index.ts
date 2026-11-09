@@ -4,6 +4,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import { resolveNavigateToAgent, type NavigateToAgentInput } from "./resolve";
 
 export type { NavigateToAgentInput } from "./resolve";
@@ -43,5 +44,5 @@ export function navigateToAgentComposer(input: NavigateToAgentInput): void {
   const sheet = layout.sheetsByWorkspace[workspaceKey]?.find(
     ({ tab }) => tab.target.kind === "agent" && tab.target.agentId === input.agentId,
   );
-  if (sheet) layout.openTabInFront(workspaceKey, sheet);
+  if (sheet) revealWorkspaceTab(workspaceKey, layout.openTabInFront(workspaceKey, sheet));
 }

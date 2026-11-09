@@ -472,6 +472,7 @@ export async function withPluginFocusingASubagent(
   page: Page,
   run: (author: {
     openParentAgent(): Promise<void>;
+    openExplorer(): Promise<void>;
     focusSubagent(): Promise<void>;
     expectSubagentTabReadyToType(): Promise<void>;
   }) => Promise<void>,
@@ -513,6 +514,10 @@ export async function withPluginFocusingASubagent(
           await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
           await expectOpenTabCount(page, 1);
           await page.waitForFunction(() => (globalThis as FocusAgentGlobal).focusAgent);
+        }),
+      openExplorer: () =>
+        test.step("open the Explorer over the parent's composer", async () => {
+          await expect(await ensureExplorerSidebar(page)).toBeVisible();
         }),
       focusSubagent: () =>
         test.step("focus the subagent, which has no tab", async () => {
