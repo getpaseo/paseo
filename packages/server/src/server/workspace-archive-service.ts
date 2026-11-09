@@ -102,10 +102,16 @@ export class WorkspaceArchiveCanceledError extends Error {
   }
 }
 
+/** The workspace being archived, with the active records the caller already read. */
+export interface ActiveWorkspaceArchiveTarget {
+  workspace: ActiveWorkspaceRef;
+  activeWorkspaces: ActiveWorkspaceRef[];
+}
+
 export async function requireActiveWorkspaceForArchive(
   dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
   workspaceId: string,
-): Promise<{ workspace: ActiveWorkspaceRef; activeWorkspaces: ActiveWorkspaceRef[] }> {
+): Promise<ActiveWorkspaceArchiveTarget> {
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
   const workspace = activeWorkspaces.find((candidate) => candidate.workspaceId === workspaceId);
   if (!workspace) {
@@ -130,17 +136,28 @@ interface BackingDirectory {
   paseoWorktreesRoot: string | null;
 }
 
+interface ArchiveTeardownTarget {
+  workspaceId: string | null;
+  cwd: string;
+}
+
 interface ArchiveTarget {
   backing: BackingDirectory | null;
-  teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
+  teardownTargets: ArchiveTeardownTarget[];
   setupWorkspaceIds: string[];
   workspaceIds: string[];
+}
+
+/** The workspace an archive by path resolved to, with the active records the caller read. */
+export interface ResolvedArchiveTarget {
+  workspaceId: string | null;
+  activeWorkspaces: ActiveWorkspaceRef[];
 }
 
 export async function resolveWorkspaceTargetAtPath(
   dependencies: Pick<ArchiveDependencies, "findWorkspaceIdForCwd" | "listActiveWorkspaces">,
   targetPath: string,
-): Promise<{ workspaceId: string | null; activeWorkspaces: ActiveWorkspaceRef[] }> {
+): Promise<ResolvedArchiveTarget> {
   const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
   const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
@@ -574,9 +591,9 @@ async function maybeRemoveDirectory(
 
 async function filterAllowedTeardownTargets(
   dependencies: ArchiveDependencies,
-  targets: Array<{ workspaceId: string | null; cwd: string }>,
-): Promise<Array<{ workspaceId: string | null; cwd: string }>> {
-  const allowed: Array<{ workspaceId: string | null; cwd: string }> = [];
+  targets: ArchiveTeardownTarget[],
+): Promise<ArchiveTeardownTarget[]> {
+  const allowed: ArchiveTeardownTarget[] = [];
   const blockedCwds: string[] = [];
   for (const target of targets) {
     try {
