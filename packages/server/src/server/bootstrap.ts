@@ -1,5 +1,6 @@
+import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
-import { sendPromptToAgent } from "./agent/agent-prompt.js";
+import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
 import {
   createFinishSubscriptions,
@@ -977,6 +978,17 @@ export async function createPaseoDaemon(
     }
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: (workspaceId, archivedAt, allowLegacyFallback) =>
+      unarchiveWorkspaceAgents(
+        {
+          agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(agentStorage, agentManager, id),
+          sessionLogger: logger,
+        },
+        workspaceId,
+        archivedAt,
+        allowLegacyFallback,
+      ),
     lifecycle: pluginRuntime,
     serverId,
     projectRegistry,

@@ -15,6 +15,7 @@ import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   archiveByScope,
+  unarchiveWorkspaceAgents,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
@@ -1289,4 +1290,65 @@ test("uses the operation timestamp for live agents, snapshots, and the workspace
   expect(stamps).toHaveLength(3);
   expect(typeof stamps[0]).toBe("string");
   expect(new Set(stamps).size).toBe(1);
+});
+
+test.each([
+  {
+    stamp: "2026-11-09T10:00:00.000Z",
+    agents: [
+      ["a", "2026-11-09T10:00:00.000Z"],
+      ["b", "2026-11-09T10:00:00.000Z"],
+      ["closed", "2026-11-09T09:59:50.000Z"],
+      ["rearchived", "2026-11-09T10:00:00.001Z"],
+    ],
+    expected: ["a", "b"],
+  },
+  {
+    stamp: "2026-11-09T10:00:00.000Z",
+    agents: [
+      ["a", "2026-11-09T09:59:00.000Z"],
+      ["b", "2026-11-09T09:59:59.000Z"],
+      ["closed", "2026-11-09T09:58:59.999Z"],
+      ["later", "2026-11-09T10:00:00.001Z"],
+    ],
+    expected: ["a", "b"],
+  },
+])(
+  "restores only agents belonging to the workspace archive ($expected)",
+  async ({ stamp, agents, expected }) => {
+    const restored: string[] = [];
+    await unarchiveWorkspaceAgents(
+      {
+        agentStorage: {
+          listByWorkspace: async () =>
+            agents.map(([id, archivedAt]) => ({ id, archivedAt })) as StoredAgentRecord[],
+        },
+        unarchiveAgent: async (id) => {
+          restored.push(id);
+        },
+      },
+      "workspace",
+      stamp,
+    );
+    expect(restored).toEqual(expected);
+  },
+);
+
+test("a canceled archive with no matching agents leaves earlier closed agents archived", async () => {
+  const restored: string[] = [];
+  await unarchiveWorkspaceAgents(
+    {
+      agentStorage: {
+        listByWorkspace: async () =>
+          [{ id: "closed", archivedAt: "2026-11-09T09:59:59.000Z" }] as StoredAgentRecord[],
+      },
+      unarchiveAgent: async (id) => {
+        restored.push(id);
+      },
+    },
+    "workspace",
+    "2026-11-09T10:00:00.000Z",
+    false,
+  );
+  expect(restored).toEqual([]);
 });

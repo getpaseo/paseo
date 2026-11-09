@@ -118,6 +118,7 @@ beforeEach(async () => {
   await workspaceRegistry.initialize();
   await projectRegistry.initialize();
   provisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -169,6 +170,7 @@ test("a workspace created during a base change records the new base", async () =
   });
   await locked;
   const creator = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: git,
@@ -285,6 +287,7 @@ test("background workspace creation preserves hooks, inheritance and durable vis
   const dir = path.join(tmpDir, "plain");
   const events: string[] = [];
   provisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -374,6 +377,7 @@ test("persists manual worktree ownership separately from its workspace kind", as
   const cwd = path.join(tmpDir, "manual-worktree");
   const mainRepoRoot = path.join(tmpDir, "main-repo");
   const manualWorktreeProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,
@@ -461,6 +465,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
   await workspaceRegistry.upsert(workspace);
   await projectRegistry.archive(project.projectId, ARCHIVED_AT);
   const archivedProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,
@@ -513,6 +518,7 @@ test("uses one workspace snapshot when reopening an archived workspace", async (
     remove: (workspaceId) => workspaceRegistry.remove(workspaceId),
   };
   const snapshotProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry: snapshotRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -1016,6 +1022,7 @@ test("a failed import keeps an archived worktree's placement when its directory 
   });
   await workspaceRegistry.upsert(archived);
   const realCheckoutProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     logger,
@@ -1089,6 +1096,7 @@ test("a directory that goes away while the git read is in flight keeps its place
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
   expect(created).toMatchObject({ kind: "local_checkout", branch: "feature/vanishing" });
   const vanishingProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,

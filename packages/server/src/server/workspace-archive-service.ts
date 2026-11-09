@@ -95,6 +95,7 @@ export class WorkspaceArchiveCanceledError extends Error {
   constructor(
     public readonly newlyArchivedAgentIds: string[],
     public readonly recordArchived: boolean,
+    public readonly archivedAt: string,
   ) {
     super("Workspace archive was canceled");
     this.name = "WorkspaceArchiveCanceledError";
@@ -172,6 +173,7 @@ async function archiveByScopeWithPriority(
       throw new WorkspaceArchiveCanceledError(
         Array.from(progress.newlyArchivedAgentIds),
         progress.recordArchived,
+        archivedAt,
       );
     }
   };
@@ -433,6 +435,7 @@ async function archiveTargetRecords(
       throw new WorkspaceArchiveCanceledError(
         Array.from(options.progress.newlyArchivedAgentIds),
         options.progress.recordArchived,
+        options.archivedAt,
       );
     } else {
       dependencies.sessionLogger?.warn(
@@ -759,4 +762,40 @@ export async function archivePersistedWorkspaceRecord(input: {
   await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
 
   return existingWorkspace;
+}
+
+interface UnarchiveWorkspaceAgentsDependencies {
+  agentStorage: Pick<AgentStorage, "listByWorkspace">;
+  unarchiveAgent: (agentId: string) => Promise<unknown>;
+  sessionLogger?: Logger;
+}
+
+export async function unarchiveWorkspaceAgents(
+  dependencies: UnarchiveWorkspaceAgentsDependencies,
+  workspaceId: string,
+  archivedAt: string,
+  allowLegacyFallback = true,
+): Promise<void> {
+  const records = await dependencies.agentStorage.listByWorkspace(workspaceId);
+  const exact = records.filter((record) => record.archivedAt === archivedAt);
+  // COMPAT(workspaceArchiveStamp): added in v0.15.3; remove after 2027-05-09 once old workspace archives no longer need restoration.
+  const matching =
+    exact.length > 0 || !allowLegacyFallback
+      ? exact
+      : records.filter((record) => {
+          if (!record.archivedAt) return false;
+          const age = Date.parse(archivedAt) - Date.parse(record.archivedAt);
+          return age >= 0 && age <= 60_000;
+        });
+  const results = await Promise.allSettled(
+    matching.map((record) => dependencies.unarchiveAgent(record.id)),
+  );
+  for (const [index, result] of results.entries()) {
+    if (result.status === "rejected") {
+      dependencies.sessionLogger?.warn(
+        { err: result.reason, workspaceId, agentId: matching[index]!.id },
+        "Failed to unarchive workspace agent",
+      );
+    }
+  }
 }

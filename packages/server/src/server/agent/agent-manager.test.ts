@@ -14309,6 +14309,7 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
     await ensureAgentLoaded(parent.id, { agentManager: manager, agentStorage: storage, logger });
     await manager.archiveAgent(parent.id, "2026-11-09T01:00:00.000Z");
     expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
+    expect((await storage.get(parent.id))?.updatedAt).toBe("2026-11-09T01:00:00.000Z");
   } finally {
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
