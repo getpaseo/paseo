@@ -1,11 +1,18 @@
 import { useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  SafeAreaInsetsContext,
+  useSafeAreaInsets,
+  type Edges,
+} from "react-native-safe-area-context";
 import { useWindowLayout } from "./context";
 import { resolveWorkspaceActionPlacement, type DesktopDivisionLayout } from "./model";
 
-/** Consume horizontal safe areas once, including compact content beside a vertical bar. */
+const HORIZONTAL_EDGES: Edges = ["left", "right"];
+const NO_EDGES: Edges = [];
+
 export function WindowLayoutSurface({
   children,
   compact,
@@ -16,24 +23,22 @@ export function WindowLayoutSurface({
   style: StyleProp<ViewStyle>;
 }) {
   const insets = useSafeAreaInsets();
-  const usesBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
-  const surfaceStyle = useMemo(
-    () => [
-      style,
-      (!compact || usesBar) && { paddingLeft: insets.left, paddingRight: insets.right },
-    ],
-    [style, compact, usesBar, insets.left, insets.right],
-  );
+  const usesVerticalBarActions =
+    resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
+  const consumesHorizontalInsets = !compact || usesVerticalBarActions;
+  const overridesCompactInsets = compact && consumesHorizontalInsets;
+  // Wide sidebar allocation still needs window-space insets. Only compact
+  // descendants use this override to avoid repeating the shell's clearance.
   const contentInsets = useMemo(
-    () => (compact && usesBar ? { ...insets, left: 0, right: 0 } : insets),
-    [compact, usesBar, insets],
+    () => (overridesCompactInsets ? { ...insets, left: 0, right: 0 } : insets),
+    [overridesCompactInsets, insets],
   );
   return (
-    <View style={surfaceStyle}>
+    <SafeAreaView style={style} edges={consumesHorizontalInsets ? HORIZONTAL_EDGES : NO_EDGES}>
       <SafeAreaInsetsContext.Provider value={contentInsets}>
         {children}
       </SafeAreaInsetsContext.Provider>
-    </View>
+    </SafeAreaView>
   );
 }
 
