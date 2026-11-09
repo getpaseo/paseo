@@ -11,7 +11,11 @@ import { seedWorkspace } from "./seed-client";
 import { expectNoSheetOpen, expectOpenTabCount } from "./sheet";
 import { seedSubagent } from "./subagents";
 import { getServerId } from "./server-id";
-import { createAgentTabFromMenu, ensureExplorerSidebar } from "./workspace-tabs";
+import {
+  createAgentTabFromMenu,
+  dragTabIntoExplorer,
+  ensureExplorerSidebar,
+} from "./workspace-tabs";
 
 const WIDE = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
@@ -475,6 +479,9 @@ export async function withPluginFocusingASubagent(
     openExplorer(): Promise<void>;
     focusSubagent(): Promise<void>;
     expectSubagentTabReadyToType(): Promise<void>;
+    keepParentInExplorerOnCompactScreen(): Promise<void>;
+    focusParent(): Promise<void>;
+    expectParentReadyToTypeInExplorer(): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedMockAgentWorkspace({
@@ -504,7 +511,38 @@ export async function withPluginFocusingASubagent(
     await client.installDirectoryPlugin(directory);
     await page.setViewportSize(COMPACT);
     await gotoAppShell(page);
+    const focusAgent = async (agentId: string) => {
+      const result = await page.evaluate(
+        (id) =>
+          (globalThis as FocusAgentGlobal).focusAgent?.(id).then(
+            () => "focused",
+            (error: Error) => error.message,
+          ),
+        agentId,
+      );
+      expect(result).toBe("focused");
+    };
     await run({
+      keepParentInExplorerOnCompactScreen: () =>
+        test.step("move the parent into the Explorer, then narrow the window", async () => {
+          await page.setViewportSize(WIDE);
+          await openAgentRoute(page, {
+            workspaceId: workspace.workspaceId,
+            agentId: workspace.agentId,
+          });
+          await page.waitForFunction(() => (globalThis as FocusAgentGlobal).focusAgent);
+          const explorer = await ensureExplorerSidebar(page);
+          await dragTabIntoExplorer(page, `agent_${workspace.agentId}`);
+          await expect(
+            explorer.getByTestId(`workspace-tab-agent_${workspace.agentId}`),
+          ).toBeVisible();
+          await page.setViewportSize(COMPACT);
+        }),
+      focusParent: () =>
+        test.step("focus the agent kept in the Explorer", () => focusAgent(workspace.agentId)),
+      expectParentReadyToTypeInExplorer: () =>
+        test.step("the cursor is in the Explorer's composer", () =>
+          expect(prompt(page).filter({ visible: true })).toBeFocused()),
       openParentAgent: () =>
         test.step("open the parent agent on a phone", async () => {
           await openAgentRoute(page, {
@@ -520,17 +558,7 @@ export async function withPluginFocusingASubagent(
           await expect(await ensureExplorerSidebar(page)).toBeVisible();
         }),
       focusSubagent: () =>
-        test.step("focus the subagent, which has no tab", async () => {
-          const result = await page.evaluate(
-            (agentId) =>
-              (globalThis as FocusAgentGlobal).focusAgent?.(agentId).then(
-                () => "focused",
-                (error: Error) => error.message,
-              ),
-            child.id,
-          );
-          expect(result).toBe("focused");
-        }),
+        test.step("focus the subagent, which has no tab", () => focusAgent(child.id)),
       expectSubagentTabReadyToType: () =>
         test.step("the subagent is a tab with the cursor in its composer", async () => {
           await expectNoSheetOpen(page);

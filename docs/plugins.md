@@ -713,7 +713,7 @@ implementations provide it:
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
 
 `focus` differs per implementation on purpose. A running agent's model reveals the agent with
-`navigateToAgentComposer` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
+`navigateToAgent` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
 input that is revealed attaches. `isRevealed` is stricter than `isLive`: a compact overlay panel and
 an unfocused pane leave the input live but unable to take the keyboard, so the agent is revealed
 first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change

@@ -15,7 +15,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady, type DraftRecord } from "@/stores/draft-store/state";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { UserComposerAttachment } from "@/attachments/types";
-import { navigateToAgentComposer } from "@/utils/navigate-to-agent";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 /** The mounted composer's input. While attached, prompt commands go through it. */
 export interface MountedComposerInput {
@@ -359,7 +359,7 @@ export function agentComposer(serverId: string, agentId: string): AgentComposer 
     composer = createAgentComposer(serverId, agentId, {
       queryClient: singletonQueryClient,
       onUnheld: releaseReleasableComposers,
-      reveal: () => navigateToAgentComposer({ serverId, agentId }),
+      reveal: () => navigateToAgent({ serverId, agentId, asTab: true }),
     });
     composers.set(key, composer);
   }

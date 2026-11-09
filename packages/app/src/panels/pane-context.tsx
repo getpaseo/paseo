@@ -74,6 +74,11 @@ export function usePaneContext(): PaneContextValue {
   return value;
 }
 
+/** The host of the pane around this component; a screen with no panes counts as the main host. */
+export function usePaneHost(): PaneHost {
+  return useContext(PaneContext)?.host ?? "main";
+}
+
 export function usePaneFocus(): PaneFocusContextValue {
   const value = useContext(PaneFocusContext);
   invariant(value, "PaneFocusContext is required");
