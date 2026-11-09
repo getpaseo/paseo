@@ -9,6 +9,7 @@ describe("findSvgIconProblem", () => {
       "a fragment reference",
       '<svg><defs><path id="mark" d="M0 0h1v1z" /></defs><use href="#mark" /></svg>',
     ],
+    ["fragment paint", '<svg><path fill="url(#paint)" /></svg>'],
     ["currentColor fills", '<svg fill="currentColor"><circle r="4" /></svg>'],
   ])("accepts %s", (_name, svg) => {
     expect(findSvgIconProblem(svg)).toBeNull();
@@ -39,6 +40,11 @@ describe("findSvgIconProblem", () => {
       "an external xlink:href",
       "<svg><image xlink:href=icon.png /></svg>",
       "external href references are not allowed",
+    ],
+    [
+      "external paint",
+      '<svg><path fill="url(https://example.com/icon.svg#paint)" /></svg>',
+      "external URL references are not allowed",
     ],
     ["markup over 64 KiB", `<svg>${" ".repeat(64 * 1024)}</svg>`, "exceeds 64 KiB"],
   ])("rejects %s", (_name, svg, reason) => {
