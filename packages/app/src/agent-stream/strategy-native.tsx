@@ -25,6 +25,9 @@ import {
 } from "@legendapp/list/react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Button } from "@/components/ui/button";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useTranslation } from "react-i18next";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -32,21 +35,27 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
-import { createNativeDisclosureHold } from "./native-disclosure-hold";
+import {
+  createNativeDisclosureHold,
+  disclosureAnchor,
+  createEndHoldDistance,
+  type EndHoldDistance,
+} from "./native-disclosure-hold";
 import { EndPinnedScrollView } from "./native-end-pin";
 import { createNewRowEstimates } from "./new-row-estimates";
-import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
+import type {
+  DisclosureTriggerEdge,
+  StreamRenderInput,
+  StreamStrategy,
+  StreamViewportHandle,
+} from "./strategy";
 import { createStreamStrategy, isNearBottomForStreamRenderStrategy } from "./strategy";
 import {
-  abandonHistoryStartPaginationRequest,
-  createHistoryStartPaginationState,
-  evaluateHistoryStartPagination,
   isHistoryStartLoadingOperation,
-  rearmHistoryStartPagination,
-  settleHistoryStartPagination,
   type HistoryStartPaginationInput,
-  type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import { useHistoryStartPagination } from "./use-history-start-pagination";
+import { nativeHistoryStartGeometry } from "./native-history-start-geometry";
 import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
@@ -108,6 +117,16 @@ function distanceFromEnd(input: {
 }): number {
   return Math.max(0, input.contentHeight - input.viewportHeight - input.offsetY);
 }
+const viewportStyle: ViewStyle = { flex: 1 };
+const initialFillStyle: ViewStyle = {
+  position: "absolute",
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+  alignItems: "center",
+  justifyContent: "center",
+};
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
@@ -125,6 +144,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     viewportRef,
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
+    isInitialHistoryLoading,
+    revealInitialHistory,
     onNearBottomChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
@@ -135,6 +156,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     baseListContentContainerStyle,
     strategy,
   } = props;
+  const isActive = useRetainedPanelActive();
+  const { t } = useTranslation();
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const listRef = useRef<LegendListRef>(null);
   // LegendList places the rows once, behind a hidden reveal, when the list mounts.
@@ -157,10 +180,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const isReleasedAtEndRef = useRef(false);
   const programmaticScrollEventBudgetRef = useRef(0);
   const historyStartReadyRef = useRef(false);
-  const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
-    createHistoryStartPaginationState,
-  );
-  const historyStartPaginationStateRef = useRef(historyStartPaginationState);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
 
   const historyItems = useMemo(() => {
@@ -191,48 +210,36 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       metrics.viewportMeasuredForKey === metrics.containerKey &&
       metrics.contentMeasuredForKey === metrics.containerKey;
     return {
-      distanceFromHistoryStart: metrics.offsetY,
+      ...nativeHistoryStartGeometry({
+        contentHeight: metrics.contentHeight,
+        viewportHeight: metrics.viewportHeight,
+        offsetY: metrics.offsetY,
+        topOverlayInset,
+      }),
       hasOlderHistory,
       isLoadingOlderHistory,
-      isReady: historyStartReadyRef.current && hasMeasuredViewport,
+      isReady:
+        isActive &&
+        isAuthoritativeHistoryReady &&
+        historyStartReadyRef.current &&
+        hasMeasuredViewport,
       progressKey: olderHistoryProgressKey,
     };
   });
-  const applyHistoryStartPaginationTransition = useStableEvent(
-    (transition: HistoryStartPaginationTransition) => {
-      const previousState = historyStartPaginationStateRef.current;
-      historyStartPaginationStateRef.current = transition.state;
-      if (transition.state !== previousState) {
-        setHistoryStartPaginationState(transition.state);
-      }
-      if (transition.shouldLoad) {
-        const requestedProgressKey = olderHistoryProgressKey;
-        if (requestedProgressKey === null) {
-          return;
-        }
-        void (async () => {
-          const started = await onNearHistoryStart();
-          if (started === true) {
-            return;
-          }
-          applyHistoryStartPaginationTransition({
-            state: abandonHistoryStartPaginationRequest(
-              historyStartPaginationStateRef.current,
-              requestedProgressKey,
-            ),
-            shouldLoad: false,
-          });
-        })();
-      }
-    },
+  const { state: historyStartPaginationState, controller: historyStartPagination } =
+    useHistoryStartPagination({
+      initiallyVisible: !isInitialHistoryLoading,
+      read: getHistoryStartPaginationInput,
+      load: async () => onNearHistoryStart(),
+      scheduleSettle: () => scheduleHistoryStartSettle(),
+    });
+  const evaluateHistoryStart = useStableEvent(() => historyStartPagination.update());
+  const disposeHistoryStart = useStableEvent(() => historyStartPagination.dispose());
+  const isHistoryStartSettling = useStableEvent(
+    () => historyStartPagination.state.status === "settling",
   );
-  const evaluateHistoryStart = useStableEvent(() => {
-    const transition = evaluateHistoryStartPagination(
-      historyStartPaginationStateRef.current,
-      getHistoryStartPaginationInput(),
-    );
-    applyHistoryStartPaginationTransition(transition);
-  });
+  const finishInitialFill = useStableEvent(() => historyStartPagination.reveal());
+  const retryHistoryStart = useStableEvent(() => historyStartPagination.rearm());
   const scheduleHistoryStartSettle = useStableEvent(() => {
     let scheduler = historyStartSettleSchedulerRef.current;
     if (!scheduler) {
@@ -240,15 +247,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         settleFrames: HISTORY_START_SETTLE_FRAMES,
         requestFrame: requestAnimationFrame,
         cancelFrame: cancelAnimationFrame,
-        isSettling: () => historyStartPaginationStateRef.current.status === "settling",
+        isSettling: () => isHistoryStartSettling(),
         isLoading: () => getHistoryStartPaginationInput().isLoadingOlderHistory,
-        onSettle: () => {
-          const transition = settleHistoryStartPagination(
-            historyStartPaginationStateRef.current,
-            getHistoryStartPaginationInput(),
-          );
-          applyHistoryStartPaginationTransition(transition);
-        },
+        onSettle: () => historyStartPagination.settle(),
       });
       historyStartSettleSchedulerRef.current = scheduler;
     }
@@ -315,8 +316,14 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const isAtEnd = useStableEvent(
     () => distanceFromEnd(streamViewportMetricsRef.current) <= AT_END_OFFSET_PX,
   );
+  // A hold on the content end mounts the end pin while detached (`holdRow`). The release reads the
+  // tracked distance instead of the offset: the content size reaches JS before the pin's scroll does.
+  const [endHold, setEndHold] = useState<{ rowId: string; distance: EndHoldDistance } | null>(null);
   const releaseDisclosure = useStableEvent(() => {
-    bottomAnchorController.releaseDisclosure({ isAtEnd: isAtEnd() });
+    setEndHold(null);
+    bottomAnchorController.releaseDisclosure({
+      isAtEnd: endHold ? endHold.distance.current() <= AT_END_OFFSET_PX : isAtEnd(),
+    });
   });
   const [disclosureHold] = useState(() =>
     createNativeDisclosureHold({
@@ -326,16 +333,54 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onRelease: releaseDisclosure,
     }),
   );
-  useEffect(() => () => disclosureHold.cancel(), [disclosureHold]);
-  // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
-  // has end following off and LegendList anchoring on the held row. The row's measurement trigger
-  // makes that same commit carry the row's new height.
-  const holdRow = useStableEvent((rowId: string, apply: () => void) => {
-    disclosureHold.hold(rowId);
-    bottomAnchorController.holdForDisclosure();
-    apply();
-    rowLayoutSyncRegistry.get(rowId)?.();
+  const cancelDisclosureHold = useStableEvent(() => {
+    disclosureHold.cancel();
+    setEndHold(null);
   });
+  useEffect(() => () => cancelDisclosureHold(), [cancelDisclosureHold]);
+  // The hold detaches the controller in the same event as `apply`, so the toggle's commit already
+  // has end following off and LegendList anchoring on the held row, or on the row below it for a
+  // trigger on the row's bottom edge. The row's measurement trigger makes that same commit carry
+  // the row's new height. While following, a bottom trigger keeps following: the end pin holds the
+  // content end, and with it the bottom of the row, in the frame the new height mounts.
+  // The last row's bottom is the content end, which LegendList cannot anchor. The end pin can, from
+  // any offset, but only once it is mounted: a pin that mounts with the new height anchors nothing.
+  // So the toggle lands a frame after the pin's commit, whose mount runs before the frame's timers.
+  const latestDisclosureAnchor = useStableEvent(
+    (rowId: string, triggerEdge: DisclosureTriggerEdge) =>
+      disclosureAnchor(rows, rowId, triggerEdge),
+  );
+  const holdRow = useStableEvent(
+    (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => {
+      const applyAndMeasure = () => {
+        apply();
+        rowLayoutSyncRegistry.get(rowId)?.();
+      };
+      if (triggerEdge === "bottom" && bottomAnchorController.mode === "sticky-bottom") {
+        applyAndMeasure();
+        return;
+      }
+      const anchor = disclosureAnchor(rows, rowId, triggerEdge);
+      bottomAnchorController.holdForDisclosure();
+      if (anchor.kind === "row" || !isListPlacedRef.current) {
+        setEndHold(null);
+        disclosureHold.hold(anchor);
+        applyAndMeasure();
+        return;
+      }
+      setEndHold({
+        rowId,
+        distance: createEndHoldDistance(distanceFromEnd(streamViewportMetricsRef.current)),
+      });
+      disclosureHold.holdNextFrame(
+        () => latestDisclosureAnchor(rowId, triggerEdge),
+        (latestAnchor) => {
+          if (latestAnchor.kind === "row") setEndHold(null);
+          applyAndMeasure();
+        },
+      );
+    },
+  );
   const handleItemSizeChanged = useStableEvent(
     (info: { size: number; previous: number; itemKey: string; itemData: StreamItem }) => {
       newRowEstimates.noteMeasured(info.itemData, info.size);
@@ -343,8 +388,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
   );
   const shouldRestorePosition = useStableEvent((item: StreamItem) => {
-    const heldRowId = disclosureHold.heldRowId();
-    return heldRowId === null || item.id === heldRowId;
+    const anchorRowId = disclosureHold.anchorRowId();
+    return anchorRowId === null || item.id === anchorRowId;
   });
   // One owner keeps the scroll offset at any moment:
   // - Before the list has placed its rows for the agent: LegendList's initial scroll to the end. It
@@ -358,16 +403,23 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   //   scrolls to the end its JS sizes predict, which runs ahead of the native mount, so it lands
   //   short of the real end and the controller reads that as the user scrolling away.
   // - A disclosure hold: the held row. The hold detaches the controller, which removes the pin, and
-  //   LegendList keeps only the held row in place.
+  //   LegendList keeps only the held row in place, or the row below it when the trigger sits on the
+  //   held row's bottom edge. A bottom-edge hold while following leaves the end pin in charge, and
+  //   one on the last row mounts the pin for the hold: the row's bottom is the content end.
   // - A user scroll: the finger. The controller detaches for the gesture, so streamed lines grow below
   //   the rows the user is dragging, and resumes following if the gesture ends at the end.
   // - Detached: the visible rows. LegendList keeps the first visible row in place, so history loading
   //   above or rows growing below leave what the user is reading where it is.
   const isFollowingEnd = bottomAnchorController.mode === "sticky-bottom";
-  const pinsEnd = isFollowingEnd && isListPlaced;
+  // An end hold pins the end only while its row's bottom is the end. A reply landing below the row
+  // drops the pin in the commit that mounts the reply, so the reply grows below the held row.
+  const isEndHeld =
+    endHold !== null && disclosureAnchor(rows, endHold.rowId, "bottom").kind === "end";
+  const isEndPinned = isFollowingEnd || isEndHeld;
+  const pinsEnd = isEndPinned && isListPlaced;
   const maintainVisibleContentPosition = useMemo(
-    () => (isFollowingEnd ? false : { data: true, size: true, shouldRestorePosition }),
-    [isFollowingEnd, shouldRestorePosition],
+    () => (isEndPinned ? false : { data: true, size: true, shouldRestorePosition }),
+    [isEndPinned, shouldRestorePosition],
   );
   // A new identity re-renders LegendList's scroll component, which is how the pin follows the mode.
   const renderScrollComponent = useCallback(
@@ -390,10 +442,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     return () => {
       cancelAnimationFrame(frame);
       clearPendingUserScrollEnd();
+      disposeHistoryStart();
       historyStartSettleSchedulerRef.current?.cancel();
       historyStartSettleSchedulerRef.current = null;
     };
-  }, [clearPendingUserScrollEnd, evaluateHistoryStart]);
+  }, [clearPendingUserScrollEnd, disposeHistoryStart, evaluateHistoryStart]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
@@ -506,21 +559,21 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
 
   const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    finishInitialFill();
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
     scrollKeyboardDismiss.onScrollBeginDrag(event);
     // The gesture takes the viewport from a disclosure hold. Size changes from a streaming row can
     // keep the hold's quiet frames from ever passing, and a held row that scrolls away would leave
     // no row LegendList may anchor a history page on. The gesture's end decides following.
-    disclosureHold.cancel();
+    cancelDisclosureHold();
     bottomAnchorController.beginUserScroll();
-    const rearmed = rearmHistoryStartPagination(historyStartPaginationStateRef.current);
-    if (rearmed !== historyStartPaginationStateRef.current) {
-      historyStartPaginationStateRef.current = rearmed;
-      setHistoryStartPaginationState(rearmed);
-      evaluateHistoryStart();
-    }
+    historyStartPagination.rearm();
   });
+
+  useEffect(() => {
+    if (revealInitialHistory) finishInitialFill();
+  }, [finishInitialFill, revealInitialHistory]);
 
   // A gesture ends at the end when the finger lifts at or past it, or when its momentum stops there.
   // A release past the end bounces back to it on iOS, and lines that land during the bounce scroll
@@ -589,6 +642,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentHeight: nextContentHeight,
       contentMeasuredForKey: isListPlacedRef.current ? "native-virtualized" : null,
     };
+    endHold?.distance.noteContentSize(streamViewportMetricsRef.current);
     bottomAnchorController.handleContentSizeChange();
     // Content growing below a detached viewport moves the end away without a scroll event.
     if (
@@ -598,7 +652,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       publishNearBottom();
     }
     evaluateHistoryStart();
-    if (historyStartPaginationStateRef.current.status === "settling") {
+    if (isHistoryStartSettling()) {
       scheduleHistoryStartSettle();
     }
   });
@@ -611,19 +665,23 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentMeasuredForKey: "native-virtualized",
     };
     bottomAnchorController.handleContentSizeChange();
+    evaluateHistoryStart();
   });
 
   useEffect(() => {
     evaluateHistoryStart();
-    if (historyStartPaginationStateRef.current.status === "settling") {
+    if (isHistoryStartSettling()) {
       scheduleHistoryStartSettle();
     }
   }, [
     evaluateHistoryStart,
     hasOlderHistory,
+    isActive,
+    isAuthoritativeHistoryReady,
     isLoadingOlderHistory,
     olderHistoryProgressKey,
     scheduleHistoryStartSettle,
+    isHistoryStartSettling,
   ]);
 
   // LegendList re-renders a mounted row only when its item or `extraData` changes, not when
@@ -658,51 +716,65 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
     return (
       <View style={historyStartSlotStyle} testID="older-history-slot">
-        {isLoadingOperation ? (
+        {isLoadingOperation && (
           <View testID="load-older-history-spinner">
             <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
           </View>
-        ) : null}
+        )}
+        {!isLoadingOperation &&
+          historyStartPaginationState.status === "failed" &&
+          hasOlderHistory && (
+            <Button variant="ghost" size="sm" onPress={retryHistoryStart}>
+              {t("paneFind.retry")}
+            </Button>
+          )}
       </View>
     );
-  }, [historyStartPaginationState]);
+  }, [historyStartPaginationState, hasOlderHistory, retryHistoryStart, t]);
 
   return (
-    <LegendList<StreamItem>
-      ref={listRef}
-      data={rows}
-      renderItem={renderItem}
-      extraData={renderHistoryMountedRow}
-      keyExtractor={keyExtractor}
-      testID="agent-chat-scroll"
-      nativeID="agent-chat-scroll-native-virtualized"
-      ListHeaderComponent={historyStartContent}
-      ListFooterComponent={liveAuxiliaryContent ?? undefined}
-      contentContainerStyle={listContentContainerStyle}
-      automaticallyAdjustContentInsets={false}
-      automaticallyAdjustsScrollIndicatorInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      style={listStyle}
-      onLayout={handleListLayout}
-      onScroll={handleScroll}
-      onScrollBeginDrag={handleScrollBeginDrag}
-      onScrollEndDrag={handleScrollEndDrag}
-      onMomentumScrollBegin={handleMomentumScrollBegin}
-      onMomentumScrollEnd={handleMomentumScrollEnd}
-      scrollEventThrottle={16}
-      onContentSizeChange={handleContentSizeChange}
-      onItemSizeChanged={handleItemSizeChanged}
-      onReady={handleListPlaced}
-      maintainVisibleContentPosition={maintainVisibleContentPosition}
-      renderScrollComponent={renderScrollComponent}
-      recycleItems={false}
-      alignItemsAtEnd
-      initialScrollAtEnd
-      drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
-      getEstimatedItemSize={getEstimatedItemSize}
-      scrollEnabled={scrollEnabled}
-      showsVerticalScrollIndicator
-    />
+    <View style={viewportStyle}>
+      <LegendList<StreamItem>
+        ref={listRef}
+        data={rows}
+        renderItem={renderItem}
+        extraData={renderHistoryMountedRow}
+        keyExtractor={keyExtractor}
+        testID="agent-chat-scroll"
+        nativeID="agent-chat-scroll-native-virtualized"
+        ListHeaderComponent={historyStartContent}
+        ListFooterComponent={liveAuxiliaryContent ?? undefined}
+        contentContainerStyle={listContentContainerStyle}
+        automaticallyAdjustContentInsets={false}
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
+        onLayout={handleListLayout}
+        onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollBegin={handleMomentumScrollBegin}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        scrollEventThrottle={16}
+        onContentSizeChange={handleContentSizeChange}
+        onItemSizeChanged={handleItemSizeChanged}
+        onReady={handleListPlaced}
+        maintainVisibleContentPosition={maintainVisibleContentPosition}
+        renderScrollComponent={renderScrollComponent}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
+        getEstimatedItemSize={getEstimatedItemSize}
+        scrollEnabled={scrollEnabled}
+        showsVerticalScrollIndicator
+      />
+      {!historyStartPaginationState.visible ? (
+        <View pointerEvents="none" testID="agent-initial-fill" style={initialFillStyle}>
+          <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 

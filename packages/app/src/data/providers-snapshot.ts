@@ -119,6 +119,36 @@ export async function fetchProvidersSnapshot(input: {
   return snapshot;
 }
 
+/**
+ * The providers snapshot as a replica query: its key and its fetch together, so the model picker
+ * and anything else that needs the catalog read the same cache entry. `client` is asked when the
+ * fetch runs.
+ */
+export function providersSnapshotQuery(input: {
+  serverId: string;
+  cwd?: string | null;
+  client: () => SnapshotClient;
+  queryClient?: QueryClient;
+  cache?: ProviderSnapshotCache;
+}) {
+  const cwd = normalizeProvidersSnapshotCwd(input.cwd);
+  return {
+    queryKey: providersSnapshotQueryKey(input.serverId, cwd),
+    // The content-hash cache already owns catalog and model identity.
+    structuralSharing: false as const,
+    pushEvent: "providers_snapshot_update",
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      fetchProvidersSnapshot({
+        client: input.client(),
+        serverId: input.serverId,
+        cwd,
+        queryClient: input.queryClient,
+        cache: input.cache,
+        signal,
+      }),
+  };
+}
+
 export async function refreshAndApplyProvidersSnapshot(input: {
   client: SnapshotClient & Pick<DaemonClient, "refreshProvidersSnapshot">;
   queryClient: QueryClient;

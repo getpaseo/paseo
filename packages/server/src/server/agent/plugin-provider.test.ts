@@ -58,6 +58,14 @@ interface ProviderHarnessOptions {
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
+function controlKey(control: { key: string }): string {
+  return control.key;
+}
+
+function lastConfigure(inputs: ProviderInput[]): ProviderInput | undefined {
+  return inputs.findLast((input) => input.type === "session.configure");
+}
+
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
   let listener: ((event: ProviderEvent) => void) | null = null;
   let closeCount = 0;
@@ -494,6 +502,144 @@ test("combined plugin rewind replays the retained native branch", async () => {
     expect(await pluginMessages(session)).toEqual(["A", "Reply A"]);
     await session.revertConversation!({ messageId: "user-A" });
     expect(await pluginMessages(session)).toEqual([]);
+  });
+});
+
+test("a rewind reopens with the options as they stand, a reset included", async () => {
+  const options: Record<string, boolean> = {};
+  const report = (emit: (event: ProviderEvent) => void, sessionId: string) =>
+    emit({
+      type: "session.config",
+      sessionId,
+      config: {
+        model: "plugin-model",
+        mode: "build",
+        models: [{ id: "plugin-model", label: "Plugin model" }],
+        modes: [{ id: "build", label: "Build" }],
+        thinkingOptions: [],
+        controls: [{ type: "toggle", key: "concise", label: "Concise" }],
+        providerOptions: { ...options },
+      },
+    });
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        options.concise = true;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        report(emit, input.sessionId);
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        // A plugin that represents the default by leaving the key out.
+        delete options.concise;
+        report(emit, input.sessionId);
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { concise: true },
+  });
+  await session.run("A");
+  await session.applyOptions?.({ concise: null });
+
+  await session.revertConversation!({ messageId: "user-A" });
+
+  const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+  expect(reopened?.config.providerOptions).toEqual({});
+  await session.close();
+  await registry.shutdown();
+});
+
+// A plugin may report no options at all while it runs the ones it was given.
+async function withUnreportedOptionSession(
+  run: (
+    session: Awaited<ReturnType<AgentClient["createSession"]>>,
+    harness: ReturnType<typeof createRewindProviderHarness>,
+  ) => Promise<void>,
+) {
+  const harness = createRewindProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type === "session.open" && input.history !== "replay") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: [...CAPABILITIES, "session.revert.conversation"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        emit({
+          type: "session.config",
+          sessionId: input.sessionId,
+          config: {
+            model: "plugin-model",
+            mode: "build",
+            models: [{ id: "plugin-model", label: "Plugin model" }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions: [],
+            controls: [],
+            providerOptions: {},
+          },
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      if (input.type === "session.configure") {
+        emit({ type: "request.completed", requestId: input.requestId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const session = await registry.clients()[harness.registration.id]!.createSession({
+    provider: harness.registration.id,
+    cwd: tmpdir(),
+    providerOptions: { token_budget: 1000 },
+  });
+  try {
+    await run(session, harness);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+}
+
+test("applying an option the plugin never reports leaves the stored option alone", async () => {
+  await withUnreportedOptionSession(async (session) => {
+    // The same value as a whole-profile patch carries it, then a new one.
+    expect(await session.applyOptions?.({ token_budget: 1000 })).toEqual({});
+    expect(await session.applyOptions?.({ token_budget: 2000 })).toEqual({});
+  });
+});
+
+test("a rewind reopens with the value the plugin accepted for an option it never reports", async () => {
+  await withUnreportedOptionSession(async (session, harness) => {
+    await session.run("A");
+    await session.applyOptions?.({ token_budget: 2000 });
+
+    await session.revertConversation!({ messageId: "user-A" });
+
+    const reopened = harness.inputs.findLast((input) => input.type === "session.open");
+    expect(reopened?.config.providerOptions).toEqual({ token_budget: 2000 });
   });
 });
 
@@ -970,7 +1116,7 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
-  test("stores only agent options while the plugin receives merged defaults", async () => {
+  test("stores the agent options and the settings the plugin opened with, not the merged config defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
     const plugins = new PluginAgentClientRegistry(logger);
@@ -992,11 +1138,321 @@ describe("PluginAgentClientRegistry", () => {
       undefined,
       { workspaceId: undefined },
     );
-    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual(own);
+    // `nested.base` comes from `config.json` and is not stored; `voice` is the plugin's own opening state.
+    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual({ ...own, voice: "direct" });
     expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
       config: { providerOptions: { nested: { base: true, replace: "agent" } } },
     });
     await agent.session?.close();
+  });
+
+  // The same contract holds for a plugin that reports `controls` and `providerOptions` and for one
+  // still reporting `settings`.
+  describe.each(["controls", "settings"] as const)("options of a plugin reporting %s", (shape) => {
+    // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
+    async function openStubbornVoiceSession(
+      given: Record<string, boolean | string>,
+      { refuseAfterChanging = false }: { refuseAfterChanging?: boolean } = {},
+    ) {
+      const state: { voice: string; loud: boolean; tokenBudget?: number } = {
+        voice: "direct",
+        loud: false,
+      };
+      let openedSessionId = "";
+      const reported = () =>
+        shape === "controls"
+          ? {
+              controls: [
+                {
+                  type: "select" as const,
+                  key: "voice",
+                  label: "Voice",
+                  icon: "Mic",
+                  defaultValue: "direct",
+                  choices: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                {
+                  type: "toggle" as const,
+                  key: "loud",
+                  label: "Loud",
+                  icon: "Volume2",
+                  defaultValue: false,
+                },
+              ],
+              providerOptions: {
+                voice: state.voice,
+                loud: state.loud,
+                ...(state.tokenBudget === undefined ? {} : { token_budget: state.tokenBudget }),
+              },
+            }
+          : {
+              settings: [
+                {
+                  type: "select" as const,
+                  id: "voice",
+                  label: "Voice",
+                  value: state.voice,
+                  options: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                { type: "toggle" as const, id: "loud", label: "Loud", value: state.loud },
+              ],
+            };
+      const emitConfig = (emit: (event: ProviderEvent) => void, sessionId: string) =>
+        emit({
+          type: "session.config",
+          sessionId,
+          config: {
+            model: "plugin-model",
+            mode: "build",
+            models: [{ id: "plugin-model", label: "Plugin model" }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions: [],
+            ...reported(),
+          },
+        });
+      const harness = createProviderHarness({
+        async handleInput(input, emit) {
+          if (input.type === "session.open") {
+            openedSessionId = input.sessionId;
+            emit({
+              type: "session.opened",
+              requestId: input.requestId,
+              sessionId: input.sessionId,
+              capabilities: CAPABILITIES,
+              restoration: "core",
+              persistence: { version: 1, data: { token: "root" } },
+              cwd: input.config.cwd,
+            });
+            emitConfig(emit, input.sessionId);
+            emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+            return true;
+          }
+          if (input.type === "session.configure") {
+            const patch =
+              shape === "settings" ? input.changes.settings : input.changes.providerOptions;
+            const { loud, token_budget: tokenBudget } = patch ?? {};
+            // A plugin that takes `token_budget` live refuses the whole request on a bad value.
+            if (tokenBudget !== undefined && typeof tokenBudget !== "number") {
+              emit({
+                type: "request.failed",
+                requestId: input.requestId,
+                error: { message: "bad budget" },
+              });
+              return true;
+            }
+            if (typeof loud === "boolean") state.loud = loud;
+            if (typeof tokenBudget === "number") state.tokenBudget = tokenBudget;
+            // Going loud returns an unrequested token budget to its default, by leaving it out.
+            if (loud === true && tokenBudget === undefined) state.tokenBudget = undefined;
+            emitConfig(emit, input.sessionId);
+            emit(
+              refuseAfterChanging
+                ? { type: "request.failed", requestId: input.requestId, error: { message: "no" } }
+                : { type: "request.completed", requestId: input.requestId },
+            );
+            return true;
+          }
+          return false;
+        },
+      });
+      const plugins = new PluginAgentClientRegistry(createTestLogger());
+      plugins.replace([harness.registration]);
+      const session = await plugins.clients()["plugin-direct"]!.createSession({
+        provider: "plugin-direct",
+        cwd: tmpdir(),
+        providerOptions: given,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const changeOnItsOwn = (change: Partial<typeof state>) => {
+        Object.assign(state, change);
+        emitConfig(harness.emit, openedSessionId);
+      };
+      return { harness, session, events, changeOnItsOwn };
+    }
+
+    test("forwards a setting the plugin changes on its own", async () => {
+      const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+
+      changeOnItsOwn({ loud: true });
+
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
+      await session.close();
+    });
+
+    test.runIf(shape === "controls")(
+      "reports an option the plugin stops reporting as removed, alone or with another change",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        changeOnItsOwn({ tokenBudget: undefined });
+        changeOnItsOwn({ tokenBudget: 700 });
+        changeOnItsOwn({ tokenBudget: undefined, loud: true });
+
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: null } },
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 700 } },
+          {
+            type: "options_changed",
+            provider: "plugin-direct",
+            patch: { token_budget: null, loud: true },
+          },
+        ]);
+        await session.close();
+      },
+    );
+
+    test.runIf(shape === "controls")(
+      "an apply returns the option the plugin reset along the way as removed",
+      async () => {
+        const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+        changeOnItsOwn({ tokenBudget: 500 });
+
+        const ended = await session.applyOptions?.({ loud: true });
+
+        expect(ended).toEqual({ token_budget: null });
+        // The apply reports it; the plugin's later identical report is not a second change.
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { token_budget: 500 } },
+        ]);
+        await session.close();
+      },
+    );
+
+    test("a rejected apply reports what the plugin moved before refusing, since nothing is stored", async () => {
+      const { session, events } = await openStubbornVoiceSession({}, { refuseAfterChanging: true });
+
+      await expect(session.applyOptions?.({ loud: true })).rejects.toThrow("no");
+
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
+      await session.close();
+    });
+
+    test("a setting the plugin opened differently is the session's open patch, not an event", async () => {
+      const { session, events } = await openStubbornVoiceSession({ voice: "other", loud: false });
+
+      expect(session.openOptionsPatch).toEqual({ voice: "direct" });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
+
+    test("options the plugin opened with that nobody set are in the open patch, defaults included", async () => {
+      const { session, events } = await openStubbornVoiceSession({});
+
+      expect(session.openOptionsPatch).toEqual({ voice: "direct", loud: false });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
+
+    test("applying options configures only the settings it is given", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      await session.applyOptions?.({ loud: true });
+
+      const configure = lastConfigure(harness.inputs);
+      // Only a plugin that reports `settings` is also sent them.
+      expect((configure as { changes: object }).changes).toEqual(
+        shape === "settings"
+          ? { providerOptions: { loud: true }, settings: { loud: true } }
+          : { providerOptions: { loud: true } },
+      );
+      await session.close();
+    });
+
+    test("a removal reaches the plugin as null", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      const ended = await session.applyOptions?.({ loud: null });
+
+      expect(lastConfigure(harness.inputs)).toMatchObject({
+        changes: { providerOptions: { loud: null } },
+      });
+      // It went back to its default, and what it ended up with is reported like any provider's.
+      expect(ended).toEqual({ loud: false });
+      await session.close();
+    });
+
+    test("draws a control from what the plugin reports", async () => {
+      const { session } = await openStubbornVoiceSession({});
+
+      expect((session.controls ?? []).map(controlKey)).toEqual(["voice", "loud"]);
+      await session.close();
+    });
+
+    test.runIf(shape === "controls")(
+      "keeps a control's icon, default and choices as the plugin declared them",
+      async () => {
+        const { session } = await openStubbornVoiceSession({});
+
+        expect(session.controls?.[0]).toMatchObject({
+          icon: "Mic",
+          defaultValue: "direct",
+          choices: [
+            { label: "Direct", value: "direct" },
+            { label: "Other", value: "other" },
+          ],
+        });
+        await session.close();
+      },
+    );
+
+    test.runIf(shape === "controls")(
+      "sends a live option that has no control, and the plugin's answer decides",
+      async () => {
+        const { harness, session, events } = await openStubbornVoiceSession({});
+
+        await session.applyOptions?.({ token_budget: 2000 });
+        expect(lastConfigure(harness.inputs)).toMatchObject({
+          changes: { providerOptions: { token_budget: 2000 } },
+        });
+
+        // The plugin refuses the request as a whole, so the other key it was given is not applied.
+        await expect(session.applyOptions?.({ loud: true, token_budget: "lots" })).rejects.toThrow(
+          "bad budget",
+        );
+        expect(eventsOfType(events, "options_changed")).toEqual([]);
+        expect(await session.applyOptions?.({ token_budget: 3000 })).toEqual({});
+        await session.close();
+      },
+    );
+
+    test("sends a key the plugin does not report, for the plugin to accept or refuse", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      await session.applyOptions?.({ loud: true, launch_key: "changed" });
+
+      const configure = lastConfigure(harness.inputs) as {
+        changes: { providerOptions: object; settings?: object };
+      };
+      expect(configure.changes.providerOptions).toEqual({ loud: true, launch_key: "changed" });
+      // A plugin reporting `settings` is sent the same keys under that name.
+      expect(configure.changes.settings).toEqual(
+        shape === "settings" ? { loud: true, launch_key: "changed" } : undefined,
+      );
+      await session.close();
+    });
+
+    test("applying options returns the settings that ended up different, and emits nothing", async () => {
+      const { session, events } = await openStubbornVoiceSession({});
+
+      const ended = await session.applyOptions?.({ voice: "other", loud: true });
+
+      expect(ended).toEqual({ voice: "direct" });
+      expect(eventsOfType(events, "options_changed")).toEqual([]);
+      await session.close();
+    });
   });
 
   test.each([
@@ -1511,12 +1967,13 @@ describe("PluginAgentClientRegistry", () => {
     });
 
     const session = await client!.createSession({ provider: "plugin-direct", cwd: "/workspace" });
-    expect(session.features).toEqual([
-      expect.objectContaining({
+    expect(session.controls).toEqual([
+      {
         type: "select",
-        id: "voice",
-        options: [{ id: "direct", label: "Direct", value: "direct" }],
-      }),
+        key: "voice",
+        label: "Voice",
+        choices: [{ value: "direct", label: "Direct" }],
+      },
     ]);
     expect(session.describePersistence()).toMatchObject({
       provider: "plugin-direct",

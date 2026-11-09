@@ -31,7 +31,7 @@ nav: 工具参考
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------- |
 | `browser_snapshot`   | `browserId`                            | 以带元素引用的无障碍树形式返回页面。                                |
 | `browser_screenshot` | `browserId, fullPage?`                 | 截取视口的 PNG；传入 `fullPage` 时截取整个页面。                    |
-| `browser_logs`       | `browserId, maxEntries?`               | 读取最近的控制台消息和网络耗时条目。                                |
+| `browser_logs`       | `browserId, maxEntries?`               | 读取最近的控制台消息和网络条目：URL、耗时、大小和 HTTP 状态码。     |
 | `browser_wait`       | `browserId, text? \| url?, timeoutMs?` | 等待页面包含某段文本或到达某个 URL 片段（两者必须且只能提供一个）。 |
 
 ## 交互 {#interacting}
