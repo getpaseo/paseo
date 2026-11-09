@@ -110,6 +110,13 @@ function sidebarViews(
         label: { name: "Unlabelled", color: "red" },
         assigned: true,
       });
+      // Each label renders a row. Observe the addition before removing the old
+      // label so a stale single row cannot satisfy the final readiness check.
+      const moveWorkspace = slot.getByRole("button", {
+        name: `Move workspace ${workspaceId}`,
+        exact: true,
+      });
+      await expect(moveWorkspace).toHaveCount(2);
       await client.setWorkspaceLabel({
         workspaceId,
         label: { name: "Later", color: "red" },
@@ -122,9 +129,9 @@ function sidebarViews(
               ?.labels,
         )
         .toEqual(["Unlabelled"]);
-      await slot
-        .getByRole("button", { name: `Move workspace ${workspaceId}`, exact: true })
-        .click();
+      // The daemon reply does not guarantee the browser has applied the removal.
+      await expect(moveWorkspace).toHaveCount(1);
+      await moveWorkspace.click();
       await slot.getByRole("button", { name: "Move to Inbox", exact: true }).click();
       await expect
         .poll(
