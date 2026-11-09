@@ -211,7 +211,10 @@ describe("kimi usage source", () => {
 
     const result = await service({ kimiHomeDir: homeDir }).listUsage();
 
-    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(findProvider(result, "kimi")).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "rejected", status: 401, refreshedBy: "kimi login" },
+    });
     expect(usageCalls).toBe(1);
     // The credentials file must be left untouched for the Kimi CLI to own.
     expect(readFileSync(credPath, "utf8")).toBe(before);
@@ -224,7 +227,10 @@ describe("kimi usage source", () => {
 
     const result = await service().listUsage();
 
-    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(findProvider(result, "kimi")).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "rejected", status: 401, refreshedBy: "kimi login" },
+    });
     expect(usageFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -235,7 +241,10 @@ describe("kimi usage source", () => {
 
     const result = await service({ kimiHomeDir: homeDir }).listUsage();
 
-    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(findProvider(result, "kimi")).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "rejected", status: 403, refreshedBy: "kimi login" },
+    });
     expect(usageFetch).toHaveBeenCalledTimes(1);
   });
 });
@@ -422,7 +431,10 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
       { store: "env", locator: "KIMI_TOKEN" },
       async () => new Response(null, { status }),
     );
-    expect(report).toEqual({ status: "unavailable", problem: { kind: "rejected", status } });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: { kind: "rejected", status, refreshedBy: "kimi login" },
+    });
   } finally {
     if (previous === undefined) delete process.env["KIMI_TOKEN"];
     else process.env["KIMI_TOKEN"] = previous;

@@ -272,12 +272,17 @@ export async function fetchUsage(
     return unavailable({
       kind: "expired",
       expiresAt: new Date(credentials.expires_at * 1000).toISOString(),
+      refreshedBy: "kimi login",
     });
 
   const res = await callUsageApi(credentials.access_token);
 
   if (res.status === 401 || res.status === 403)
-    return unavailable({ kind: "rejected", status: res.status });
+    return unavailable({
+      kind: "rejected",
+      status: res.status,
+      refreshedBy: "kimi login",
+    });
   if (!res.ok) throw new Error(`Kimi usage API returned ${res.status}`);
 
   const windows = kimiUsageWindowsFromPayload(await res.json());
