@@ -12,7 +12,7 @@ import {
   type AgentTimelineState,
 } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getSendingClientMessageIds } from "@/composer/submission/model";
 import {
   getInitDeferred,
@@ -339,10 +339,56 @@ function applyAuthoritativeTimelineResponse(input: {
   return true;
 }
 
+/**
+ * Measured on a dev daemon: set_subscription answers in a mean of 1.4 ms, p99 per-window max
+ * 107 ms, max 227 ms. A check slower than this is slow enough to say so on screen.
+ */
+export const FRESHNESS_CHECK_QUIET_MS = 500;
+
+export type TimelineFreshness = "current" | "behind";
+
+/** The empty after page the daemon would have returned for a cursor already at the head. */
+function buildCurrentTimelinePage(
+  agentId: string,
+  cursor: { epoch: string; endSeq: number },
+): TimelineResponsePayload {
+  return {
+    requestId: "",
+    agentId,
+    agent: null,
+    direction: "after",
+    projection: "projected",
+    epoch: cursor.epoch,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 0, maxSeq: cursor.endSeq, nextSeq: cursor.endSeq + 1 },
+    startCursor: null,
+    endCursor: null,
+    hasOlder: false,
+    hasNewer: false,
+    entries: [],
+    error: null,
+  };
+}
+
 export interface ViewedTimelineSyncPorts {
   prepare(agentId: string): Promise<void>;
   replaceDemandedAgentIds(agentIds: string[]): void;
-  observe(agentIds: string[]): { ready: Promise<unknown>; release(): Promise<void> };
+  /** Whether the daemon answers with each cursor's freshness in the subscribe response. */
+  canCheckFreshness(): boolean;
+  observe(
+    agentIds: string[],
+    cursors?: Record<string, { epoch: string; seq: number }>,
+  ): {
+    ready: Promise<{
+      timelines?: Record<string, TimelineFreshness>;
+      agents?: Record<string, AgentSnapshotPayload>;
+    } | void>;
+    release(): Promise<void>;
+  };
+  /** The daemon confirmed the cached timeline is at its head, as a zero-row after page would. */
+  applyCurrentTimeline(agentId: string): void;
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
   fetchPage(
     agentId: string,
@@ -361,7 +407,17 @@ export interface ViewedTimelineSyncPorts {
   reportError(error: unknown): void;
 }
 
-export type ViewedTimelineStatus = "ready" | "pending" | "error" | "retrying";
+/**
+ * "checking": the daemon has not said whether this chat is current; nothing to report yet.
+ * "reattaching": the same question right after a reconnect, so the chat is still not back.
+ */
+export type ViewedTimelineStatus =
+  | "ready"
+  | "checking"
+  | "reattaching"
+  | "pending"
+  | "error"
+  | "retrying";
 
 export interface ViewedTimelineUiBridge {
   replaceVisibleAgentIds(sourceId: string, agentIds: string[]): void;
@@ -386,7 +442,12 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
-  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded" | "onCatchUpOwed" | "onCatchUpSettled"
+  | "prepare"
+  | "replaceDemandedAgentIds"
+  | "onCatchUpEnded"
+  | "onCatchUpOwed"
+  | "onCatchUpSettled"
+  | "applyCurrentTimeline"
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
@@ -422,6 +483,18 @@ export function createViewedTimelineOwner(input: {
     prepare: (agentId) => input.replica.prepare(agentId),
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
+    applyCurrentTimeline: (agentId) => {
+      const cursor = input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId);
+      if (!cursor) return;
+      const accepted = applyAuthoritativeTimelineResponse({
+        serverId: input.serverId,
+        payload: buildCurrentTimelinePage(agentId, cursor),
+        cachedCursor: input.replica.readRange(agentId),
+        recoverGap: (id, gapCursor) => sync.recoverGap(id, gapCursor),
+        drainQueuedAgentMessage: input.drainQueuedAgentMessage,
+      });
+      if (accepted) input.replica.timelineUpdated(agentId);
+    },
     onCatchUpEnded: (agentId) =>
       useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
     onCatchUpOwed: (agentId) => input.replica.catchUpOwed(agentId),
@@ -526,6 +599,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const manualRetries = new Set<string>();
   const loadedCache = new Set<string>();
   const cacheLoads = new Map<string, Promise<void>>();
+  // Chats whose freshness answer is outstanding. No catch-up starts for them until it arrives;
+  // `quiet` holds the status short of "pending" until FRESHNESS_CHECK_QUIET_MS elapses.
+  const freshnessChecks = new Map<
+    string,
+    { quiet: boolean; reattaching: boolean; timer: ReturnType<typeof setTimeout> | null }
+  >();
   const listeners = new Set<() => void>();
   let active = true;
   let connected = false;
@@ -538,6 +617,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let acknowledged: string[] = [];
   let membershipGeneration = 0;
   let membershipNeedsRetry = false;
+  let freshnessCheckOwed = false;
   // Chats this session has opened. Visibility is the only way in, so an agent is never
   // subscribed — and never resumed on the daemon — until the user actually opens it.
   // Membership then survives hiding, workspace switches, backgrounding and reconnect;
@@ -591,6 +671,33 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const markCatchUpOwed = (agentId: string) => {
     visibilityCatchUpPending.add(agentId);
     ports.onCatchUpOwed(agentId);
+  };
+
+  const startFreshnessCheck = (agentId: string, reattaching = false) => {
+    if (freshnessChecks.has(agentId)) return;
+    freshnessChecks.set(agentId, { quiet: true, reattaching, timer: null });
+  };
+
+  // The delay measures the daemon's answer, so it starts when the question is sent. On a cold
+  // start the cache read that precedes the question can outlast it on its own.
+  const startFreshnessCheckDelay = (agentId: string) => {
+    const check = freshnessChecks.get(agentId);
+    if (!check || check.timer) return;
+    check.timer = setTimeout(() => {
+      check.quiet = false;
+      notifyListeners();
+    }, FRESHNESS_CHECK_QUIET_MS);
+  };
+
+  const endFreshnessCheck = (agentId: string) => {
+    const check = freshnessChecks.get(agentId);
+    if (!check) return;
+    if (check.timer) clearTimeout(check.timer);
+    freshnessChecks.delete(agentId);
+  };
+
+  const endAllFreshnessChecks = () => {
+    for (const agentId of freshnessChecks.keys()) endFreshnessCheck(agentId);
   };
 
   const cancelCatchUp = (agentId: string) => {
@@ -682,6 +789,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     } = {},
   ) => {
     const { request, supersede = false } = options;
+    if (freshnessChecks.has(agentId)) {
+      if (request) pendingCatchUps.set(agentId, request);
+      return;
+    }
     if (!canCatchUp(agentId)) {
       if (request) pendingCatchUps.set(agentId, request);
       return;
@@ -736,30 +847,98 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     }
   };
 
+  const membershipIsSettled = (requested: string[]) =>
+    !membershipNeedsRetry &&
+    !freshnessCheckOwed &&
+    sameAgentIds(requested, observation?.agentIds ?? acknowledged);
+
+  // A chat with no fetch running and a cursor to compare; the daemon can answer without a fetch.
+  const collectFreshnessCursors = (requested: string[]) => {
+    const cursors: Record<string, { epoch: string; seq: number }> = {};
+    for (const agentId of requested) {
+      if (catchUps.has(agentId) || pendingCatchUps.has(agentId)) continue;
+      const cursor = ports.readCursor(agentId);
+      if (cursor) cursors[agentId] = { epoch: cursor.epoch, seq: cursor.endSeq };
+    }
+    return cursors;
+  };
+
+  const completeCurrentCatchUp = (agentId: string) => {
+    const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
+    catchUpGenerations.set(agentId, generation);
+    catchUps.set(agentId, { generation, status: "complete" });
+    ports.applyCurrentTimeline(agentId);
+    setVisibilityCatchUpReady(agentId);
+  };
+
+  const applyFreshnessAnswer = (
+    checked: string[],
+    timelines: Record<string, TimelineFreshness> | undefined,
+  ) => {
+    for (const agentId of checked) {
+      endFreshnessCheck(agentId);
+      // A gap found during the check still needs its fetch; "current" only speaks for the cursor.
+      if (timelines?.[agentId] === "current" && !pendingCatchUps.has(agentId)) {
+        completeCurrentCatchUp(agentId);
+      }
+    }
+    if (checked.length > 0) notifyListeners();
+  };
+
+  const isReconcileSuperseded = (generation: number) =>
+    disposed || !connected || generation !== membershipGeneration;
+
+  const askDaemonAboutFreshness = (checked: string[]) => {
+    for (const agentId of checked) {
+      startFreshnessCheck(agentId);
+      startFreshnessCheckDelay(agentId);
+    }
+    for (const agentId of freshnessChecks.keys()) {
+      if (!checked.includes(agentId)) endFreshnessCheck(agentId);
+    }
+  };
+
   const reconcileMembership = async (): Promise<void> => {
     if (disposed || !connected) return;
     const generation = membershipGeneration;
     const requested = desired;
-    if (!membershipNeedsRetry && sameAgentIds(requested, observation?.agentIds ?? acknowledged))
-      return;
+    if (membershipIsSettled(requested)) return;
+    const canCheck = ports.canCheckFreshness();
+    if (canCheck) {
+      // The cursor sent to the daemon must include whatever the cache restores.
+      await Promise.all(requested.map((agentId) => cacheLoads.get(agentId)));
+      if (isReconcileSuperseded(generation)) return;
+      if (membershipIsSettled(requested)) return;
+    }
     membershipNeedsRetry = false;
+    freshnessCheckOwed = false;
+    const cursors = canCheck ? collectFreshnessCursors(requested) : undefined;
+    const checked = Object.keys(cursors ?? {});
+    askDaemonAboutFreshness(checked);
+    notifyListeners();
+    let timelines: Record<string, TimelineFreshness> | undefined;
     try {
       const previous = observation;
-      const handle = ports.observe(requested);
+      const handle = ports.observe(requested, cursors);
       observation = { handle, agentIds: requested };
-      void previous?.handle.release().catch(ports.reportError);
-      await handle.ready;
+      // A subscription routes events only once the daemon accepts it, so the old one delivers until then.
+      const answer = await handle.ready.finally(() => {
+        void previous?.handle.release().catch(ports.reportError);
+      });
+      timelines = answer ? answer.timelines : undefined;
     } catch (error) {
-      if (disposed || !connected || generation !== membershipGeneration) return;
+      if (isReconcileSuperseded(generation)) return;
       membershipNeedsRetry = true;
       acknowledged = [];
+      for (const agentId of checked) endFreshnessCheck(agentId);
       for (const agentId of requested) cancelCatchUp(agentId);
       setVisibilityCatchUpError(requested, error);
       ports.reportError(error);
       return;
     }
-    if (disposed || !connected || generation !== membershipGeneration) return;
+    if (isReconcileSuperseded(generation)) return;
     acknowledged = requested;
+    applyFreshnessAnswer(checked, timelines);
     startAcknowledgedCatchUps();
   };
 
@@ -803,6 +982,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     for (const agentId of desired) {
       if (!nextDesired.includes(agentId)) {
         cancelCatchUp(agentId);
+        endFreshnessCheck(agentId);
         visibilityCatchUpPending.delete(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
@@ -815,6 +995,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         markCatchUpOwed(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
+        if (connected && ports.canCheckFreshness()) startFreshnessCheck(agentId);
         ensureCacheLoaded(agentId);
       }
     }
@@ -824,6 +1005,19 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     for (const agentId of released) ports.onCatchUpEnded(agentId);
     notifyListeners();
     void reconcileMembership();
+  };
+
+  // A render can see the connection return, or a chat become visible, before this owner hears
+  // about it, so those two states answer as if the check had already started.
+  const getUnconfirmedStatus = (agentId: string): ViewedTimelineStatus => {
+    const check = freshnessChecks.get(agentId);
+    if (check) {
+      if (!check.quiet) return "pending";
+      return check.reattaching ? "reattaching" : "checking";
+    }
+    if (!ports.canCheckFreshness()) return "pending";
+    if (!connected) return "reattaching";
+    return isDesired(agentId) ? "pending" : "checking";
   };
 
   const publishVisibleMembership = () => {
@@ -838,8 +1032,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     getAgentTimelineStatus(agentId) {
       if (manualRetries.has(agentId)) return "retrying";
       if (visibilityCatchUpErrors.has(agentId)) return "error";
-      if (!isDesired(agentId) || visibilityCatchUpPending.has(agentId)) return "pending";
-      return "ready";
+      if (isDesired(agentId) && !visibilityCatchUpPending.has(agentId)) return "ready";
+      return getUnconfirmedStatus(agentId);
     },
     getAgentTimelineError(agentId) {
       return visibilityCatchUpErrors.get(agentId) ?? null;
@@ -867,10 +1061,26 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         startAcknowledgedCatchUps();
         return;
       }
+      const canCheck = connected && ports.canCheckFreshness();
       for (const agentId of visibleAgentIds()) {
         if (visibilityCatchUpErrors.has(agentId)) continue;
         markCatchUpOwed(agentId);
+        if (
+          canCheck &&
+          catchUps.get(agentId)?.status === "complete" &&
+          !pendingCatchUps.has(agentId) &&
+          ports.readCursor(agentId)
+        ) {
+          catchUps.delete(agentId);
+          startFreshnessCheck(agentId);
+          freshnessCheckOwed = true;
+          continue;
+        }
         startCatchUp(agentId, { supersede: true });
+      }
+      if (freshnessCheckOwed) {
+        membershipGeneration += 1;
+        void reconcileMembership();
       }
       notifyListeners();
     },
@@ -883,10 +1093,18 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         observation = null;
         acknowledged = [];
         membershipGeneration += 1;
+        freshnessCheckOwed = false;
+        endAllFreshnessChecks();
         for (const agentId of desired) cancelCatchUp(agentId);
         return;
       }
+      if (ports.canCheckFreshness()) {
+        for (const agentId of desired) {
+          if (visibilityCatchUpPending.has(agentId)) startFreshnessCheck(agentId, true);
+        }
+      }
       membershipGeneration += 1;
+      notifyListeners();
       void reconcileMembership();
     },
     recoverGap(agentId, cursor) {
@@ -913,6 +1131,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       visibilityCatchUpPending.clear();
       visibilityCatchUpErrors.clear();
       manualRetries.clear();
+      endAllFreshnessChecks();
       notifyListeners();
       listeners.clear();
     },
