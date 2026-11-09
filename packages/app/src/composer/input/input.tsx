@@ -69,7 +69,6 @@ import type { ImageAttachment, MessagePayload, TextReplacement } from "@/compose
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
-import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,6 +85,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
+import { ComposerScrollbar } from "./scrollbar";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
@@ -710,8 +710,8 @@ interface ComposerTextSurfaceProps {
   onBlur: () => void;
   editable: boolean;
   scrollEnabled: boolean;
-  /** Web: the mounted textarea, which carries the overlay scrollbar once the draft scrolls. */
-  webTextAreaRef: React.RefObject<HTMLElement | null>;
+  /** Web: the mounted textarea; the overlay scrollbar tracks it once the draft scrolls. */
+  webTextareaRef: React.RefObject<HTMLElement | null>;
   autoFocus: boolean;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
@@ -788,9 +788,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      {isWeb && props.scrollEnabled ? (
-        <DomOverlayScrollbar scrollContainerRef={props.webTextAreaRef} />
-      ) : null}
+      {props.scrollEnabled ? <ComposerScrollbar textareaRef={props.webTextareaRef} /> : null}
       <FocusHint
         visible={props.focusHintVisible}
         focusInputKeys={props.focusInputKeys}
@@ -2155,7 +2153,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onBlur={handleInputBlur}
             editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
             scrollEnabled={isComposerScrollEnabled}
-            webTextAreaRef={webTextareaRef}
+            webTextareaRef={webTextareaRef}
             autoFocus={false}
             onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
             onSelectionChange={handleSelectionChange}

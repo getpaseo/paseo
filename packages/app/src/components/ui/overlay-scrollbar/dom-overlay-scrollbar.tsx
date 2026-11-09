@@ -6,7 +6,7 @@ export function DomOverlayScrollbar({
   onUserScrollUp,
 }: {
   scrollContainerRef: RefObject<HTMLElement | null>;
-  onUserScrollUp?: () => void;
+  onUserScrollUp: () => void;
 }) {
   const [metrics, setMetrics] = useState<OverlayScrollbarMetrics>({
     offset: 0,
