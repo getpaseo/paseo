@@ -7,11 +7,16 @@ import {
   rotatorStyles,
 } from "@/components/status-ring/frame";
 import { STATUS_RING_SIZE } from "@/components/status-ring/geometry";
+import type { Theme } from "@/styles/theme";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 
-const RunningIndicator = withUnistyles(ActivityIndicator, (theme) => ({
-  color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
-}));
+export function getAndroidRunningIndicatorProps(theme: Theme) {
+  return {
+    color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
+  };
+}
+
+const RunningIndicator = withUnistyles(ActivityIndicator, getAndroidRunningIndicatorProps);
 
 // Reanimated's per-frame ShadowTree commits can starve a concurrent Unistyles resize commit.
 // Android's platform drawable animates without committing a new ShadowTree each frame.
