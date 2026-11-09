@@ -1141,7 +1141,7 @@ test("source-key registration remains idempotent at directory capacity", async (
 });
 
 /** Real WebSocket proxy records the A–B physical wire without replacing either daemon. */
-async function hostWire(b: TestPaseoDaemon) {
+async function hostWire(b: TestPaseoDaemon, options: { legacyFlowControl?: boolean } = {}) {
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
   const frames: { binary: boolean; bytes: Buffer; direction: "toB" | "fromB" }[] = [];
@@ -1154,7 +1154,14 @@ async function hostWire(b: TestPaseoDaemon) {
       for (const send of pending.splice(0)) send();
     });
     downstream.on("message", (data, binary) => {
-      const bytes = Buffer.from(data as Buffer);
+      let bytes = Buffer.from(data as Buffer);
+      if (options.legacyFlowControl && !binary) {
+        const envelope = JSON.parse(bytes.toString());
+        if (envelope.message?.type === "hosts.link.open.request") {
+          delete envelope.message.flowControl;
+          bytes = Buffer.from(JSON.stringify(envelope));
+        }
+      }
       frames.push({ binary, bytes, direction: "toB" });
       const send = () => {
         if (upstream.readyState === 1) upstream.send(bytes, { binary });
@@ -1729,6 +1736,77 @@ test(
         )
         .toBe(previous + 1);
     }
+  },
+);
+
+test(
+  "a background caller's MCP and SDK children and workspaces on B are background unless it overrides",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon();
+    const { paseo } = await api(a);
+    await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "Fleet B" });
+    const directory = await online(paseo);
+    const workspace = await paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "Background parent",
+      background: true,
+    });
+    const mcp = new Client({ name: "background-delegation", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const response = await mcp.callTool({ name, arguments: args });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      return z.record(z.string(), z.unknown()).parse(response.structuredContent);
+    };
+    const serverId = directory.hosts[0]!.serverId!;
+    const hidden = await call("create_workspace", {
+      serverId,
+      isolation: "local",
+      path: b.staticDir,
+      title: "Inherited workspace",
+    });
+    const helper = await call("create_agent", {
+      serverId,
+      workspaceId: hidden.workspaceId,
+      title: "Inherited helper",
+      provider: "claude/claude-test",
+      initialPrompt: "Summarize",
+    });
+    const visible = await call("create_agent", {
+      serverId,
+      workspaceId: hidden.workspaceId,
+      title: "Visible helper",
+      provider: "claude/claude-test",
+      initialPrompt: "Summarize",
+      background: false,
+    });
+
+    const bApi = await api(b);
+    const workspaces = await bApi.client.fetchWorkspaces({ includeBackground: true });
+    expect(workspaces.entries.find((entry) => entry.id === hidden.workspaceId)).toMatchObject({
+      background: true,
+    });
+    const snapshot = async (agentId: unknown) =>
+      (await bApi.paseo.agents.ref(String(agentId)).refresh())?.agent;
+    expect(await snapshot(helper.agentId)).toMatchObject({ background: true });
+    expect((await snapshot(visible.agentId))?.background).toBeUndefined();
+
+    const sdkChild = await bApi.paseo.workspaces.ref(String(hidden.workspaceId)).agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "SDK helper",
+      parent,
+    });
+    expect(sdkChild.current()).toMatchObject({ background: true });
   },
 );
 
@@ -2319,6 +2397,169 @@ test(
   },
 );
 
+test("a host channel waits for its downstream consumer without blocking sibling requests", async () => {
+  const b = await daemon();
+  const destination = await api(b);
+  const workspace = await destination.paseo.workspaces.create({
+    source: { kind: "directory", path: b.staticDir },
+  });
+  const agent = await workspace.agents.create({
+    config: { provider: "claude/claude-test", modeId: "full-access" },
+    title: "Flow-controlled history",
+  });
+  const text = "x".repeat(240 * 1024);
+  for (let index = 0; index < 50; index++)
+    await b.daemon.agentManager.appendTimelineItem(agent.id, { type: "user_message", text });
+
+  const channel = createHostChannelTransport(
+    destination.client,
+    b.daemon.getServerId()!,
+    "held-consumer",
+    null,
+    true,
+  )({ url: "ws://host-link/ws" });
+  const received = Promise.withResolvers<void>();
+  const forward = Promise.withResolvers<void>();
+  let binaryFrames = 0;
+  channel.onMessage((_data, binary) => {
+    if (!binary) return;
+    binaryFrames++;
+    received.resolve();
+    return forward.promise;
+  });
+  const consumer = new DaemonClient({
+    url: "ws://host-link/ws",
+    clientId: "held-consumer",
+    reconnect: { enabled: false },
+    transportFactory: () => channel,
+  });
+  const remote = createPaseoApi(consumer);
+  cleanup.push(async () => {
+    forward.resolve();
+    await remote.dispose();
+    await consumer.close();
+  });
+  await consumer.connect();
+  const history = remote.agents.ref(agent.id).timeline.refetch({ limit: 0 });
+  void history.catch(() => {}); // Cleanup can close the request after an earlier assertion fails.
+  await received.promise;
+  // A round trip on the same physical link must progress while this channel is held.
+  await destination.client.ping();
+  expect(binaryFrames).toBe(1);
+  forward.resolve();
+  const response = await history;
+  const messages = response.entries.flatMap((row) =>
+    row.item.type === "user_message" ? [row.item.text] : [],
+  );
+  expect(messages).toHaveLength(50);
+  expect(messages.every((message) => message === text)).toBe(true);
+  await consumer.ping();
+});
+
+test("small host-channel responses fill the window before earlier forwarding completes", async () => {
+  const b = await daemon();
+  const destination = await api(b);
+  const channel = createHostChannelTransport(
+    destination.client,
+    b.daemon.getServerId()!,
+    "concurrent-consumer",
+    null,
+    true,
+  )({ url: "ws://host-link/ws" });
+  const first = Promise.withResolvers<void>();
+  const forward = Promise.withResolvers<void>();
+  let responses = 0;
+  channel.onMessage((data, binary) => {
+    if (binary || JSON.parse(String(data)).message?.type !== "pong") return;
+    responses++;
+    first.resolve();
+    return forward.promise;
+  });
+  const consumer = new DaemonClient({
+    url: "ws://host-link/ws",
+    clientId: "concurrent-consumer",
+    reconnect: { enabled: false },
+    transportFactory: () => channel,
+  });
+  cleanup.push(async () => {
+    forward.resolve();
+    await consumer.close();
+  });
+  await consumer.connect();
+  const requests = Promise.all(Array.from({ length: 10 }, () => consumer.ping()));
+  void requests.catch(() => {});
+  await first.promise;
+  await destination.client.ping();
+  await destination.client.ping();
+  expect(responses).toBe(10);
+  forward.resolve();
+  await requests;
+});
+
+test("legacy host links receive no acknowledgment messages", async () => {
+  const b = await daemon();
+  const wire = await hostWire(b, { legacyFlowControl: true });
+  const origin = createHostClient(wire.connection, {
+    clientId: "legacy-flow-origin",
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => origin.close());
+  await origin.connect();
+  const consumer = new DaemonClient({
+    url: "ws://host-link/ws",
+    clientId: "legacy-flow-consumer",
+    reconnect: { enabled: false },
+    transportFactory: createHostChannelTransport(
+      origin,
+      b.daemon.getServerId()!,
+      "legacy",
+      null,
+      true,
+    ),
+  });
+  cleanup.push(() => consumer.close());
+  await consumer.connect();
+  await consumer.ping();
+  await origin.ping();
+  const operations = wire.frames
+    .filter((frame) => !frame.binary && frame.direction === "toB")
+    .map((frame) => JSON.parse(frame.bytes.toString()).message?.type);
+  expect(operations).toContain("hosts.link.open.request");
+  expect(operations).not.toContain("hosts.link.ack.request");
+});
+
+test("mixed asynchronous and synchronous receiver failures close only their host channel", async () => {
+  const b = await daemon();
+  const destination = await api(b);
+  const channel = createHostChannelTransport(
+    destination.client,
+    b.daemon.getServerId()!,
+    "failing-consumer",
+    null,
+    true,
+  )({ url: "ws://host-link/ws" });
+  const failed = Promise.withResolvers<unknown>();
+  channel.onError(failed.resolve);
+  channel.onMessage(async () => {
+    throw new Error("asynchronous receiver failure");
+  });
+  channel.onMessage(() => {
+    throw new Error("synchronous receiver failure");
+  });
+  const consumer = new DaemonClient({
+    url: "ws://host-link/ws",
+    clientId: "failing-consumer",
+    reconnect: { enabled: false },
+    transportFactory: () => channel,
+  });
+  cleanup.push(() => consumer.close());
+  const connecting = consumer.connect().catch((error: unknown) => error);
+  expect(await failed.promise).toBeInstanceOf(Error);
+  await connecting;
+  expect(consumer.isConnected).toBe(false);
+  await destination.client.ping();
+});
+
 test("a pre-write host budget rejection leaves sibling routes connected", async () => {
   const { HostTransportBudget } = await import("@getpaseo/client/node");
   const b = await daemon();
@@ -2357,3 +2598,74 @@ test("a pre-write host budget rejection leaves sibling routes connected", async 
     true,
   ]);
 }, 30000);
+
+test.each([false, true])(
+  "remote prompt to a closed agent (archived=%s) reports its new turn instead of stale closure",
+  { timeout: 30000 },
+  async (archived) => {
+    const parentPrompts: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const a = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => parentPrompts.push(String(prompt)),
+      }),
+    });
+    const b = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: () => started.resolve(),
+        beforeTurnComplete: () => finish.promise,
+      }),
+    });
+    cleanup.push(async () => finish.resolve());
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const remoteId = (await online(origin.paseo)).hosts[0]!.serverId!;
+    const workspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Closed target caller",
+    });
+    const child = await remoteWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Closed target",
+    });
+    if (archived) await child.archive();
+    else await b.daemon.agentManager.closeAgent(child.id);
+    expect((await destination.client.fetchAgent(child.id))?.agent.status).toBe("closed");
+    const mcp = new Client({ name: "closed-target-caller", version: "1" });
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    cleanup.push(() => mcp.close());
+    const result = await mcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId: remoteId, agentId: child.id, prompt: "Finish the new task" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ deliveryStatus: "queued", status: "closed" });
+    await started.promise;
+    expect(parentPrompts).toEqual([]);
+    finish.resolve();
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
+    expect(parentPrompts[0]).toContain('event="finished"');
+    expect(parentPrompts[0]).not.toContain('event="closed"');
+    expect((await destination.client.fetchAgent(child.id))?.agent).toMatchObject({
+      status: "idle",
+      archivedAt: null,
+    });
+    await expect
+      .poll(async () =>
+        JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+      )
+      .toEqual([]);
+  },
+);

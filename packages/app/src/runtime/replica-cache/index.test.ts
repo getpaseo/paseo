@@ -321,6 +321,26 @@ describe("ReplicaCache", () => {
     expect(restored?.range).toBeNull();
   });
 
+  it("preserves workspace parentage and its checkpoint across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      parentWorkspaceId: "parent",
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(baseline.checkpoint);
+    expect(restored.workspaces.get(workspace.id)?.parentWorkspaceId).toBe("parent");
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.parentWorkspaceId).toBe(
+      "parent",
+    );
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -511,6 +531,23 @@ describe("ReplicaCache", () => {
       { kind: "checkpoint", id: "singleton" },
     ]);
     expect(storage.changes[0]?.deletes).toEqual([]);
+  });
+
+  it("keeps a background agent background across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const helper = { ...agent("helper"), background: true };
+    const visible = agent("visible");
+    writer.commitDirectoryMutations(SERVER_ID, [
+      { kind: "agent", type: "upsert", id: helper.id, value: helper },
+      { kind: "agent", type: "upsert", id: visible.id, value: visible },
+    ]);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.agents.get("helper")?.background).toBe(true);
+    expect(restored.agents.get("visible")?.background).toBe(false);
   });
 
   it("round-trips identified and anonymous open turns without changing protocol status", async () => {

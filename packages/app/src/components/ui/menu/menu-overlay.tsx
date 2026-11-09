@@ -1,3 +1,5 @@
+import { navigateMenuKeyboard } from "./keyboard-navigation";
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { Modal } from "@/components/ui/modal";
 import {
   useCallback,
@@ -24,14 +26,10 @@ import { StyleSheet } from "react-native-unistyles";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import {
   computePosition,
+  fitSurfaceWidth,
   getTransformOrigin,
   measureElement,
   type Alignment,
@@ -286,11 +284,7 @@ export function AnchoredSurface({
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
-      : {
-          ...(typeof width === "number" ? { width } : null),
-          ...(typeof minWidth === "number" ? { minWidth } : null),
-          ...(typeof maxWidth === "number" ? { maxWidth } : null),
-        };
+      : fitSurfaceWidth({ width, minWidth, maxWidth }, screenWidth);
     return [
       resolvedWidthStyle,
       {
@@ -405,8 +399,8 @@ export function MenuOverlay({
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
 
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -414,44 +408,15 @@ export function MenuOverlay({
         return true;
       }
 
-      const target = event.target instanceof Element ? event.target : null;
-      const surface = target?.closest<HTMLElement>('[data-menu-surface="true"]');
-      if (!surface) return false;
-      const items = Array.from(
-        surface.querySelectorAll<HTMLElement>(
-          '[data-menu-item="true"]:not([data-menu-disabled="true"])',
-        ),
-      );
-      if (items.length === 0) return false;
-      const currentIndex = items.findIndex((item) => item === document.activeElement);
-      let nextIndex: number | null = null;
-      if (event.key === "ArrowDown")
-        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-      if (event.key === "ArrowUp")
-        nextIndex =
-          currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
-      if (event.key === "Home") nextIndex = 0;
-      if (event.key === "End") nextIndex = items.length - 1;
-      if (nextIndex !== null) {
-        event.preventDefault();
-        event.stopPropagation();
-        items[nextIndex]?.focus();
-        return true;
-      }
-      if ((event.key === "Enter" || event.key === " ") && currentIndex >= 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        items[currentIndex]?.click();
-        return true;
-      }
-      return false;
+      return navigateMenuKeyboard(event);
     },
     [onClose],
   );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && visible,
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: visible,
     layer: floatingLayer,
-    onKeyDown: handleWebOverlayKeyDown,
+    onKeyDown: handleOverlayKeyDown,
     restoreFocusRef,
   });
 
@@ -463,7 +428,7 @@ export function MenuOverlay({
         {...{
           onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
         }}
-        ref={setWebOverlayScope}
+        ref={setOverlayScope}
         collapsable={false}
         style={[
           styles.overlay,
