@@ -19,6 +19,7 @@ import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
   createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
@@ -1124,4 +1125,46 @@ test("a directory that goes away while the git read is in flight keeps its place
     kind: "local_checkout",
     branch: "feature/vanishing",
   });
+});
+
+test("a failed workspace unarchive write keeps agents archived and permits retry", async () => {
+  const repo = path.join(tmpDir, "restore-write-failure");
+  mkdirSync(repo, { recursive: true });
+  const workspace = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+  const archived = (await workspaceRegistry.get(workspace.workspaceId))!;
+
+  class FailingWorkspaceRegistry extends FileBackedWorkspaceRegistry {
+    failWrites = true;
+    override async upsert(record: PersistedWorkspaceRecord): Promise<void> {
+      if (this.failWrites && !record.archivedAt) throw new Error("Workspace write failed");
+      await super.upsert(record);
+    }
+  }
+  const registry = new FailingWorkspaceRegistry(
+    path.join(tmpDir, "projects", "workspaces.json"),
+    logger,
+  );
+  await registry.initialize();
+  let agentArchived = true;
+  const recovery = createWorkspaceProvisioningService({
+    workspaceRegistry: registry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    unarchiveWorkspaceAgents: async () => {
+      agentArchived = false;
+    },
+  });
+  await expect(recovery.ensureWorkspaceRecordUnarchived(archived)).rejects.toThrow(
+    "Workspace write failed",
+  );
+  expect((await registry.get(workspace.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
+  expect(agentArchived).toBe(true);
+
+  registry.failWrites = false;
+  await recovery.ensureWorkspaceRecordUnarchived(archived);
+  expect((await registry.get(workspace.workspaceId))?.archivedAt).toBeNull();
+  expect(agentArchived).toBe(false);
 });

@@ -978,17 +978,13 @@ export async function createPaseoDaemon(
     }
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
-    unarchiveWorkspaceAgents: (workspaceId, archivedAt, allowLegacyFallback) =>
-      unarchiveWorkspaceAgents(
-        {
-          agentStorage,
-          unarchiveAgent: (id) => unarchiveAgentState(agentStorage, agentManager, id),
-          sessionLogger: logger,
-        },
-        workspaceId,
-        archivedAt,
-        allowLegacyFallback,
-      ),
+    unarchiveWorkspaceAgents: (request) =>
+      unarchiveWorkspaceAgents({
+        ...request,
+        agentStorage,
+        unarchiveAgent: (id) => unarchiveAgentState(agentStorage, agentManager, id),
+        sessionLogger: logger,
+      }),
     lifecycle: pluginRuntime,
     serverId,
     projectRegistry,

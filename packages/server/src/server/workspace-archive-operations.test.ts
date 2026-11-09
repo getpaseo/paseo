@@ -19,10 +19,9 @@ function deferred<T = void>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function archived(newlyArchivedAgentIds: string[]): ArchiveResult {
+function archived(agentIds: string[]): ArchiveResult {
   return {
-    archivedAgentIds: newlyArchivedAgentIds,
-    newlyArchivedAgentIds,
+    archivedAgentIds: agentIds,
     archivedWorkspaceIds: ["ws"],
     removedDirectory: false,
   };
@@ -46,7 +45,7 @@ function parkedArchive(agentIds: string[]) {
       signal = runSignal;
       started.resolve();
       await release.promise;
-      if (runSignal.aborted) throw new WorkspaceArchiveCanceledError(agentIds, false, "stamp");
+      if (runSignal.aborted) throw new WorkspaceArchiveCanceledError("stamp");
       return archived(agentIds);
     },
   };
@@ -210,7 +209,6 @@ describe("WorkspaceArchiveOperations", () => {
     await operations.archive("ws", async () => archived(["agent-a"]));
     await operations.archive("ws", async () => ({
       archivedAgentIds: ["agent-a"],
-      newlyArchivedAgentIds: [],
       archivedWorkspaceIds: [],
       removedDirectory: false,
     }));

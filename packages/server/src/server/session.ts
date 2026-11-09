@@ -1004,17 +1004,13 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
-      unarchiveWorkspaceAgents: (workspaceId, archivedAt, allowLegacyFallback) =>
-        unarchiveWorkspaceAgents(
-          {
-            agentStorage: this.agentStorage,
-            unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
-            sessionLogger: this.sessionLogger,
-          },
-          workspaceId,
-          archivedAt,
-          allowLegacyFallback,
-        ),
+      unarchiveWorkspaceAgents: (request) =>
+        unarchiveWorkspaceAgents({
+          ...request,
+          agentStorage: this.agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
+          sessionLogger: this.sessionLogger,
+        }),
       withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,

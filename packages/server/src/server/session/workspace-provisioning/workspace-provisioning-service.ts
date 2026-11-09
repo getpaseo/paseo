@@ -1,3 +1,4 @@
+import type { WorkspaceArchiveRestoreRequest } from "../../workspace-archive-service.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
@@ -105,11 +106,7 @@ export class WorkspaceProvisioningError extends Error {
 }
 
 export function createWorkspaceProvisioningService(deps: {
-  unarchiveWorkspaceAgents: (
-    workspaceId: string,
-    archivedAt: string,
-    allowLegacyFallback: boolean,
-  ) => Promise<void>;
+  unarchiveWorkspaceAgents: (request: WorkspaceArchiveRestoreRequest) => Promise<void>;
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
@@ -487,17 +484,16 @@ export function createWorkspaceProvisioningService(deps: {
         });
       }
     }
+    if (next) await workspaceRegistry.upsert(next);
     // A canceled archive supplies a modern stamp before the record itself is archived.
     if (archivedAt) {
-      await deps.unarchiveWorkspaceAgents(
-        workspace.workspaceId,
+      await deps.unarchiveWorkspaceAgents({
+        workspaceId: workspace.workspaceId,
         archivedAt,
-        Boolean(workspace.archivedAt),
-      );
+        allowLegacyFallback: Boolean(workspace.archivedAt),
+      });
     }
-    if (!next) return workspace;
-    await workspaceRegistry.upsert(next);
-    return next;
+    return next ?? workspace;
   }
 
   async function refreshWorkspaceRecord(
