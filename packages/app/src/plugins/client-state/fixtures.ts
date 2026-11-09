@@ -50,4 +50,5 @@ export const agent: Agent = {
   attentionReason: "permission",
   parentAgentId: null,
   labels: { phase: "implementation" },
+  metadata: { "linear.issue": { id: "ENG-1" } },
 };

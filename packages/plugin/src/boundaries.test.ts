@@ -213,6 +213,133 @@ describe("plugin panel SDK boundary", () => {
   });
 });
 
+describe("plugin composer SDK boundary", () => {
+  it("lets a composer item read and change the composer through typed commands and controls", () => {
+    expect(
+      typeErrors(`
+      import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+      import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+      function Item() {
+        const composer = useComposer();
+        const context: "agent" | "draft" | "new-workspace" = composer.context;
+        const provider: string | null = composer.agent.provider;
+        const flag: boolean = composer.agent.metadata.flag === true;
+        // @ts-expect-error reads are not writable
+        composer.agent.model = "other";
+        composer.setProvider("codex").then(() => composer.setModel("gpt"));
+        composer.setOptions({ effort: null });
+        composer.setMetadata({ flag: true, stale: null });
+        composer.insertText("text");
+        composer.addAttachment({ sourceId: "issues", item: { id: "1", identifier: "1", title: "t", url: "https://e.com", text: "t", resourceType: "issue" } });
+        // @ts-expect-error commands take JSON values
+        composer.setMetadata({ fn: () => {} });
+        return (
+          <>
+            <Toggle title="Flag" icon="Flag" value={flag} onValueChange={({ value }: { value: boolean }) => composer.setMetadata({ flag: value })} />
+            <Select title="Size" icon="Gauge" value="a" options={[{ value: "a", label: "A" }, { value: "b", label: "B" }]} onValueChange={({ value }: { value: "a" | "b" }) => {}} />
+            <Action title="Insert" icon="Plus" onPress={() => composer.setPrompt("")} />
+          </>
+        );
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addComposerItem({ id: "item", Component: Item });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin composers by reference SDK boundary", () => {
+  it("reaches a running agent's composer from any component and from every command context", () => {
+    expect(
+      typeErrors(`
+      import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+      function Button() {
+        const [focused] = useComposers({ focused: true });
+        const byId = useComposers({ agentId: "agent-1" });
+        if (!focused) return null;
+        const first: string = byId[0]?.prompt ?? "";
+        focused.insertText("text");
+        focused.setMetadata({ flag: true });
+        // @ts-expect-error a selector names an agent or the focused agent
+        useComposers({ active: true });
+        // @ts-expect-error focused is true or absent
+        useComposers({ focused: false });
+        return null;
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addWorkspacePanel({ id: "panel", title: "P", icon: "File", context: "workspace", Component: Button });
+        client.addCommandCenterItem({
+          id: "mark",
+          title: "Mark",
+          icon: "Flag",
+          context: "agent",
+          async onSelect(context) {
+            for (const composer of context.composers({ agentId: context.agent.id })) {
+              await composer.setMetadata({ review: true });
+            }
+          },
+        });
+        client.addCommandCenterItem({
+          id: "global",
+          title: "Global",
+          icon: "Flag",
+          context: "global",
+          onSelect: ({ composers }) => composers({ focused: true })[0]?.insertText("x"),
+        });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin New workspace SDK boundary", () => {
+  it("lets a New workspace item read the setup and change it through typed commands and a Combobox", () => {
+    expect(
+      typeErrors(`
+      import { useNewWorkspace, type PluginClientContext } from "@getpaseo/plugin/client";
+      import { Combobox } from "@getpaseo/plugin/client/ui";
+      interface Issue { id: string; label: string; branch: string }
+      function Item() {
+        const newWorkspace = useNewWorkspace();
+        const isolation: "local" | "worktree" = newWorkspace.isolation;
+        const branch: string | null = newWorkspace.branch;
+        const project: string | undefined = newWorkspace.project?.name;
+        const host: string = newWorkspace.host.label;
+        const base = newWorkspace.baseRef;
+        if (base?.type === "branch") { const name: string = base.name; }
+        // @ts-expect-error project is read-only
+        newWorkspace.project = null;
+        // @ts-expect-error host is read-only
+        newWorkspace.setHost("other");
+        // @ts-expect-error metadata reads are not writable
+        newWorkspace.metadata.key = "x";
+        newWorkspace.setIsolation("worktree").then(() => newWorkspace.setBaseRef({ type: "branch", name: "main" }));
+        newWorkspace.setBranch(null);
+        newWorkspace.setMetadata({ issue: "1", stale: null });
+        // @ts-expect-error commands take JSON values
+        newWorkspace.setMetadata({ fn: () => {} });
+        return (
+          <Combobox<Issue>
+            title="Issue"
+            icon="CircleDot"
+            value={{ id: "1", label: "One" }}
+            search={async ({ query }: { query: string }) => [{ id: query, label: query, branch: "b" }]}
+            onSelect={({ item }) => newWorkspace.setBranch(item.branch)}
+          />
+        );
+      }
+      export default function contribute(client: PluginClientContext) {
+        client.addNewWorkspaceItem({ id: "item", Component: Item });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
 describe("plugin agent tools SDK boundary", () => {
   it("lets a session hook attach typed tools without exposing their transport", () => {
     expect(
@@ -283,6 +410,10 @@ describe("lifecycle hook SDK types", () => {
         server.addHook("workspace.create.before", async ({ request }) => ({ ...request, title: "Changed" }));
         server.addHook("workspace.create.before", async () => {});
         server.addHook("agent.open.before", async () => {});
+        server.addHook("agent.open.before", async ({ request }) => {
+          const { metadata, ...withoutMetadata } = request;
+          return withoutMetadata;
+        });
         server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
           // @ts-expect-error Notification payloads have no creation request.

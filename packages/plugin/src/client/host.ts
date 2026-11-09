@@ -7,6 +7,12 @@ export {
   type PluginClientSnapshot,
 } from "./client-state.js";
 export {
+  PluginComposerProvider,
+  PluginComposersProvider,
+  type PluginComposersSource,
+} from "./composer.js";
+export { PluginNewWorkspaceProvider } from "./new-workspace.js";
+export {
   usePluginRuntimeContextBridge,
   type PluginRuntimeContextBridge,
 } from "./runtime-context-bridge.js";
