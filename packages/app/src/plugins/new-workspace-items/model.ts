@@ -2,7 +2,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginHostProps, PluginNewWorkspace } from "@getpaseo/plugin/client";
 import type { PickerItem } from "@/screens/new-workspace-picker-item";
 import type { SetupCommands } from "@/screens/new-workspace/setup-model";
-import { cloneAndFreeze } from "../freeze";
+import { cloneAndFreeze, ownCopy } from "../freeze";
 
 /** What the New workspace screen shows at render; the plugin reads it, never writes it. */
 export interface NewWorkspaceView {
@@ -37,5 +37,6 @@ export function toPluginNewWorkspace(input: {
     branch: view.branch,
     metadata: cloneAndFreeze(view.metadata),
     ...commands,
+    setMetadata: (patch) => commands.setMetadata(ownCopy(patch)),
   };
 }

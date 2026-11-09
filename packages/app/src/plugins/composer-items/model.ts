@@ -4,7 +4,7 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import type { ComposerModel, ComposerState } from "@/composer/model";
 import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment } from "../attachments/model";
-import { cloneAndFreeze } from "../freeze";
+import { cloneAndFreeze, ownCopy } from "../freeze";
 
 function isPluginAttachment(
   attachment: UserComposerAttachment,
@@ -59,8 +59,7 @@ export function toPluginComposer(input: {
           sourceTitle: plugin.i18n.resolve(source.title, plugin.locale),
           sourceIcon: source.icon,
         },
-        // The draft's own copy: the plugin keeps the object it handed in.
-        { ...item },
+        ownCopy(item),
       );
       model.changeAttachments((current) =>
         current.some((candidate) => isPluginAttachment(candidate, plugin.id, sourceId, item.id))
@@ -77,7 +76,7 @@ export function toPluginComposer(input: {
     setModel: (modelId) => model.setModel(modelId),
     setMode: (modeId) => model.setMode(modeId),
     setThinking: (thinkingOptionId) => model.setThinking(thinkingOptionId),
-    setOptions: (patch) => model.setOptions(patch),
-    setMetadata: (patch) => model.setMetadata(patch),
+    setOptions: (patch) => model.setOptions(ownCopy(patch)),
+    setMetadata: (patch) => model.setMetadata(ownCopy(patch)),
   };
 }

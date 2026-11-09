@@ -9,7 +9,7 @@ import { toPluginNewWorkspace } from "./model";
 
 const HOST = { id: "host", label: "Host" } as Parameters<typeof toPluginNewWorkspace>[0]["host"];
 
-function viewOf(baseItem: PickerItem) {
+function viewOf(baseItem: PickerItem | null) {
   return {
     project: { id: "p", name: "repo" },
     isolation: "worktree" as const,
@@ -60,5 +60,31 @@ describe("the base ref a plugin reads", () => {
     expect(pickerItemToCheckoutRequest(chosen[0] ?? null)).toEqual(
       pickerItemToCheckoutRequest(origin),
     );
+  });
+});
+
+describe("the metadata a plugin sets", () => {
+  it("stays what the plugin set when the plugin reuses the object it handed in", async () => {
+    const setup = createNewWorkspaceSetup(
+      {
+        serverId: "host-a",
+        locked: false,
+        project: { id: "p", name: "repo" },
+        canCreateWorktree: true,
+        supportsMetadata: true,
+      },
+      { persistIsolation: () => {}, syncBaseAttachment: () => {} },
+    );
+    const plugin = toPluginNewWorkspace({
+      host: HOST,
+      view: { ...viewOf(null), metadata: setup.getSnapshot().metadata },
+      commands: setup.commandsFor({ serverId: "host-a", projectId: "p" }),
+    });
+
+    const issue = { id: "ISS-1" };
+    await plugin.setMetadata({ issue });
+    issue.id = "ISS-2";
+
+    expect(setup.getSnapshot().metadata).toEqual({ issue: { id: "ISS-1" } });
   });
 });

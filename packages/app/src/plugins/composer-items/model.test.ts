@@ -250,6 +250,25 @@ describe("toPluginComposer", () => {
     expect(stored.kind === "plugin_resource" && Object.isFrozen(stored.item)).toBe(false);
   });
 
+  it("hands the composer its own copy of the options and metadata a plugin sets", async () => {
+    const { agent } = fakeAgent("draft");
+    const kept: Record<string, unknown> = {};
+    agent.setOptions = async (patch) => void (kept.options = patch);
+    agent.setMetadata = async (patch) => void (kept.metadata = patch);
+    const { input } = fakeInput();
+    const composer = compose(agent, input);
+
+    const sandbox = { mode: "read-only" };
+    const linked = { id: "ISS-1" };
+    await composer.setOptions({ sandbox });
+    await composer.setMetadata({ linked });
+    sandbox.mode = "full-access";
+    linked.id = "ISS-2";
+
+    expect(kept.options).toEqual({ sandbox: { mode: "read-only" } });
+    expect(kept.metadata).toEqual({ linked: { id: "ISS-1" } });
+  });
+
   it("adds and removes the plugin's own attachments only", () => {
     const { agent } = fakeAgent("agent");
     const other: UserComposerAttachment = {
