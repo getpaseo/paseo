@@ -31,6 +31,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** Called once if a steer has to wait for the running turn (a compaction) before it can land. */
+  onSteerWait?: () => void;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -54,7 +56,9 @@ async function steerOrReplaceActiveRun(
   const steerOptions = options.clearPendingPermissions
     ? { ...options.runOptions, clearPendingPermissions: true }
     : options.runOptions;
-  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions, {
+    onWait: options.onSteerWait,
+  });
   if (result.status === "steered") {
     return { disposition: "steered" };
   }
@@ -230,6 +234,8 @@ export interface SendPromptToAgentParams {
   unarchive?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
+  /** See {@link StartAgentRunOptions.onSteerWait}. */
+  onSteerWait?: () => void;
   logger: Logger;
 }
 
@@ -362,6 +368,7 @@ export async function sendPreparedPromptToAgent(
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
+    onSteerWait: params.onSteerWait,
     runOptions: params.runOptions,
   });
 }

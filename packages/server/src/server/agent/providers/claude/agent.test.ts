@@ -1507,6 +1507,53 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("answers busy to a steer while compacting, so the compaction is not interrupted", async () => {
+    const { queryFactory, push } = createStreamingQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      // An ordinary turn that Claude compacts on its own, so the compaction marker below comes
+      // from Claude's status message rather than from a /compact command.
+      const { turnId } = await session.startTurn("long task");
+      // Claude echoes the prompt before it starts compacting.
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ type: "user_message" }),
+          }),
+        ),
+      );
+      push({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "session-1",
+      } as unknown as SDKMessage);
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: { type: "compaction", status: "loading" },
+          }),
+        ),
+      );
+
+      await expect(
+        session.steerActiveTurn?.("finish notification", { expectedTurnId: turnId }),
+      ).resolves.toEqual({ status: "busy" });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test("a human steer supersedes blocking permissions until Claude reads it", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

@@ -392,6 +392,11 @@ export interface AgentManagerOptions {
   logger: Logger;
 }
 
+export interface SteerWaitHooks {
+  /** Called once when the steer has to wait for the turn (a compaction) before it can land. */
+  onWait?: () => void;
+}
+
 export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
@@ -3475,34 +3480,82 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
+    hooks?: SteerWaitHooks,
   ): Promise<ActiveTurnSteerDispatchResult> {
-    // A turn that is still starting has no id to steer yet. Replacing it would drop its
-    // prompt, so wait until it is accepted (or fails) and steer the turn it became.
-    await this.runs.waitForForegroundStart(agentId);
-    const agent = this.requireSessionAgent(agentId);
-    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
-    if (!expectedTurnId) {
-      return { status: "inactive" };
+    let waited = false;
+    for (;;) {
+      // A turn that is still starting has no id to steer yet. Replacing it would drop its
+      // prompt, so wait until it is accepted (or fails) and steer the turn it became.
+      await this.runs.waitForForegroundStart(agentId);
+      const agent = this.requireSessionAgent(agentId);
+      const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+      if (!expectedTurnId) {
+        return { status: "inactive" };
+      }
+      const result = await this.admitSteer(agent, expectedTurnId, prompt, options);
+      if (result.status !== "busy") {
+        return await this.dispatchUnsteeredPrompt(agent, expectedTurnId, result, prompt, options);
+      }
+      // The turn can take no input now and must not be replaced (a compaction, which an
+      // interrupt would cancel). Ask again on the agent's next event: the steer joins the turn
+      // once it can, or starts a new one if the turn ends first. Subscribing only after the
+      // answer keeps the admission's own events from waking the wait; a change in between is
+      // caught by a later event, and the end of the turn always produces one.
+      if (!waited) {
+        waited = true;
+        hooks?.onWait?.();
+      }
+      await this.nextAgentEvent(agentId);
     }
+  }
 
-    const result = agent.session.steerActiveTurn
-      ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
-          const admission = await agent.session.steerActiveTurn!(prompt, {
-            ...options,
-            expectedTurnId,
-          });
-          if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(
-              agent,
-              prompt,
-              options?.clientMessageId,
-              expectedTurnId,
-              admission.providerMessageId,
-            );
-          }
-          return admission;
-        })
-      : { status: "unavailable" as const };
+  private async admitSteer(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    prompt: AgentPromptInput,
+    options: AgentSteerOptions | undefined,
+  ): Promise<SteerResult> {
+    if (!agent.session.steerActiveTurn) {
+      return { status: "unavailable" };
+    }
+    return await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      const admission = await agent.session.steerActiveTurn!(prompt, {
+        ...options,
+        expectedTurnId,
+      });
+      if (admission.status === "accepted") {
+        await this.recordAcceptedSteer(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+          admission.providerMessageId,
+        );
+      }
+      return admission;
+    });
+  }
+
+  /** Resolves on the next event about this agent: a state change, stream event or removal. */
+  private nextAgentEvent(agentId: string): Promise<void> {
+    return new Promise<void>((settle) => {
+      const unsubscribe = this.subscribe(
+        () => {
+          unsubscribe();
+          settle();
+        },
+        { agentId, replayState: false },
+      );
+    });
+  }
+
+  private async dispatchUnsteeredPrompt(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    result: SteerResult,
+    prompt: AgentPromptInput,
+    options: AgentSteerOptions | undefined,
+  ): Promise<ActiveTurnSteerDispatchResult> {
     if (result.status === "accepted") {
       return { status: "steered" };
     }
@@ -3513,7 +3566,7 @@ export class AgentManager {
       return { status: "inactive" };
     }
 
-    await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
+    await this.beforeSteerUnavailableFallback?.({ agentId: agent.id, expectedTurnId });
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     return {
       status: "replaced",
