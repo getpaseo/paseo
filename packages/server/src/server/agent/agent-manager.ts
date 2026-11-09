@@ -193,6 +193,11 @@ interface StopAgentBackgroundWorkOptions {
   stopToken: string;
 }
 
+interface CloseAgentRuntimeOptions {
+  canClose?: () => boolean;
+  keepErrorStatus?: boolean;
+}
+
 async function resolveResumePurpose(
   record: StoredAgentRecord | null,
   requested: AgentResumePurpose | undefined,
@@ -2169,7 +2174,7 @@ export class AgentManager {
 
   private async closeAgentRuntime(
     agentId: string,
-    options?: { canClose?: () => boolean; keepErrorStatus?: boolean },
+    options?: CloseAgentRuntimeOptions,
   ): Promise<boolean> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
