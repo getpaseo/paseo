@@ -1211,6 +1211,43 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
+  it("applies opening configuration in the order the agent lists its options", async () => {
+    const executable = await fakeAcp(`const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+let provider = "first";
+let model = "first-saved";
+const saved = { first: "first-saved", second: "second-saved" };
+const select = (id, currentValue, values) => ({ id, name: id, category: "model", type: "select", currentValue, options: values.map((value) => ({ name: value, value })) });
+const options = () => [
+  select("provider", provider, ["first", "second"]),
+  select("model", model, ["first-saved", "second-saved", "second-chosen"]),
+];
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", configOptions: options() } });
+  else if (message.method === "session/set_config_option") {
+    if (message.params.configId === "provider") { provider = message.params.value; model = saved[provider]; }
+    if (message.params.configId === "model") model = message.params.value;
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: options() } });
+  }
+});`);
+    const { connection, events } = await connect(executable, [
+      "prompt.message",
+      "session.configure",
+    ]);
+    const input = openInput({ provider: "second" });
+
+    await connection.send({ ...input, config: { ...input.config, model: "second-chosen" } });
+
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    expect(events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "second-chosen" },
+    });
+    await connection.close();
+  });
+
   it("gives discovery transformers the discovered session configuration facade", async () => {
     const executable = await fakeAcp(`const readline = require("node:readline");
 const lines = readline.createInterface({ input: process.stdin });

@@ -695,15 +695,16 @@ class AcpRuntime {
   async configure(
     changes: Extract<ProviderInput, { type: "session.configure" }>["changes"],
   ): Promise<void> {
-    const ordered: AcpConfigChange[] = [];
-    if (changes.model !== undefined) ordered.push({ target: "model", value: changes.model });
-    if (changes.mode !== undefined) ordered.push({ target: "mode", value: changes.mode });
+    const requested: AcpConfigChange[] = [];
+    if (changes.model !== undefined) requested.push({ target: "model", value: changes.model });
+    if (changes.mode !== undefined) requested.push({ target: "mode", value: changes.mode });
     if (changes.thinkingOption !== undefined) {
-      ordered.push({ target: "thinking", value: changes.thinkingOption });
+      requested.push({ target: "thinking", value: changes.thinkingOption });
     }
     for (const [id, value] of Object.entries(changes.settings ?? {})) {
-      ordered.push({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    const ordered = this.inAgentOrder(requested);
     const previousModes = this.modes ? structuredClone(this.modes) : null;
     const previousOptions = structuredClone(this.configOptions);
     this.configTransaction = true;
@@ -769,14 +770,36 @@ class AcpRuntime {
   }
 
   private async applyInitialConfig(config: ProviderSessionConfig): Promise<void> {
-    if (config.model) await this.applyConfigChange({ target: "model", value: config.model });
-    if (config.mode) await this.applyConfigChange({ target: "mode", value: config.mode });
+    const requested: AcpConfigChange[] = [];
+    if (config.model) requested.push({ target: "model", value: config.model });
+    if (config.mode) requested.push({ target: "mode", value: config.mode });
     if (config.thinkingOption) {
-      await this.applyConfigChange({ target: "thinking", value: config.thinkingOption });
+      requested.push({ target: "thinking", value: config.thinkingOption });
     }
     for (const [id, value] of Object.entries(config.settings)) {
-      await this.applyConfigChange({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  // One option can reset another: choosing an fx provider also selects that provider's saved
+  // model, so a model applied first would be lost. Agents list the option that decides first.
+  private inAgentOrder(changes: readonly AcpConfigChange[]): AcpConfigChange[] {
+    const position = (change: AcpConfigChange): number => {
+      const configId = this.configIdFor(change);
+      const index = this.configOptions.findIndex((option) => option.id === configId);
+      return index === -1 ? this.configOptions.length : index;
+    };
+    return changes.toSorted((left, right) => position(left) - position(right));
+  }
+
+  private configIdFor(change: AcpConfigChange): string | undefined {
+    if (change.target === "setting") return change.id;
+    if (change.target === "model") return modelOption(this.configOptions)?.id;
+    if (change.target === "thinking") {
+      return this.configOptions.find((option) => option.category === "thought_level")?.id;
+    }
+    return this.configOptions.find((option) => option.category === "mode")?.id;
   }
 
   private async applyConfigChange(change: AcpConfigChange): Promise<void> {
@@ -804,12 +827,7 @@ class AcpRuntime {
       this.modes = { ...this.modes, currentModeId: change.value };
       return;
     }
-    let configId: string | undefined;
-    if (change.target === "setting") configId = change.id;
-    if (change.target === "model") configId = modelOption(this.configOptions)?.id;
-    if (change.target === "thinking") {
-      configId = this.configOptions.find((option) => option.category === "thought_level")?.id;
-    }
+    const configId = this.configIdFor(change);
     if (!configId) {
       throw new Error(`ACP session does not expose ${change.target} configuration`);
     }
