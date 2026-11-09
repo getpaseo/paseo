@@ -21,6 +21,11 @@ export const ru: TranslationResources = {
     notReady:
       "Браузеру не удалось подготовить сеть хоста {{host}}. Попробуйте открыть вкладку снова.",
   },
+  pluginCombobox: {
+    searching: "Поиск…",
+    empty: "Нет результатов",
+    failed: "Не удалось выполнить поиск: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",

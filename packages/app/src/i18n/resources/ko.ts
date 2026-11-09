@@ -19,6 +19,11 @@ export const ko: TranslationResources = {
       "호스트 {{host}}의 네트워크를 통한 연결이 종료되었습니다. 호스트를 다시 연결하고 새로고침하세요.",
     notReady: "호스트 {{host}}의 네트워크를 준비할 수 없습니다. 탭을 다시 열어 보세요.",
   },
+  pluginCombobox: {
+    searching: "검색 중…",
+    empty: "결과 없음",
+    failed: "검색 실패: {{message}}",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",

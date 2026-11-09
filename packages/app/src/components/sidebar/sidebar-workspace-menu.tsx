@@ -74,7 +74,11 @@ const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMappin
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 
 /** Pointer-only, so it is always the kebab's pointer size. */
-export const ARCHIVE_BUTTON_SIZE = 18;
+const ARCHIVE_BUTTON_SIZE = 18;
+/** Keeps a press aimed at the kebab from landing on the one-click archive. */
+const ARCHIVE_BUTTON_KEBAB_GAP = 8;
+/** The width the archive button and its gap take up left of the kebab. */
+export const ARCHIVE_BUTTON_FOOTPRINT = ARCHIVE_BUTTON_SIZE + ARCHIVE_BUTTON_KEBAB_GAP;
 
 const triggerIconProps = densityIconProps("sm", foregroundMutedColorMapping);
 const triggerIconHoveredProps = densityIconProps("sm", foregroundColorMapping);
@@ -482,7 +486,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 4,
-    marginLeft: 2,
     // Center the touch box on the 20px title line it is anchored to.
     marginTop: bySizing({ touch: -6, pointer: 0 }),
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
@@ -493,10 +496,11 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   // The kebab's box without its offsets: the archive glyph fills its view box, so it needs
-  // none of the nudging the three dots do. The kebab's marginLeft is the gap between them.
+  // none of the nudging the three dots do.
   archiveButton: {
     width: ARCHIVE_BUTTON_SIZE,
     height: ARCHIVE_BUTTON_SIZE,
+    marginRight: ARCHIVE_BUTTON_KEBAB_GAP,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 4,

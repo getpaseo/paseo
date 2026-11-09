@@ -1,3 +1,4 @@
+import { decodeDiffFrame, DiffOpcode, type DiffFrame } from "./diff.js";
 import { decodeTunnelFrame, isTunnelOpcode, type TunnelFrame } from "./tunnel.js";
 import { HOST_ROUTE_OPCODE, decodeHostRouteFrame, type HostRouteFrame } from "./host-route.js";
 import {
@@ -13,6 +14,7 @@ import {
 } from "./terminal.js";
 
 export type BinaryFrame =
+  | { kind: "diff"; frame: DiffFrame }
   | { kind: "host_route"; frame: HostRouteFrame }
   | { kind: "terminal"; frame: TerminalStreamFrame }
   | { kind: "file_transfer"; frame: FileTransferFrame }
@@ -20,6 +22,13 @@ export type BinaryFrame =
   | { kind: "tunnel"; frame: TunnelFrame };
 
 export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
+  if (Object.values(DiffOpcode).some((opcode) => opcode === bytes[0])) {
+    return { kind: "diff", frame: decodeDiffFrame(bytes) };
+  }
+  return decodeExistingBinaryFrame(bytes);
+}
+
+function decodeExistingBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   switch (bytes[0]) {
     case HOST_ROUTE_OPCODE: {
       const frame = decodeHostRouteFrame(bytes);
@@ -53,7 +62,7 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   }
 }
 
-// Kept out of decodeBinaryFrame so the tunnel's opcodes don't count toward its complexity limit.
+// Kept out of decodeExistingBinaryFrame so the tunnel's opcodes don't count toward its complexity limit.
 function decodeTunnelBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   if (!isTunnelOpcode(bytes[0])) return null;
   const frame = decodeTunnelFrame(bytes);

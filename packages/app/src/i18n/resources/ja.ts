@@ -21,6 +21,11 @@ export const ja: TranslationResources = {
     notReady:
       "ホスト {{host}} のネットワークを準備できませんでした。タブをもう一度開いてください。",
   },
+  pluginCombobox: {
+    searching: "検索中…",
+    empty: "結果がありません",
+    failed: "検索に失敗しました: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",

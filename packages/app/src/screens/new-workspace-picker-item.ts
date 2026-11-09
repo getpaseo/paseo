@@ -132,7 +132,7 @@ export interface BaseRefCheckoutStatus {
 
 // Display only. The exact ref is what every request carries; this is just how a ref reads in
 // a row label, so "refs/remotes/origin/other-name" shows as "other-name".
-function branchNameFromRef(refName: string): string {
+export function branchNameFromRef(refName: string): string {
   if (refName.startsWith("refs/heads/")) return refName.slice("refs/heads/".length);
   if (refName.startsWith(REMOTE_TRACKING_PREFIX)) {
     const remainder = refName.slice(REMOTE_TRACKING_PREFIX.length);
@@ -208,6 +208,17 @@ export function pickerItemToCheckoutRequest(
       };
     }
   }
+}
+
+/**
+ * Whether creating a worktree from this request cuts a new branch, which is what the daemon does
+ * for anything but a checkout. No request at all (a detached HEAD gives the screen no default
+ * base) cuts one from the repository's default branch.
+ */
+export function startsNewBranch(request: PickerCheckoutRequest | undefined): boolean {
+  if (!request) return true;
+  if (request.action === "checkout") return false;
+  return !request.checkoutSource && request.githubPrNumber === undefined;
 }
 
 export function prPickerOptionId(number: number): string {

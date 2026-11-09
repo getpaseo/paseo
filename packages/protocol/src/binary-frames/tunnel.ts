@@ -1,16 +1,21 @@
-/** Opcodes 0x40-0x4f are reserved for network tunnel traffic. */
+/** Opcodes 0x50-0x5f are reserved for network tunnel traffic. */
 export const TunnelOpcode = {
-  Data: 0x40,
-  Close: 0x41,
-  Open: 0x42,
-  Connected: 0x43,
-  WindowUpdate: 0x44,
+  Data: 0x50,
+  Close: 0x51,
+  Open: 0x52,
+  Connected: 0x53,
+  WindowUpdate: 0x54,
 } as const;
 
 const tunnelOpcodes: ReadonlySet<number> = new Set(Object.values(TunnelOpcode));
 
 export function isTunnelOpcode(value: number): boolean {
   return tunnelOpcodes.has(value);
+}
+
+/** The whole family, including opcodes not assigned yet. */
+export function isReservedTunnelOpcode(value: number): boolean {
+  return value >= 0x50 && value <= 0x5f;
 }
 
 export const TunnelCloseReason = {

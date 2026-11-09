@@ -19,6 +19,11 @@ export const ar: TranslationResources = {
     connectionClosed: "أُغلق الاتصال عبر شبكة المضيف {{host}}. أعد الاتصال بالمضيف وأعد التحميل.",
     notReady: "تعذّر على المتصفح تجهيز شبكة المضيف {{host}}. حاول فتح علامة التبويب مرة أخرى.",
   },
+  pluginCombobox: {
+    searching: "جارٍ البحث…",
+    empty: "لا توجد نتائج",
+    failed: "فشل البحث: {{message}}",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",

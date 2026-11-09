@@ -20,6 +20,11 @@ export const ptBR: TranslationResources = {
     notReady:
       "O navegador não conseguiu preparar a rede do host {{host}}. Tente abrir a aba novamente.",
   },
+  pluginCombobox: {
+    searching: "Pesquisando…",
+    empty: "Nenhum resultado",
+    failed: "Falha na pesquisa: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",

@@ -675,6 +675,40 @@ test("renames the branch even when the app supplies a random placeholder slug", 
   expect(branchAfter).toBe("renamed-from-prompt");
 });
 
+test("keeps a branch the caller named instead of renaming it from the first agent context", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      branchName: "pas-101-slow-sidebar",
+      firstAgentContext: { prompt: "Investigate the failing login flow" },
+
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(created.worktree.branchName).toBe("pas-101-slow-sidebar");
+  await expect(
+    attemptFirstAgentBranchAutoName({
+      cwd: created.worktree.worktreePath,
+      firstAgentContext: { prompt: "Investigate the failing login flow" },
+      generateBranchNameFromContext: async () => "must-not-rename",
+    }),
+  ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim(),
+  ).toBe("pas-101-slow-sidebar");
+});
+
 test("renames the branch from a github_pr attachment when no prompt is supplied", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);

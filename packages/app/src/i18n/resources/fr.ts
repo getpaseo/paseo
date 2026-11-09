@@ -21,6 +21,11 @@ export const fr: TranslationResources = {
     notReady:
       "Le navigateur n’a pas pu préparer le réseau de l’hôte {{host}}. Réessayez d’ouvrir l’onglet.",
   },
+  pluginCombobox: {
+    searching: "Recherche…",
+    empty: "Aucun résultat",
+    failed: "Échec de la recherche : {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",

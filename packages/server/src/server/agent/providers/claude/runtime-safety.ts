@@ -6,6 +6,10 @@ import { toBackgroundWorkInputs, type ClaudeBackgroundTask } from "./background-
 /** Process-local background ownership. Completion delivery can follow an empty roster. */
 export class ClaudeRuntimeSafety {
   private inventoryState: "unknown" | "supported" | "retired" = "unknown";
+  // Background work starts inside a turn, and init only arrives with a turn. A process that
+  // has neither been sent a prompt nor reported init (a resumed chat that only answered
+  // control requests) owns no background work.
+  private turnSeen = false;
   private liveTasks: readonly ClaudeBackgroundTask[] = [];
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
@@ -15,6 +19,7 @@ export class ClaudeRuntimeSafety {
 
   reset(): void {
     this.inventoryState = "unknown";
+    this.turnSeen = false;
     this.liveTasks = [];
     this.published = undefined;
     this.awaitingNotifications.clear();
@@ -26,6 +31,11 @@ export class ClaudeRuntimeSafety {
   retire(): void {
     this.reset();
     this.inventoryState = "retired";
+  }
+
+  /** Called before a prompt is written to this process. */
+  notePromptSent(): void {
+    this.turnSeen = true;
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
@@ -93,6 +103,7 @@ export class ClaudeRuntimeSafety {
       );
     }
     if (message.subtype === "init") {
+      this.turnSeen = true;
       const version = parseClaudeCodeVersion(message.claude_code_version ?? "");
       if (
         version &&
@@ -115,6 +126,7 @@ export class ClaudeRuntimeSafety {
   }
 
   canStopRuntime(): boolean {
+    if (this.inventoryState === "unknown" && !this.turnSeen) return true;
     return (
       this.inventoryState === "supported" &&
       this.liveTasks.length === 0 &&

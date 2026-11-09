@@ -17,6 +17,11 @@ export const en = {
     notReady:
       "The browser could not prepare the network of host {{host}}. Try opening the tab again.",
   },
+  pluginCombobox: {
+    searching: "Searching…",
+    empty: "No results",
+    failed: "Search failed: {{message}}",
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

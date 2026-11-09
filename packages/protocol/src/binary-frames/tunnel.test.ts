@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DiffOpcode } from "./diff.js";
 import { FileTransferOpcode } from "./file-transfer.js";
 import { HOST_ROUTE_OPCODE } from "./host-route.js";
 import { PluginFrameOpcode } from "./plugin.js";
@@ -6,6 +7,7 @@ import { TerminalStreamOpcode } from "./terminal.js";
 import {
   decodeTunnelFrame,
   encodeTunnelFrame,
+  isReservedTunnelOpcode,
   TunnelOpcode,
   TunnelCloseReason,
   type TunnelFrame,
@@ -14,16 +16,26 @@ import {
 describe("tunnel frames", () => {
   it("uses the reserved tunnel opcode range", () => {
     const otherOpcodes = [
+      ...Object.values(DiffOpcode),
       ...Object.values(TerminalStreamOpcode),
       ...Object.values(FileTransferOpcode),
       ...Object.values(PluginFrameOpcode),
       HOST_ROUTE_OPCODE,
     ];
     for (const opcode of Object.values(TunnelOpcode)) {
-      expect(opcode).toBeGreaterThanOrEqual(0x40);
-      expect(opcode).toBeLessThanOrEqual(0x4f);
+      expect(opcode).toBeGreaterThanOrEqual(0x50);
+      expect(opcode).toBeLessThanOrEqual(0x5f);
       expect(otherOpcodes).not.toContain(opcode);
     }
+  });
+
+  it.each([
+    [0x4f, false],
+    [0x50, true],
+    [0x5f, true],
+    [0x60, false],
+  ])("treats opcode %i as reserved for the tunnel: %s", (opcode, reserved) => {
+    expect(isReservedTunnelOpcode(opcode)).toBe(reserved);
   });
 
   it("encodes a domain open with subscription ownership and a big-endian port", () => {
@@ -34,7 +46,7 @@ describe("tunnel frames", () => {
       target: { atyp: 3, address: "intranet", port: 8080 },
     } as const;
     const bytes = new Uint8Array([
-      0x42, 1, 115, 1, 116, 3, 8, 105, 110, 116, 114, 97, 110, 101, 116, 0x1f, 0x90,
+      0x52, 1, 115, 1, 116, 3, 8, 105, 110, 116, 114, 97, 110, 101, 116, 0x1f, 0x90,
     ]);
     expect(encodeTunnelFrame(frame)).toEqual(bytes);
     expect(decodeTunnelFrame(bytes)).toEqual(frame);
@@ -79,7 +91,7 @@ describe("tunnel codec boundaries", () => {
         opcode: TunnelOpcode.WindowUpdate,
         credit: 0x010203,
       }),
-    ).toEqual(new Uint8Array([0x44, 1, 115, 1, 116, 0, 1, 2, 3]));
+    ).toEqual(new Uint8Array([0x54, 1, 115, 1, 116, 0, 1, 2, 3]));
   });
 
   it.each(Object.values(TunnelCloseReason))("preserves close reason %i", (reason) => {
@@ -194,39 +206,39 @@ describe("tunnel codec boundaries", () => {
 
   it.each([
     [],
-    [0x43],
-    [0x43, 0, 1, 116],
-    [0x43, 255, 115, 1, 116],
-    [0x43, 1, 115],
-    [0x43, 1, 115, 0],
-    [0x43, 1, 115, 2, 116],
-    [0x43, 1, 0xff, 1, 116],
-    [0x43, 1, 115, 1, 0xff],
-    [0x43, 2, 0xc0, 0xaf, 1, 116],
+    [0x53],
+    [0x53, 0, 1, 116],
+    [0x53, 255, 115, 1, 116],
+    [0x53, 1, 115],
+    [0x53, 1, 115, 0],
+    [0x53, 1, 115, 2, 116],
+    [0x53, 1, 0xff, 1, 116],
+    [0x53, 1, 115, 1, 0xff],
+    [0x53, 2, 0xc0, 0xaf, 1, 116],
   ])("rejects malformed headers %j", (...bytes) => {
     expect(decodeTunnelFrame(new Uint8Array(bytes))).toBeNull();
   });
 
   it.each([
-    [0x42, 2, 127, 0, 0, 1, 0, 80], // unknown atyp
-    [0x42, 1, 127, 0, 0, 1, 0], // truncated port
-    [0x42, 1, 127, 0, 0, 1, 0, 0], // zero port
-    [0x42, 1, 127, 0, 0, 1, 0, 80, 1], // trailing address data
-    [0x42, 4, 0, 0, 1, 0, 80], // truncated IPv6
-    [0x42, 3, 0, 0, 80], // empty domain
-    [0x42, 3, 2, 97, 0, 80], // truncated domain
-    [0x42, 3, 1, 0xff, 0, 80], // malformed domain UTF-8
-    [0x42, 3, 1, 0, 0, 80], // NUL domain
-    [0x43, 1],
-    [0x40],
-    [0x41],
-    [0x41, 9],
-    [0x41, 0, 0],
-    [0x44, 0, 0, 0],
-    [0x44, 0, 0, 0, 1, 0],
-    [0x44, 0, 0, 0, 0],
-    [0x45],
-    [0x4f],
+    [0x52, 2, 127, 0, 0, 1, 0, 80], // unknown atyp
+    [0x52, 1, 127, 0, 0, 1, 0], // truncated port
+    [0x52, 1, 127, 0, 0, 1, 0, 0], // zero port
+    [0x52, 1, 127, 0, 0, 1, 0, 80, 1], // trailing address data
+    [0x52, 4, 0, 0, 1, 0, 80], // truncated IPv6
+    [0x52, 3, 0, 0, 80], // empty domain
+    [0x52, 3, 2, 97, 0, 80], // truncated domain
+    [0x52, 3, 1, 0xff, 0, 80], // malformed domain UTF-8
+    [0x52, 3, 1, 0, 0, 80], // NUL domain
+    [0x53, 1],
+    [0x50],
+    [0x51],
+    [0x51, 9],
+    [0x51, 0, 0],
+    [0x54, 0, 0, 0],
+    [0x54, 0, 0, 0, 1, 0],
+    [0x54, 0, 0, 0, 0],
+    [0x55],
+    [0x5f],
     [0xff],
   ])("rejects malformed body or opcode %j", (opcode, ...body) => {
     expect(decodeTunnelFrame(new Uint8Array([opcode, 1, 115, 1, 116, ...body]))).toBeNull();
@@ -234,7 +246,7 @@ describe("tunnel codec boundaries", () => {
 
   it("accepts received data larger than the default RPC limit", () => {
     const bytes = new Uint8Array(5 + 65537);
-    bytes.set([0x40, 1, 115, 1, 116]);
+    bytes.set([0x50, 1, 115, 1, 116]);
     expect(decodeTunnelFrame(bytes)).toEqual({
       opcode: TunnelOpcode.Data,
       subscriptionId: "s",
@@ -247,7 +259,7 @@ describe("tunnel codec boundaries", () => {
     { body: [0, 4, 0, 1], credit: 262145 },
     { body: [255, 255, 255, 255], credit: 0xffffffff },
   ])("accepts received u32 credit $credit beyond the default window", ({ body, credit }) => {
-    const bytes = new Uint8Array([0x44, 1, 115, 1, 116, ...body]);
+    const bytes = new Uint8Array([0x54, 1, 115, 1, 116, ...body]);
     expect(decodeTunnelFrame(bytes)).toEqual({
       opcode: TunnelOpcode.WindowUpdate,
       subscriptionId: "s",

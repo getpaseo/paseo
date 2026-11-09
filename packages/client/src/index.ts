@@ -19,7 +19,7 @@ export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
-import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import type { AgentPermissionResponse, JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
@@ -31,6 +31,8 @@ import type {
   ListCommandsResponse,
   ListProviderFeaturesRequestMessage,
   ListProviderFeaturesResponseMessage,
+  ProviderControlsListRequestMessage,
+  ProviderControlsListResponseMessage,
   ListProviderModelsResponseMessage,
   ProjectListRequestMessage,
   ProjectListResponseMessage,
@@ -194,6 +196,8 @@ export interface PaseoWorkspaceHandle {
   readonly directory: string | null;
   readonly name: string | null;
   readonly status: PaseoWorkspace["status"] | null;
+  /** Data plugins stored on the workspace. Paseo never reads a key. */
+  readonly metadata: NonNullable<PaseoWorkspace["metadata"]> | null;
   readonly agents: {
     create(options: PaseoWorkspaceAgentCreateOptions): Promise<PaseoAgentHandle>;
   };
@@ -201,6 +205,8 @@ export interface PaseoWorkspaceHandle {
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
+  /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
+  setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   setPinned(pinned: boolean): Promise<{ pinnedAt: string | null }>;
   setLabel(name: string, options: { assigned: boolean }): Promise<{ labels: string[] }>;
   setBaseBranch(options: {
@@ -257,8 +263,12 @@ export interface PaseoAgentConfig {
   provider: string;
   modeId?: PaseoAgentSessionConfig["modeId"];
   thinkingOptionId?: PaseoAgentSessionConfig["thinkingOptionId"];
+  /** @deprecated Put these in `options`; they are folded into it on send. */
   featureValues?: PaseoProviderFeatureValues;
-  /** JSON-safe provider-native settings, validated by the selected provider. */
+  /**
+   * JSON-safe provider settings, validated by the selected provider. They include the settings the
+   * provider offers a composer control for, such as `service_tier` or `fast_mode`.
+   */
   options?: PaseoAgentSessionConfig["providerOptions"];
   systemPrompt?: PaseoAgentSessionConfig["systemPrompt"];
   toolPolicy?: PaseoAgentSessionConfig["toolPolicy"];
@@ -290,6 +300,8 @@ export interface PaseoAgentCreateOptions {
   background?: CreateAgentRequestMessage["background"];
   requestId?: string;
   labels?: Record<string, string>;
+  /** Data plugins store on the agent: JSON values under keys such as `"linear.issue"`. */
+  metadata?: CreateAgentRequestMessage["metadata"];
 }
 
 export type PaseoWorkspaceAgentCreateOptions = Omit<PaseoAgentCreateOptions, "cwd">;
@@ -416,7 +428,14 @@ export interface PaseoAgentHandle {
   readonly activeTurn: NonNullable<PaseoAgent["activeTurn"]> | null;
   readonly lastUsage: NonNullable<PaseoAgent["lastUsage"]> | null;
   readonly lastError: NonNullable<PaseoAgent["lastError"]> | null;
+  /** @deprecated Use `controls` and `options`. */
   readonly features: NonNullable<PaseoAgent["features"]> | null;
+  /** The provider options the agent runs with: `config.json` defaults merged with its own. */
+  readonly options: NonNullable<PaseoAgent["options"]> | null;
+  /** How the provider wants its options drawn. Controls hold no value; read `options`. */
+  readonly controls: NonNullable<PaseoAgent["controls"]> | null;
+  /** Data plugins stored on the agent. Paseo never reads a key. */
+  readonly metadata: NonNullable<PaseoAgent["metadata"]> | null;
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
@@ -430,6 +449,14 @@ export interface PaseoAgentHandle {
   reload(options?: { requestId?: string }): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
+  /**
+   * Changes the agent's own options: top-level keys replace, `null` removes the key so the
+   * `config.json` default (or the provider's own default) applies again. Resolves once the
+   * provider has applied the patch; a provider that cannot apply a key live rejects it.
+   */
+  setOptions(patch: Record<string, unknown>): Promise<void>;
+  /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
+  setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -466,14 +493,21 @@ export interface PaseoAgentActions {
 
 export type PaseoProviderModelsResult = ListProviderModelsResponseMessage["payload"];
 export type PaseoProviderModesResult = ListProviderModesResponseMessage["payload"];
-type PaseoProviderFeaturesDraft = ListProviderFeaturesRequestMessage["draftConfig"];
-export interface PaseoProviderFeaturesInput extends Omit<
-  PaseoProviderFeaturesDraft,
+type PaseoProviderControlsDraft = ProviderControlsListRequestMessage["draftConfig"];
+export interface PaseoProviderControlsInput extends Omit<
+  PaseoProviderControlsDraft,
   "provider" | "model"
 > {
   /** Provider and model in `provider/model` format. */
   provider: string;
 }
+export type PaseoProviderControlsResult = ProviderControlsListResponseMessage["payload"];
+/** @deprecated Use `PaseoProviderControlsInput`. */
+export type PaseoProviderFeaturesInput = Omit<
+  ListProviderFeaturesRequestMessage["draftConfig"],
+  "provider" | "model"
+> & { provider: string };
+/** @deprecated Use `PaseoProviderControlsResult`. */
 export type PaseoProviderFeaturesResult = ListProviderFeaturesResponseMessage["payload"];
 export type PaseoProviderAvailabilityResult = ListAvailableProvidersResponse["payload"];
 export type PaseoProviderSnapshotResult = GetProvidersSnapshotResponseMessage["payload"];
@@ -512,6 +546,15 @@ export interface PaseoProviderActions {
     provider: PaseoAgentProvider,
     options?: PaseoProviderListOptions,
   ): Promise<PaseoProviderModesResult>;
+  /**
+   * The controls a draft agent would show and the options it would run with, resolved by the
+   * daemon from `config.json` defaults and the draft's own `providerOptions`.
+   */
+  listControls(
+    draftConfig: PaseoProviderControlsInput,
+    options?: { requestId?: string },
+  ): Promise<PaseoProviderControlsResult>;
+  /** @deprecated Use `listControls`. */
   listFeatures(
     draftConfig: PaseoProviderFeaturesInput,
     options?: { requestId?: string },
@@ -596,7 +639,14 @@ function toDaemonAgentCreateOptions(
   serverId?: string,
 ): CreateAgentRequestOptions {
   const { config: agentConfig, cwd, parent, title, prompt, ...requestOptions } = options;
-  const { provider: providerModel, options: providerOptions, ...runtimeConfig } = agentConfig;
+  const {
+    provider: providerModel,
+    options: ownOptions,
+    featureValues,
+    ...runtimeConfig
+  } = agentConfig;
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. An explicit option wins.
+  const providerOptions = featureValues ? { ...featureValues, ...ownOptions } : ownOptions;
   const { provider, model } = parseProviderModel(providerModel);
   const relationship = parent ? encodeParent(parent, serverId) : {};
   return {
@@ -832,6 +882,10 @@ export function createPaseoApi(
         const { provider, model } = parseProviderModel(providerModel);
         return daemonClient.listProviderFeatures({ ...draftConfig, provider, model }, options);
       },
+      listControls: ({ provider: providerModel, ...draftConfig }, options) => {
+        const { provider, model } = parseProviderModel(providerModel);
+        return daemonClient.listProviderControls({ ...draftConfig, provider, model }, options);
+      },
       listAvailable: (options) => daemonClient.listAvailableProviders(options),
       snapshot: (options) => daemonClient.getProvidersSnapshot(options),
       waitForReady: (options) =>
@@ -893,6 +947,9 @@ function createWorkspaceHandleFactory(
       get status() {
         return current?.status ?? null;
       },
+      get metadata() {
+        return current?.metadata ?? null;
+      },
       agents: {
         create: async (options) => {
           const snapshot = current ?? (await refresh());
@@ -912,6 +969,10 @@ function createWorkspaceHandleFactory(
       current: () => current,
       refresh,
       setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),
+      setMetadata: async (patch) => {
+        const metadata = await daemonClient.setWorkspaceMetadata(id, patch);
+        if (current) current = { ...current, metadata };
+      },
       setPinned: (pinned) => daemonClient.setWorkspacePinned(id, pinned),
       setLabel: (name, options) =>
         assignWorkspaceLabel({
@@ -1066,6 +1127,15 @@ function createAgentHandleFactory(
       get features() {
         return current?.features ?? null;
       },
+      get options() {
+        return current?.options ?? null;
+      },
+      get controls() {
+        return current?.controls ?? null;
+      },
+      get metadata() {
+        return current?.metadata ?? null;
+      },
       get runtimeInfo() {
         return current?.runtimeInfo ?? null;
       },
@@ -1086,6 +1156,13 @@ function createAgentHandleFactory(
       },
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
+      },
+      setOptions: async (patch) => {
+        await daemonClient.setAgentOptions(id, patch);
+      },
+      setMetadata: async (patch) => {
+        const metadata = await daemonClient.setAgentMetadata(id, patch);
+        if (current) current = { ...current, metadata };
       },
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermission(id, requestId, response);
@@ -1309,6 +1386,8 @@ function createGeneratedClientId(): string {
       : Math.random().toString(36).slice(2);
   return `paseo-sdk-${randomId}`;
 }
+
+export type { DiffCompare, DiffState, DiffEntry, ResolvedShas } from "./diff/index.js";
 
 interface WorkspaceLabelAssignment {
   client: DaemonClient;

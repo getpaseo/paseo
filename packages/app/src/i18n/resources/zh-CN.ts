@@ -15,6 +15,11 @@ export const zhCN: TranslationResources = {
     connectionClosed: "通过主机 {{host}} 网络的连接已关闭。请重新连接主机并刷新。",
     notReady: "浏览器无法准备主机 {{host}} 的网络。请尝试重新打开标签页。",
   },
+  pluginCombobox: {
+    searching: "搜索中…",
+    empty: "无结果",
+    failed: "搜索失败：{{message}}",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
