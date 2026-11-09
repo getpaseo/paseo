@@ -1386,6 +1386,40 @@ describe("live workspace observation", () => {
     await session.cleanup();
   });
 
+  test("fills the git data of every workspace record that shares a quiet directory", async () => {
+    const quietCwd = "/tmp/shared-quiet-workspace";
+    const { session, emitted, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests();
+    for (const workspaceId of ["ws-shared-a", "ws-shared-b"]) {
+      seedGitWorkspace({
+        projects,
+        workspaces,
+        projectId: "proj-1",
+        workspaceId,
+        cwd: quietCwd,
+        name: workspaceId,
+        updatedAt: OLD,
+      });
+    }
+
+    const updatedWorkspaceIds = () =>
+      getWorkspaceUpdates(emitted).flatMap((message) =>
+        message.payload.kind === "upsert" ? [message.payload.workspace.id] : [],
+      );
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+
+    await vi.waitFor(() =>
+      expect(updatedWorkspaceIds().sort()).toEqual(["ws-shared-a", "ws-shared-b"]),
+    );
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledExactlyOnceWith(quietCwd);
+
+    await session.cleanup();
+  });
+
   test("does not read a quiet workspace that already has a cached snapshot", async () => {
     const quietCwd = "/tmp/cached-workspace";
     const workspaceRuntimeStore = createWorkspaceRuntimeStore();
