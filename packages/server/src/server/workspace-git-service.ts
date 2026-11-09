@@ -3986,6 +3986,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const timer = setTimeout(() => {
       target.releaseTimer = null;
       if (!this.isIdleUnobservedWorkspaceTarget(target)) {
+        // A suspended target keeps arming its missing-folder probe, which counts as busy. Check
+        // again after another TTL instead of dropping the timer, so the target still releases
+        // once the probe clears.
+        this.scheduleWorkspaceTargetRelease(target);
         return;
       }
       this.removeWorkspaceTarget(target);

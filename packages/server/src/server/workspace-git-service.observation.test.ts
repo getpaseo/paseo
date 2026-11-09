@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import type { FileObserver } from "./file-observer/index.js";
 import {
+  WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS,
   WORKSPACE_GIT_TARGET_IDLE_TTL_MS,
   WorkspaceGitServiceImpl,
 } from "./workspace-git-service.js";
+import { asInternals } from "./test-utils/class-mocks.js";
 
 const REPO_CWD = path.resolve("/tmp/paseo-observation-repo");
 const GIT_DIR = path.join(REPO_CWD, ".git");
@@ -20,6 +22,17 @@ const WORKTREE_B = path.resolve("/tmp/paseo-observation-worktree-b");
 interface WatchEvent {
   path: string;
   type: "create" | "update" | "delete";
+}
+
+/** The suspended state degraded polling puts a workspace target in when its folder vanished. */
+interface SuspendedWorkspaceTarget {
+  folderMissing: boolean;
+}
+
+interface WorkspaceGitServiceInternals {
+  workspaceTargets: Map<string, SuspendedWorkspaceTarget>;
+  suspendWorkspaceWithMissingFolder: (target: SuspendedWorkspaceTarget) => void;
+  resumeWorkspaceIfFolderRestored: (target: SuspendedWorkspaceTarget) => Promise<void>;
 }
 
 interface WatchRecord {
@@ -443,6 +456,47 @@ describe("WorkspaceGitService checkout observation", () => {
 
       expect(service.getMetrics().workspaceTargetCount).toBe(0);
     } finally {
+      await service.dispose();
+    }
+  });
+
+  test("re-arms the idle release check while a suspended target probes for its folder", async () => {
+    let folderExists = true;
+    const service = createService(createWatcherHarness(), {
+      workspaceFolderExists: vi.fn(async () => folderExists),
+    });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const idleReleaseSchedules = () =>
+      setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WORKSPACE_GIT_TARGET_IDLE_TTL_MS)
+        .length;
+    try {
+      await service.getSnapshot(REPO_CWD);
+
+      // Degraded polling suspends a target whose folder disappeared; this is the same call.
+      folderExists = false;
+      const internals = asInternals<WorkspaceGitServiceInternals>(service);
+      const target = internals.workspaceTargets.get(REPO_CWD);
+      if (!target) throw new Error("Expected a workspace target for the read");
+      internals.suspendWorkspaceWithMissingFolder(target);
+
+      // A read while suspended returns the cached snapshot and arms the idle release check even
+      // though the missing-folder probe is running.
+      await service.getSnapshot(REPO_CWD);
+      const schedulesBeforeIdle = idleReleaseSchedules();
+
+      // The probe counts as busy, so the check must arm itself again instead of disappearing.
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_TARGET_IDLE_TTL_MS);
+      expect(service.getMetrics().workspaceTargetCount).toBe(1);
+      expect(idleReleaseSchedules()).toBe(schedulesBeforeIdle + 1);
+
+      // Once the folder is back the probe resumes observation, and the retained check collects
+      // the target as soon as it is idle.
+      folderExists = true;
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_TARGET_IDLE_TTL_MS);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+    } finally {
+      setTimeoutSpy.mockRestore();
       await service.dispose();
     }
   });
