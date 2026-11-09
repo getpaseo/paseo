@@ -1255,3 +1255,38 @@ describe("resolveWorkspaceIdAtPath", () => {
     expect(result).toBe("ws-nested");
   });
 });
+
+test("uses the operation timestamp for live agents, snapshots, and the workspace", async () => {
+  const { repoDir } = createGitRepo();
+  const deps = createArchiveDeps({
+    paseoHome: repoDir,
+    activeWorkspaces: [{ workspaceId: "stamped", cwd: repoDir, kind: "local_checkout" }],
+  });
+  const stamps: Array<string | undefined> = [];
+  deps.agentManager.listAgents = () => [{ id: "live", workspaceId: "stamped" }] as ManagedAgent[];
+  deps.agentManager.getAgent = () => ({ id: "live" }) as ManagedAgent;
+  deps.agentManager.archiveAgent = async (_id, stamp) => {
+    stamps.push(stamp);
+    return { archivedAt: stamp! };
+  };
+  deps.agentStorage.listByWorkspace = async () =>
+    [
+      { id: "stored", workspaceId: "stamped", archivedAt: null },
+      { id: "closed", workspaceId: "stamped", archivedAt: "2020-01-01T00:00:00.000Z" },
+    ] as StoredAgentRecord[];
+  deps.agentManager.getAgent = (id) => (id === "live" ? ({ id } as ManagedAgent) : null);
+  deps.agentManager.archiveSnapshot = async (_id, stamp) => {
+    stamps.push(stamp);
+    return {} as StoredAgentRecord;
+  };
+  deps.archiveWorkspaceRecord = async (_id, stamp) => {
+    stamps.push(stamp);
+  };
+  await archiveByScope(deps, {
+    scope: { kind: "workspace", workspaceId: "stamped" },
+    requestId: "stamp",
+  });
+  expect(stamps).toHaveLength(3);
+  expect(typeof stamps[0]).toBe("string");
+  expect(new Set(stamps).size).toBe(1);
+});

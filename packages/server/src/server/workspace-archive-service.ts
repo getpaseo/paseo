@@ -45,7 +45,7 @@ export interface ArchiveDependencies {
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  archiveWorkspaceRecord: (workspaceId: string, archivedAt: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -165,6 +165,7 @@ async function archiveByScopeWithPriority(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
+  const archivedAt = new Date().toISOString();
   const progress: ArchiveProgress = { newlyArchivedAgentIds: new Set(), recordArchived: false };
   const checkpoint = () => {
     if (request.signal?.aborted) {
@@ -198,7 +199,7 @@ async function archiveByScopeWithPriority(
     const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
       dependencies,
       targetWorkspaceIds,
-      { requestId: request.requestId, checkpoint, progress },
+      { requestId: request.requestId, checkpoint, progress, archivedAt },
     );
     checkpoint();
 
@@ -393,21 +394,30 @@ async function resolveBackingDirectory(
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
-  options: { requestId: string; checkpoint: () => void; progress: ArchiveProgress },
+  options: {
+    requestId: string;
+    checkpoint: () => void;
+    progress: ArchiveProgress;
+    archivedAt: string;
+  },
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const contents = await archiveWorkspaceContentsWithProgress(dependencies, workspaceId);
+      const contents = await archiveWorkspaceContentsWithProgress(
+        dependencies,
+        workspaceId,
+        options.archivedAt,
+      );
       for (const agentId of contents.newlyArchivedAgentIds) {
         options.progress.newlyArchivedAgentIds.add(agentId);
       }
       // Agents and terminals are down, the record is not: an abort here leaves the workspace
       // listed, and the canceller restores the agents it reports.
       options.checkpoint();
-      await dependencies.archiveWorkspaceRecord(workspaceId);
+      await dependencies.archiveWorkspaceRecord(workspaceId, options.archivedAt);
       options.progress.recordArchived = true;
       return { workspaceId, agents: contents.agentIds };
     }),
@@ -574,13 +584,16 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  archivedAt = new Date().toISOString(),
 ): Promise<Set<string>> {
-  return (await archiveWorkspaceContentsWithProgress(dependencies, workspaceId)).agentIds;
+  return (await archiveWorkspaceContentsWithProgress(dependencies, workspaceId, archivedAt))
+    .agentIds;
 }
 
 async function archiveWorkspaceContentsWithProgress(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  archivedAt: string,
 ): Promise<{ agentIds: Set<string>; newlyArchivedAgentIds: string[] }> {
   const archivedAgents = new Set<string>();
 
@@ -605,7 +618,6 @@ async function archiveWorkspaceContentsWithProgress(
     archivedAgents.add(record.id);
   }
 
-  const archivedAt = new Date().toISOString();
   const agentIdsToArchive = [
     ...new Set([
       ...liveAgents.map((agent) => agent.id),
@@ -625,7 +637,7 @@ async function archiveWorkspaceContentsWithProgress(
     Promise.allSettled(
       agentIdsToArchive.map((agentId) =>
         dependencies.agentManager.getAgent(agentId)
-          ? dependencies.agentManager.archiveAgent(agentId)
+          ? dependencies.agentManager.archiveAgent(agentId, archivedAt)
           : dependencies.agentManager.archiveSnapshot(agentId, archivedAt),
       ),
     ),
