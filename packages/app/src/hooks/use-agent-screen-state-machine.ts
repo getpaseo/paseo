@@ -1,9 +1,6 @@
 import { useRef } from "react";
-import type {
-  AgentCapabilityFlags,
-  AgentFeature,
-  AgentProvider,
-} from "@getpaseo/protocol/agent-types";
+import type { AgentCapabilityFlags, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { Agent } from "@/stores/session-store";
 import type { ViewedTimelineStatus } from "@/timeline/viewed-timeline-sync";
 
 export interface AgentScreenAgent {
@@ -22,7 +19,8 @@ export interface AgentScreenAgent {
     modeId?: string | null;
     thinkingOptionId?: string | null;
   } | null;
-  features?: readonly AgentFeature[];
+  options?: Agent["options"];
+  controls?: Agent["controls"];
   lastError?: string | null;
   projectPlacement?: {
     projectKey?: string;
@@ -175,10 +173,14 @@ function resolveAgentScreenSync(args: {
   hadInitialSyncFailure: boolean;
 }): AgentScreenReadySyncState {
   const { input, hadInitialSyncFailure } = args;
-  if (input.isArchived) {
+  if (
+    input.isArchived &&
+    input.visibilityCatchUpStatus !== "error" &&
+    input.visibilityCatchUpStatus !== "retrying"
+  ) {
     return { status: "idle" };
   }
-  if (!input.isConnected) {
+  if (!input.isConnected && !input.isArchived) {
     return { status: "reconnecting" };
   }
   if (input.missingAgentState.kind === "error") {

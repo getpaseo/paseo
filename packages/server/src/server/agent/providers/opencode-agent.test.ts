@@ -32,6 +32,16 @@ import type {
 const EXPECTED_STARTUP_BUDGET_MS = 30_000;
 const EXPECTED_EVENT_READINESS_BUDGET_MS = 45_000;
 
+// Keep event correlation and turn ordering assertions exact while accepting a fresh namespace.
+function turnIdAt(events: AgentStreamEvent[], ordinal: number): string {
+  const started = events.find((event) => event.type === "turn_started");
+  if (!started || started.type !== "turn_started" || typeof started.turnId !== "string") {
+    throw new Error("Expected a turn_started event with a turn ID");
+  }
+  const namespace = started.turnId.slice(0, started.turnId.lastIndexOf("-"));
+  return `${namespace}-${ordinal}`;
+}
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "opencode-agent-test-"));
   try {
@@ -403,100 +413,6 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     },
   );
 
-  test("usage reference follows the active OpenCode model and OAuth account", async () => {
-    const cwd = tmpCwd();
-    const runtime = new TestOpenCodeHarness();
-    const openCode = new TestOpenCodeClient();
-    runtime.enqueueClient(openCode);
-    const client = new OpenCodeAgentClient(
-      logger,
-      {
-        env: {
-          OPENCODE_AUTH_CONTENT: JSON.stringify({
-            openai: { type: "oauth", access: "oauth-token", accountId: "acct-1" },
-            "opencode-go": { type: "api", key: "go-key" },
-          }),
-        },
-      },
-      { serverManager: runtime, createClient: runtime.createClient },
-    );
-    const session = await client.createSession(buildConfig(cwd));
-    await session.setModel?.("openai/gpt-5");
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "codex",
-      input: { accessToken: "oauth-token", accountId: "acct-1" },
-    });
-    await session.setModel?.("opencode-go/qwen");
-    expect(await session.getUsageReference?.()).toEqual({
-      source: "opencode-go",
-      input: { apiKey: "go-key" },
-    });
-    await session.setModel?.("other/model");
-    expect(await session.getUsageReference?.()).toBeNull();
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-    const sessionId = (await session.getRuntimeInfo()).sessionId;
-    openCode.emitEvent({
-      type: "message.updated",
-      properties: {
-        info: {
-          id: "msg_changed_model",
-          sessionID: sessionId,
-          role: "user",
-          model: { providerID: "openai", modelID: "gpt-5" },
-        },
-      },
-    } as OpenCodeEvent);
-    await vi.waitFor(async () =>
-      expect(await session.getUsageReference?.()).toEqual({
-        source: "codex",
-        input: { accessToken: "oauth-token", accountId: "acct-1" },
-      }),
-    );
-    expect(events).toContainEqual({
-      type: "model_changed",
-      provider: "opencode",
-      runtimeInfo: {
-        provider: "opencode",
-        sessionId,
-        model: "openai/gpt-5",
-        modeId: null,
-        thinkingOptionId: null,
-      },
-    });
-    await session.close();
-    rmSync(cwd, { recursive: true, force: true });
-  });
-
-  test("usage reference ignores another auth entry with a different type", async () => {
-    const cwd = tmpCwd();
-    const runtime = new TestOpenCodeHarness();
-    runtime.enqueueClient(new TestOpenCodeClient());
-    const client = new OpenCodeAgentClient(
-      logger,
-      {
-        env: {
-          OPENCODE_AUTH_CONTENT: JSON.stringify({
-            openai: { type: "api", key: "other-key" },
-            "opencode-go": { type: "api", key: "go-key" },
-          }),
-        },
-      },
-      { serverManager: runtime, createClient: runtime.createClient },
-    );
-    const session = await client.createSession(buildConfig(cwd));
-    try {
-      await session.setModel?.("opencode-go/qwen");
-      expect(await session.getUsageReference?.()).toEqual({
-        source: "opencode-go",
-        input: { apiKey: "go-key" },
-      });
-    } finally {
-      await session.close();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -848,6 +764,19 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps turn identities distinct for the same persisted session", async () => {
+    const first = await createParentSession("ses_persisted");
+    const firstTurn = await first.parent.startTurn("first");
+    await first.parent.close();
+    const resumed = await createParentSession("ses_persisted");
+    try {
+      const nextTurn = await resumed.parent.startTurn("second");
+      expect(nextTurn.turnId).not.toBe(firstTurn.turnId);
+    } finally {
+      await resumed.parent.close();
     }
   });
 
@@ -1712,6 +1641,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1731,10 +1661,10 @@ describe("OpenCode adapter startTurn error handling", () => {
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });
     expect(turn.events.map((event) => ("turnId" in event ? event.turnId : undefined))).toEqual([
-      "opencode-turn-0",
-      "opencode-turn-0",
-      "opencode-turn-0",
-      "opencode-turn-0",
+      turnIdAt(turn.events, 0),
+      turnIdAt(turn.events, 0),
+      turnIdAt(turn.events, 0),
+      turnIdAt(turn.events, 0),
     ]);
   });
 
@@ -1822,6 +1752,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1906,6 +1837,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -1924,7 +1856,7 @@ describe("OpenCode adapter startTurn error handling", () => {
           type: "error",
           message: "Provider retry (attempt 1): model does not exist",
         },
-        turnId: "opencode-turn-0",
+        turnId: turnIdAt(events, 0),
       });
       expect(events.some((event) => event.type === "turn_failed")).toBe(false);
       await session.close();
@@ -1947,6 +1879,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       undefined,
       undefined,
@@ -1975,6 +1908,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     await session.close();
@@ -1999,6 +1933,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
       new Map(),
       events,
     );
@@ -2071,6 +2006,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2161,6 +2097,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2213,6 +2150,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2326,6 +2264,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const history: AgentStreamEvent[] = [];
@@ -2441,6 +2380,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       fakeClient,
       "ses_unit_test",
       createTestLogger(),
+      {},
     );
 
     const events: AgentStreamEvent[] = [];
@@ -2724,11 +2664,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(
         turnEventSignatures(events.filter((event) => event.type !== "provider_subagent")),
       ).toEqual([
-        ["turn_started", "opencode-turn-0"],
-        ["turn_canceled", "opencode-turn-0"],
-        ["turn_started", "opencode-turn-1"],
-        ["timeline", "opencode-turn-1"],
-        ["turn_completed", "opencode-turn-1"],
+        ["turn_started", turnIdAt(events, 0)],
+        ["turn_canceled", turnIdAt(events, 0)],
+        ["turn_started", turnIdAt(events, 1)],
+        ["timeline", turnIdAt(events, 1)],
+        ["turn_completed", turnIdAt(events, 1)],
       ]);
     } finally {
       settleRetry.resolve();
@@ -2789,7 +2729,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         expect(events).toContainEqual(
           expect.objectContaining({
             type: "timeline",
-            turnId: "opencode-turn-1",
+            turnId: turnIdAt(events, 1),
             item: expect.objectContaining({ text: "Wake output streams live." }),
           }),
         ),
@@ -2809,11 +2749,11 @@ describe("OpenCode adapter startTurn error handling", () => {
       });
       await vi.waitFor(() =>
         expect(events).toContainEqual(
-          expect.objectContaining({ type: "turn_completed", turnId: "opencode-turn-1" }),
+          expect.objectContaining({ type: "turn_completed", turnId: turnIdAt(events, 1) }),
         ),
       );
       await expect(session.startTurn("after the wake")).resolves.toEqual({
-        turnId: "opencode-turn-2",
+        turnId: turnIdAt(events, 2),
       });
     } finally {
       settleAbort.resolve();
@@ -2926,13 +2866,13 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(events).toContainEqual({
         type: "turn_started",
         provider: "opencode",
-        turnId: "opencode-turn-1",
+        turnId: turnIdAt(events, 1),
       });
       await vi.waitFor(() =>
         expect(events).toContainEqual({
           type: "turn_completed",
           provider: "opencode",
-          turnId: "opencode-turn-1",
+          turnId: turnIdAt(events, 1),
           usage: expect.objectContaining({
             inputTokens: 7,
             outputTokens: 3,
@@ -2941,7 +2881,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       );
       const autonomousCompletion = events.find(
-        (event) => event.type === "turn_completed" && event.turnId === "opencode-turn-1",
+        (event) => event.type === "turn_completed" && event.turnId === turnIdAt(events, 1),
       );
       expect(autonomousCompletion?.type).toBe("turn_completed");
       if (autonomousCompletion?.type === "turn_completed") {
@@ -2950,7 +2890,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           type: "timeline",
-          turnId: "opencode-turn-1",
+          turnId: turnIdAt(events, 1),
           item: expect.objectContaining({
             type: "assistant_message",
             text: "Autonomous wake completed.",
@@ -2958,7 +2898,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       );
       await expect(session.startTurn("after autonomous wake")).resolves.toEqual({
-        turnId: "opencode-turn-2",
+        turnId: turnIdAt(events, 2),
       });
     } finally {
       settleAbort.resolve();
@@ -3037,7 +2977,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         type: "turn_canceled",
         provider: "opencode",
         reason: "interrupted",
-        turnId: "opencode-turn-0",
+        turnId: turnIdAt(events, 0),
       });
 
       openCode.emitEvent({
@@ -3045,7 +2985,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         properties: { sessionID: "ses_retried_stop" },
       });
       await expect(session.startTurn("replacement")).resolves.toEqual({
-        turnId: "opencode-turn-1",
+        turnId: turnIdAt(events, 1),
       });
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
@@ -3141,7 +3081,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         expect(events).toContainEqual({
           type: "turn_started",
           provider: "opencode",
-          turnId: "opencode-turn-1",
+          turnId: turnIdAt(events, 1),
         }),
       );
 
@@ -3240,6 +3180,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       sdkClient,
       "ses_sync_abort_failure",
       createTestLogger(),
+      {},
     );
 
     try {
@@ -3838,7 +3779,10 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       await session.startTurn("first");
       await session.interrupt();
+      const descriptor = session.usageSession?.();
       openCode.emitEvent({ type: "server-exited", error: new Error("OpenCode exited") });
+      expect(session.usageSession?.()).toEqual(descriptor);
+      expect(descriptor).not.toBeNull();
       await vi.advanceTimersByTimeAsync(0);
 
       openCode.sessionPromptAsyncEvents = [
@@ -3846,7 +3790,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       ];
       const replacement = session.startTurn("second");
       await vi.advanceTimersByTimeAsync(10_000);
-      await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
+      await expect(replacement).resolves.toEqual({ turnId: turnIdAt(events, 1) });
       expect(countEvents(events, "turn_canceled")).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -3893,6 +3837,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_timeout",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => new Promise<void>(() => undefined),
@@ -3946,6 +3891,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_slow_stream",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -3978,6 +3924,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.asSdkClient(),
       "ses_readiness_retry",
       createTestLogger(),
+      {},
       new Map(),
       {
         ready: () => streamReady.promise,
@@ -4085,6 +4032,9 @@ describe("OpenCode adapter startTurn error handling", () => {
       return { data: true };
     };
 
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
     try {
       await session.startTurn("first");
       const interrupt = session.interrupt();
@@ -4098,7 +4048,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionStatus).toHaveLength(1);
 
       releaseIdle.resolve();
-      await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
+      await expect(replacement).resolves.toEqual({ turnId: turnIdAt(events, 1) });
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
       expect(openCode.calls.sessionStatus.length).toBeGreaterThanOrEqual(2);
     } finally {
@@ -4798,9 +4748,9 @@ describe("OpenCode provider subagent contract", () => {
       "turn_completed",
     ]);
     expect(events.map((event) => ("turnId" in event ? event.turnId : undefined))).toEqual([
-      "opencode-turn-0",
-      "opencode-turn-0",
-      "opencode-turn-0",
+      turnIdAt(events, 0),
+      turnIdAt(events, 0),
+      turnIdAt(events, 0),
     ]);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -4836,7 +4786,7 @@ describe("OpenCode provider subagent contract", () => {
           expect(events).toContainEqual({
             type: "turn_started",
             provider: "opencode",
-            turnId: "opencode-turn-0",
+            turnId: turnIdAt(events, 0),
           });
         });
         for (const event of assistantTurnEvents({
@@ -4850,9 +4800,9 @@ describe("OpenCode provider subagent contract", () => {
 
         expect(childClient.calls.sessionStatus).toEqual([{ directory: "/workspace/repo" }]);
         expect(turnEventSignatures(events)).toEqual([
-          ["turn_started", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
-          ["turn_completed", "opencode-turn-0"],
+          ["turn_started", turnIdAt(events, 0)],
+          ["timeline", turnIdAt(events, 0)],
+          ["turn_completed", turnIdAt(events, 0)],
         ]);
         expect(events).toContainEqual(
           expect.objectContaining({
@@ -4957,9 +4907,9 @@ describe("OpenCode provider subagent contract", () => {
 
       await vi.waitFor(() => {
         expect(turnEventSignatures(events)).toEqual([
-          ["turn_started", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
-          ["turn_completed", "opencode-turn-0"],
+          ["turn_started", turnIdAt(events, 0)],
+          ["timeline", turnIdAt(events, 0)],
+          ["turn_completed", turnIdAt(events, 0)],
         ]);
       });
       expect(events).toContainEqual(
@@ -5003,9 +4953,9 @@ describe("OpenCode provider subagent contract", () => {
 
       await vi.waitFor(() => {
         expect(turnEventSignatures(events)).toEqual([
-          ["turn_started", "opencode-turn-0"],
-          ["timeline", "opencode-turn-0"],
-          ["turn_completed", "opencode-turn-0"],
+          ["turn_started", turnIdAt(events, 0)],
+          ["timeline", turnIdAt(events, 0)],
+          ["turn_completed", turnIdAt(events, 0)],
         ]);
       });
     } finally {
@@ -5079,7 +5029,7 @@ describe("OpenCode provider subagent contract", () => {
       });
       await vi.waitFor(() => {
         expect(events).toEqual([
-          { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+          { type: "turn_started", provider: "opencode", turnId: turnIdAt(events, 0) },
         ]);
       });
 
@@ -5194,12 +5144,12 @@ describe("OpenCode provider subagent contract", () => {
 
       await streamDrained.promise;
       expect(events.filter((event) => event.type !== "provider_subagent")).toEqual([
-        { type: "turn_started", provider: "opencode", turnId: "opencode-turn-0" },
+        { type: "turn_started", provider: "opencode", turnId: turnIdAt(events, 0) },
         {
           type: "turn_canceled",
           provider: "opencode",
           reason: "interrupted",
-          turnId: "opencode-turn-0",
+          turnId: turnIdAt(events, 0),
         },
       ]);
     } finally {
@@ -5250,7 +5200,7 @@ describe("OpenCode provider subagent contract", () => {
       expect.objectContaining({
         type: "permission_requested",
         request: expect.objectContaining({ id: "perm_child_external" }),
-        turnId: "opencode-turn-0",
+        turnId: turnIdAt(events, 0),
       }),
     );
   });
@@ -5350,7 +5300,7 @@ describe("OpenCode provider subagent contract", () => {
     const parent = await client.createSession({
       provider: "opencode",
       cwd: "/workspace/repo",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     parent.subscribe(() => undefined);
 
@@ -5656,6 +5606,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -5814,6 +5765,7 @@ describe("OpenCode provider subagent contract", () => {
       fakeClient,
       "ses_parent",
       createTestLogger(),
+      {},
       new Map(),
       createDirectEventSource(fakeClient),
     );
@@ -7070,12 +7022,35 @@ describe("OpenCode session permission rules", () => {
         metadata: { cwd },
       });
       try {
+        expect(session.usageSession?.()).toMatchObject({
+          provider: "opencode",
+          sessionKey: expect.any(String),
+        });
         expect(openCode.calls.sessionUpdate).toEqual([]);
       } finally {
         await session.close();
+        expect(session.usageSession?.()).toBeNull();
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+});
+
+test("OpenCode v1 runtime safety retains terminals and busy sessions on its shared server", async () => {
+  const { parent, openCode } = await createParentSession("runtime-safety");
+  try {
+    expect(await parent.canStopRuntime!()).toBe(true);
+    openCode.ptyListResponse = { data: [{ id: "shell", status: "running" }] };
+    expect(await parent.canStopRuntime!()).toBe(false);
+    openCode.ptyListResponse = { data: [] };
+    openCode.sessionStatusResponse = { data: { "other-native-session": { type: "busy" } } };
+    expect(await parent.canStopRuntime!()).toBe(false);
+    openCode.sessionStatusResponse = { data: {} };
+    expect(await parent.canStopRuntime!()).toBe(true);
+    openCode.ptyListResponse = { error: "Inventory unavailable" };
+    await expect(parent.canStopRuntime!()).rejects.toThrow("Unable to inspect OpenCode terminals");
+  } finally {
+    await parent.close();
+  }
 });

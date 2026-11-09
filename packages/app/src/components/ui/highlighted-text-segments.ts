@@ -4,6 +4,7 @@ import {
   scoreMatch,
   tokenizeQuery,
   type MatchRange,
+  type TextFieldsOptions,
 } from "@getpaseo/protocol/search/text-match";
 
 export interface HighlightSegment {
@@ -40,11 +41,22 @@ export function toHighlightSegments(
   return segments;
 }
 
-/** Best-effort presentation of each query token in this field, independently of other fields. */
-export function findHighlightRanges(query: string, text: string): MatchRange[] {
+/**
+ * Best-effort presentation of each query token in this field, independently of other fields.
+ * Pass the same options the list was matched with, so a mark never claims a match the list did
+ * not make.
+ */
+export function findHighlightRanges(
+  query: string,
+  text: string,
+  options: TextFieldsOptions = {},
+): MatchRange[] {
   const ranges = tokenizeQuery(query)
     .flatMap((token) => {
-      const score = scoreMatch(token, text, { fuzzy: fuzzyPolicyForToken(token) });
+      const score = scoreMatch(token, text, {
+        fuzzy: options.typoTolerant ? fuzzyPolicyForToken(token) : null,
+        subsequence: options.subsequence,
+      });
       return score ? matchRanges(token, text, score) : [];
     })
     .sort((left, right) => left.start - right.start);

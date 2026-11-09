@@ -36,6 +36,27 @@ function deferred<T>() {
 }
 
 describe("OMP usage poller", () => {
+  test("refresh publishes usage without ending an active turn's polling", async () => {
+    const scheduler = new ManualPollScheduler();
+    const used: Array<number | undefined> = [];
+    let stats: OmpSessionStats = { contextUsage: { contextWindow: 200_000, tokens: 9_000 } };
+    const poller = new OmpUsagePoller({
+      scheduler,
+      readStats: async () => stats,
+      onUsage: (update) => used.push(update.contextWindowUsedTokens),
+      onPollError: (error) => {
+        throw error;
+      },
+    });
+
+    poller.startTurn();
+    stats = { contextUsage: { contextWindow: 200_000, tokens: 2_000 } };
+    await poller.refresh();
+
+    expect(used).toEqual([2_000]);
+    expect(scheduler.activePollCount()).toBe(1);
+  });
+
   test("emits only changed usage while active", async () => {
     const scheduler = new ManualPollScheduler();
     const updates: AgentUsage[] = [];

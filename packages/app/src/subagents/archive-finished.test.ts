@@ -5,6 +5,7 @@ import type { PaseoSubagentRow, ProviderSubagentRow } from "./select";
 function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSubagentRow {
   return {
     kind: "paseo",
+    address: { serverId: "server-1", agentId: id },
     id,
     provider: "codex",
     title: id,
@@ -76,8 +77,8 @@ describe("createArchiveFinishedSubagents", () => {
       [provider("native"), paseo("first"), paseo("second", "error"), paseo("resumed")],
       {
         parentAgentId: "parent",
-        getManagedSubagent: (id) => current.get(id),
-        archiveManagedSubagent: (id) => {
+        getManagedSubagent: ({ agentId: id }) => current.get(id),
+        archiveManagedSubagent: ({ agentId: id }) => {
           events.push(`archive:${id}`);
           return id === "first" ? first.promise : second.promise;
         },
@@ -130,8 +131,8 @@ describe("createArchiveFinishedSubagents", () => {
     const calls: string[] = [];
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
-      archiveManagedSubagent: (id) => {
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
+      archiveManagedSubagent: ({ agentId: id }) => {
         calls.push(id);
         const response = responses.shift();
         if (!response) throw new Error("Unexpected archive");
@@ -204,8 +205,8 @@ describe("createArchiveFinishedSubagents", () => {
     ]);
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
-      archiveManagedSubagent: async (id) => {
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
+      archiveManagedSubagent: async ({ agentId: id }) => {
         throw id === "first" ? firstError : secondError;
       },
       dismissProviderSubagents: () => undefined,
@@ -230,7 +231,7 @@ describe("createArchiveFinishedSubagents", () => {
     const current = new Map([["failed", managed("failed")]]);
     const archive = createArchiveFinishedSubagents([paseo("failed")], {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async () => {
         current.set("failed", managed("failed", "running"));
         throw new Error("archive failed");
@@ -256,7 +257,7 @@ describe("createArchiveFinishedSubagents", () => {
     const current = new Map([["failed", managed("failed")]]);
     const archive = createArchiveFinishedSubagents([paseo("failed")], {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async () => {
         current.set("failed", managed("failed", "initializing"));
         throw new Error("archive failed");
@@ -297,7 +298,7 @@ describe("createArchiveFinishedSubagents", () => {
       const current = new Map([["failed", managed("failed")]]);
       const archive = createArchiveFinishedSubagents([paseo("failed")], {
         parentAgentId: "parent",
-        getManagedSubagent: (id) => current.get(id),
+        getManagedSubagent: ({ agentId: id }) => current.get(id),
         archiveManagedSubagent: async () => {
           updateSnapshot(current);
           throw error;
@@ -325,8 +326,8 @@ describe("createArchiveFinishedSubagents", () => {
     const calls: string[] = [];
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
-      archiveManagedSubagent: async (id) => {
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
+      archiveManagedSubagent: async ({ agentId: id }) => {
         calls.push(id);
         if (calls.length === 1) throw firstError;
         if (calls.length === 2) {
@@ -384,8 +385,8 @@ describe("createArchiveFinishedSubagents", () => {
     const archived: string[] = [];
     const archive = createArchiveFinishedSubagents(rows, {
       parentAgentId: "parent",
-      getManagedSubagent: (id) => current.get(id),
-      archiveManagedSubagent: async (id) => {
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
+      archiveManagedSubagent: async ({ agentId: id }) => {
         archived.push(id);
         current.set("resumed", managed("resumed", "running"));
       },
@@ -429,4 +430,33 @@ describe("createArchiveFinishedSubagents", () => {
     expect(descriptors.get("finished")).toBe(finished);
     expect(descriptors.get("running")).toBe(running);
   });
+});
+
+it("excludes live background work and rechecks it before each archive", async () => {
+  const first = deferred<void>();
+  const active = { ...paseo("active"), backgroundWork: { count: 1 } };
+  const current = new Map([
+    ["first", managed("first")],
+    ["later", managed("later")],
+    ["active", managed("active", "idle", { backgroundWork: { count: 1 } })],
+  ]);
+  const calls: string[] = [];
+  const archive = createArchiveFinishedSubagents([paseo("first"), paseo("later"), active], {
+    parentAgentId: "parent",
+    getManagedSubagent: ({ agentId }) => current.get(agentId),
+    archiveManagedSubagent: ({ agentId }) => {
+      calls.push(agentId);
+      return first.promise;
+    },
+    dismissProviderSubagents: () => undefined,
+  });
+  expect(archive.getState().eligibleCount).toBe(2);
+  const operation = archive.archiveFinished();
+  current.set("later", managed("later", "idle", { backgroundWork: { count: 1 } }));
+  first.resolve();
+  expect(await operation).toMatchObject({
+    archivedPaseoIds: ["first"],
+    skippedPaseoIds: ["later"],
+  });
+  expect(calls).toEqual(["first"]);
 });

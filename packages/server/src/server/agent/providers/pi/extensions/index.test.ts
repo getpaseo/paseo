@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { mkdtemp, appendFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createPiExtensionHost } from "./index.js";
 import { PiHistoryMapper } from "../history-mapper.js";
 import { parseToolArgs, parseToolResult } from "../tool-call-mapper.js";
@@ -30,10 +33,57 @@ const throwingAdapter: PiExtension = {
 };
 
 describe("Pi extension host", () => {
+  test("streams appended child rows before the child completes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-pi-live-child-"));
+    const file = join(dir, "child.jsonl");
+    const received: string[] = [];
+    const host = new PiExtensionHost([
+      {
+        id: "child",
+        createSession: () => ({
+          mapToolCall: () => ({
+            subagents: [{ type: "upsert", id: "child-1", status: "running" }],
+            childSessions: [{ id: "child-1", file }],
+          }),
+        }),
+      },
+    ]);
+    try {
+      host.follow((event) => {
+        if (event.type === "provider_subagent" && event.event.type === "timeline") {
+          received.push(JSON.stringify(event.event.item));
+        }
+      });
+      host.mapToolCall({
+        callId: "x",
+        toolName: "child",
+        args: {},
+        status: "completed",
+        result: null,
+      });
+      await appendFile(
+        file,
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"BEGIN"}]}}\n',
+      );
+      await expect.poll(() => received.length).toBe(1);
+      await appendFile(
+        file,
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"DO',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(received).toHaveLength(1);
+      await appendFile(file, 'NE"}]}}\n');
+      await expect.poll(() => received.length).toBe(2);
+      expect(received.join(" ")).toContain("DONE");
+    } finally {
+      host.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("declines a throwing adapter and preserves generic history", async () => {
     const host = createPiExtensionHost(undefined, [throwingAdapter]);
     const mapper = new PiHistoryMapper("pi", [], {}, host);
-    const events = mapper.mapMessages([
+    const events = await mapper.mapMessages([
       {
         role: "assistant",
         content: [{ type: "toolCall", id: "call-1", name: "other", arguments: {} }],
@@ -143,7 +193,7 @@ describe("Pi extension host", () => {
     await output?.hydration;
     expect(reads).toHaveLength(8);
   });
-  test("claims a tool, declines an unrelated one, and maps history like live events", () => {
+  test("claims a tool, declines an unrelated one, and maps history like live events", async () => {
     const host = createPiExtensionHost();
     const args = { agent: "scout", task: "Inspect files" };
     const result = parseToolResult({ content: [{ type: "text", text: "Found two files" }] });
@@ -160,7 +210,7 @@ describe("Pi extension host", () => {
           type: "sub_agent",
           subAgentType: "scout",
           description: "Inspect files",
-          log: "Found two files",
+          log: "",
         },
       }),
     );
@@ -175,7 +225,7 @@ describe("Pi extension host", () => {
     ).toBeUndefined();
 
     const mapper = new PiHistoryMapper("pi");
-    const events = mapper.mapMessages([
+    const events = await mapper.mapMessages([
       {
         role: "assistant",
         content: [{ type: "toolCall", id: "call-1", name: "subagent", arguments: args }],

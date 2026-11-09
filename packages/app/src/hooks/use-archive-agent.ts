@@ -367,6 +367,11 @@ function useArchiveAgentPendingQuery() {
   });
 }
 
+export function usePendingArchiveAgentKeys(): ReadonlySet<string> {
+  const pendingQuery = useArchiveAgentPendingQuery();
+  return useMemo(() => new Set(Object.keys(pendingQuery.data ?? {})), [pendingQuery.data]);
+}
+
 export function usePendingArchiveAgentIds(serverId: string): ReadonlySet<string> {
   const pendingQuery = useArchiveAgentPendingQuery();
   return useMemo(

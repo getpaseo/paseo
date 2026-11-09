@@ -1,13 +1,21 @@
-import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { useCallback } from "react";
+import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { ModalExamples } from "./client/examples";
 
+function ModalExamplesItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  const open = useCallback(() => openScreen({ screenId: "main" }), [openScreen]);
+  return (
+    <SidebarRow icon="PanelsTopLeft" active={currentScreen?.screenId === "main"} onPress={open} />
+  );
+}
+
 export default function contribute(plugin: PluginClientContext) {
-  plugin.addSurface("main", ModalExamples);
-  plugin.addSidebarItem({
+  plugin.addScreen({ id: "main", title: "Modal examples", Component: ModalExamples });
+  plugin.addSidebarHeaderItem({
     id: "main",
     title: "Modal examples",
-    icon: "PanelsTopLeft",
-    surface: "main",
+    Component: ModalExamplesItem,
   });
   plugin.addWorkspacePanel({
     id: "examples",

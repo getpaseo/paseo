@@ -10,7 +10,6 @@ interface KiroACPAgentClientOptions {
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
-  providerParams?: unknown;
 }
 
 // Kiro CLI publishes its slash commands and skills asynchronously through the
@@ -92,7 +91,6 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
       env: options.env,
       providerId: options.providerId,
       label: options.label,
-      providerParams: options.providerParams,
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: KIRO_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       extensionCommandsParser: parseKiroExtensionCommands,

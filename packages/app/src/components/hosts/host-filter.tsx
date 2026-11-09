@@ -2,13 +2,13 @@ import { useCallback, useMemo, useRef, useState, type ReactElement } from "react
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, Server } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { HostProfile } from "@/types/host-connection";
 import type { Theme } from "@/styles/theme";
 import {
   ALL_HOSTS_OPTION_ID,
   getHostPickerLabel,
   HostPicker,
   HostStatusDotSlot,
+  type HostPickerHost,
 } from "@/components/hosts/host-picker";
 
 const ThemedServer = withUnistyles(Server);
@@ -16,7 +16,7 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 export interface HostFilterProps {
-  hosts: HostProfile[];
+  hosts: HostPickerHost[];
   selectedHost: string;
   onSelectHost: (serverId: string) => void;
   /**
@@ -29,9 +29,9 @@ export interface HostFilterProps {
 }
 
 /**
- * The "All hosts / <host>" filter pill shared by the History and Schedules
- * screens: an anchored HostPicker with `includeAllHost`, hidden by the caller
- * when only one host exists. Copies the History layout exactly.
+ * The "All hosts / <host>" host pill shared by History, Schedules, Usage, the label manager and
+ * plugin screens: an anchored HostPicker, hidden by the caller when only one host exists. Without
+ * `includeAllHost` it picks the one host a surface shows.
  */
 export function HostFilter({
   hosts,
