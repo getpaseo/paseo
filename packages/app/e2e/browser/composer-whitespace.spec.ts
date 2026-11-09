@@ -634,19 +634,7 @@ test("fullscreen Send follows the visible viewport when it shrinks and pans", as
   }
 });
 
-async function composerScrollThumbBox(page: Page) {
-  const editor = (await composerLocator(page).boundingBox())!;
-  const thumbs = page.getByTestId("workspace-overlay-scrollbar-thumb");
-  for (const thumb of await thumbs.all()) {
-    const box = await thumb.boundingBox();
-    if (box && box.y >= editor.y - 1 && box.y + box.height <= editor.y + editor.height + 1) {
-      return box;
-    }
-  }
-  return null;
-}
-
-test("desktop long drafts stop growing and show a scrollbar inside the composer", async ({
+test("desktop long drafts stop growing at two fifths of the window and scroll", async ({
   page,
 }, testInfo) => {
   const agent = await seedMockAgentWorkspace({
@@ -654,7 +642,8 @@ test("desktop long drafts stop growing and show a scrollbar inside the composer"
     title: "Composer desktop cap",
   });
   try {
-    await page.setViewportSize({ width: 1512, height: 982 });
+    const viewport = { width: 1512, height: 982 };
+    await page.setViewportSize(viewport);
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
     const composer = composerLocator(page);
@@ -662,18 +651,8 @@ test("desktop long drafts stop growing and show a scrollbar inside the composer"
       "Inspect this repo and configure the workspace setup scripts.\n".repeat(40),
     );
     await expect.poll(() => composerHeight(page)).toBeGreaterThan(160);
-    expect(await composerHeight(page)).toBeLessThanOrEqual(260);
+    expect(await composerHeight(page)).toBeLessThanOrEqual(Math.floor(viewport.height * 0.4));
     expect(await composer.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-
-    await expect.poll(() => composerScrollThumbBox(page)).not.toBeNull();
-    const bottomThumb = (await composerScrollThumbBox(page))!;
-    await composer.evaluate((el) => {
-      el.scrollTop = 0;
-    });
-    await expect
-      .poll(async () => (await composerScrollThumbBox(page))?.y)
-      .toBeLessThan(bottomThumb.y);
-
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme });
       await page.screenshot({ path: testInfo.outputPath(`desktop-long-draft-${colorScheme}.png`) });

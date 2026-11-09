@@ -28,15 +28,12 @@ export function DomOverlayScrollbar({
     if (!scrollContainer) return;
     syncMetrics();
     scrollContainer.addEventListener("scroll", syncMetrics, { passive: true });
-    // An editable container grows its content without scrolling or resizing.
-    scrollContainer.addEventListener("input", syncMetrics);
     const observer = new ResizeObserver(syncMetrics);
     observer.observe(scrollContainer);
     const content = scrollContainer.firstElementChild;
     if (content) observer.observe(content);
     return () => {
       scrollContainer.removeEventListener("scroll", syncMetrics);
-      scrollContainer.removeEventListener("input", syncMetrics);
       observer.disconnect();
     };
   }, [scrollContainerRef, syncMetrics]);

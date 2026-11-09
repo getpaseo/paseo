@@ -19,13 +19,8 @@ export function installWebScrollbarStyles(): () => void {
   scrollbar-width: ${WEB_SCROLLBAR_WIDTH};
 }
 
-/* The composer draws an overlay thumb instead; see composer/input/scrollbar.web.tsx. */
 [data-composer-input] {
-  scrollbar-width: none;
-}
-
-[data-composer-input]::-webkit-scrollbar {
-  display: none;
+  scrollbar-gutter: stable;
 }
 
 *::-webkit-scrollbar {

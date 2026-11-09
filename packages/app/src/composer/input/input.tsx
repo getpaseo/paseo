@@ -85,7 +85,6 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
-import { ComposerScrollbar } from "./scrollbar";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
@@ -240,10 +239,7 @@ export interface MessageInputRef {
 const MIN_INPUT_HEIGHT_MOBILE = 30;
 const MIN_INPUT_HEIGHT_DESKTOP = 46;
 const DEFAULT_MAX_INPUT_HEIGHT = 160;
-// A long pasted prompt scrolls inside the editor instead of pushing the
-// conversation off screen; fullscreen editing is there for drafting at length.
-const MAX_INPUT_VIEWPORT_RATIO = 0.25;
-const MAX_INPUT_HEIGHT_CEILING = 260;
+const MAX_INPUT_VIEWPORT_RATIO = 0.4;
 const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
@@ -710,8 +706,6 @@ interface ComposerTextSurfaceProps {
   onBlur: () => void;
   editable: boolean;
   scrollEnabled: boolean;
-  /** Web: the mounted textarea; the overlay scrollbar tracks it once the draft scrolls. */
-  webTextareaRef: React.RefObject<HTMLElement | null>;
   autoFocus: boolean;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
@@ -788,7 +782,6 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      {props.scrollEnabled ? <ComposerScrollbar textareaRef={props.webTextareaRef} /> : null}
       <FocusHint
         visible={props.focusHintVisible}
         focusInputKeys={props.focusInputKeys}
@@ -1111,8 +1104,7 @@ function computeIsDictationStartEnabled(
 function resolveMaxInputHeight(windowHeight: number, compact: boolean): number {
   if (compact) return DEFAULT_MAX_INPUT_HEIGHT;
   if (!Number.isFinite(windowHeight) || windowHeight <= 0) return DEFAULT_MAX_INPUT_HEIGHT;
-  const proportional = Math.floor(windowHeight * MAX_INPUT_VIEWPORT_RATIO);
-  return Math.min(MAX_INPUT_HEIGHT_CEILING, Math.max(DEFAULT_MAX_INPUT_HEIGHT, proportional));
+  return Math.max(DEFAULT_MAX_INPUT_HEIGHT, Math.floor(windowHeight * MAX_INPUT_VIEWPORT_RATIO));
 }
 
 function isTextAreaLike(v: unknown): v is TextAreaHandle {
@@ -2153,7 +2145,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onBlur={handleInputBlur}
             editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
             scrollEnabled={isComposerScrollEnabled}
-            webTextareaRef={webTextareaRef}
             autoFocus={false}
             onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
             onSelectionChange={handleSelectionChange}
