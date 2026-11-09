@@ -2,6 +2,7 @@ import { test } from "../support/fixtures";
 import {
   CHECKLIST,
   withComposerToolsExample,
+  withPluginFocusingAComposer,
   withPluginWritingToAnotherWorkspace,
 } from "../support/helpers/plugin-composers-by-reference";
 
@@ -49,5 +50,58 @@ test("a plugin writes to an agent's composer while its workspace is not on scree
     await author.insertFromCommandCenter();
     await author.returnToTargetWorkspace();
     await author.expectComposerText("A note from a plugin");
+  });
+});
+
+test("a pill that inserts text and focuses leaves the cursor in the composer, ready to type", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingAComposer(page, async (author) => {
+    await author.openTargetAgent();
+    await author.moveFocusOutOfComposer();
+    await author.pressPill();
+    await author.expectComposerFocused();
+    await author.typeAtCursor(" world");
+    await author.expectComposerText("HELLO world");
+  });
+});
+
+test("focus reaches an agent in another tab of the workspace", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingAComposer(page, async (author) => {
+    await author.openTargetAgent();
+    await author.openOtherAgent();
+    await author.focusFromCommandCenter();
+    await author.expectOnTargetAgent();
+    await author.expectComposerFocused();
+  });
+});
+
+test("focus reaches an agent in another workspace, with the selection asked for", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingAComposer(page, async (author) => {
+    await author.openTargetAgent();
+    await author.fillComposer("typed before");
+    await author.goToAnotherWorkspace();
+    await author.selectPromptFromCommandCenter();
+    await author.expectOnTargetAgent();
+    await author.expectComposerFocused();
+    await author.typeAtCursor("replaced");
+    await author.expectComposerText("replaced");
+  });
+});
+
+test("focus closes the compact Explorer panel covering the composer", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingAComposer(page, async (author) => {
+    await author.useCompactLayout();
+    await author.openTargetAgent();
+    await author.coverComposerWithExplorerPanel();
+    await author.pressPanelFocusButton();
+    await author.expectExplorerPanelClosed();
+    await author.expectComposerFocused();
   });
 });

@@ -712,6 +712,17 @@ implementations provide it:
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
 
+`focus` differs per implementation on purpose. A running agent's model reveals the agent with
+`navigateToAgent` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
+input that is revealed attaches. `isRevealed` is stricter than `isLive`: a compact overlay panel and
+an unfocused pane leave the input live but unable to take the keyboard, so the agent is revealed
+first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change
+re-runs `attachInput`, which is what tells the pending request the input is on screen. The draft
+half has nothing to navigate to and does not pull the user back to a draft they left, so it rejects
+when not revealed. `toPluginComposer` clears the Command Center's focus restore, which would
+otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so
+the app's web-only `focusInput` stays separate and plugins go through `takeInputFocus`.
+
 `ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
 implementations and `toPluginComposer`; never branch on `context` in the host.
 

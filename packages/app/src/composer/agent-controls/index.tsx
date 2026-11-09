@@ -1181,6 +1181,8 @@ export const AgentControls = memo(function AgentControls({
             isLive: composerInput.isLive,
             setText: composerInput.setText,
             insertText: composerInput.insertText,
+            isRevealed: composerInput.isRevealed,
+            focus: composerInput.focus,
           })
         : undefined,
     [composer, composerInput],

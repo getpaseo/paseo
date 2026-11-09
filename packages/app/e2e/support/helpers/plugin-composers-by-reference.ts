@@ -12,6 +12,7 @@ import { getServerId } from "./server-id";
 import { createAgentTabFromMenu, ensureExplorerSidebar } from "./workspace-tabs";
 
 const WIDE = { width: 1440, height: 900 };
+const COMPACT = { width: 390, height: 844 };
 const CHECKLIST = "- [ ] Tests\n- [ ] Docs\n";
 
 type Workspace = Awaited<ReturnType<typeof seedWorkspace>>;
@@ -197,6 +198,190 @@ export async function withPluginWritingToAnotherWorkspace(
     });
   } finally {
     await client.removePlugin("composer-ref");
+    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+    await elsewhere.cleanup();
+    await workspace.cleanup();
+  }
+}
+
+/**
+ * A plugin that reaches one agent's composer from a pill and from Command Center items, and asks
+ * for focus, wherever the user is.
+ */
+export async function withPluginFocusingAComposer(
+  page: Page,
+  run: (author: {
+    openOtherAgent(): Promise<void>;
+    openTargetAgent(): Promise<void>;
+    goToAnotherWorkspace(): Promise<void>;
+    moveFocusOutOfComposer(): Promise<void>;
+    pressPill(): Promise<void>;
+    focusFromCommandCenter(): Promise<void>;
+    selectPromptFromCommandCenter(): Promise<void>;
+    useCompactLayout(): Promise<void>;
+    coverComposerWithExplorerPanel(): Promise<void>;
+    pressPanelFocusButton(): Promise<void>;
+    expectExplorerPanelClosed(): Promise<void>;
+    fillComposer(text: string): Promise<void>;
+    expectOnTargetAgent(): Promise<void>;
+    expectComposerFocused(): Promise<void>;
+    typeAtCursor(text: string): Promise<void>;
+    expectComposerText(text: string): Promise<void>;
+  }) => Promise<void>,
+) {
+  const workspace = await seedWorkspace({ repoPrefix: "composer-focus-", title: "Composer focus" });
+  const elsewhere = await seedWorkspace({ repoPrefix: "focus-away-", title: "Focus away" });
+  const target = await createMockAgent(workspace, "Target agent");
+  const other = await createMockAgent(workspace, "Other agent");
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-composer-focus-"));
+  const targetId = JSON.stringify(target.id);
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "composer-focus", requirements: pluginRequirements }),
+  );
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `import { Pressable, Text } from "react-native";
+
+export default function contribute(client) {
+  client.addComposerPill({
+    id: "hello",
+    workspaceId: ${JSON.stringify(workspace.workspaceId)},
+    agentId: ${targetId},
+    button: {
+      title: "Add HELLO to the composer",
+      icon: "Hand",
+      label: "Hello",
+      behavior: {
+        kind: "action",
+        async onPress() {
+          for (const composer of client.composers({ agentId: ${targetId} })) {
+            await composer.insertText("HELLO");
+            await composer.focus();
+          }
+        },
+      },
+    },
+  });
+  client.addWorkspacePanel({
+    id: "tools",
+    title: "Focus tools",
+    icon: "ListChecks",
+    locations: ["explorer"],
+    Component() {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Focus the target agent"
+          onPress={() => client.composers({ agentId: ${targetId} })[0]?.focus()}
+        >
+          <Text>Focus the target agent</Text>
+        </Pressable>
+      );
+    },
+  });
+  client.addCommandCenterItem({
+    id: "focus",
+    title: "Composer focus: focus the target",
+    icon: "Flag",
+    context: "global",
+    onSelect({ composers }) {
+      return composers({ agentId: ${targetId} })[0].focus();
+    },
+  });
+  client.addCommandCenterItem({
+    id: "select",
+    title: "Composer focus: select the prompt",
+    icon: "Flag",
+    context: "global",
+    onSelect({ composers }) {
+      const composer = composers({ agentId: ${targetId} })[0];
+      return composer.focus({ selection: { start: 0, end: composer.prompt.length } });
+    },
+  });
+  return () => {};
+}`,
+  );
+  const targetTab = () => page.getByTestId(`workspace-tab-agent_${target.id}`);
+  const workspaceRow = (id: string) =>
+    page.getByTestId(`sidebar-workspace-row-${getServerId()}:${id}`);
+  const panelFocusButton = () =>
+    page.getByRole("button", { name: "Focus the target agent", exact: true });
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize(WIDE);
+    await gotoAppShell(page);
+    await run({
+      openOtherAgent: () =>
+        test.step("open another agent, so the target's tab is not showing", async () => {
+          await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: other.id });
+          await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
+        }),
+      openTargetAgent: () =>
+        test.step("open the target agent", async () => {
+          await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: target.id });
+          await expect(prompt(page)).toBeVisible({ timeout: 30_000 });
+        }),
+      goToAnotherWorkspace: () =>
+        test.step("go to another workspace", async () => {
+          await workspaceRow(elsewhere.workspaceId).click();
+          await expect(targetTab().first()).toBeHidden();
+        }),
+      moveFocusOutOfComposer: () =>
+        test.step("the composer does not have focus", async () => {
+          await prompt(page).blur();
+          await expect(prompt(page)).not.toBeFocused();
+        }),
+      pressPill: () =>
+        test.step("press the pill", () => page.getByRole("button", { name: "Hello" }).click()),
+      focusFromCommandCenter: () =>
+        test.step("run the plugin's focus command", () =>
+          runCommand(page, "Composer focus: focus the target")),
+      selectPromptFromCommandCenter: () =>
+        test.step("run the plugin's select command", () =>
+          runCommand(page, "Composer focus: select the prompt")),
+      useCompactLayout: () =>
+        test.step("use a phone-sized window", () => page.setViewportSize(COMPACT)),
+      coverComposerWithExplorerPanel: () =>
+        test.step("open the plugin's panel in the Explorer, covering the composer", async () => {
+          const explorer = await ensureExplorerSidebar(page);
+          await explorer.getByRole("button", { name: "New tab", exact: true }).click();
+          await page
+            .getByTestId("workspace-new-tab-menu")
+            .filter({ visible: true })
+            .getByRole("menuitem", { name: "Focus tools", exact: true })
+            .click();
+          await expect(panelFocusButton()).toBeVisible();
+        }),
+      pressPanelFocusButton: () =>
+        test.step("press the panel's button", () => panelFocusButton().click()),
+      expectExplorerPanelClosed: () =>
+        test.step("the Explorer no longer covers the composer", () =>
+          expect(panelFocusButton()).toBeHidden({ timeout: 30_000 })),
+      fillComposer: (text) =>
+        test.step(`write "${text}" in the composer`, () => prompt(page).fill(text)),
+      expectOnTargetAgent: () =>
+        test.step("the target agent's tab is showing", async () => {
+          await expect(targetTab().filter({ visible: true }).first()).toHaveAttribute(
+            "aria-selected",
+            "true",
+            { timeout: 30_000 },
+          );
+        }),
+      expectComposerFocused: () =>
+        test.step("the composer input has focus", () =>
+          expect(prompt(page)).toBeFocused({ timeout: 30_000 })),
+      typeAtCursor: (text) => test.step(`type "${text}"`, () => page.keyboard.type(text)),
+      expectComposerText: (text) =>
+        test.step("the composer holds the text", () => expect(prompt(page)).toHaveValue(text)),
+    });
+  } finally {
+    await client.removePlugin("composer-focus");
     await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
     await client.close();
     await rm(directory, { recursive: true, force: true });
