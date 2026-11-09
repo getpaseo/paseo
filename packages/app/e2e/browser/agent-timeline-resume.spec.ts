@@ -63,7 +63,7 @@ test.describe("Agent timeline resume", () => {
 
       await test.step("back from the background", async () => {
         const requests = rememberTimelineRequestCounts(gate);
-        const expectNoUpdatingToast = await watchForUpdatingToast(page);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page, gate, requests);
 
         await hideTabAndReturn(page);
         await waitForResumeAnswer(gate, requests);
@@ -75,7 +75,7 @@ test.describe("Agent timeline resume", () => {
 
       await test.step("back from a dropped connection", async () => {
         const requests = rememberTimelineRequestCounts(gate);
-        const expectNoUpdatingToast = await watchForUpdatingToast(page);
+        const expectNoUpdatingToast = await watchForUpdatingToast(page, gate, requests);
 
         await disconnectViewedTimeline(page, gate);
         await restoreUnchangedViewedTimeline(page, gate);
@@ -88,7 +88,7 @@ test.describe("Agent timeline resume", () => {
       await test.step("back from reopening the app", async () => {
         const requests = rememberTimelineRequestCounts(gate);
 
-        const expectNoUpdatingToast = await reopenAppWatchingForUpdatingToast(page);
+        const expectNoUpdatingToast = await reopenAppWatchingForUpdatingToast(page, gate, requests);
         await waitForResumeAnswer(gate, requests);
         await expectTimelinePromptVisible(page, agent.newestPrompt);
 

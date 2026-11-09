@@ -13,6 +13,12 @@ const SUBSCRIPTION_REQUEST = "agent.timeline.set_subscription.request";
 const SUBSCRIPTION_RESPONSE = "agent.timeline.set_subscription.response";
 const TIMELINE_REQUEST = "fetch_agent_timeline_request";
 const TIMELINE_RESPONSE = "fetch_agent_timeline_response";
+/**
+ * A check unanswered after `FRESHNESS_CHECK_QUIET_MS` (500) reports Updating messages by design, and
+ * a loaded runner can take that long. The gate sees the answer before the app does, so this stops
+ * short of 500.
+ */
+const SLOW_ANSWER_MS = 300;
 
 export interface TimelineRequestCounts {
   agentId?: string;
@@ -78,7 +84,11 @@ export async function waitForResumeAnswer(
 }
 
 /** Records every appearance of the toast, including one that lasts a single commit. */
-export async function watchForUpdatingToast(page: Page): Promise<() => Promise<void>> {
+export async function watchForUpdatingToast(
+  page: Page,
+  gate: DaemonWebSocketGate,
+  before: TimelineRequestCounts,
+): Promise<() => Promise<void>> {
   const watch = await page.evaluateHandle(() => {
     let shown = false;
     const check = () => {
@@ -98,12 +108,16 @@ export async function watchForUpdatingToast(page: Page): Promise<() => Promise<v
     await waitForNextPaint(page);
     const shown = await watch.evaluate((recorder) => recorder.stop());
     await watch.dispose();
-    expect(shown, "the Updating messages toast appeared").toBe(false);
+    expectNoToastForPromptAnswer(shown, gate, before);
   };
 }
 
 /** Reopens the app on this chat, recording the toast from the first paint of the new page. */
-export async function reopenAppWatchingForUpdatingToast(page: Page): Promise<() => Promise<void>> {
+export async function reopenAppWatchingForUpdatingToast(
+  page: Page,
+  gate: DaemonWebSocketGate,
+  before: TimelineRequestCounts,
+): Promise<() => Promise<void>> {
   await page.addInitScript(() => {
     const recorder = window as Window & { updatingToastShown?: boolean };
     new MutationObserver(() => {
@@ -117,8 +131,22 @@ export async function reopenAppWatchingForUpdatingToast(page: Page): Promise<() 
     const shown = await page.evaluate(
       () => (window as Window & { updatingToastShown?: boolean }).updatingToastShown === true,
     );
-    expect(shown, "the Updating messages toast appeared").toBe(false);
+    expectNoToastForPromptAnswer(shown, gate, before);
   };
+}
+
+function expectNoToastForPromptAnswer(
+  shown: boolean,
+  gate: DaemonWebSocketGate,
+  before: TimelineRequestCounts,
+): void {
+  const slowest = gate.getSlowestAnswerMs(
+    SUBSCRIPTION_REQUEST,
+    SUBSCRIPTION_RESPONSE,
+    before.subscriptions,
+  );
+  if (slowest >= SLOW_ANSWER_MS) return;
+  expect(shown, "the Updating messages toast appeared").toBe(false);
 }
 
 async function waitForNextPaint(page: Page): Promise<void> {

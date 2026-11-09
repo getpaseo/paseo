@@ -328,8 +328,10 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
   };
   const clientRequestCounts = new Map<string, number>();
   const clientRequests = new Map<string, ClientRequest[]>();
+  const clientRequestTimes = new Map<string, number[]>();
   const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
+  const serverMessageTimes = new Map<string, number[]>();
   const agentStreamEventCounts = new Map<string, number>();
   const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
@@ -363,8 +365,13 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     const messageType = typeof message?.type === "string" ? message.type : null;
     const itemType = readAgentStreamItemType(message);
     const eventType = readAgentStreamEventType(message);
-    if (messageType)
+    if (messageType) {
       serverMessageCounts.set(messageType, (serverMessageCounts.get(messageType) ?? 0) + 1);
+      serverMessageTimes.set(messageType, [
+        ...(serverMessageTimes.get(messageType) ?? []),
+        Date.now(),
+      ]);
+    }
     if (itemType)
       agentStreamItemCounts.set(itemType, (agentStreamItemCounts.get(itemType) ?? 0) + 1);
     if (eventType)
@@ -481,6 +488,10 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
         const requests = clientRequests.get(request.type) ?? [];
         requests.push(request);
         clientRequests.set(request.type, requests);
+        clientRequestTimes.set(request.type, [
+          ...(clientRequestTimes.get(request.type) ?? []),
+          Date.now(),
+        ]);
       }
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
@@ -850,6 +861,17 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     },
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
+    },
+    /** The longest the daemon took to answer a request of this type since `fromIndex`, in ms. */
+    getSlowestAnswerMs(requestType: string, responseType: string, fromIndex = 0): number {
+      const answers = serverMessageTimes.get(responseType) ?? [];
+      const latencies = (clientRequestTimes.get(requestType) ?? [])
+        .slice(fromIndex)
+        .flatMap((askedAt) => {
+          const answeredAt = answers.find((at) => at >= askedAt);
+          return answeredAt === undefined ? [] : [answeredAt - askedAt];
+        });
+      return Math.max(0, ...latencies);
     },
     getClientRequests(type: string): ReadonlyArray<ClientRequest> {
       return [...(clientRequests.get(type) ?? [])];
