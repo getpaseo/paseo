@@ -1611,6 +1611,41 @@ describe("live workspace observation", () => {
     await session.cleanup();
   });
 
+  test("drops the warm-up reads still queued when the session is cleaned up", async () => {
+    const { session, projects, workspaces, workspaceGitService } =
+      createSessionForWorkspaceGitWatchTests();
+    const readings: Array<() => void> = [];
+    workspaceGitService.getSnapshot.mockImplementation(async (cwd: string) => {
+      await new Promise<void>((resolve) => readings.push(resolve));
+      return createWorkspaceRuntimeSnapshot(cwd);
+    });
+    for (const name of ["one", "two", "three"]) {
+      seedGitWorkspace({
+        projects,
+        workspaces,
+        projectId: "proj-1",
+        workspaceId: `ws-${name}`,
+        cwd: `/tmp/queued-${name}`,
+        name,
+        updatedAt: OLD,
+      });
+    }
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-list",
+      subscribe: { subscriptionId: "workspace-list" },
+    });
+    await vi.waitFor(() => expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(2));
+
+    await session.cleanup();
+    // Let the two admitted reads finish; the queued third must not start after cleanup.
+    readings.splice(0).forEach((resolve) => resolve());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(2);
+  });
+
   test("a session that does not project checkout status runs no liveness scans on agent events", async () => {
     const agents = [{ workspaceId: "ws-idle", lifecycle: "idle" as const, labels: {} }];
     const { session, projects, workspaces, agentEventListeners, livenessReads } =

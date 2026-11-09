@@ -9666,6 +9666,9 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    // Warm-up reads are fire-and-forget. Drop the ones still queued so nothing reads or re-arms a
+    // target for a session that no longer exists.
+    this.workspaceGitWarmUpLimit.clearQueue();
     this.unsubscribeSetupObservation();
     await this.delivery.close();
 
