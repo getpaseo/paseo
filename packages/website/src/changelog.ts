@@ -18,8 +18,12 @@ export interface ChangelogReleaseGroup {
   releases: ChangelogRelease[];
 }
 
+// The app's What's new sheet and the release scripts parse the same file with their own code.
+// `scripts/test-support/changelog-structure.json` holds the cases all three must split the same
+// way; a change to the structure rules starts there.
 const releaseHeadingPattern = /^## (.+?) - (\d{4}-\d{2}-\d{2})$/;
-const sectionHeadingPattern = /^### /;
+const sectionHeadingPattern = /^ {0,3}###(?:[ \t]|$)/;
+const fencePattern = /^\s*(`{3,}|~{3,})/;
 
 export function releaseAnchor(version: string): string {
   return `release-${version}`;
@@ -40,9 +44,20 @@ export function parseChangelog(markdown: string, locale: Locale): ChangelogRelea
   const releases: ReleaseDraft[] = [];
   const versions = new Set<string>();
   let currentRelease: ReleaseDraft | null = null;
+  // A `##` or `###` inside a fenced code block is an example, so it starts nothing.
+  let fence: string | null = null;
 
-  for (const line of markdown.split("\n")) {
-    const heading = line.match(releaseHeadingPattern);
+  for (const line of markdown.split(/\r?\n/)) {
+    const fenceEdge = line.match(fencePattern)?.[1];
+    if (fenceEdge) {
+      if (!fence) {
+        fence = fenceEdge;
+      } else if (fenceEdge[0] === fence[0] && fenceEdge.length >= fence.length) {
+        fence = null;
+      }
+    }
+
+    const heading = fence ? null : line.match(releaseHeadingPattern);
     if (heading) {
       const version = heading[1];
       if (versions.has(version)) {
@@ -56,7 +71,8 @@ export function parseChangelog(markdown: string, locale: Locale): ChangelogRelea
     }
 
     if (!currentRelease) continue;
-    if (currentRelease.sections.length > 0 || sectionHeadingPattern.test(line)) {
+    const startsSection = !fence && sectionHeadingPattern.test(line);
+    if (currentRelease.sections.length > 0 || startsSection) {
       currentRelease.sections.push(line);
     } else {
       currentRelease.highlights.push(line);
@@ -67,10 +83,18 @@ export function parseChangelog(markdown: string, locale: Locale): ChangelogRelea
   return releases.map((release) => ({
     version: release.version,
     date: release.date,
-    highlights: release.highlights.join("\n").trim(),
-    sections: release.sections.join("\n").trim(),
+    highlights: joinWithoutBlankEdges(release.highlights),
+    sections: joinWithoutBlankEdges(release.sections),
     locale,
   }));
+}
+
+function joinWithoutBlankEdges(lines: string[]): string {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start].trim() === "") start += 1;
+  while (end > start && lines[end - 1].trim() === "") end -= 1;
+  return lines.slice(start, end).join("\n");
 }
 
 /**

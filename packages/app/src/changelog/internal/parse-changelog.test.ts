@@ -36,6 +36,25 @@ function isNotBlank(line: string): boolean {
   return line.trim().length > 0;
 }
 
+function readRepositoryFile(path: string): string {
+  return readFileSync(fileURLToPath(new URL(`../../../../../${path}`, import.meta.url)), "utf8");
+}
+
+/** The cases the app, the website and the release scripts must all split the same way. */
+interface ChangelogStructureCases {
+  document: string[];
+  releases: {
+    version: string;
+    date: string;
+    highlights: string[];
+    sectionTitles: string[];
+  }[];
+}
+
+const structureCases: ChangelogStructureCases = JSON.parse(
+  readRepositoryFile("scripts/test-support/changelog-structure.json"),
+);
+
 describe("parseChangelog", () => {
   it("reads the shape the changelog is authored in today", () => {
     const releases = parseChangelog(
@@ -300,12 +319,38 @@ describe("formatChangelogDate", () => {
   });
 });
 
+describe("the structure every changelog surface shares", () => {
+  for (const lineEnding of ["\n", "\r\n"]) {
+    it(`splits the shared cases with ${JSON.stringify(lineEnding)} line endings`, () => {
+      const releases = parseChangelog(structureCases.document.join(lineEnding));
+
+      expect(
+        releases.map((release) => ({
+          version: release.version,
+          date: release.date,
+          highlights: release.highlights.split("\n").filter(isNotBlank),
+          sectionTitles: release.sections.map(sectionTitle),
+        })),
+      ).toEqual(
+        structureCases.releases.map((release) => ({
+          version: release.version,
+          date: release.date,
+          highlights: release.highlights.filter(isNotBlank),
+          sectionTitles: release.sectionTitles,
+        })),
+      );
+    });
+  }
+});
+
 describe("the repository's own CHANGELOG.md", () => {
-  const markdown = readFileSync(
-    fileURLToPath(new URL("../../../../../CHANGELOG.md", import.meta.url)),
-    "utf8",
-  );
+  const markdown = readRepositoryFile("CHANGELOG.md");
   const releases = parseChangelog(markdown);
+
+  it("finds a release for every release heading line", () => {
+    const headingLines = markdown.split("\n").filter((line) => line.startsWith("## "));
+    expect(releases).toHaveLength(headingLines.length);
+  });
 
   it("parses every release heading", () => {
     expect(releases.length).toBeGreaterThan(50);
