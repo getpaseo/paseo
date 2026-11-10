@@ -560,6 +560,9 @@ export class ScheduleService {
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
+    if (this.stopping) {
+      throw new ScheduleStateConflictError(`Schedule service is shutting down`);
+    }
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {
       throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
@@ -572,9 +575,7 @@ export class ScheduleService {
   }
 
   async tick(): Promise<void> {
-    if (this.stopping) {
-      return;
-    }
+    this.stopping = false;
     const now = this.now();
     const schedules = await this.store.list();
     for (const schedule of schedules) {

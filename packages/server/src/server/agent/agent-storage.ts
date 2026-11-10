@@ -163,8 +163,9 @@ export class AgentStorage {
 
   async listActive(options?: { includeArchived?: boolean }): Promise<StoredAgentRecord[]> {
     await this.load();
-    return Array.from(options?.includeArchived ? this.cache.keys() : this.activeIds, (id) =>
-      this.cache.get(id)!,
+    return Array.from(
+      options?.includeArchived ? this.cache.keys() : this.activeIds,
+      (id) => this.cache.get(id)!,
     );
   }
 
@@ -416,15 +417,17 @@ export class AgentStorage {
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
       if (existing?.resumeOnStartup) {
-        const keepOnShutdown =
-          this.shuttingDown &&
-          (this.preserveResumeOnShutdown === null || this.preserveResumeOnShutdown(agent.id));
-        record.resumeOnStartup = keepOnShutdown
-          ? true
-          : agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+        record.resumeOnStartup = this.resolveResumeOnStartup(agent);
       }
       return record;
     });
+  }
+
+  private resolveResumeOnStartup(agent: ManagedAgent): boolean {
+    const keepOnShutdown =
+      this.shuttingDown &&
+      (this.preserveResumeOnShutdown === null || this.preserveResumeOnShutdown(agent.id));
+    return keepOnShutdown ? true : agent.lifecycle !== "idle" && agent.lifecycle !== "error";
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

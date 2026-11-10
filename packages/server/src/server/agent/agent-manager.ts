@@ -3198,7 +3198,7 @@ export class AgentManager {
           provider: agent.provider,
           error: errorMsg,
         });
-        this.finalizeForegroundTurn(agent, undefined, "turn_failed");
+        this.finalizeForegroundTurn({ agent, terminalEventType: "turn_failed" });
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
         this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -3395,11 +3395,12 @@ export class AgentManager {
     return streamForwarder;
   }
 
-  private finalizeForegroundTurn(
-    agent: ActiveManagedAgent,
-    turnId?: string,
-    terminalEventType?: "turn_completed" | "turn_failed" | "turn_canceled",
-  ): void {
+  private finalizeForegroundTurn(params: {
+    agent: ActiveManagedAgent;
+    turnId?: string;
+    terminalEventType?: "turn_completed" | "turn_failed" | "turn_canceled";
+  }): void {
+    const { agent, turnId, terminalEventType } = params;
     const mutableAgent = agent;
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
@@ -5122,7 +5123,11 @@ export class AgentManager {
       if (isTurnTerminalEvent(event)) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
-          this.finalizeForegroundTurn(agent, eventTurnId, event.type);
+          this.finalizeForegroundTurn({
+            agent,
+            turnId: eventTurnId,
+            terminalEventType: event.type,
+          });
         }
       }
 
