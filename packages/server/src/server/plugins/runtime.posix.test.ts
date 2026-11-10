@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
@@ -1934,6 +1934,40 @@ export default function contribute(plugin: any) {
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
+  });
+
+  it("exits a plugin process when its channel to the daemon closes without a shutdown", async () => {
+    const directory = await createPlugin(
+      "orphaned",
+      // A timer keeps the process alive the way a polling plugin does.
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  const timer = setInterval(() => undefined, 1_000);
+  return () => clearInterval(timer);
+}`,
+    );
+    const spawned: Array<ReturnType<typeof spawnObservedPluginProcess>> = [];
+    const exits: Array<Promise<number | null>> = [];
+    const runtime = createTestRuntime({
+      spawnChild: () => {
+        const child = spawnObservedPluginProcess(() => undefined);
+        exits.push(new Promise((resolve) => child.once("exit", resolve)));
+        spawned.push(child);
+        return child;
+      },
+    });
+    // If the process never exits (the failure this test catches), do not leave it running.
+    onTestFinished(() => {
+      for (const child of spawned) if (child.exitCode === null) child.kill("SIGKILL");
+    });
+    await runtime.startPlugin("orphaned", directory);
+    expect(spawned).toHaveLength(1);
+
+    // What the plugin sees when its daemon worker dies: the IPC channel closes, no shutdown request.
+    spawned[0]!.disconnect();
+
+    // In a real crash the daemon side is gone, so there is no runtime state left to stop here.
+    await expect(exits[0]).resolves.toBe(0);
   });
 
   it("re-attaches a plugin session when the daemon closes the socket under a live child", async () => {
