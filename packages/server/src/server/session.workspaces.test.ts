@@ -1,4 +1,4 @@
-import { AgentDirectory } from "./agent/directory.js";
+import { AgentDirectory, type AgentDirectoryCandidate } from "./agent/directory.js";
 import { buildStoredAgentPayload } from "./agent/agent-projections.js";
 import {
   createWorkspaceRuntimeStore,
@@ -173,6 +173,8 @@ interface SessionTestAccess {
   handleMessage(message: unknown, source?: object): Promise<unknown>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
+  listAgentCandidates(...args: unknown[]): Promise<AgentDirectoryCandidate[]>;
+  buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
   listFetchAgentsEntries(params: unknown): Promise<ListFetchResult>;
   resolveAgentIdentifier(identifier: string): Promise<unknown>;
@@ -293,6 +295,10 @@ function makeAgent(input: {
     attentionTimestamp: input.attentionTimestamp ?? null,
     archivedAt: null,
   };
+}
+
+function storedCandidate(record: StoredAgentRecord): AgentDirectoryCandidate {
+  return { kind: "stored", record };
 }
 
 function makeStoredAgent(input: {
@@ -2826,45 +2832,48 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
     archivedWorkspace,
     workspaceInArchivedProject,
   ];
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: "agent-active",
-      cwd: "/tmp/active",
-      workspaceId: "ws-active",
-      status: "idle",
-      updatedAt: "2026-03-01T12:04:00.000Z",
-    }),
-    makeAgent({
-      id: "agent-subdir",
-      cwd: "/tmp/active/packages/app",
-      workspaceId: "ws-active",
-      status: "idle",
-      updatedAt: "2026-03-01T12:03:00.000Z",
-    }),
-    makeAgent({
-      id: "agent-archived-workspace",
-      cwd: "/tmp/archived-workspace",
-      workspaceId: "ws-archived",
-      status: "idle",
-      updatedAt: "2026-03-01T12:02:00.000Z",
-    }),
-    makeAgent({
-      id: "agent-archived-project",
-      cwd: "/tmp/archived-project",
-      workspaceId: "ws-archived-project",
-      status: "idle",
-      updatedAt: "2026-03-01T12:01:00.000Z",
-    }),
-    {
-      ...makeAgent({
+  session.listAgentCandidates = async () => [
+    storedCandidate(
+      makeStoredAgent({
+        id: "agent-active",
+        cwd: "/tmp/active",
+        workspaceId: "ws-active",
+        updatedAt: "2026-03-01T12:04:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "agent-subdir",
+        cwd: "/tmp/active/packages/app",
+        workspaceId: "ws-active",
+        updatedAt: "2026-03-01T12:03:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "agent-archived-workspace",
+        cwd: "/tmp/archived-workspace",
+        workspaceId: "ws-archived",
+        updatedAt: "2026-03-01T12:02:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "agent-archived-project",
+        cwd: "/tmp/archived-project",
+        workspaceId: "ws-archived-project",
+        updatedAt: "2026-03-01T12:01:00.000Z",
+      }),
+    ),
+    storedCandidate({
+      ...makeStoredAgent({
         id: "agent-archived",
         cwd: "/tmp/active",
         workspaceId: "ws-active",
-        status: "idle",
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
       archivedAt,
-    },
+    }),
   ];
 
   const result = await session.listFetchAgentsEntries({
@@ -2924,28 +2933,31 @@ test("active-scoped fetch_agents pages within active scope instead of global his
     activeTwo,
     archivedWorkspace,
   ];
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: "active-one",
-      cwd: "/tmp/pages/one",
-      workspaceId: "ws-active-one",
-      status: "idle",
-      updatedAt: "2026-03-01T12:03:00.000Z",
-    }),
-    makeAgent({
-      id: "stale-between",
-      cwd: "/tmp/pages/stale",
-      workspaceId: "ws-stale",
-      status: "idle",
-      updatedAt: "2026-03-01T12:02:00.000Z",
-    }),
-    makeAgent({
-      id: "active-two",
-      cwd: "/tmp/pages/two",
-      workspaceId: "ws-active-two",
-      status: "idle",
-      updatedAt: "2026-03-01T12:01:00.000Z",
-    }),
+  session.listAgentCandidates = async () => [
+    storedCandidate(
+      makeStoredAgent({
+        id: "active-one",
+        cwd: "/tmp/pages/one",
+        workspaceId: "ws-active-one",
+        updatedAt: "2026-03-01T12:03:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "stale-between",
+        cwd: "/tmp/pages/stale",
+        workspaceId: "ws-stale",
+        updatedAt: "2026-03-01T12:02:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "active-two",
+        cwd: "/tmp/pages/two",
+        workspaceId: "ws-active-two",
+        updatedAt: "2026-03-01T12:01:00.000Z",
+      }),
+    ),
   ];
 
   const firstPage = await session.listFetchAgentsEntries({
@@ -3009,21 +3021,23 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
     [activeWorkspace, archivedWorkspace].find(
       (workspace) => workspace.workspaceId === workspaceId,
     ) ?? null;
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: "legacy-active",
-      cwd: activeCwd,
-      workspaceId: "ws-legacy-active",
-      status: "idle",
-      updatedAt: "2026-03-01T12:01:00.000Z",
-    }),
-    makeAgent({
-      id: "legacy-archived-workspace",
-      cwd: archivedCwd,
-      workspaceId: "ws-legacy-archived",
-      status: "idle",
-      updatedAt: "2026-03-01T12:00:00.000Z",
-    }),
+  session.listAgentCandidates = async () => [
+    storedCandidate(
+      makeStoredAgent({
+        id: "legacy-active",
+        cwd: activeCwd,
+        workspaceId: "ws-legacy-active",
+        updatedAt: "2026-03-01T12:01:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "legacy-archived-workspace",
+        cwd: archivedCwd,
+        workspaceId: "ws-legacy-archived",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    ),
   ];
 
   const result = await session.listFetchAgentsEntries({
@@ -3068,17 +3082,16 @@ test("fetch_agent_history_request pages archived historical rows separately", as
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
-    {
-      ...makeAgent({
+  session.listAgentCandidates = async () => [
+    storedCandidate({
+      ...makeStoredAgent({
         id: "history-archived",
         cwd: historyCwd,
         workspaceId: "ws-history",
-        status: "idle",
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
       archivedAt: "2026-03-02T12:00:00.000Z",
-    },
+    }),
   ];
 
   await session.handleMessage({
@@ -3138,38 +3151,35 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  session.listAgentCandidates = async () => [
     // Search keeps chronological order, skipping unrelated rows between pages.
-    {
-      ...makeAgent({
+    storedCandidate({
+      ...makeStoredAgent({
         id: "weak",
         cwd: historyCwd,
         workspaceId: "ws-search",
-        status: "idle",
         updatedAt: "2026-03-03T12:00:00.000Z",
       }),
       title: "Unbilled usage report",
-    },
-    {
-      ...makeAgent({
+    }),
+    storedCandidate({
+      ...makeStoredAgent({
         id: "unrelated",
         cwd: historyCwd,
         workspaceId: "ws-search",
-        status: "idle",
         updatedAt: "2026-03-02T12:00:00.000Z",
       }),
       title: "Terminal resize fix",
-    },
-    {
-      ...makeAgent({
+    }),
+    storedCandidate({
+      ...makeStoredAgent({
         id: "strong",
         cwd: historyCwd,
         workspaceId: "ws-search",
-        status: "idle",
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
       title: "Add Stripe billing",
-    },
+    }),
   ];
 
   await session.handleMessage({
@@ -3226,17 +3236,16 @@ test("fetch_agent_history_request rejects a malformed search cursor", async () =
     workspace,
   ];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
-    {
-      ...makeAgent({
+  session.listAgentCandidates = async () => [
+    storedCandidate({
+      ...makeStoredAgent({
         id: "match",
         cwd: historyCwd,
         workspaceId: "ws-cursor",
-        status: "idle",
         updatedAt: "2026-03-01T12:00:00.000Z",
       }),
       title: "Add Stripe billing",
-    },
+    }),
   ];
 
   // Search uses the same validated chronological cursor as unfiltered history.
@@ -3299,21 +3308,23 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
   session.workspaceRegistry.get = async (workspaceId: string) =>
     [stableWorkspace, orphanWorkspace].find((workspace) => workspace.workspaceId === workspaceId) ??
     null;
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: "history-orphan",
-      cwd: orphanCwd,
-      workspaceId: orphanWorkspace.workspaceId,
-      status: "idle",
-      updatedAt: "2026-03-01T12:01:00.000Z",
-    }),
-    makeAgent({
-      id: "history-stable",
-      cwd: stableCwd,
-      workspaceId: stableWorkspace.workspaceId,
-      status: "closed",
-      updatedAt: "2026-03-01T12:00:00.000Z",
-    }),
+  session.listAgentCandidates = async () => [
+    storedCandidate(
+      makeStoredAgent({
+        id: "history-orphan",
+        cwd: orphanCwd,
+        workspaceId: orphanWorkspace.workspaceId,
+        updatedAt: "2026-03-01T12:01:00.000Z",
+      }),
+    ),
+    storedCandidate(
+      makeStoredAgent({
+        id: "history-stable",
+        cwd: stableCwd,
+        workspaceId: stableWorkspace.workspaceId,
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    ),
   ];
 
   await session.handleMessage({
@@ -3345,6 +3356,85 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
       }),
     },
   ]);
+});
+
+test("fetch_agents pages project only their page and keep the full-sort order", async () => {
+  const session = createSessionForWorkspaceTests();
+  const historyCwd = path.resolve("/tmp/history-paging");
+  const project = createPersistedProjectRecord({
+    projectId: "proj-paging",
+    rootPath: historyCwd,
+    kind: "non_git",
+    displayName: "paging",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-paging",
+    projectId: project.projectId,
+    cwd: historyCwd,
+    kind: "directory",
+    displayName: "paging",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.projectRegistry.get = async () => project;
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
+  session.workspaceRegistry.get = async () => workspace;
+
+  const total = 11_000;
+  const newest = Date.parse("2026-03-01T12:00:00.000Z");
+  const records: StoredAgentRecord[] = Array.from({ length: total }, (_, index) => ({
+    ...makeStoredAgent({
+      id: `agent-${String(index).padStart(5, "0")}`,
+      cwd: historyCwd,
+      workspaceId: workspace.workspaceId,
+      // Pairs share a timestamp so the id tiebreak is exercised as well.
+      updatedAt: new Date(newest - Math.floor(index / 2) * 60_000).toISOString(),
+    }),
+    // Every other row is archived, so pages must continue across archived records.
+    archivedAt: index % 2 === 0 ? "2026-03-02T12:00:00.000Z" : null,
+  }));
+  session.listAgentCandidates = async () => records.map(storedCandidate);
+
+  const projected = vi.spyOn(session, "buildStoredAgentPayload");
+  const limit = 200;
+
+  const firstPage = await session.listFetchAgentsEntries({
+    type: "fetch_agent_history_request",
+    requestId: "req-paging-1",
+    page: { limit },
+  });
+  expect(firstPage.entries).toHaveLength(limit);
+  expect(firstPage.pageInfo.hasMore).toBe(true);
+  expect(projected).toHaveBeenCalledTimes(limit + 1);
+
+  projected.mockClear();
+  const secondPage = await session.listFetchAgentsEntries({
+    type: "fetch_agent_history_request",
+    requestId: "req-paging-2",
+    page: { limit, cursor: firstPage.pageInfo.nextCursor },
+  });
+  expect(secondPage.entries).toHaveLength(limit);
+  expect(projected).toHaveBeenCalledTimes(limit + 1);
+
+  // The paged result is the same order the pager produced when it sorted every payload.
+  const expectedIds = records
+    .toSorted(
+      (left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.id.localeCompare(right.id),
+    )
+    .slice(0, limit * 2)
+    .map((record) => record.id);
+  const firstIds = agentIdsFromEntries(firstPage.entries);
+  const secondIds = agentIdsFromEntries(secondPage.entries);
+  expect([...firstIds, ...secondIds]).toEqual(expectedIds);
+  expect(new Set([...firstIds, ...secondIds]).size).toBe(limit * 2);
+  expect(firstPage.entries.some((entry) => entry.agent.archivedAt)).toBe(true);
+  expect(secondPage.entries.some((entry) => entry.agent.archivedAt)).toBe(true);
 });
 
 test("fetch_recent_provider_sessions_request lists importable provider sessions by handle", async () => {
