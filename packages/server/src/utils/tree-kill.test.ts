@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   createTreeKillTerminator,
   parseProcStat,
@@ -12,11 +12,6 @@ import {
   type ProcessTableEntry,
   type TreeKillTarget,
 } from "./tree-kill.js";
-
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, readdir: vi.fn(original.readdir), readFile: vi.fn(original.readFile) };
-});
 
 const pollIntervalMs = 50;
 
@@ -438,22 +433,26 @@ describe("session boundaries", () => {
 });
 
 describe.runIf(process.platform === "linux")("Linux process table failures", () => {
-  afterEach(() => vi.restoreAllMocks());
+  function fileSystemWithFailure(
+    code: string,
+  ): NonNullable<Parameters<typeof readProcessTable>[0]> {
+    return {
+      readdir: async () => ["100", "101"],
+      readFile: async (path) => {
+        if (path === "/proc/100/stat") return "100 (agent) S 1 100 100";
+        throw Object.assign(new Error(code), { code });
+      },
+    };
+  }
 
   test.each(["EMFILE", "EACCES"])("rejects a partial table on %s", async (code) => {
-    vi.mocked(readdir).mockResolvedValueOnce(["100", "101"] as never);
-    vi.mocked(readFile)
-      .mockImplementationOnce(async () => "100 (agent) S 1 100 100")
-      .mockRejectedValueOnce(Object.assign(new Error(code), { code }));
-    expect(await readProcessTable()).toBeNull();
+    expect(await readProcessTable(fileSystemWithFailure(code))).toBeNull();
   });
 
   test.each(["ENOENT", "ESRCH"])("ignores a process that vanished with %s", async (code) => {
-    vi.mocked(readdir).mockResolvedValueOnce(["100", "101"] as never);
-    vi.mocked(readFile)
-      .mockImplementationOnce(async () => "100 (agent) S 1 100 100")
-      .mockRejectedValueOnce(Object.assign(new Error(code), { code }));
-    expect(await readProcessTable()).toEqual([{ pid: 100, ppid: 1, sessionLeader: true }]);
+    expect(await readProcessTable(fileSystemWithFailure(code))).toEqual([
+      { pid: 100, ppid: 1, sessionLeader: true },
+    ]);
   });
 });
 

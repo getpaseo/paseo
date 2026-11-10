@@ -174,21 +174,35 @@ async function signalAttachedProcessTree(
   }
 }
 
-export function readProcessTable(): Promise<ProcessTableEntry[] | null> {
+interface ProcFileSystem {
+  readdir(path: string): Promise<string[]>;
+  readFile(path: string): Promise<string>;
+}
+
+const procFileSystem: ProcFileSystem = {
+  readdir: (path) => readdir(path),
+  readFile: (path) => readFile(path, "utf8"),
+};
+
+export function readProcessTable(
+  fileSystem: ProcFileSystem = procFileSystem,
+): Promise<ProcessTableEntry[] | null> {
   if (process.platform === "win32") {
     // tree-kill's taskkill /T owns Windows; there is no session to detach into.
     return Promise.resolve(null);
   }
   if (process.platform === "linux") {
-    return readLinuxProcessTable();
+    return readLinuxProcessTable(fileSystem);
   }
   return readPsProcessTable();
 }
 
-async function readLinuxProcessTable(): Promise<ProcessTableEntry[] | null> {
+async function readLinuxProcessTable(
+  fileSystem: ProcFileSystem,
+): Promise<ProcessTableEntry[] | null> {
   let names: string[];
   try {
-    names = await readdir("/proc");
+    names = await fileSystem.readdir("/proc");
   } catch {
     return null;
   }
@@ -200,7 +214,7 @@ async function readLinuxProcessTable(): Promise<ProcessTableEntry[] | null> {
     const entries = await Promise.all(
       pids.slice(index, index + 32).map(async (name) => {
         try {
-          const entry = parseProcStat(await readFile(`/proc/${name}/stat`, "utf8"));
+          const entry = parseProcStat(await fileSystem.readFile(`/proc/${name}/stat`));
           if (!entry) throw new Error("Invalid process stat");
           return entry;
         } catch (error) {
