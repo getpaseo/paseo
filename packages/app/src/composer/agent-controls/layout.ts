@@ -1,6 +1,7 @@
 import {
   TOOLBAR_CONTROL_GAPS,
-  TOOLBAR_CONTROL_SIZES,
+  TOOLBAR_DISC_SIZES,
+  TOOLBAR_LABEL_PADDING,
   toolbarGlyphsFor,
   type ControlSizing,
   type ToolbarGlyphs,
@@ -50,25 +51,19 @@ export interface ComposerToolbarGeometry {
   glyphs: ToolbarGlyphs;
   controlGap: number;
   iconLabelGap: number;
-  /** A labelled control's padding on each side, as far as it takes room in the row. */
+  /** A labelled control's padding on each side. */
   labelPadding: number;
   caretSize: number;
 }
 
-/**
- * The toolbar's measurements under a control sizing; see `resolveControlSizing`. Touch-sized a
- * control lays out at the width of what it paints (`toolbarSlot`, `toolbarContentSlot`), so an
- * icon-only control takes its glyph's width and a picker's padding takes no room.
- */
+/** The toolbar's measurements under a control sizing; see `resolveControlSizing`. */
 export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarGeometry {
-  const glyphs = toolbarGlyphsFor(sizing);
-  const isTouch = sizing === "touch";
   return {
-    controlSize: isTouch ? glyphs.icon.size : TOOLBAR_CONTROL_SIZES.pointer,
-    glyphs,
+    controlSize: TOOLBAR_DISC_SIZES[sizing],
+    glyphs: toolbarGlyphsFor(sizing),
     controlGap: TOOLBAR_CONTROL_GAPS[sizing],
     iconLabelGap: 4,
-    labelPadding: isTouch ? 0 : 8,
+    labelPadding: TOOLBAR_LABEL_PADDING,
     caretSize: 14,
   };
 }
