@@ -1,0 +1,44 @@
+Adversarial security review: TH1-2410 / hteo1337/paseo#10
+Model: GPT-6 (Codex). The exact runtime model variant is not exposed to this session; gpt-6.1-sol execution is not independently verified.
+Reviewed HEAD: e82fdddf0ff669f156fe5e773f09601d67d34ca1
+Base: f9ab1a93a07ba435700621dfa2d4600d6f5b01a9
+Scope: git diff th1-2410-device-credentials...th1-2410-hardening and reachable authorization/transport paths.
+
+Findings
+No BLOCKING or NON-BLOCKING security findings identified in the scoped hardening diff.
+
+S1: nothing found.
+- packages/client/src/daemon-client.ts:6117-6137 deletes only when helloAuth is deviceCredential and helloRejectedReason is incorrect_password. A forged 4002 / Incorrect password close alone selects the one-attempt password fallback without calling the deletion callback.
+- packages/client/src/daemon-client.ts:1608-1611 consumes and resets skipDeviceCredentialOnce before auth selection; the following ordinary attempt uses the retained credential again. A second password rejection follows normal auth-failure handling rather than recursively taking the device fallback. Continued relay interference can deny service, but does not itself delete the credential.
+- packages/client/src/daemon-client.ts:1668 resets helloRejectedReason for each constructed transport before handlers are registered. disposeTransport removes the prior transport listeners, and incoming messages also check transport identity (1780). No previous-attempt rejection leakage was identified.
+- packages/server/src/server/websocket-server.ts:2008-2020 sends hello.rejected whenever hello.auth exists. A genuinely revoked credential therefore receives the in-channel incorrect_password signal on its next hello. A live Credential revoked close leads to reconnect and that admission rejection; it need not delete on the initial close.
+- Legacy-channel attack considered: stripping the protected handshake can select legacy when no floor is pinned, and legacy has no replay counters. However, packages/relay/src/secure-channel.ts:163 creates a fresh client key for every attempt; box ciphertext from another attempt does not authenticate under that key. A bare legacy ready cannot create an authenticated rejection. Replaying a rejection within the same key context requires an actual daemon rejection in that context. No relay-only way to manufacture that rejection for an accepted credential was found. This conclusion does not claim that legacy mode has general replay protection; the documented daemon-side replay limitation remains.
+- The app deletion callbacks at packages/app/src/runtime/host-runtime.ts:602 and :706 remain reachable through the client's rejection callback, not the close parser.
+
+S2: nothing found.
+- packages/server/src/server/websocket-server.ts:1648-1655 derives authority from the actual request socket and marks VirtualHostSocket OR session.isRouted() as routed. packages/server/src/server/device-credentials.ts:26 rejects routed authority and non-owner principals even with every permission.
+- packages/server/src/server/connected-hosts/link.ts:190-198 overrides routed to true and namespaces clientId before admission. Omitting or falsifying routed in the caller hello cannot bypass the VirtualHostSocket check.
+- Resume attack considered: resumeSession at websocket-server.ts:2039 changes the shared session's routed flag. A direct socket resuming a routed session still needs independently valid owner admission. Existing virtual sockets remain denied by instanceof even if that direct resume clears the flag. A routed resume setting the flag true conservatively denies issuance on sibling direct sockets.
+- Pairing-offer includePairingToken reaches the same mintToken authority check through session/daemon/daemon-session.ts:242 and websocket-server.ts:1688. DeviceCredentials.mintToken independently requires isFullOwner (device-credentials.ts:116-117). No alternative production mintToken caller was found.
+- Hub admission is assigned a hub: principal by hub/relationship-controller.ts:637 and passed through bootstrap.ts:1352. Resume keys include principalId (websocket-server.ts:3212), so a Hub-selected clientId does not resume an owner session.
+
+S3: nothing found.
+- packages/server/src/server/websocket-server.ts:1684-1696 applies isFullOwner to both list and revoke. A narrowed session with access.manage gets [] / false before touching the store, including id="*".
+- session.ts:3211 and device-access.ts route these RPCs through those closures using the source socket. Searching production callers found no alternate RPC exposing DeviceCredentials.list/revoke without these checks. The low-level store methods are internal primitives, not independently exposed RPCs.
+
+Protocol/app: nothing found.
+- No packages/protocol files or wire schemas changed in this diff. Existing list/revoke response shapes are retained; denial changes their values only.
+- packages/app/src/runtime/host-runtime.ts:1565 skips enrollment when the active connection is routed. Direct and relay connections retain enrollment. Server-side checks independently enforce the boundary.
+- Coverage limitation: the changed app test removes routed from the positive enrollment cases but adds no explicit routed negative assertion. Virtual-socket resume and real encrypted legacy rejection scenarios were inspected in source, not dynamically exercised here.
+
+Verification
+- Initial worktree was clean; HEAD and both comparison refs verified locally.
+- packages/client: npx vitest run src/daemon-client.test.ts --bail=1 -> exit 127, vitest: command not found; no tests executed.
+- packages/server: npx vitest run src/server/bootstrap-auth.test.ts src/server/device-credentials.test.ts --bail=1 -> exit 127, vitest: command not found; no tests executed.
+- npm ci --prefer-offline --no-audit --no-fund -> exit 190, ENOTEMPTY removing packages/expo-two-way-audio/node_modules/expo-modules-core/ios/Tests. Log: /tmp/th1-2410-review-npm-ci.log.
+- Same npm ci command retried once -> exit 190, ENOTEMPTY removing node_modules/es-toolkit/dist. Log: /tmp/th1-2410-review-npm-ci-retry.log.
+- npm run build:server (one attempt) -> exit 1, MODULE_NOT_FOUND: zod-aot during protocol validator generation. Log: /tmp/th1-2410-review-build-server.log.
+- No successful build or test pass is claimed. No full suite, CI, app runtime test, lint or typecheck was run. Test verification remains outstanding in an environment with working dependencies.
+- Only review.txt authored; no source edits, commits, pushes, daemon restarts, or operations on port 6767. No token files read.
+
+VERDICT: APPROVE
