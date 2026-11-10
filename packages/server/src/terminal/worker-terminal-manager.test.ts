@@ -1666,19 +1666,19 @@ it.each([1, 4])(
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(5);
+    expect(workers[0]!.protocolVersion).toBe(6);
   },
 );
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 6);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 6");
+  expect(unavailable?.message).toContain("worker protocol 7");
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1796,7 +1796,6 @@ it("replays bounded ANSI chunks independently of live output and reconstructs th
       rows: 8,
       cols: 120,
       ...nodeTerminalCommand(`
-      for (let i = 0; i < 800; i++) process.stdout.write("\\x1b[31m" + String(i).padStart(4, "0") + ":" + "x".repeat(100) + "\\x1b[0m\\r\\n");
       require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
         if (line !== "before") { process.stdout.write("LIVE-AFTER-REPLAY\\r\\n"); return; }
         process.stdout.write("PRE-CUT");
@@ -1806,6 +1805,9 @@ it("replays bounded ANSI chunks independently of live output and reconstructs th
           process.stdout.write("\\r\\n");
         }, 5);
       });
+      // The last history row is the parent's readiness signal. Install input
+      // handling first so observing that row means the fixture can answer.
+      for (let i = 0; i < 800; i++) process.stdout.write("\\x1b[31m" + String(i).padStart(4, "0") + ":" + "x".repeat(100) + "\\x1b[0m\\r\\n");
       setInterval(() => {}, 1000);
     `),
     }),

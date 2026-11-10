@@ -165,7 +165,11 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
+  // Native recursive delivery can be coalesced before the backend's deletion audit.
+  // Assert eventual classification without imposing Vitest's one-second default.
+  await expect
+    .poll(() => events.find((event) => event.path === target)?.type, { timeout: 10_000 })
+    .toBe("delete");
   await subscription.unsubscribe();
 });
 

@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentFeature,
+  type AgentDraftControls,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1704,10 +1704,10 @@ export class PiRpcAgentSession implements AgentSession {
     return null;
   }
 
-  async setModel(modelId: string | null): Promise<void> {
+  async setModel(modelId: string | null): Promise<{ model: string | null }> {
     const parsedReference = parseModelReference(modelId);
     if (!parsedReference) {
-      return;
+      return { model: modelToId(this.state.model) };
     }
     if (!parsedReference.provider) {
       throw new Error(`Pi model id must include a provider: ${modelId}`);
@@ -1716,6 +1716,7 @@ export class PiRpcAgentSession implements AgentSession {
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
     await this.refreshState();
     this.config.model = `${model.provider}/${model.id}`;
+    return { model: modelToId(this.state.model) };
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -2832,8 +2833,8 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return [];
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls: [], options: config.providerOptions ?? {} };
   }
 
   async listImportableSessions(

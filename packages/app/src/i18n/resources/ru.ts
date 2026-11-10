@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  pluginCombobox: {
+    searching: "Поиск…",
+    empty: "Нет результатов",
+    failed: "Не удалось выполнить поиск: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
@@ -1196,6 +1201,14 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Не удалось загрузить вид боковой панели.",
+      useDefault: "Использовать стандартный вид",
+      readFailed: "Не удалось загрузить настройку вида боковой панели.",
+      agentUnavailable: "Агент больше недоступен",
+      terminalUnavailable: "Терминал больше недоступен",
+      projectUnavailable: "Проект больше недоступен",
+    },
     statusGroupAccessibility: "Группа «{{label}}»",
     statusBucket: {
       needsInput: "Ожидает ввода",
@@ -2615,6 +2628,12 @@ export const ru: TranslationResources = {
         description: "Показывать оглавление для перехода между запросами",
       },
       sidebar: {
+        view: {
+          title: "Вид боковой панели",
+          label: "Вид",
+          default: "Стандартный вид",
+          unavailable: "Выбранный вид недоступен или отключён. Показан стандартный вид.",
+        },
         header: {
           title: "Верх",
           description:

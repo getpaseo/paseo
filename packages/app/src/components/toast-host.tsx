@@ -4,14 +4,7 @@ import {
 } from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import {
-  Platform,
-  Pressable,
-  StyleSheet as NativeStyleSheet,
-  Text,
-  ToastAndroid,
-  View,
-} from "react-native";
+import { Platform, StyleSheet as NativeStyleSheet, Text, ToastAndroid, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -59,7 +52,7 @@ export interface ToastApi {
   error: (message: string) => void;
 }
 
-type ToastViewportPlacement = "app-shell" | "panel";
+type ToastViewportPlacement = "app-shell" | "panel" | "sidebar";
 
 const DEFAULT_DURATION_MS = 2200;
 const noopDismiss: DismissToast = () => {};
@@ -221,11 +214,17 @@ export function ToastViewport({
 
   const content = (
     <View
-      style={styles.container(placement, topOffset)}
+      style={
+        placement === "sidebar" ? styles.sidebarContainer : styles.container(placement, topOffset)
+      }
       pointerEvents="box-none"
       collapsable={false}
     >
-      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
+      <View
+        style={placement === "sidebar" ? styles.sidebarWidthBoundary : styles.widthBoundary}
+        pointerEvents="box-none"
+        collapsable={false}
+      >
         {toast ? (
           <Animated.View
             entering={toastEntering}
@@ -234,7 +233,7 @@ export function ToastViewport({
             testID={toast.testID ?? "app-toast"}
             accessibilityRole="alert"
           >
-            <ToastCard toast={toast} onHoverIn={pauseDismiss} onHoverOut={resumeDismiss} />
+            <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
           </Animated.View>
         ) : null}
       </View>
@@ -250,12 +249,12 @@ export function ToastViewport({
 
 function ToastCard({
   toast,
-  onHoverIn,
-  onHoverOut,
+  onPointerEnter,
+  onPointerLeave,
 }: {
   toast: ToastState;
-  onHoverIn: () => void;
-  onHoverOut: () => void;
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
 }) {
   let defaultIcon: ReactNode = null;
   if (toast.variant === "info") {
@@ -270,10 +269,9 @@ function ToastCard({
   const icon = toast.icon ?? defaultIcon;
 
   return (
-    <Pressable
-      accessible={false}
-      onHoverIn={onHoverIn}
-      onHoverOut={onHoverOut}
+    <View
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
       style={[
         styles.toast,
         toast.variant === "info" ? styles.toastInfo : null,
@@ -291,7 +289,7 @@ function ToastCard({
           {toast.content}
         </View>
       )}
-    </Pressable>
+    </View>
   );
 }
 
@@ -300,7 +298,7 @@ const animatedStyles = NativeStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  container: (placement: ToastViewportPlacement, topOffset: number) => ({
+  container: (placement: Exclude<ToastViewportPlacement, "sidebar">, topOffset: number) => ({
     position: "absolute",
     left: theme.spacing[4],
     right: theme.spacing[4],
@@ -308,9 +306,21 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
   }),
+  sidebarContainer: {
+    position: "absolute",
+    left: theme.spacing[2],
+    right: theme.spacing[2],
+    bottom: theme.spacing[2],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
   widthBoundary: {
     width: "92%",
     maxWidth: TOAST_MAX_WIDTH,
+    alignItems: "center",
+  },
+  sidebarWidthBoundary: {
+    width: "100%",
     alignItems: "center",
   },
   toast: {

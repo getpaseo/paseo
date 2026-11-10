@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  pluginCombobox: {
+    searching: "Buscando…",
+    empty: "Sin resultados",
+    failed: "La búsqueda falló: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
@@ -1215,6 +1220,14 @@ export const es: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "No se pudo cargar la vista de la barra lateral.",
+      useDefault: "Usar vista predeterminada",
+      readFailed: "No se pudo cargar tu preferencia de vista de la barra lateral.",
+      agentUnavailable: "El agente ya no está disponible",
+      terminalUnavailable: "La terminal ya no está disponible",
+      projectUnavailable: "El proyecto ya no está disponible",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Necesita datos",
@@ -2627,6 +2640,13 @@ export const es: TranslationResources = {
         description: "Muestra un esquema para saltar entre instrucciones",
       },
       sidebar: {
+        view: {
+          title: "Vista de la barra lateral",
+          label: "Vista",
+          default: "Vista predeterminada",
+          unavailable:
+            "La vista seleccionada no está disponible o está desactivada. Se muestra la vista predeterminada.",
+        },
         header: {
           title: "Encabezado",
           description:

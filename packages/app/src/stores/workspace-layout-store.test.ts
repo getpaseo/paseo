@@ -165,6 +165,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
   const sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
     prepare: async () => undefined,
+    canCheckFreshness: () => false,
+    applyCurrentTimeline: () => undefined,
     observe: (agentIds) => {
       observed.push(agentIds);
       return { ready: Promise.resolve(), release: async () => undefined };
@@ -174,6 +176,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
     onCatchUpEnded: () => undefined,
     reportError: () => undefined,
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
   });
   // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
   // agent behind a restored tab on the daemon.
@@ -4551,7 +4555,6 @@ describe("compact workspace sheet", () => {
             title: agent.id,
             cwd: "/repo",
             model: null,
-            features: undefined,
             thinkingOptionId: undefined,
             requiresAttention: false,
             attentionReason: null,

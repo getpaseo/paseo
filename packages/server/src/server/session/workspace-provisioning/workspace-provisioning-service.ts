@@ -1,3 +1,4 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
 import { basename, resolve } from "node:path";
@@ -51,6 +52,7 @@ export interface CreateWorktreeWorkspaceInput {
   branch: string | null;
   baseBranch: string | null;
   title: string | null;
+  metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
   untrustedSource?: UntrustedWorkspaceSource;
   background?: boolean;
@@ -71,6 +73,7 @@ export interface WorkspaceProvisioningService {
     context?: {
       expectsInitialAgent?: boolean;
       workspaceId?: string;
+      metadata?: Record<string, JsonValue>;
       background?: boolean;
       callerWorkspaceId?: string;
     },
@@ -251,6 +254,7 @@ export function createWorkspaceProvisioningService(deps: {
     context?: {
       expectsInitialAgent?: boolean;
       workspaceId?: string;
+      metadata?: Record<string, JsonValue>;
       background?: boolean;
       callerWorkspaceId?: string;
     },
@@ -273,6 +277,7 @@ export function createWorkspaceProvisioningService(deps: {
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
         title: title?.trim() || null,
+        metadata: context?.metadata,
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),
@@ -313,6 +318,7 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      metadata: input.metadata,
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),

@@ -46,16 +46,23 @@ export interface ScrollToMessageOccurrence {
   targetTop(): number | null;
 }
 
+/**
+ * The edge of its row a disclosure's trigger sits on. A header trigger sits on the top: the content
+ * it opens grows below it. A trigger under the content it opens, such as a long message's show
+ * more, sits on the bottom.
+ */
+export type DisclosureTriggerEdge = "top" | "bottom";
+
 export interface StreamViewportHandle {
   /** Give keyboard navigation back to the scrolling surface on web. */
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
   /**
-   * Run a disclosure's state change so the row that owns its trigger keeps its visual top.
-   * Following output stops; it resumes if the change leaves the list at its end.
+   * Run a disclosure's state change so the row that owns its trigger keeps the edge the trigger
+   * sits on in place. Following output stops; it resumes if the change leaves the list at its end.
    */
-  holdRow: (rowId: string, apply: () => void) => void;
+  holdRow: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
@@ -85,11 +92,13 @@ export interface StreamRenderInput {
   viewportRef: RefObject<StreamViewportHandle | null>;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
+  isInitialHistoryLoading?: boolean;
+  revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
   // The history row under the top of the viewport, for surfaces that mark where the reader
   // is in the transcript. Only the web viewport measures it today.
   onReadingPositionChange?: (rowId: string | null) => void;
-  onNearHistoryStart: () => boolean | Promise<boolean>;
+  onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   olderHistoryProgressKey: string | null;

@@ -1,12 +1,14 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
 import { CodexBackgroundInventory } from "./codex/background-inventory.js";
-import { validateProviderOptions } from "../provider-options.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -75,10 +77,10 @@ import {
   probeExecutable,
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
-  buildCodexFeatures,
+  buildCodexControls,
   CodexServiceTierSchema,
   readCodexServiceTier,
   type CodexServiceTier,
@@ -94,6 +96,7 @@ import {
   type CodexThreadRollbackResponse,
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
+import { codexAppServerStartup } from "./codex/app-server-startup.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
   type CodexHistoryRow,
@@ -291,14 +294,31 @@ const CODEX_MODES: AgentMode[] = [
 const DEFAULT_CODEX_MODE_ID = "auto";
 
 interface CodexAppServerClientLike {
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
   rollbackThread?(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse>;
   notify(method: string, params?: unknown): void;
   dispose(): Promise<void>;
 }
 
+interface CodexAppServerLaunchPrefix {
+  command: string;
+  args: string[];
+}
+
+interface CodexAppServerProcessSpawnInput extends CodexAppServerLaunchPrefix {
+  options: SpawnProcessOptions;
+}
+
+interface CodexAppServerProcessPort {
+  resolvePrefix(options: {
+    runtimeSettings?: ProviderRuntimeSettings;
+  }): Promise<CodexAppServerLaunchPrefix>;
+  spawn(input: CodexAppServerProcessSpawnInput): ChildProcess;
+}
+
 interface CodexAppServerAgentDeps {
+  appServerProcess?: CodexAppServerProcessPort;
   environment?: Record<string, string>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   customProvider?: {
@@ -610,10 +630,9 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
   return await findCodexMicrosoftStoreBinary();
 }
 
-async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
-  command: string;
-  args: string[];
-}> {
+async function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<CodexAppServerLaunchPrefix> {
   const launch = await resolveCodexLaunch(runtimeSettings);
   const availability = await checkCodexLaunchAvailable(launch);
   if (!availability.available) {
@@ -627,6 +646,11 @@ async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSetting
     args: launch.args,
   };
 }
+
+const defaultCodexAppServerProcess: CodexAppServerProcessPort = {
+  resolvePrefix: ({ runtimeSettings }) => resolveCodexLaunchPrefix(runtimeSettings),
+  spawn: ({ command, args, options }) => spawnProcess(command, args, options),
+};
 
 async function resolveCodexLaunch(
   runtimeSettings?: ProviderRuntimeSettings,
@@ -3369,6 +3393,14 @@ export function buildCodexAppServerEnv(
   });
 }
 
+function codexStartupStateDirKey(environment: NodeJS.ProcessEnv): string {
+  const home =
+    process.platform === "win32"
+      ? environment.USERPROFILE || os.homedir()
+      : environment.HOME || os.homedir();
+  return path.resolve(environment.CODEX_HOME || path.join(home, ".codex"));
+}
+
 function buildCodexAppServerInitializeParams(): {
   clientInfo: { name: string; title: string; version: string };
   capabilities: { experimentalApi: true; mcpServerOpenaiFormElicitation: true };
@@ -3474,7 +3506,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly codexHome: string;
   private currentMode: string;
   private hasWorkflowModeOverride: boolean;
-  private readonly providerOptions: CodexProviderOptions;
+  private providerOptions: CodexProviderOptions;
   private resolvedWorkspaceWrite: NonNullable<
     CodexProviderOptions["sandbox_workspace_write"]
   > | null = null;
@@ -3499,11 +3531,15 @@ export class CodexAppServerAgentSession implements AgentSession {
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private startupEvents: AgentStreamEvent[] | null = null;
+  /** How the opened session differs from the options it was given; reported at first subscribe. */
+  openOptionsPatch: Record<string, unknown> = {};
+  private readonly turnNamespace = randomUUID();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
-  private serviceTier: string | null = null;
+  /** The tier the options ask for; `serviceTier` is what the current model can honor. */
+  private requestedServiceTier: string | null = null;
   private speedModels: CodexModel[] = [];
   private planModeEnabled = false;
   // History read by rewind or an archived resume, held until streamHistory consumes it.
@@ -3566,6 +3602,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionItemCompletions = 0;
   private connectionState: "disconnected" | "history-ready" | "connected" = "disconnected";
   private connectionPromise: Promise<void> | null = null;
+  private readonly startupAbort = new AbortController();
   private closed = false;
   private collaborationModes: Array<{
     name: string;
@@ -3623,10 +3660,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
-    this.serviceTier = readCodexServiceTier(this.config.featureValues);
-    if (this.config.featureValues?.plan_mode) {
-      this.planModeEnabled = true;
-    }
+    this.requestedServiceTier = readCodexServiceTier(this.providerOptions);
+    this.planModeEnabled = this.providerOptions.plan_mode === true;
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
@@ -3641,11 +3676,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     return this.currentThreadId;
   }
 
-  get features(): AgentFeature[] {
-    return buildCodexFeatures({
+  get controls(): AgentOptionControl[] {
+    return buildCodexControls({
       serviceTiers: this.currentServiceTiers(),
-      serviceTier: this.serviceTier ?? "default",
-      planModeEnabled: this.planModeEnabled,
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
   }
@@ -3683,8 +3716,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.connectionState = "history-ready";
       return;
     }
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const { client, initialized } = await codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(this.harnessEnvironment),
+      spawn: this.spawnAppServer,
+      createClient: (child) =>
+        new CodexAppServerClient(child, this.logger, () => this.traceContext()),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: this.startupAbort.signal,
+    });
     if (this.closed) {
       await client.dispose();
       throw this.createClosedError();
@@ -3697,15 +3737,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.registerRequestHandlers();
 
     try {
-      const initialized = toObjectRecord(
-        await client.request("initialize", buildCodexAppServerInitializeParams()),
+      this.threadRollbackAvailable = codexServerHasThreadRollback(
+        toObjectRecord(initialized)?.userAgent,
       );
-      this.threadRollbackAvailable = codexServerHasThreadRollback(initialized?.userAgent);
-      client.notify("initialized", {});
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
-      this.reconcileServiceTier();
+      this.normalizeSpeed();
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3920,24 +3958,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     return selectedModel?.serviceTiers ?? [];
   }
 
-  private reconcileServiceTier(): void {
-    const tiers = this.currentServiceTiers();
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-    if (this.serviceTier === "fast" && !tiers.some((tier) => tier.id === "fast")) {
-      this.serviceTier = tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
-    }
-    if (this.serviceTier !== "default" && !tiers.some((tier) => tier.id === this.serviceTier)) {
-      this.serviceTier = null;
-    }
-    const { fast_mode: _legacyFast, ...values } = this.config.featureValues ?? {};
-    this.config.featureValues = { ...values, service_tier: this.serviceTier ?? "default" };
+  /**
+   * A saved `service_tier: "fast"` runs as the model's Fast tier, and a tier the opening model
+   * lacks runs as Normal; the session says so in `openOptionsPatch`, so the options and the
+   * control agree (as when the model is switched later).
+   */
+  private normalizeSpeed(): void {
+    const requested = this.requestedServiceTier;
+    const resolved = this.resolveServiceTier(requested);
+    if (requested === resolved) return;
+    const runs = resolved ?? "default";
+    this.providerOptions = { ...this.providerOptions, service_tier: runs };
+    this.requestedServiceTier = runs;
+    this.openOptionsPatch = { service_tier: runs };
   }
 
-  private applyFeatureValue(featureId: "plan_mode", value: boolean): void {
-    this.config.featureValues = { ...this.config.featureValues, [featureId]: value };
-    this.planModeEnabled = value;
-    this.refreshResolvedCollaborationMode();
-    this.cachedRuntimeInfo = null;
+  private get serviceTier(): string | null {
+    return this.resolveServiceTier(this.requestedServiceTier);
+  }
+
+  private resolveServiceTier(requested: string | null): string | null {
+    // Until the model list arrives there is nothing to check the request against.
+    if (this.speedModels.length === 0 || requested === "default") return requested;
+    const tiers = this.currentServiceTiers();
+    // `fast` names whichever tier the model calls Fast.
+    if (requested === "fast" && !tiers.some((tier) => tier.id === "fast")) {
+      return tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
+    }
+    return tiers.some((tier) => tier.id === requested) ? requested : null;
   }
 
   private rememberPlanResult(item: ToolCallTimelineItem): void {
@@ -4002,7 +4050,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     const planText =
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
 
-    this.applyFeatureValue("plan_mode", false);
+    this.setPlanMode(false);
+    // The user left plan mode; their options follow so controls and reopened sessions agree.
+    this.emitEvent({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { plan_mode: false },
+    });
 
     return buildCodexPlanImplementationPrompt(planText);
   }
@@ -4029,11 +4083,16 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async readArchivedHistory(): Promise<CodexThreadHistory> {
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const { client } = await codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(this.harnessEnvironment),
+      spawn: this.spawnAppServer,
+      createClient: (child) =>
+        new CodexAppServerClient(child, this.logger, () => this.traceContext()),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: this.startupAbort.signal,
+    });
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       return await this.readThreadHistory(client);
     } finally {
       await client.dispose();
@@ -4707,9 +4766,27 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     this.config.model = modelId ?? undefined;
-    this.reconcileServiceTier();
     this.refreshResolvedCollaborationMode();
     this.cachedRuntimeInfo = null;
+    this.dropUnavailableServiceTier();
+  }
+
+  /**
+   * A speed the new model does not offer turns into Normal and is reported, so choosing a model
+   * that does offer it again does not bring the paid tier back. It is reported as Normal rather
+   * than removed so a configured default cannot fill the old speed back in.
+   */
+  private dropUnavailableServiceTier(): void {
+    const requested = this.requestedServiceTier;
+    if (requested === null || this.speedModels.length === 0) return;
+    if (this.isServiceTierAvailable(requested)) return;
+    this.requestedServiceTier = "default";
+    this.providerOptions = { ...this.providerOptions, service_tier: "default" };
+    this.emitEvent({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { service_tier: "default" },
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void | AgentProviderNotice> {
@@ -4721,35 +4798,53 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
-    if (featureId === "fast_mode") {
-      const fast = this.currentServiceTiers().find((tier) => tier.name.toLowerCase() === "fast");
-      if (value && !fast)
+  /** Applies only the options the patch sets; the rest of the running options stay as they are. */
+  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    // The approval policy and sandbox are sent when the thread starts, not with each turn.
+    assertChangesAreLive({
+      provider: "codex",
+      patch: options,
+      current: this.providerOptions,
+      live: ["service_tier", "plan_mode"],
+    });
+    const valid =
+      validateProviderOptions(
+        "codex",
+        CodexProviderOptionsSchema,
+        applyProviderOptionsPatch({ options: this.providerOptions, patch: options }),
+      ) ?? {};
+    const requested = "service_tier" in options ? readCodexServiceTier(options) : null;
+    let accepted = this.requestedServiceTier;
+    if ("service_tier" in options) {
+      if (requested !== accepted && !this.isServiceTierAvailable(requested)) {
         throw new Error(
-          `Codex fast mode is not available for model '${this.config.model ?? "default"}'`,
-        );
-      return this.setFeature("service_tier", value ? fast!.id : "default");
-    }
-    if (featureId === "service_tier") {
-      if (
-        typeof value !== "string" ||
-        (value !== "default" && !this.currentServiceTiers().some((tier) => tier.id === value))
-      ) {
-        throw new Error(
-          `Codex speed '${String(value)}' is not available for model '${this.config.model ?? "default"}'`,
+          `Codex speed '${String(requested)}' is not available for model '${this.config.model ?? "default"}'`,
         );
       }
-      this.serviceTier = value;
-      this.reconcileServiceTier();
-      this.cachedRuntimeInfo = null;
-      return;
+      // The session keeps the catalog's id for the tier, so a later model switch sees what runs.
+      accepted = requested && (this.resolveServiceTier(requested) ?? requested);
     }
-    if (featureId === "plan_mode") {
-      this.applyFeatureValue("plan_mode", Boolean(value));
-      return;
-    }
-    throw new Error(`Unknown Codex feature: ${featureId}`);
+    this.providerOptions = { ...valid, ...(accepted ? { service_tier: accepted } : {}) };
+    this.requestedServiceTier = accepted || null;
+    if ("plan_mode" in options) this.setPlanMode(options.plan_mode === true);
+    this.cachedRuntimeInfo = null;
+    // The catalog may name the tier differently from the request (`fast` is the Fast tier's id).
+    const tier = this.serviceTier;
+    return tier !== null && requested !== null && tier !== requested ? { service_tier: tier } : {};
+  }
+
+  private isServiceTierAvailable(tier: string | null): boolean {
+    if (tier === null || tier === "default") return true;
+    const tiers = this.currentServiceTiers();
+    const namesFast = tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
+    return namesFast || tiers.some((entry) => entry.id === tier);
+  }
+
+  private setPlanMode(enabled: boolean): void {
+    if (this.planModeEnabled === enabled) return;
+    this.planModeEnabled = enabled;
+    this.refreshResolvedCollaborationMode();
+    this.cachedRuntimeInfo = null;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -5296,6 +5391,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.startupAbort.abort(this.createClosedError());
     this.background.stop();
     this.clearPendingPermissions();
     this.pendingToolCallDetails.clear();
@@ -5552,7 +5648,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async applyDefaultModelAndThinking(): Promise<string> {
     const { model, thinkingOptionId } = await this.resolveModelAndThinking();
     this.config.model = model;
-    this.reconcileServiceTier();
     this.config.thinkingOptionId = thinkingOptionId;
     this.refreshResolvedCollaborationMode();
     return model;
@@ -5620,7 +5715,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
-    Object.assign(innerConfig, this.providerOptions);
+    const { service_tier: _tier, plan_mode: _plan, ...codexConfig } = this.providerOptions;
+    Object.assign(innerConfig, codexConfig);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
@@ -5677,7 +5773,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private createTurnId(): string {
-    return `codex-turn-${this.nextTurnOrdinal++}`;
+    return `codex-turn-${this.turnNamespace}-${this.nextTurnOrdinal++}`;
   }
 
   private pendingNotifications: Promise<void> = Promise.resolve();
@@ -7534,31 +7630,55 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  private async spawnAppServer(
-    launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string; environment?: Record<string, string> },
-  ): Promise<ChildProcessWithoutNullStreams> {
-    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+  private async prepareAppServerSpawn(options: {
+    environment: Record<string, string>;
+    goalsEnabled?: boolean;
+    agentId?: string;
+  }): Promise<() => ChildProcessWithoutNullStreams> {
+    const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
+    const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
     const args = [...launchPrefix.args, "app-server"];
-    if (options?.goalsEnabled) {
+    if (options.goalsEnabled) {
       args.push("--enable", "goals");
     }
-    this.logger.trace(
-      {
-        agentId: options?.agentId,
-        provider: CODEX_PROVIDER,
-        launchPrefix,
-        goalsEnabled: options?.goalsEnabled === true,
-      },
-      "provider.codex.spawn",
-    );
-    const child = spawnProcess(launchPrefix.command, args, {
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-      baseEnv: options?.environment ?? buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
+    return () => {
+      this.logger.trace(
+        {
+          agentId: options.agentId,
+          provider: CODEX_PROVIDER,
+          launchPrefix,
+          goalsEnabled: options.goalsEnabled === true,
+        },
+        "provider.codex.spawn",
+      );
+      const child = processPort.spawn({
+        command: launchPrefix.command,
+        args,
+        options: {
+          detached: process.platform !== "win32",
+          stdio: ["pipe", "pipe", "pipe"],
+          baseEnv: options.environment,
+        },
+      });
+      assertChildWithPipes(child);
+      return child;
+    };
+  }
+
+  private async startAppServer(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CodexAppServerClient> {
+    const environment = buildCodexAppServerEnv(this.runtimeSettings);
+    const spawn = await this.prepareAppServerSpawn({ environment });
+    const { client } = await codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(environment),
+      spawn,
+      createClient: (child) => new CodexAppServerClient(child, this.logger),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: options.signal,
     });
-    assertChildWithPipes(child);
-    return child;
+    return client;
   }
 
   async createSession(
@@ -7577,16 +7697,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const environment = buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env);
+    const spawn = await this.prepareAppServerSpawn({
+      environment,
+      goalsEnabled,
+      agentId: launchContext?.agentId,
+    });
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, {
-          goalsEnabled,
-          agentId: launchContext?.agentId,
-          environment,
-        }),
+      async () => spawn(),
       { ...this.sessionDeps(launchContext?.env), environment },
       options?.persistSession === false,
       goalsEnabled,
@@ -7614,16 +7734,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const environment = buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env);
+    const spawn = await this.prepareAppServerSpawn({
+      environment,
+      goalsEnabled,
+      agentId: launchContext?.agentId,
+    });
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, {
-          goalsEnabled,
-          agentId: launchContext?.agentId,
-          environment,
-        }),
+      async () => spawn(),
       { ...this.sessionDeps(launchContext?.env), environment },
       false,
       goalsEnabled,
@@ -7638,15 +7758,19 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const child = await this.spawnAppServer();
-    const client =
-      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
-      new CodexAppServerClient(child, this.logger);
+    const environment = buildCodexAppServerEnv(this.runtimeSettings);
+    const spawn = await this.prepareAppServerSpawn({ environment });
+    const { client } = await codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(environment),
+      spawn,
+      createClient: (child) =>
+        this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+        new CodexAppServerClient(child, this.logger),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+    });
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-
       const limit = options?.limit ?? 20;
       const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
@@ -7749,15 +7873,10 @@ export class CodexAppServerAgentClient implements AgentClient {
 
     try {
       await runProviderRefreshActivity(context, "app-server.start", async () => {
-        const child = await this.spawnAppServer();
-        client = new CodexAppServerClient(child, this.logger);
+        client = await this.startAppServer({ signal: context?.signal });
         if (context?.signal.aborted) await dispose();
       });
       if (!client) throw new Error("Codex app-server did not start");
-      await runProviderRefreshActivity(context, "initialize", () =>
-        client!.request("initialize", buildCodexAppServerInitializeParams()),
-      );
-      client.notify("initialized", {});
 
       const rawResponse = await runProviderRefreshActivity(context, "model/list", () =>
         client!.request("model/list", {}),
@@ -7801,12 +7920,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client = await this.startAppServer();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       if (state === "archive") {
         await client.request("thread/archive", { threadId });
         return;
