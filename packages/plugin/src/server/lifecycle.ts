@@ -2,7 +2,6 @@ import type { AgentToolDefinition } from "./agent-tools.js";
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
-  AgentTimelineItem,
   AgentSessionConfig,
   JsonValue,
 } from "@getpaseo/protocol/agent-types";
@@ -100,12 +99,8 @@ export interface PluginHookEvents {
   "agent.turn.after": {
     agent: PluginHookAgent;
     turnId: string | null;
+    /** The payload carries no history; read the turn with `latestTurn()`. */
     outcome: PluginTurnOutcome;
-    /**
-     * @deprecated Always empty. Fetch history on demand with
-     * context.paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 20 }).
-     */
-    timeline: readonly AgentTimelineItem[];
   };
   "agent.permission.before": { agent: PluginHookAgent; request: AgentPermissionRequest };
   "agent.permission.after": {

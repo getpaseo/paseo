@@ -62,7 +62,7 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 | `agent.close.after`       | no    | `{ agent }`                               |                                                |
 | `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                |
 | `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }`    |                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                |
 | `agent.permission.before` | no    | `{ agent, request }`                      |                                                |
 | `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                |
 
@@ -520,7 +520,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome, timeline }`. `outcome.kind` is `completed`, `failed`, or `canceled`. `timeline` is deprecated and always empty; fetch history through the SDK as below.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history: read the turn with `latestTurn()` from `@getpaseo/plugin/server`, which returns the last user message and everything after it. Older plugins that read `event.timeline` get an empty array, so they never see a reply.
 
 ### Send a follow-up when a turn ends
 
@@ -530,7 +530,7 @@ into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`
 and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { latestTurn, type PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -540,8 +540,7 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const text = latestOutputText(await latestTurn(agent.timeline));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }

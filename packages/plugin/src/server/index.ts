@@ -34,4 +34,5 @@ export type {
 export { spawnProcess, execCommand, terminateProcess } from "./process.js";
 
 export { defineAgentTool } from "./agent-tools.js";
+export { latestTurn } from "./timeline.js";
 export type { AgentToolDefinition, AgentToolResult, AgentToolContext } from "./agent-tools.js";
