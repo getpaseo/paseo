@@ -71,7 +71,8 @@ export function useSidebarWorkspaceRename(
     (text: string) => {
       if (session.kind !== "inline") return;
       const title = text.trim();
-      if (title.length === 0 || title === session.initialValue) {
+      // Saving the title the row already has would never move it, so `saved` would never end.
+      if (title.length === 0 || title === session.initialValue || title === currentTitle) {
         setSession(CLOSED);
         return;
       }

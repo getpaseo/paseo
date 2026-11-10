@@ -249,6 +249,36 @@ test.describe("Sidebar workspace rename", () => {
     }
   });
 
+  test("submitting the title another client just set closes the field without saving", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-external-same-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await renameFromAnotherClient(page, gate, workspace, "External title");
+
+      await input.fill("External title");
+      await page.keyboard.press("Enter");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("External title");
+      expect(gate.getClientRequestCount("workspace.title.set.request")).toBe(0);
+
+      // The row is a row again: its menu opens and renames.
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("below the lg breakpoint renaming opens the modal", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-modal-" });
 
