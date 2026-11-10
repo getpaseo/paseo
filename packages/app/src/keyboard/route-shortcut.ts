@@ -50,6 +50,7 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.archive": { id: "workspace.archive", scope: "sidebar" },
   "workspace.archive.undo": { id: "workspace.archive.undo", scope: "global" },
   "workspace.pin": { id: "workspace.pin", scope: "sidebar" },
+  "workspace.rename": { id: "workspace.rename", scope: "workspace" },
   "worktree.new": { id: "worktree.new", scope: "sidebar" },
   "workspace.terminal.new": { id: "workspace.terminal.new", scope: "workspace" },
   "workspace.tab.close.current": { id: "workspace.tab.close-current", scope: "workspace" },

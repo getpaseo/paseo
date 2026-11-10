@@ -168,6 +168,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-prev",
     "workspace-next",
     "pin-workspace",
+    "rename-workspace",
     "archive-workspace",
     "undo-archive-workspace",
   ],
@@ -408,6 +409,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "pin-workspace",
       section: "workspaces",
       label: "Pin chat",
+    },
+  },
+
+  // --- Rename workspace ---
+  {
+    id: "workspace-rename-cmd-alt-r-mac",
+    action: "workspace.rename",
+    combo: "Cmd+Alt+R",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "rename-workspace",
+      section: "workspaces",
+      label: "Rename workspace",
+    },
+  },
+  {
+    id: "workspace-rename-ctrl-alt-r-non-mac",
+    action: "workspace.rename",
+    combo: "Ctrl+Alt+R",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "rename-workspace",
+      section: "workspaces",
+      label: "Rename workspace",
     },
   },
 
