@@ -198,6 +198,7 @@ describe("execCommand", () => {
 
   test("self node command explicitly enables Electron node mode", async () => {
     const command = buildSelfNodeCommand(["-e", printEnvScript], {
+      ...process.env,
       CUSTOM: "from-helper",
     });
 

@@ -54,21 +54,18 @@ export function createExternalCommandProcessEnv(
   return buildExternalProcessEnv(baseEnv, overlays);
 }
 
+// `baseEnv` is the child's whole environment: keys a caller removed from it must not
+// come back from the daemon's own process.env.
 export function buildSelfNodeCommand(
   args: string[],
-  envOverlay?: ProcessEnvRecord,
+  baseEnv: ProcessEnvRecord = process.env,
 ): {
   command: string;
   args: string[];
   env: ExternalProcessEnv;
 } {
-  const env = buildExternalProcessEnv(process.env, []);
-  Object.assign(env, { [ELECTRON_RUN_AS_NODE]: "1" }, envOverlay);
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) {
-      delete env[key];
-    }
-  }
+  const env = buildExternalProcessEnv(baseEnv, []);
+  env[ELECTRON_RUN_AS_NODE] = "1";
   return {
     command: process.execPath,
     args,
