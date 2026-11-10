@@ -121,6 +121,14 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "이 기기에 저장했습니다. 호스트가 다시 연결되면 전송합니다.",
+      sending: "전송 중…",
+      needsReview: "전송 결과를 확인하세요. 같은 메시지 ID로 다시 시도하거나 삭제할 수 있습니다.",
+      retry: "전송 다시 시도",
+      discard: "저장된 메시지 삭제",
+      attachmentMessage: "첨부 파일이 있는 메시지",
+    },
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",

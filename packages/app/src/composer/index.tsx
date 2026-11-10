@@ -56,6 +56,7 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
+  Trash2,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT } from "@/constants/layout";
@@ -154,6 +155,17 @@ import type {
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  createPendingOutboxItem,
+  discardOutboxItem,
+  enqueueOutboxItem,
+  hydrateOutbox,
+  useOutboxStore,
+  type OutboxItem,
+} from "@/composer/outbox/store";
+import { deliverOutboxItem } from "@/composer/outbox/delivery";
+import { generateMessageId } from "@/types/stream";
 import { ComposerInputProvider, type ComposerInput } from "@/composer/session";
 import type { ComposerFocusOptions } from "@/composer/model";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -722,6 +734,67 @@ function QueuedMessageRow({
         >
           <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
         </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function OutboxRow({
+  item,
+  client,
+  connected,
+  t,
+}: {
+  item: OutboxItem;
+  client: ReturnType<typeof useHostRuntimeClient>;
+  connected: boolean;
+  t: TFunction;
+}) {
+  const retry = useCallback(() => {
+    if (client) void deliverOutboxItem({ item, client });
+  }, [client, item]);
+  const discard = useCallback(() => {
+    void discardOutboxItem(item.id);
+  }, [item.id]);
+  let status: string;
+  if (item.status === "pending") status = t("composer.outbox.pending");
+  else if (item.status === "sending") status = t("composer.outbox.sending");
+  else
+    status =
+      item.error === "agent_request_outcome_unknown"
+        ? t("composer.outbox.needsReview")
+        : item.error || t("composer.outbox.needsReview");
+  return (
+    <View style={styles.queueItem}>
+      <View style={styles.outboxDescription}>
+        <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+          {item.text || t("composer.outbox.attachmentMessage")}
+        </Text>
+        <Text style={item.status === "needs_review" ? styles.sendErrorText : styles.outboxStatus}>
+          {status}
+        </Text>
+      </View>
+      <View style={styles.queueActions}>
+        {item.status === "needs_review" && connected && client ? (
+          <Pressable
+            onPress={retry}
+            style={[styles.queueActionButton, styles.queueSendButton]}
+            accessibilityRole="button"
+            accessibilityLabel={t("composer.outbox.retry")}
+          >
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          </Pressable>
+        ) : null}
+        {item.status !== "sending" ? (
+          <Pressable
+            onPress={discard}
+            style={styles.queueActionButton}
+            accessibilityRole="button"
+            accessibilityLabel={t("composer.outbox.discard")}
+          >
+            <ThemedTrash2 size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
@@ -1334,6 +1407,16 @@ function ComposerContentImpl({
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
+  const allOutboxItems = useOutboxStore((state) => state.items);
+  const outboxItems = useMemo(
+    () => allOutboxItems.filter((item) => item.serverId === serverId && item.agentId === agentId),
+    [allOutboxItems, agentId, serverId],
+  );
+  useEffect(() => {
+    void hydrateOutbox().catch((error) =>
+      setSendError(error instanceof Error ? error.message : String(error)),
+    );
+  }, []);
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
@@ -1782,7 +1865,7 @@ function ComposerContentImpl({
         allowEmptySubmit,
         forceSend,
         submitBehavior,
-        isAgentRunning,
+        isAgentRunning: isConnected && isAgentRunning,
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
@@ -1793,7 +1876,39 @@ function ComposerContentImpl({
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
-          await submitMessage(submitText, submitAttachments);
+          if (inputMode !== "chat" || onSubmitMessage) {
+            await submitMessage(submitText, submitAttachments);
+            return;
+          }
+          const payload = splitComposerAttachmentsForSubmit(submitAttachments, {
+            format: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments: supportsForgeSearch,
+            }),
+          });
+          const item = createPendingOutboxItem({
+            id: generateMessageId(),
+            serverId,
+            agentId,
+            text: submitText,
+            images: payload.images,
+            attachments: payload.attachments,
+            activeTurnBehavior: appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+            activeTurnId:
+              appSettings.sendBehavior === "steer"
+                ? (selectAgentTurnPresentation(
+                    useSessionStore.getState().sessions[serverId],
+                    agentId,
+                  ).turnId ?? undefined)
+                : undefined,
+          });
+          await enqueueOutboxItem(item);
+          onMessageSent?.();
+          if (isConnected && client) {
+            await deliverOutboxItem({ item, client });
+            if (!useOutboxStore.getState().items.some((pending) => pending.id === item.id)) {
+              onAttentionPromptSend?.();
+            }
+          }
         },
         clearDraft,
         setUserInput: replaceUserInput,
@@ -1818,7 +1933,17 @@ function ComposerContentImpl({
       clearDraft,
       completeSubmit,
       hasExternalContent,
+      isConnected,
+      appSettings.sendBehavior,
+      client,
+      inputMode,
+      onSubmitMessage,
+      onMessageSent,
+      onAttentionPromptSend,
+      supportsForgeSearch,
       isAgentRunning,
+      serverId,
+      agentId,
       queueMessage,
       setSelectedAttachments,
       replaceUserInput,
@@ -2485,6 +2610,17 @@ function ComposerContentImpl({
     [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
+  const outboxList = useMemo(() => {
+    if (outboxItems.length === 0) return null;
+    return (
+      <View style={styles.queueTrack}>
+        {outboxItems.map((item) => (
+          <OutboxRow key={item.id} item={item} client={client} connected={isConnected} t={t} />
+        ))}
+      </View>
+    );
+  }, [client, isConnected, outboxItems, t]);
+
   const autocompleteConfiguration = useMemo(
     () => ({
       setUserInput: replaceUserInput,
@@ -2562,6 +2698,7 @@ function ComposerContentImpl({
         <View style={inputAreaContainerStyle}>
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
+            {isFullscreen ? null : outboxList}
             {!isFullscreen && sendErrorNode}
 
             <ComposerAutocompleteBinding
@@ -2801,6 +2938,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
+  outboxDescription: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  outboxStatus: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
   queueActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -2833,6 +2978,7 @@ const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
+const ThemedTrash2 = withUnistyles(Trash2);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

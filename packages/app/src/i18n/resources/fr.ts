@@ -123,6 +123,14 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Enregistré sur cet appareil. Envoi à la reconnexion de l’hôte.",
+      sending: "Envoi en cours…",
+      needsReview: "Vérifiez la livraison. Réessayez avec le même ID ou supprimez le message.",
+      retry: "Réessayer l’envoi",
+      discard: "Supprimer le message enregistré",
+      attachmentMessage: "Message avec pièces jointes",
+    },
     placeholders: {
       desktop: "Écrivez à l’agent, mentionnez des @fichiers ou utilisez les /commandes et /skills",
       mobile: "Message, @fichiers, /commandes",

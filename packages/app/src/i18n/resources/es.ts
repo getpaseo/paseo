@@ -122,6 +122,14 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Guardado en este dispositivo. Se enviará cuando el host vuelva a conectarse.",
+      sending: "Enviando…",
+      needsReview: "Revisa la entrega. Puedes reintentar con el mismo ID de mensaje o descartarlo.",
+      retry: "Reintentar envío",
+      discard: "Descartar mensaje guardado",
+      attachmentMessage: "Mensaje con archivos adjuntos",
+    },
     placeholders: {
       desktop: "Envíe un mensaje al agente, etiquete@fileso use/commandsy/skills",
       mobile: "Mensaje,@files,/commands",

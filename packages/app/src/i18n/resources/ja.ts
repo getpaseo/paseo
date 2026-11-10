@@ -122,6 +122,14 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "この端末に保存しました。ホストの再接続時に送信します。",
+      sending: "送信中…",
+      needsReview: "配信結果を確認してください。同じメッセージ ID で再試行するか破棄できます。",
+      retry: "送信を再試行",
+      discard: "保存したメッセージを破棄",
+      attachmentMessage: "添付ファイル付きメッセージ",
+    },
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",

@@ -121,6 +121,14 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "حُفظت على هذا الجهاز. ستُرسل عند إعادة اتصال المضيف.",
+      sending: "جارٍ الإرسال…",
+      needsReview: "تحقق من حالة التسليم. أعد المحاولة بمعرّف الرسالة نفسه أو احذفها.",
+      retry: "إعادة محاولة الإرسال",
+      discard: "حذف الرسالة المحفوظة",
+      attachmentMessage: "رسالة مع مرفقات",
+    },
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
