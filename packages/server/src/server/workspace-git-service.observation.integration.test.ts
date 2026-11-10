@@ -1,4 +1,10 @@
 import { flushGitCommandTrace } from "../utils/git-command-trace.js";
+import {
+  runWithGitCommandPriority,
+  startGitCommandMetrics,
+  stopGitCommandMetrics,
+  waitForGitCommandMetricsIdle,
+} from "../utils/run-git-command.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -274,6 +280,8 @@ test("recursive observation updates tracked state and prunes ignored storms", as
         }),
       ).toBe(2);
       expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
+      // The initial read, then the checkout read that follows watcher coverage.
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
       expect(service.getMetrics()).toMatchObject({
         workspaceObservationSetupInFlightCount: 0,
         workspaceRefreshInFlightCount: 0,
@@ -856,3 +864,158 @@ test.skipIf(process.platform !== "linux")(
   },
   60_000,
 );
+
+test("observation-driven refreshes run their Git work in the background lane", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-priority-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  const heads: Array<string | null> = [];
+  const subscription = service.registerWorkspace({ cwd: repo }, (snapshot) => {
+    heads.push(snapshot.git.currentBranch);
+  });
+  cleanup.push(async () => {
+    subscription.unsubscribe();
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  // Registration, observation setup and the first refresh settle before the
+  // measured change.
+  startGitCommandMetrics();
+  await service.getSnapshot(repo, { includeForge: false });
+  await waitForGitCommandMetricsIdle({ quietMs: 500, timeoutMs: 10_000 });
+  stopGitCommandMetrics();
+
+  startGitCommandMetrics();
+  const deliveredBefore = heads.length;
+  git("switch", "-c", "feature");
+  await expect.poll(() => heads.slice(deliveredBefore), { timeout: 10_000 }).toContain("feature");
+  await waitForGitCommandMetricsIdle({ quietMs: 300, timeoutMs: 10_000 });
+  const observed = stopGitCommandMetrics().submissions;
+  expect(observed.length).toBeGreaterThan(0);
+  expect(new Set(observed.map((command) => command.priority))).toEqual(new Set(["background"]));
+
+  startGitCommandMetrics();
+  await service.getSnapshot(repo, { force: true, reason: "test-demand", includeForge: false });
+  await service.getCheckout(repo, { priority: "background" });
+  await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 10_000 });
+  const demand = stopGitCommandMetrics().submissions;
+  const checkoutStart = demand.findIndex((command) => command.priority === "background");
+  expect(checkoutStart).toBeGreaterThan(0);
+  expect(new Set(demand.slice(0, checkoutStart).map((command) => command.priority))).toEqual(
+    new Set(["normal"]),
+  );
+  expect(new Set(demand.slice(checkoutStart).map((command) => command.priority))).toEqual(
+    new Set(["background"]),
+  );
+
+  startGitCommandMetrics();
+  await runWithGitCommandPriority("high", () =>
+    service.getSnapshot(repo, { force: true, reason: "test-user-action", includeForge: false }),
+  );
+  await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 10_000 });
+  const userAction = stopGitCommandMetrics().submissions;
+  expect(userAction.length).toBeGreaterThan(0);
+  expect(new Set(userAction.map((command) => command.priority))).toEqual(new Set(["high"]));
+}, 30_000);
+
+test("an edit made before the working-tree watcher starts still reaches the cached snapshot", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-coverage-gap-")));
+  const repo = path.join(root, "repo");
+  const trackedPath = path.join(repo, "src", "tracked.txt");
+  mkdirSync(path.dirname(trackedPath), { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(trackedPath, "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const observer = createFileObserver();
+  const workingTreeWatchGate = Promise.withResolvers<void>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    deps: {
+      subscribe: async (directory, callback, options) => {
+        if (directory === repo) await workingTreeWatchGate.promise;
+        return observer.subscribe(directory, callback, options);
+      },
+    },
+  });
+  const subscription = service.registerWorkspace({ cwd: repo }, () => {});
+  cleanup.push(async () => {
+    workingTreeWatchGate.resolve();
+    subscription.unsubscribe();
+    await service.dispose();
+    await observer.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  expect((await service.getSnapshot(repo, { includeForge: false })).git.isDirty).toBe(false);
+  writeFileSync(trackedPath, "edited before the watcher started\n");
+  workingTreeWatchGate.resolve();
+
+  await expect
+    .poll(async () => (await service.getSnapshot(repo, { includeForge: false })).git.isDirty, {
+      timeout: 10_000,
+    })
+    .toBe(true);
+}, 30_000);
+
+test("a branch switch made before the Git metadata watcher starts still reaches the cached snapshot", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-metadata-gap-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const observer = createFileObserver();
+  const metadataWatchGate = Promise.withResolvers<void>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    deps: {
+      subscribe: async (directory, callback, options) => {
+        if (directory !== repo) await metadataWatchGate.promise;
+        return observer.subscribe(directory, callback, options);
+      },
+    },
+  });
+  const subscription = service.registerWorkspace({ cwd: repo }, () => {});
+  cleanup.push(async () => {
+    metadataWatchGate.resolve();
+    subscription.unsubscribe();
+    await service.dispose();
+    await observer.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  expect((await service.getSnapshot(repo, { includeForge: false })).git.currentBranch).toBe("main");
+  git("switch", "-c", "feature");
+  metadataWatchGate.resolve();
+
+  await expect
+    .poll(
+      async () => (await service.getSnapshot(repo, { includeForge: false })).git.currentBranch,
+      { timeout: 10_000 },
+    )
+    .toBe("feature");
+}, 30_000);

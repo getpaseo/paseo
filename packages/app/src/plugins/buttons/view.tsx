@@ -56,6 +56,7 @@ import {
   type GlobalButtonPlacement,
   type RegisteredPluginButton,
 } from "./model";
+import { usePluginButtonMenuOpen } from "./menu-open";
 import { pluginButtonStore } from "./store";
 import { resolvePluginPlatform } from "../platform";
 
@@ -302,18 +303,18 @@ function ButtonControl({ view }: { view: ButtonView }) {
   if (composer) label = button.label ?? button.title;
   else if (toolbar || props.layout.compact) label = undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
-  const setOpen = useCallback(
-    (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
-    [entry.key],
-  );
+  // Each placement renders its own button. Sharing `entry.open` lets a hidden copy's menu
+  // surface close the one on screen, because MenuSurface calls onOpenChange(false) when its
+  // panel is inactive.
+  const [open, setOpen] = usePluginButtonMenuOpen(button);
   const buttonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
       placementButtonStyle(entry.placement, props.layout.compact, disabled, {
         hovered,
         pressed,
-        open: entry.open,
+        open,
       }),
-    [entry.placement, disabled, entry.open, props.layout.compact],
+    [entry.placement, disabled, open, props.layout.compact],
   );
   const contents = (
     <>
@@ -370,7 +371,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
     [view, entry.key, button.behavior],
   );
   return (
-    <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
+    <MenuRoot compactMode="sheet" open={open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent>

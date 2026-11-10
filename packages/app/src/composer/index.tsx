@@ -42,7 +42,6 @@ import {
   type ToolbarGlyph,
   toolbarSlot,
 } from "@/components/ui/control-geometry";
-import { COMPOSER_TOOLBAR_SHAPES } from "@/composer/input/toolbar-rails";
 import { usePanelStore } from "@/stores/panel-store";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
@@ -2656,7 +2655,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[3],
   },
   cancelButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc),
+    ...toolbarSlot(),
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2674,7 +2673,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: TOOLBAR_CONTROL_GAP,
   },
   contextWindowMeterSlot: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.ring),
+    ...toolbarSlot(),
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
@@ -2688,7 +2687,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
   },
   realtimeVoiceButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc),
+    ...toolbarSlot(),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",

@@ -1408,6 +1408,65 @@ export class Session {
     this.refreshObservationProducers();
   }
 
+  private compareTimelineCursors(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Record<string, "current" | "behind"> {
+    const timelines: Record<string, "current" | "behind"> = {};
+    for (const agentId of agentIds) {
+      const cursor = cursors[agentId];
+      if (!cursor) continue;
+      const head = this.agentManager.getLoadedTimelineHead(agentId);
+      timelines[agentId] =
+        head?.epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
+    }
+    return timelines;
+  }
+
+  private async answerTimelineFreshness(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Promise<{
+    timelines: Record<string, "current" | "behind">;
+    agents: Record<string, AgentSnapshotPayload>;
+  }> {
+    const snapshots = await Promise.all(
+      agentIds.flatMap((agentId) => {
+        const agent = cursors[agentId] ? this.agentManager.getAgent(agentId) : null;
+        return agent ? [this.buildAgentPayload(agent)] : [];
+      }),
+    );
+    // Compared after the await, so a row appended while reading the snapshots answers behind.
+    const timelines = this.compareTimelineCursors(agentIds, cursors);
+    const agents: Record<string, AgentSnapshotPayload> = {};
+    for (const snapshot of snapshots) {
+      if (timelines[snapshot.id] === "current") agents[snapshot.id] = snapshot;
+    }
+    return { timelines, agents };
+  }
+
+  private async handleAgentTimelineSubscription(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.set_subscription.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const agentIds = [...new Set(msg.agentIds)].sort();
+    // Attach before comparing: a row appended after the comparison reaches this owner live.
+    const owner = this.subscribeAgentTimelines(agentIds);
+    const freshness = msg.cursors ? await this.answerTimelineFreshness(agentIds, msg.cursors) : {};
+    this.emitForSource(
+      {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds,
+          requestId: msg.requestId,
+          subscriptionId: owner.responseId,
+          ...freshness,
+        },
+      },
+      source,
+    );
+  }
+
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
     const owner = this.delivery.begin("timelines", undefined, (id) => {
       this.timelineSubscriptions.delete(id);
@@ -3043,18 +3102,8 @@ export class Session {
           throw error;
         });
       }
-      case "agent.timeline.set_subscription.request": {
-        const agentIds = [...new Set(msg.agentIds)].sort();
-        const owner = this.subscribeAgentTimelines(agentIds);
-        this.emitForSource(
-          {
-            type: "agent.timeline.set_subscription.response",
-            payload: { agentIds, requestId: msg.requestId, subscriptionId: owner.responseId },
-          },
-          source,
-        );
-        return undefined;
-      }
+      case "agent.timeline.set_subscription.request":
+        return this.handleAgentTimelineSubscription(msg, source);
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:

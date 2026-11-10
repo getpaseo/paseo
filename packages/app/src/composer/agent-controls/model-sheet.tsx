@@ -27,7 +27,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
-  TOUCH_ICON_SIZE,
   toolbarContentSlot,
   toolbarSlot,
   type ToolbarGlyphs,
@@ -535,12 +534,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(theme.spacing[2]),
+    ...toolbarContentSlot(),
     borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
   },
   triggerIconOnly: {
-    ...toolbarSlot(TOUCH_ICON_SIZE.md),
+    ...toolbarSlot(),
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",

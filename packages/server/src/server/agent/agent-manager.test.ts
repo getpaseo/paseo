@@ -13511,6 +13511,9 @@ describe("agent options", () => {
     /** What the session says it ended up with after the next apply. */
     ended: Record<string, unknown> = {};
     openOptionsPatch: Record<string, unknown> = {};
+    runtimeModel: string | null = null;
+    /** The model the next apply moves the session to, as a provider's connection option does. */
+    movesModelTo: string | null = null;
 
     async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
       if (this.rejectWith) throw this.rejectWith;
@@ -13518,13 +13521,20 @@ describe("agent options", () => {
       this.applyGate = null;
       await gate;
       this.applied.push(options);
+      if (this.movesModelTo) this.runtimeModel = this.movesModelTo;
       return this.ended;
+    }
+
+    override async getRuntimeInfo() {
+      const info = await super.getRuntimeInfo();
+      return this.runtimeModel ? { ...info, model: this.runtimeModel } : info;
     }
   }
 
   class OptionsClient extends TestAgentClient {
     session: OptionsSession | null = null;
     openOptionsPatch: Record<string, unknown> = {};
+    runtimeModel: string | null = null;
 
     // Stands in for the `config.json` provider defaults the registry wrapper merges in.
     effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
@@ -13534,6 +13544,7 @@ describe("agent options", () => {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.session = new OptionsSession(config);
       this.session.openOptionsPatch = this.openOptionsPatch;
+      this.session.runtimeModel = this.runtimeModel;
       return this.session;
     }
   }
@@ -13541,14 +13552,21 @@ describe("agent options", () => {
   async function createOptionsAgent(
     providerOptions?: ProviderOptions,
     openOptionsPatch: Record<string, unknown> = {},
+    opened: { model?: string; runtimeModel?: string } = {},
   ) {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const client = new OptionsClient();
     client.openOptionsPatch = openOptionsPatch;
+    client.runtimeModel = opened.runtimeModel ?? null;
     const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
     const agent = await manager.createAgent(
-      { provider: "codex", cwd: workdir, ...(providerOptions ? { providerOptions } : {}) },
+      {
+        provider: "codex",
+        cwd: workdir,
+        ...(opened.model ? { model: opened.model } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
+      },
       undefined,
       { workspaceId: undefined },
     );
@@ -13635,6 +13653,33 @@ describe("agent options", () => {
       web_search: true,
       service_tier: "fast",
     });
+  });
+
+  test("an option that moves the agent to another model reopens on that model", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent(
+      undefined,
+      {},
+      { model: "first-connection-model" },
+    );
+    client.session!.movesModelTo = "second-connection-model";
+
+    await manager.setAgentOptions(agentId, { web_search: true });
+
+    expect(manager.getAgent(agentId)?.config.model).toBe("second-connection-model");
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.model).toBe("second-connection-model");
+  });
+
+  test("an option that leaves the model alone keeps the model the user chose", async () => {
+    const { manager, agentId } = await createOptionsAgent(
+      undefined,
+      {},
+      { model: "alias", runtimeModel: "canonical" },
+    );
+
+    await manager.setAgentOptions(agentId, { web_search: true });
+
+    expect(manager.getAgent(agentId)?.config.model).toBe("alias");
   });
 
   test("a patch key is resolved against the configured defaults, merging nested objects", async () => {
