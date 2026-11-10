@@ -56,6 +56,13 @@ interface FakeLegacyPatch {
   path: string;
   diff: string;
 }
+interface FakeHookCompletion {
+  threadId: string;
+  turnId: string | null;
+  eventName: string;
+  status: string;
+  entries: Array<{ kind: string; text: string }>;
+}
 type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -67,13 +74,21 @@ export interface FakeCodexAppServer {
   readonly recordedRollbacks: JsonObject[];
   requests(): readonly JsonObject[];
   assertNoErrors(): void;
-  waitForTurnStart(): Promise<JsonObject>;
+  waitForTurnStart(occurrence?: number): Promise<JsonObject>;
   waitForRequest(method: string): Promise<JsonObject>;
   disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
+  acceptsUserMessage(params: {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    text: string;
+  }): void;
+  addsHookContext(params: { threadId: string; turnId: string; itemId: string; text: string }): void;
+  completesHook(params: FakeHookCompletion): void;
   completeTurn(params?: {
     threadId?: string;
     status?: "completed" | "failed" | "interrupted";
@@ -373,9 +388,11 @@ export function createFakeCodexAppServer(
         throw errors[0];
       }
     },
-    async waitForTurnStart() {
+    async waitForTurnStart(occurrence = 1) {
       const message = await waitForMessage(
-        (candidate) => candidate.method === "turn/start",
+        (candidate) =>
+          messages.filter((request) => request.method === "turn/start")[occurrence - 1] ===
+          candidate,
         "turn start request",
       );
       return toJsonObject(message.params);
@@ -422,6 +439,27 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    acceptsUserMessage({ threadId, turnId, itemId, text }) {
+      const params = {
+        threadId,
+        turnId,
+        item: { type: "userMessage", id: itemId, content: [{ type: "text", text }] },
+      };
+      writeNotification("item/started", params);
+      writeNotification("item/completed", params);
+    },
+    addsHookContext({ threadId, turnId, itemId, text }) {
+      const params = {
+        threadId,
+        turnId,
+        item: { type: "hookPrompt", id: itemId, fragments: [{ text, hookRunId: "hook-run" }] },
+      };
+      writeNotification("item/started", params);
+      writeNotification("item/completed", params);
+    },
+    completesHook({ threadId, turnId, ...run }) {
+      writeNotification("hook/completed", { threadId, turnId, run });
     },
     completeTurn(params = {}) {
       child.stdout.write(
@@ -694,16 +732,17 @@ type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent
 
 export function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
-  type: TType,
+  type: TType | readonly TType[],
   accepts?: (event: StreamEventOfType<TType>) => boolean,
 ): Promise<StreamEventOfType<TType>> {
+  const types: readonly StreamEventType[] = typeof type === "string" ? [type] : type;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       unsubscribe();
-      reject(new Error(`Timed out waiting for ${type}`));
+      reject(new Error(`Timed out waiting for ${types.join(" or ")}`));
     }, 1000);
     const unsubscribe = session.subscribe((event) => {
-      if (event.type !== type) {
+      if (!types.includes(event.type)) {
         return;
       }
       const typedEvent = event as StreamEventOfType<TType>;
@@ -715,6 +754,10 @@ export function waitForNextEvent<TType extends StreamEventType>(
       resolve(typedEvent);
     });
   });
+}
+
+export function waitForNextTurnCompletion(session: AgentSession) {
+  return waitForNextEvent(session, ["turn_completed", "turn_failed", "turn_canceled"]);
 }
 
 type TimelineEvent = StreamEventOfType<"timeline">;
