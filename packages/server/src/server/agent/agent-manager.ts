@@ -3182,7 +3182,7 @@ export class AgentManager {
           provider: agent.provider,
           error: errorMsg,
         });
-        this.finalizeForegroundTurn(agent);
+        this.finalizeForegroundTurn(agent, undefined, "turn_failed");
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
         this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -3376,7 +3376,11 @@ export class AgentManager {
     return streamForwarder;
   }
 
-  private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
+  private finalizeForegroundTurn(
+    agent: ActiveManagedAgent,
+    turnId?: string,
+    terminalEventType?: "turn_completed" | "turn_failed" | "turn_canceled",
+  ): void {
     const mutableAgent = agent;
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
@@ -3394,8 +3398,12 @@ export class AgentManager {
       nextLifecycle = "idle";
     }
     mutableAgent.lifecycle = nextLifecycle;
-    if (this.shuttingDown && nextLifecycle === "idle") {
-      this.runningAgentsAtShutdown.delete(mutableAgent.id);
+    if (this.shuttingDown) {
+      if (terminalEventType === "turn_completed") {
+        this.runningAgentsAtShutdown.delete(mutableAgent.id);
+      } else if (terminalEventType === "turn_canceled" || terminalEventType === "turn_failed") {
+        this.captureRunningAgentAtShutdown(mutableAgent);
+      }
     }
     const persistenceHandle =
       mutableAgent.session.describePersistence() ??
@@ -5090,7 +5098,7 @@ export class AgentManager {
       if (isTurnTerminalEvent(event)) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
-          this.finalizeForegroundTurn(agent, eventTurnId);
+          this.finalizeForegroundTurn(agent, eventTurnId, event.type);
         }
       }
 

@@ -287,7 +287,6 @@ export class ScheduleService {
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private activeTickPromise: Promise<void> | null = null;
   private stopping = false;
 
   constructor(options: ScheduleServiceOptions) {
@@ -324,9 +323,6 @@ export class ScheduleService {
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
-    }
-    if (this.activeTickPromise) {
-      await this.activeTickPromise.catch(() => undefined);
     }
   }
 
@@ -579,36 +575,29 @@ export class ScheduleService {
     if (this.stopping) {
       return;
     }
-    const run = (async () => {
-      const now = this.now();
-      const schedules = await this.store.list();
-      for (const schedule of schedules) {
-        if (this.stopping) {
-          break;
-        }
-        if (schedule.status !== "active" || !schedule.nextRunAt) {
-          continue;
-        }
-        if (this.runningScheduleIds.has(schedule.id)) {
-          continue;
-        }
-        if (shouldCompleteSchedule(schedule, now)) {
-          await this.completeScheduleIfDue(schedule.id, now);
-          continue;
-        }
-        if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
-          continue;
-        }
-        await this.runSchedule(schedule, now);
+    const now = this.now();
+    const schedules = await this.store.list();
+    for (const schedule of schedules) {
+      if (this.stopping) {
+        break;
       }
-    })();
-    this.activeTickPromise = run;
-    try {
-      await run;
-    } finally {
-      if (this.activeTickPromise === run) {
-        this.activeTickPromise = null;
+      if (schedule.status !== "active" || !schedule.nextRunAt) {
+        continue;
       }
+      if (this.runningScheduleIds.has(schedule.id)) {
+        continue;
+      }
+      if (shouldCompleteSchedule(schedule, now)) {
+        await this.completeScheduleIfDue(schedule.id, now);
+        continue;
+      }
+      if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
+        continue;
+      }
+      if (this.stopping) {
+        break;
+      }
+      await this.runSchedule(schedule, now);
     }
   }
 
