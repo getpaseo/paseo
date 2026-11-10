@@ -922,15 +922,16 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: "transparent",
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     overflow: "hidden",
   },
   pressablePressed: {
     opacity: 0.9,
   },
   disclosureButton: {
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     flexDirection: "row",
     alignItems: "center",
   },
@@ -939,7 +940,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
   },
   labelRow: {
-    flexShrink: 1,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     overflow: "hidden",
@@ -989,6 +990,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   openFileButton: {
+    marginRight: theme.spacing[2],
     marginLeft: theme.spacing[1],
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.md,

@@ -155,7 +155,7 @@ function renderFileDetails() {
 describe("tool badge file action", () => {
   it("keeps file opening separate from the accessible disclosure button", async () => {
     let opened = 0;
-    function Badge() {
+    function Badge({ hasFile }: { hasFile: boolean }) {
       const [expanded, setExpanded] = React.useState(false);
       const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
       const openFile = React.useCallback(() => {
@@ -167,12 +167,26 @@ describe("tool badge file action", () => {
           secondaryLabel="src/index.ts"
           isExpanded={expanded}
           onToggle={toggle}
-          onOpenFile={openFile}
+          onOpenFile={hasFile ? openFile : undefined}
           renderDetails={renderFileDetails}
         />
       );
     }
-    act(() => root.render(<Badge />));
+    container.style.width = "300px";
+    container.style.marginLeft = "20px";
+    act(() => root.render(<Badge hasFile={false} />));
+    const header = page.getByRole("button", { name: "Read src/index.ts", exact: true });
+    const headerElement = view().getByRole("button", { name: /^Read src\/index\.ts$/ });
+    expect(headerElement.getBoundingClientRect().width).toBeGreaterThan(260);
+    await header.click({ position: { x: 220, y: 10 } });
+    await expect.element(page.getByText("File contents")).toBeVisible();
+    await header.click({ position: { x: 2, y: 2 } });
+    await expect.element(page.getByText("File contents")).not.toBeInTheDocument();
+    await header.click({ position: { x: 2, y: 2 } });
+    await expect.element(page.getByText("File contents")).toBeVisible();
+    await header.click({ position: { x: 220, y: 10 } });
+    await expect.element(page.getByText("File contents")).not.toBeInTheDocument();
+    act(() => root.render(<Badge hasFile />));
     await page.getByRole("button", { name: "Read src/index.ts", exact: true }).hover();
     const file = view().getByRole("button", { name: /^Open file$/ });
     expect(file.parentElement?.closest("button")).toBeNull();
@@ -180,9 +194,9 @@ describe("tool badge file action", () => {
     expect(opened).toBe(1);
     const disclosure = view().getByRole("button", { name: /^Read src\/index\.ts$/ });
     expect(view().queryByText("File contents")).toBeNull();
-    await page.getByRole("button", { name: "Read src/index.ts", exact: true }).click();
+    await header.click({ position: { x: 220, y: 10 } });
 
-    expect(view().getByText("File contents")).toBeTruthy();
+    await expect.element(page.getByText("File contents")).toBeVisible();
     expect(opened).toBe(1);
     act(() => file.focus());
     await userEvent.keyboard("{Enter}");
