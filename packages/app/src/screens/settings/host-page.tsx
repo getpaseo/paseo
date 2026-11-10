@@ -288,12 +288,14 @@ function HostConnectionError({ serverId }: { serverId: string }) {
   }, [password, failure, serverId, setHostPassword, t]);
 
   const needsPassword = Boolean(failure?.reason && host && !awaitingOrigin);
-  // The field remounts empty, so drop any draft it held when it goes away.
+  // Discard the draft when recovery or an offline origin hides its editor.
   useEffect(() => {
-    if (needsPassword) return;
+    if (isSaving || (needsPassword && snapshot?.connectionStatus !== "online")) return;
+    inputRef.current?.replaceText("");
     setPassword("");
     setSaveError(null);
-  }, [needsPassword]);
+    setPendingFailure(null);
+  }, [snapshot?.connectionStatus, needsPassword, isSaving]);
 
   if (!failure || !host) return null;
   const title = awaitingOrigin
