@@ -1984,9 +1984,10 @@ controls render disabled, `setPrompt` and `insertText` throw, and the agent comm
 "The composer is locked while the agent is being created." `composer.agent.options` and
 `composer.agent.metadata` are frozen copies; change them through `setOptions` and `setMetadata`.
 
-A composer item counts toward how much fits before Paseo knows what it renders. An item that
-renders nothing can still leave an empty overflow sheet on a narrow composer, so always render a
-control.
+Paseo measures what an item renders in the toolbar to decide what fits, so an item that renders
+nothing takes no room and adds no overflow button. On wide composers the item stays mounted while
+it is in the overflow, and the overflow sheet mounts a second instance while it is open, so keep
+effects safe to run twice. On a phone an item mounts only while the overflow sheet is open.
 
 The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
 registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`, plus an

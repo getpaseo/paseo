@@ -86,6 +86,10 @@ import { ComposerModelProvider } from "@/composer/model";
 import { ComposerAgentProvider, useComposerInput } from "@/composer/session";
 import { PluginComposerItems, usePluginComposerItemCount } from "@/plugins/composer-items";
 import {
+  PluginToolbarSlot,
+  usePluginToolbarWidth,
+} from "@/composer/agent-controls/plugin-toolbar-slot";
+import {
   useAgentProfileEditor,
   useAgentProfilePicker,
   type AgentProfileApplyTarget,
@@ -464,6 +468,7 @@ function ControlledAgentControls({
     onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
   );
   const pluginItemCount = usePluginComposerItemCount(modelSelectorServerId);
+  const { width: pluginItemsWidth, onLayout: handlePluginItemsLayout } = usePluginToolbarWidth();
 
   const formattedThinkingOptions = useMemo(
     () => toThinkingControlOptions(thinkingOptions),
@@ -486,6 +491,7 @@ function ControlledAgentControls({
     () =>
       (optionControls?.controls ?? []).map((control) => {
         if (control.type === "toggle") return { type: "toggle" as const };
+        if (control.desktopTrigger === "icon") return { type: "select" as const, label: null };
         const selected = readSelectOption(control, optionControls?.options ?? {});
         const choice = control.choices.find((candidate) => candidate.value === selected);
         return {
@@ -501,10 +507,10 @@ function ControlledAgentControls({
       hasThinking: canSelectThinking,
       hasMode: modeControl !== null && modeControl !== undefined,
       features: featureControls,
-      pluginItems: pluginItemCount,
+      pluginItemsWidth,
       fontScale,
     }),
-    [canSelectModel, canSelectThinking, featureControls, fontScale, modeControl, pluginItemCount],
+    [canSelectModel, canSelectThinking, featureControls, fontScale, modeControl, pluginItemsWidth],
   );
   const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
   const layoutContextValue = useMemo(
@@ -633,7 +639,7 @@ function ControlledAgentControls({
 
   return (
     <ComposerControlLayoutProvider value={layoutContextValue}>
-      <View style={styles.container} onLayout={handleLayout}>
+      <View style={styles.container} onLayout={handleLayout} testID="agent-controls-toolbar">
         {!presentation.foldControls ? (
           <DesktopAgentControlsContent
             provider={provider}
@@ -659,7 +665,7 @@ function ControlledAgentControls({
             handleSheetOpenChange={setOpenSelector}
             modeControl={modeControl}
             presentation={presentation}
-            pluginItemCount={pluginItemCount}
+            hasPluginItems={pluginItemsWidth > 0}
             glyphs={layoutContextValue.glyphs}
             activeSheet={activeSheet}
             handleOpenSheet={handleOpenSheet}
@@ -696,6 +702,14 @@ function ControlledAgentControls({
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
         )}
+        {!isCompact ? (
+          <PluginToolbarSlot
+            serverId={modelSelectorServerId}
+            width={pluginItemsWidth}
+            fits={!presentation.aggregateFeatures}
+            onLayout={handlePluginItemsLayout}
+          />
+        ) : null}
       </View>
     </ComposerControlLayoutProvider>
   );
@@ -730,7 +744,7 @@ interface DesktopAgentControlsContentProps extends AgentControlsContentProps {
   handleDesktopModelSelect: (providerId: string, modelId: string) => void;
   handleToolbarOpenChange: (id: string | null) => void;
   presentation: ComposerControlPresentation;
-  pluginItemCount: number;
+  hasPluginItems: boolean;
   activeSheet: ActiveSheet;
   handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
   handleCloseSheet: () => void;
@@ -764,7 +778,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleSheetOpenChange,
     modeControl,
     presentation,
-    pluginItemCount,
+    hasPluginItems,
     glyphs,
     activeSheet,
     handleOpenSheet,
@@ -780,7 +794,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     [t],
   );
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
-  const hasFeatures = featureItems.length > 0 || pluginItemCount > 0;
+  const hasFeatures = featureItems.length > 0 || hasPluginItems;
   return (
     <>
       {canSelectModel ? (
@@ -862,17 +876,14 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
           </AdaptiveModalSheet>
         </>
       ) : (
-        <>
-          <ComposerControls
-            items={featureItems}
-            surface="toolbar"
-            disabled={disabled}
-            openId={openSelector}
-            onOpenIdChange={handleToolbarOpenChange}
-            onActionComplete={onDropdownClose}
-          />
-          <PluginComposerItems serverId={modelSelectorServerId} surface="toolbar" />
-        </>
+        <ComposerControls
+          items={featureItems}
+          surface="toolbar"
+          disabled={disabled}
+          openId={openSelector}
+          onOpenIdChange={handleToolbarOpenChange}
+          onActionComplete={onDropdownClose}
+        />
       )}
     </>
   );
