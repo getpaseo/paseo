@@ -6,6 +6,14 @@ function releases(page: Page): Locator {
   return page.getByRole("region");
 }
 
+// The router resets the scroll position when the page hydrates. A click sent before that is aimed
+// at where the control was, so wait for the page to be interactive: the language button is enabled
+// once it has hydrated.
+async function openChangelog(page: Page): Promise<void> {
+  await page.goto("/changelog");
+  await expect(page.getByRole("button", { name: /^Language/ }).first()).toBeEnabled();
+}
+
 function releaseWithHighlights(page: Page): Locator {
   return releases(page)
     .filter({ has: page.getByText("Show all changes", { exact: true }) })
@@ -33,7 +41,7 @@ async function hideAllChanges(release: Locator): Promise<void> {
 }
 
 test("shows each release's highlights and opens its sections on request", async ({ page }) => {
-  await page.goto("/changelog");
+  await openChangelog(page);
   const highlighted = releaseWithHighlights(page);
   const plain = releaseWithoutHighlights(page);
 
@@ -56,7 +64,7 @@ test("shows each release's highlights and opens its sections on request", async 
 });
 
 test("opens a release from a deep link with its highlights in view", async ({ page }) => {
-  await page.goto("/changelog");
+  await openChangelog(page);
   const anchor = await releaseWithHighlights(page)
     .getByRole("link", { name: /^Link to Paseo / })
     .getAttribute("href");
