@@ -168,3 +168,7 @@ export function findMath(source: string, tree: Root): { edits: SourceEdit[]; ran
 export function inMathRange(ranges: MathRanges, start: number, end = start + 1): boolean {
   return ranges.some(([s, e]) => start < e && end > s);
 }
+
+export function withinMathRange(ranges: MathRanges, start: number, end: number): boolean {
+  return ranges.some(([s, e]) => s <= start && end <= e);
+}

@@ -104,6 +104,12 @@ describe("TeX delimiters", () => {
     expect(math).toEqual([{ type: "LatexMathInline", tex: "||x||_2" }]);
   });
 
+  it("does not treat Markdown inside a formula as an image", () => {
+    const prepared = prepareMarkdownSource(String.raw`See \(\text{![plot](plot.png)}\) here.`);
+    expect(prepared.images).toEqual([]);
+    expect(prepared.render()).toBe(String.raw`See $\text{![plot](plot.png)}$ here.`);
+  });
+
   it("keeps currency and shell variables in prose as text", async () => {
     const source = String.raw`Costs $20 to $30; run $HOME/bin with \(n\) workers.`;
     const math = mathNodes(await parseMarkdown(prepareMarkdownSource(source).render(), MD4C_FLAGS));

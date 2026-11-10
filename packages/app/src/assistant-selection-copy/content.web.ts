@@ -294,6 +294,7 @@ function cloneMarkdownSelection(range: Range, message: Element): Node {
   const clonedMessage = message.cloneNode(true) as Element;
   const clonedRange = cloneRangeInto(range, message, clonedMessage);
   removeUnselectedSemantics(range, message, clonedMessage);
+  dropPartialMathSources(range, message, clonedMessage);
 
   let selected: Node = clonedRange.cloneContents();
   let ancestor =
@@ -349,6 +350,16 @@ function nodeAtPath(root: Node, path: number[]): Node {
     current = child;
   }
   return current;
+}
+
+/** A formula selected only in part has no TeX to copy; it keeps its rendered text. */
+function dropPartialMathSources(range: Range, source: Element, clone: Element): void {
+  const copies = clone.querySelectorAll(MATH_SELECTOR);
+  source.querySelectorAll(MATH_SELECTOR).forEach((original, index) => {
+    if (range.intersectsNode(original) && !hasSelectedAllContents(range, original)) {
+      copies[index]?.removeAttribute("aria-label");
+    }
+  });
 }
 
 function removeUnselectedSemantics(range: Range, source: Element, clone: Element): void {

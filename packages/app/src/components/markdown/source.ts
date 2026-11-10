@@ -1,7 +1,7 @@
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
-import { findMath, inMathRange } from "./tex-delimiters";
+import { findMath, inMathRange, withinMathRange } from "./tex-delimiters";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
@@ -247,6 +247,8 @@ export function prepareMarkdownSource(
     if (position?.start.offset !== undefined && position.end.offset !== undefined) {
       const start = position.start.offset;
       const end = position.end.offset;
+      // md4c reads a formula raw, so nothing inside one is an image, link or entity.
+      if (node.type !== "root" && withinMathRange(math.ranges, start, end)) return;
       if (node.type === "paragraph") splitStandaloneImages(node, start, end);
       if (
         node.type === "table" &&

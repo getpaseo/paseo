@@ -123,23 +123,41 @@ afterEach(() => {
 
 describe("assistant selection copy of math", () => {
   it("copies rendered formulas as their TeX source", () => {
-    const host = document.createElement("div");
-    host.innerHTML = `
-      <div data-testid="assistant-message">
-        <div data-paseo-markdown-tag="p">Pixel <span role="math" aria-label="p_{ij}"><span class="katex"><math><semantics><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><annotation encoding="application/x-tex">p_{ij}</annotation></semantics></math></span></span> of corner j.</div>
-        <span role="math" aria-label="K=\\begin{bmatrix}f_x&amp;0\\\\0&amp;f_y\\end{bmatrix}" style="display: block"><span class="katex"><math display="block"><mi>K</mi></math></span></span>
-      </div>
-    `;
-    document.body.append(host);
-    const message = fixtureElement(host, '[data-testid="assistant-message"]');
-
+    const message = mountMath();
     expect(copiedMarkdown(selectNodeContents(message))).toBe(
       String.raw`Pixel $p_{ij}$ of corner j.
 
 $$K=\begin{bmatrix}f_x&0\\0&f_y\end{bmatrix}$$`,
     );
   });
+
+  it("does not paste a whole formula for a selection ending inside it", () => {
+    const message = mountMath();
+    const range = document.createRange();
+    range.setStart(textNode(fixtureElement(message, '[data-paseo-markdown-tag="p"]')), 0);
+    range.setEnd(textNode(fixtureElement(message, "mi", 1)), 1);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("Expected browser selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const copied = copiedMarkdown(selection);
+    expect(copied).toMatch(/^Pixel /);
+    expect(copied).not.toContain("p_{ij}");
+  });
 });
+
+function mountMath(): HTMLElement {
+  const host = document.createElement("div");
+  host.innerHTML = `
+      <div data-testid="assistant-message">
+        <div data-paseo-markdown-tag="p">Pixel <span role="math" aria-label="p_{ij}"><span class="katex"><math><semantics><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><annotation encoding="application/x-tex">p_{ij}</annotation></semantics></math></span></span> of corner j.</div>
+        <span role="math" aria-label="K=\\begin{bmatrix}f_x&amp;0\\\\0&amp;f_y\\end{bmatrix}" style="display: block"><span class="katex"><math display="block"><mi>K</mi></math></span></span>
+      </div>
+    `;
+  document.body.append(host);
+  return fixtureElement(host, '[data-testid="assistant-message"]');
+}
 
 describe("assistant selection copy ranges", () => {
   it("does not handle absent, collapsed, or non-assistant selections", () => {
