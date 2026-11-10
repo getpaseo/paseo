@@ -313,6 +313,8 @@ function buildDefaultTestServiceDeps() {
   };
 }
 
+// Registering a workspace reads the checkout twice: once at start and once
+// when observation setup establishes watcher coverage.
 function createService(options?: CreateServiceTestOptions) {
   const deps = { ...buildDefaultTestServiceDeps(), ...options };
   deps.getCheckoutWorktreeState =
@@ -766,6 +768,35 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("a refresh requested after a mutation waits for a new snapshot", async () => {
+    const gate = createDeferred<CheckoutStatusGit>();
+    let reads = 0;
+    const service = createService({
+      getCheckoutStatus: (cwd: string) => {
+        reads += 1;
+        return reads === 1
+          ? gate.promise
+          : Promise.resolve(createCheckoutStatus(cwd, { currentBranch: "new-base" }));
+      },
+    });
+    const first = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "before-mutation",
+    });
+    await vi.waitFor(() => expect(reads).toBe(1));
+    const after = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "after-mutation",
+      afterInFlight: true,
+    });
+    gate.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "old-base" }));
+    await first;
+    expect((await after).git.currentBranch).toBe("new-base");
+    service.dispose();
+  });
+
   test("bounds refresh generations and re-enqueues hot workspace successors fairly", async () => {
     const hotCwds = Array.from({ length: WORKSPACE_GIT_REFRESH_CONCURRENCY }, (_, index) =>
       path.resolve(`/tmp/hot-repo-${index}`),
@@ -1105,6 +1136,18 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
+    // Keep the second workspace's observation setup behind its initial snapshot.
+    const secondCwd = join(REPO_CWD, "packages", "server");
+    const runGitCommand = vi.fn(async (_args, options) => {
+      if (options.cwd === secondCwd) await delay(250);
+      return {
+        stdout: `${REPO_CWD}\n`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    });
     const firstFetch = createDeferred<void>();
     const runGitFetch = vi.fn(async () => {
       await firstFetch.promise;
@@ -1126,6 +1169,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const resolveAbsoluteGitDir = vi.fn(async () => join(REPO_CWD, ".git"));
 
     const service = createService({
+      runGitCommand,
       getCheckoutSnapshotFacts,
       getCheckoutRefDerivedState,
       resolveAbsoluteGitDir,
@@ -1134,12 +1178,9 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-    const second = service.registerWorkspace(
-      { cwd: join(REPO_CWD, "packages", "server") },
-      vi.fn(),
-    );
+    const second = service.registerWorkspace({ cwd: secondCwd }, vi.fn());
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
       expect(runGitFetch).toHaveBeenCalledTimes(1);
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
@@ -1148,11 +1189,13 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(hasOriginRemote).toHaveBeenCalledTimes(0);
     expect(runGitFetch).toHaveBeenCalledTimes(1);
 
+    await waitForObservationToSettle(service, 2);
+
     firstFetch.resolve();
     await flushPromises();
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
     });
 
@@ -1200,7 +1243,7 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.waitFor(() => {
       expect(runGitFetch).toHaveBeenCalledTimes(1);
       expect(service.getMetrics().fetchInFlightCount).toBe(0);
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
     });
     getCheckoutSnapshotFacts.mockClear();
 
@@ -1262,7 +1305,7 @@ describe("WorkspaceGitServiceImpl", () => {
     );
     await vi.waitFor(
       () => {
-        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
         expect(service.getMetrics()).toMatchObject({
           repositoryWorkspaceLinkCount: 2,
           workspaceObservationSetupInFlightCount: 0,
@@ -1279,7 +1322,7 @@ describe("WorkspaceGitServiceImpl", () => {
     });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(6);
     });
     expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
 
@@ -1319,7 +1362,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
       expect(service.getMetrics().fetchInFlightCount).toBe(1);
     });
 
@@ -1331,8 +1374,10 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-      expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(3);
+      // Initial read, the checkout read once the watcher covers the tree,
+      // then the fallback.
+      expect(getCheckoutShortstat).toHaveBeenCalledTimes(3);
     });
     expect(listener.mock.lastCall?.[0].git.diffStat).toEqual({ additions: 2, deletions: 0 });
 

@@ -509,6 +509,8 @@ check_autocomplete() {
     fi
   fi
   ad wait 'id="composer-autocomplete-popover"' 10000
+  # Rows replace the popover's loading row once the host lists them; a cold Claude list is slow.
+  ad wait "text=\"${expected}\"" 30000
   # The popover remeasures once keyboard motion settles.
   sleep 1
   capture_screen "${prefix}.png"

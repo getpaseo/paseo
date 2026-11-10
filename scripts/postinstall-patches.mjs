@@ -52,6 +52,9 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
+  // Web pointer capture: capture only pointers the handler still tracks after pointer-down, so a
+  // touch-only pan that fails the mouse leaves browser text selection alone. Keep until upstream
+  // stops capturing pointers a handler has rejected.
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",

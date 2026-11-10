@@ -18,6 +18,7 @@ import { DaemonClient } from "../test-utils/daemon-client.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { readDaemonInstance, stopDaemonInstance } from "../daemon-instance.js";
 import { currentBootId } from "../pid-lock.js";
+import { resolveTerminalWorkerSocketPath } from "../../terminal/terminal-worker-socket-path.js";
 import { connectTerminalWorker } from "../../terminal/terminal-worker-client.js";
 import { createTerminalWorkerProcessInspector } from "../../terminal/terminal-worker-processes.js";
 import { reapTerminalWorkers } from "../../terminal/terminal-worker-reaper.js";
@@ -316,14 +317,6 @@ function spawnUnrelated(): ChildProcess {
   return child;
 }
 
-async function birthOf(pid: number): Promise<string> {
-  const inspection = await inspector.inspect(pid);
-  if (inspection.status !== "alive" || !inspection.snapshot.startedAt) {
-    throw new Error(`no birth time for ${pid}`);
-  }
-  return inspection.snapshot.startedAt;
-}
-
 afterEach(async () => {
   for (const harness of harnesses.splice(0)) {
     const pid = harness.supervisor.pid;
@@ -582,28 +575,26 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     const reused = spawnUnrelated();
     const earlierBoot = spawnUnrelated();
     const base = await currentWorkerRecord(harness.home);
-    // Same pid, another birth time: what a reused pid looks like, whatever its command line.
+    // A reused pid with its old record-specific socket gone must never be signaled.
     writeTerminalWorkerRecord(harness.home, {
       ...base,
       recordId: "stale-record",
       pid: reused.pid!,
-      identity: { startedAt: "Thu Jan  1 00:00:00 1970", commandLine: "node -e setInterval" },
+      socketPath: resolveTerminalWorkerSocketPath({
+        paseoHome: harness.home,
+        workerPid: reused.pid!,
+        recordId: "stale-record",
+      }),
       terminals: [{ id: "t-stale", pid: reused.pid!, startedAt: "Thu Jan  1 00:00:00 1970" }],
     });
-    // The right birth time, but written before this boot.
+    // Records from an earlier boot are retired before checking any process.
     writeTerminalWorkerRecord(harness.home, {
       ...base,
       recordId: "earlier-boot-record",
       pid: earlierBoot.pid!,
       bootId: currentBootId() ? "another-boot" : null,
       createdAt: "2000-01-01T00:00:00.000Z",
-      identity: {
-        startedAt: await birthOf(earlierBoot.pid!),
-        commandLine: `node --paseo-terminal-worker earlier-boot-record`,
-      },
-      terminals: [
-        { id: "t-boot", pid: earlierBoot.pid!, startedAt: await birthOf(earlierBoot.pid!) },
-      ],
+      terminals: [{ id: "t-boot", pid: earlierBoot.pid!, startedAt: null }],
     });
 
     await stopDaemon(harness);
@@ -616,7 +607,11 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
       ...base,
       recordId: "stale-record",
       pid: reused.pid!,
-      identity: { startedAt: "Thu Jan  1 00:00:00 1970", commandLine: "node -e setInterval" },
+      socketPath: resolveTerminalWorkerSocketPath({
+        paseoHome: harness.home,
+        workerPid: reused.pid!,
+        recordId: "stale-record",
+      }),
       terminals: [{ id: "t-stale", pid: reused.pid!, startedAt: "Thu Jan  1 00:00:00 1970" }],
     });
     await stopDaemonInstance(harness.home, { force: true });

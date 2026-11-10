@@ -1,5 +1,6 @@
 import { createHostPluginClientBundleStore } from "@/plugins/client-bundles";
 import { watchdog } from "@/watchdog";
+import { createHostLogger } from "./host-logger";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
@@ -589,6 +590,7 @@ function createDefaultDeps(
         runtimeGeneration,
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
+        logger: createHostLogger(() => host.serverId),
         providerSnapshots: "wire",
         createPluginClientBundleStore: createHostPluginClientBundleStore,
         ...(host.password ? { password: host.password } : {}),
@@ -669,6 +671,7 @@ function createDefaultDeps(
             null,
           ),
           reconnect: { enabled: false },
+          logger: createHostLogger(() => host.serverId),
           appVersion: resolveAppVersion() ?? undefined,
           createPluginClientBundleStore: createHostPluginClientBundleStore,
         });
@@ -1021,6 +1024,9 @@ export class HostRuntimeController {
       }
 
       const currentActiveConnectionId = this.snapshot.activeConnectionId;
+      if (currentActiveConnectionId) {
+        this.reconcileActiveProbeWithClient(currentActiveConnectionId, probeByConnectionId);
+      }
       const activeProbe = currentActiveConnectionId
         ? probeByConnectionId.get(currentActiveConnectionId)
         : null;
@@ -1057,37 +1063,46 @@ export class HostRuntimeController {
             expectedProbeVersion: requestVersion,
           });
         }
-        this.switchCandidateConnectionId = null;
-        this.switchCandidateHitCount = 0;
+        this.resetSwitchCandidate();
         return;
       }
 
-      if (!activeProbe || activeProbe.status !== "available") {
+      // Adaptive switching counts fresh comparisons only. The probe map keeps the last known
+      // sample per connection for display and failover; a streak hit needs a candidate measured
+      // in this cycle and a heartbeat RTT from the socket that is active right now. Re-reading
+      // the cached map at every ten-second active tick turned one idle-probe sample into three
+      // "consecutive" wins, and a reconnected socket inherited its predecessor's RTT, so a
+      // working relay connection was replaced within seconds of coming online.
+      const sampledCandidates = connectionsToProbe.filter(
+        (connection) => connection.id !== currentActiveConnectionId,
+      );
+      if (sampledCandidates.length === 0) {
+        // An active-only tick carries no evidence about any candidate.
+        return;
+      }
+      const fastest =
+        sampledCandidates
+          .flatMap((connection) => {
+            const probe = probeByConnectionId.get(connection.id);
+            return probe?.status === "available"
+              ? [{ connectionId: connection.id, latencyMs: probe.latencyMs }]
+              : [];
+          })
+          .sort((left, right) => left.latencyMs - right.latencyMs)[0] ?? null;
+      if (!fastest) {
+        // Every candidate sampled this cycle failed: that breaks the streak.
+        this.resetSwitchCandidate();
         return;
       }
 
-      const available = Array.from(probeByConnectionId.entries())
-        .filter(
-          (entry): entry is [string, Extract<ConnectionProbeState, { status: "available" }>] =>
-            entry[1].status === "available",
-        )
-        .map(([connectionId, probe]) => ({
-          connectionId,
-          latencyMs: probe.latencyMs,
-        }))
-        .sort((left, right) => left.latencyMs - right.latencyMs);
-
-      const fastest = available[0] ?? null;
-      if (!fastest || fastest.connectionId === currentActiveConnectionId) {
-        this.switchCandidateConnectionId = null;
-        this.switchCandidateHitCount = 0;
+      const activeRttMs = this.currentActiveSocketRttMs();
+      if (activeRttMs === null) {
         return;
       }
 
-      const improvement = activeProbe.latencyMs - fastest.latencyMs;
+      const improvement = activeRttMs - fastest.latencyMs;
       if (improvement < ADAPTIVE_SWITCH_THRESHOLD_MS) {
-        this.switchCandidateConnectionId = null;
-        this.switchCandidateHitCount = 0;
+        this.resetSwitchCandidate();
         return;
       }
 
@@ -1099,8 +1114,7 @@ export class HostRuntimeController {
       }
 
       if (this.switchCandidateHitCount >= ADAPTIVE_SWITCH_CONSECUTIVE_PROBES) {
-        this.switchCandidateConnectionId = null;
-        this.switchCandidateHitCount = 0;
+        this.resetSwitchCandidate();
         await this.switchToConnection({
           connectionId: fastest.connectionId,
           expectedProbeVersion: requestVersion,
@@ -1209,6 +1223,40 @@ export class HostRuntimeController {
         })();
       }
     });
+  }
+
+  // The client clears its heartbeat RTT when a socket connects, so a connected client's RTT
+  // describes the socket in use right now; a reconnecting client still carries the old one.
+  private currentActiveSocketRttMs(): number | null {
+    const client = this.snapshot.client;
+    if (!client || client.getConnectionState().status !== "connected") return null;
+    return client.getLastLivenessRttMs();
+  }
+
+  private resetSwitchCandidate(): void {
+    this.switchCandidateConnectionId = null;
+    this.switchCandidateHitCount = 0;
+  }
+
+  // The active connection is probed through its own client, which may still be
+  // reconnecting when the probe starts. A verdict taken then is stale if the client
+  // has since connected, so the decision uses the client's current state.
+  private reconcileActiveProbeWithClient(
+    connectionId: string,
+    probeByConnectionId: Map<string, ConnectionProbeState>,
+  ): void {
+    if (probeByConnectionId.get(connectionId)?.status !== "unavailable") return;
+    if (this.authRejectedConnectionIds.has(connectionId)) return;
+    const client = this.snapshot.client;
+    if (!client || client.getConnectionState().status !== "connected") return;
+    const rttMs = client.getLastLivenessRttMs();
+    probeByConnectionId.set(
+      connectionId,
+      rttMs === null
+        ? { status: "pending", latencyMs: null }
+        : { status: "available", latencyMs: rttMs },
+    );
+    this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
   }
 
   private isConnectionUnavailable(
@@ -1479,6 +1527,8 @@ export class HostRuntimeController {
           return;
         }
         if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
+        // Switch evidence belongs to the socket it was measured against.
+        if (state.status !== "connected") this.resetSwitchCandidate();
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
         this.updateSnapshot({
           ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
@@ -2828,7 +2878,22 @@ export class HostRuntimeStore {
       replica,
       replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
-      ports,
+      applyTurnLiveness: (agentId, transitions) =>
+        directory.applyAgentTurnLiveness(agentId, transitions),
+      ports: {
+        ...ports,
+        observe: (agentIds, cursors) => {
+          const keepAgents = directory.captureSubscribedAgents(agentIds);
+          const observation = ports.observe(agentIds, cursors);
+          return {
+            ready: observation.ready.then((answer) => {
+              if (answer?.agents) keepAgents(answer.agents);
+              return answer;
+            }),
+            release: () => observation.release(),
+          };
+        },
+      },
     });
   }
 

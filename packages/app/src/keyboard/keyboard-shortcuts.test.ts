@@ -408,6 +408,25 @@ describe("keyboard-shortcuts", () => {
     },
   );
 
+  describe("undo archive workspace", () => {
+    it.each([
+      { isMac: true, event: { key: "z", code: "KeyZ", metaKey: true } },
+      { isMac: false, event: { key: "z", code: "KeyZ", ctrlKey: true } },
+    ])("routes Cmd/Ctrl+Z outside text and terminals (mac: $isMac)", ({ isMac, event }) => {
+      expectShortcutResolution({ event, context: { isMac }, action: "workspace.archive.undo" });
+    });
+
+    it.each(["editable", "message-input", "terminal"] as const)(
+      "leaves Cmd+Z to the focused %s",
+      (focusScope) => {
+        expectNoShortcutResolution({
+          event: { key: "z", code: "KeyZ", metaKey: true },
+          context: { isMac: true, focusScope },
+        });
+      },
+    );
+  });
+
   it("leaves Escape to an editable field", () => {
     expectNoShortcutResolution({
       event: { key: "Escape", code: "Escape" },

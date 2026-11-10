@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  pluginCombobox: {
+    searching: "جارٍ البحث…",
+    empty: "لا توجد نتائج",
+    failed: "فشل البحث: {{message}}",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
@@ -381,6 +386,24 @@ export const ar: TranslationResources = {
       next: "التالي",
       answerPlaceholder: "اكتب إجابتك...",
       otherPlaceholder: "آخر...",
+    },
+    backgroundWork: {
+      pillOne: "مهمة واحدة في الخلفية",
+      pillMany: "{{count}} مهمة في الخلفية",
+      notRunning: "لم يعد قيد التشغيل",
+      dismiss: "إغلاق",
+      stop: "إيقاف",
+      stopping: "جارٍ الإيقاف…",
+      stopError: "تعذر تأكيد الإيقاف.",
+      label: "في الخلفية",
+      title: "عمل الخلفية",
+      waiting: "بانتظار تفاصيل عمل الخلفية",
+      error: "تعذر تحميل عمل الخلفية",
+      retry: "إعادة المحاولة",
+      running: "عمل الخلفية قيد التشغيل",
+      shell: "الصدفة",
+      monitor: "المراقبة",
+      other: "عمل آخر",
     },
     todo: {
       title: "المهام",
@@ -933,6 +956,9 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "الفرع الأساسي",
+        },
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
@@ -1161,6 +1187,14 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "تعذر تحميل عرض الشريط الجانبي.",
+      useDefault: "استخدام العرض الافتراضي",
+      readFailed: "تعذر تحميل تفضيل عرض الشريط الجانبي.",
+      agentUnavailable: "لم يعد الوكيل متاحًا",
+      terminalUnavailable: "لم تعد الطرفية متاحة",
+      projectUnavailable: "لم يعد المشروع متاحًا",
+    },
     statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
       needsInput: "تحتاج إدخالاً",
@@ -1236,6 +1270,7 @@ export const ar: TranslationResources = {
       hosts: "المضيفون",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+      moreActions: "المزيد من الإجراءات",
     },
     footer: {
       usage: "الاستخدام",
@@ -1340,6 +1375,9 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        archived: "تمت أرشفة مساحة العمل",
+        undoArchive: "تراجع",
+        undoArchiveFailed: "تعذّر التراجع عن الأرشفة",
       },
     },
   },
@@ -1597,6 +1635,7 @@ export const ar: TranslationResources = {
     openPath: "فتح المسار",
   },
   branchSwitcher: {
+    failedToLoad: "تعذّر تحميل الفروع. أعد فتح قائمة الفروع للمحاولة مرة أخرى.",
     triggerTooltip: "تبديل فرع مساحة العمل",
     currentBranch: "الفرع الحالي:{{branchName}}. اضغط لتبديل الفرع.",
     placeholder: "تبديل الفرع...",
@@ -1619,7 +1658,11 @@ export const ar: TranslationResources = {
     loadingCommands: "جارٍ تحميل الأوامر...",
     noFiles: "لم يتم العثور على ملفات أو أدلة",
     noCommands: "لم يتم العثور على أي أوامر",
-    failedToLoad: "فشل التحميل",
+    loadingProviderCommands: "جارٍ تحميل أوامر {{provider}}...",
+    commandsFailed: "تعذر تحميل الأوامر",
+    providerCommandsFailed: "تعذر تحميل أوامر {{provider}}",
+    filesFailed: "تعذر البحث في الملفات",
+    skillTag: "مهارة",
     chooseProjectForCommands: "اختر مشروعًا لعرض الأوامر",
     chooseModelForCommands: "اختر نموذجًا لعرض الأوامر",
   },
@@ -2585,6 +2628,12 @@ export const ar: TranslationResources = {
         description: "عرض مخطط للتنقل بين المطالبات",
       },
       sidebar: {
+        view: {
+          title: "عرض الشريط الجانبي",
+          label: "العرض",
+          default: "العرض الافتراضي",
+          unavailable: "العرض المحدد غير متاح أو معطل. يتم عرض العرض الافتراضي.",
+        },
         header: {
           title: "الرأس",
           description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",

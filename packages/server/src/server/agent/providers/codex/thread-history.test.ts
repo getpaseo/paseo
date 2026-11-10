@@ -1,4 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -27,15 +26,24 @@ async function openCodexThread(
   const appServer = createFakeCodexAppServer(
     fakeCodexThreadHistory({ "saved-thread": thread }, options),
   );
-  const provider = new CodexAppServerAgentClient(createTestLogger());
+  const provider = new CodexAppServerAgentClient(
+    createTestLogger(),
+    {
+      command: { mode: "replace", argv: ["codex-must-not-run-in-this-test"] },
+    },
+    {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "codex", args: [] }),
+        spawn: () => appServer.child,
+      },
+    },
+  );
   const internals = provider as unknown as {
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
-    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
   };
   internals.goalsEnabledPromise = Promise.resolve(false);
   internals.autoReviewEnabledPromise = Promise.resolve(false);
-  internals.spawnAppServer = async () => appServer.child;
   const session = await provider.resumeSession({ sessionId: "saved-thread" });
   return { appServer, session };
 }

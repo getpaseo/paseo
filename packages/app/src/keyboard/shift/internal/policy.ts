@@ -37,9 +37,14 @@ export function resolveKeyboardLift(input: {
   shift: number;
   enabled: boolean;
   bottomClearance: number;
+  keyboardGap: number;
 }): number {
   "worklet";
-  return input.enabled ? Math.max(0, input.shift - input.bottomClearance) : 0;
+  if (!input.enabled) return 0;
+  // The gap opens over the shift's first points, so the view never rises at rest.
+  return (
+    Math.max(0, input.shift - input.bottomClearance) + Math.min(input.keyboardGap, input.shift)
+  );
 }
 
 export function shouldReconcileHiddenKeyboardEnd(input: {

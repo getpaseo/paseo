@@ -172,6 +172,11 @@ slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
 band or a paused transition when the stream list updates its viewport.
 
+The docked composer rests at the larger of the safe-area bottom and 16pt. With
+the keyboard open it keeps 16pt above the keyboard through the translate view's
+`keyboardGap`, which rises further than the keyboard's safe-area overlap. Do not
+grow the composer's bottom padding with the keyboard instead.
+
 Do not animate a layout prop through the keyboard transition. On Android
 Fabric, each animated layout update clones the shadow tree and runs Yoga over
 the dock subtree. This measured about 10 ms per frame on the emulator and the
@@ -441,6 +446,13 @@ Before you write a new one, ask:
    positioning (`bottom: windowHeight - anchor.y + gap`) and skip the
    `contentSize` round-trip entirely. **But only if the height is genuinely
    bounded**. Verify before you commit.
+6. **Can the content change size after the panel paints, and does the panel
+   sit above its anchor?** Hold it by its bottom edge with `holdSurfaceEdge`
+   and `surfaceFrameStyles` from `components/ui/anchor.ts`. Native delivers
+   `onLayout` after the frame that shows the new size, so a panel placed by
+   `top` paints over its anchor until the next placement lands, about 150 ms
+   on Android. Web hides this because React commits the resize and the
+   re-placement in one task.
 
 Then copy the closest canonical file and trim.
 

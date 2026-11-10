@@ -9,9 +9,11 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
+  resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
   resolveDesktopSidebarWidth,
+  resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
@@ -102,6 +104,40 @@ describe("desktop sidebar layout", () => {
         canShare: true,
       }),
     ).toBe(false);
+  });
+
+  it("offers an overlay only after wide navigation yields its dock", () => {
+    const input = {
+      chromeEnabled: true,
+      isCompactLayout: false,
+      isFocusModeEnabled: false,
+    };
+    expect(resolveLeftSidebarPresentation({ ...input, desktopSidebarVisible: true })).toBe("dock");
+    expect(resolveLeftSidebarPresentation({ ...input, desktopSidebarVisible: false })).toBe(
+      "overlay",
+    );
+  });
+
+  it("does not reveal navigation over a focused workspace or suppressed chrome", () => {
+    const input = {
+      chromeEnabled: true,
+      isCompactLayout: false,
+      isFocusModeEnabled: false,
+      desktopSidebarVisible: false,
+    };
+    expect(resolveLeftSidebarPresentation({ ...input, isFocusModeEnabled: true })).toBe("hidden");
+    expect(resolveLeftSidebarPresentation({ ...input, chromeEnabled: false })).toBe("hidden");
+  });
+
+  it("keeps phone navigation available independently of saved wide focus mode", () => {
+    expect(
+      resolveLeftSidebarPresentation({
+        chromeEnabled: true,
+        isCompactLayout: true,
+        isFocusModeEnabled: true,
+        desktopSidebarVisible: false,
+      }),
+    ).toBe("overlay");
   });
 
   it("keeps the sidebar toggle window-owned beside left window controls", () => {
@@ -206,4 +242,9 @@ it("reserves room for Explorer and the workspace before showing app navigation",
       viewportWidth: 951,
     }),
   ).toBe(true);
+});
+
+it("insets an overlay sidebar's content by the left safe area and leaves the dock to app chrome", () => {
+  expect(resolveDesktopSidebarInsetLeft({ overlay: true, safeAreaLeft: 20 })).toBe(20);
+  expect(resolveDesktopSidebarInsetLeft({ overlay: false, safeAreaLeft: 20 })).toBe(0);
 });

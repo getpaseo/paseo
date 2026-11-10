@@ -235,6 +235,7 @@ async function beginTimelineRowStabilityCheck(
       lastTop: initialRow.getBoundingClientRect().top,
       largestDownwardShift: 0,
       sawMissing: false,
+      sawHidden: false,
     };
     const windowState = window as unknown as Record<string, unknown>;
     windowState.__messageSubmissionTimelineRowStability = state;
@@ -244,6 +245,9 @@ async function beginTimelineRowStabilityCheck(
         state.sawMissing = true;
         requestAnimationFrame(checkFrame);
         return;
+      }
+      if (!initialRow.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
+        state.sawHidden = true;
       }
       const top = initialRow.getBoundingClientRect().top;
       state.largestDownwardShift = Math.max(state.largestDownwardShift, top - state.lastTop);
@@ -257,14 +261,24 @@ async function beginTimelineRowStabilityCheck(
     const result = await page.evaluate(() => {
       const windowState = window as unknown as Record<string, unknown>;
       const state = windowState.__messageSubmissionTimelineRowStability as
-        | { active: boolean; largestDownwardShift: number; sawMissing: boolean }
+        | {
+            active: boolean;
+            largestDownwardShift: number;
+            sawMissing: boolean;
+            sawHidden: boolean;
+          }
         | undefined;
       if (!state) throw new Error("Timeline-row stability check was not started");
       state.active = false;
       delete windowState.__messageSubmissionTimelineRowStability;
-      return { largestDownwardShift: state.largestDownwardShift, sawMissing: state.sawMissing };
+      return {
+        largestDownwardShift: state.largestDownwardShift,
+        sawMissing: state.sawMissing,
+        sawHidden: state.sawHidden,
+      };
     });
     expect(result.sawMissing).toBe(false);
+    expect(result.sawHidden).toBe(false);
     expect(result.largestDownwardShift).toBeLessThanOrEqual(2);
   };
 }
@@ -1178,7 +1192,13 @@ test.describe("Agent message submission", () => {
     test.setTimeout(120_000);
     const toasts = await recordPanelToasts(page);
     const pending = await beginDraftCreateSubmission(page, draftCreateScenario);
+    // The created agent takes over the draft's timeline: the same row stays mounted and painted.
+    const finishTimelineRowStabilityCheck = await beginTimelineRowStabilityCheck(
+      page,
+      pending.userMessage,
+    );
     await completeDraftCreateSubmission(page, draftCreateScenario, pending);
+    await finishTimelineRowStabilityCheck();
     // A chat this client just created is current by construction; it is never out of date.
     await toasts.expectNeverShown("agent-updating-toast");
   });
