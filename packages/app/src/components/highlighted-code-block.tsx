@@ -172,11 +172,25 @@ function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): Spli
 interface CopyButtonProps {
   getCode: () => string;
   visible: boolean;
+  /** What the button copies, for assistive tech; "Copy code" when unset. */
+  label?: string;
+  /** Extra chrome on the button, laid over its corner position (a quote's bordered chip). */
+  chromeStyle?: StyleProp<ViewStyle>;
+  iconSize?: number;
+  /** The check's colour once copied; the icon's own colour when unset. */
+  copiedColor?: string;
 }
 
 const COPIED_RESET_MS = 1500;
 
-const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButtonProps) {
+export const CopyButton = React.memo(function CopyButton({
+  getCode,
+  visible,
+  label,
+  chromeStyle,
+  iconSize = 14,
+  copiedColor,
+}: CopyButtonProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -204,8 +218,8 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
     ? copyButtonStyles.containerVisible
     : copyButtonStyles.containerHidden;
   const wrapperStyle = useMemo(
-    () => [copyButtonStyles.container, visibilityStyle],
-    [visibilityStyle],
+    () => [copyButtonStyles.container, chromeStyle, visibilityStyle],
+    [chromeStyle, visibilityStyle],
   );
 
   return (
@@ -214,7 +228,9 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
       style={wrapperStyle}
       pointerEvents={visible ? "auto" : "none"}
       accessibilityRole="button"
-      accessibilityLabel={copied ? t("message.actions.copied") : t("message.actions.copyCode")}
+      accessibilityLabel={
+        copied ? t("message.actions.copied") : (label ?? t("message.actions.copyCode"))
+      }
       hitSlop={8}
       dataSet={markdownCopyDataSet.ignore}
     >
@@ -223,9 +239,9 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
           ? copyButtonStyles.iconHoveredColor.color
           : copyButtonStyles.iconColor.color;
         return copied ? (
-          <Check size={14} color={iconColor} />
+          <Check size={iconSize} color={copiedColor ?? iconColor} />
         ) : (
-          <Copy size={14} color={iconColor} />
+          <Copy size={iconSize} color={iconColor} />
         );
       }}
     </Pressable>

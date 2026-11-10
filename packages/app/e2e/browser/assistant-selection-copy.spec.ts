@@ -672,6 +672,51 @@ test("copying an assistant selection preserves Markdown structure and links", as
   }
 });
 
+test("a quote's Copy button copies the quote as it reads, line breaks kept", async ({
+  context,
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-quote-copy-",
+    title: "Assistant quote copy",
+    initialPrompt: "Render the quote fixture.",
+    featureValues: {
+      mockAssistantResponse: [
+        "Here's a draft:",
+        "",
+        "> fair point, ill narrow it",
+        "> no cancel at all",
+        ">",
+        "> queue of 5 doesnt help tho",
+        "",
+        "After the quote.",
+      ].join("\n"),
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+
+    const quote = assistantMessageBlocks(page).locator("blockquote");
+    await expect(quote).toContainText("queue of 5 doesnt help tho");
+    // The button sits in the quote's corner without a hover, so it is there to tap on a phone too.
+    await quote.getByRole("button", { name: "Copy quote" }).click();
+
+    expect(await readPlainClipboard(page)).toBe(
+      "fair point, ill narrow it\nno cancel at all\n\nqueue of 5 doesnt help tho",
+    );
+    await expect(quote.getByRole("button", { name: "Copied" })).toBeVisible();
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("copying a selection across an assistant image keeps its Markdown source and alt text", async ({
   context,
   page,
