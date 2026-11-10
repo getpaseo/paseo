@@ -4,7 +4,11 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { type Forge, getForgePresentation } from "@/git/forge";
 import type { PresentableCheck } from "@/git/check-presentation";
-import { parseClientForgeFacts } from "@/git/forges";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  parseHostForgeFacts,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
 import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
 import { type CheckStatus, mapCheckStatus } from "./check-status";
@@ -114,6 +118,7 @@ export function mapPrPaneData(
   timeline: PullRequestTimeline | null | undefined,
   nowMs = Date.now(),
   forge: Forge = "github",
+  clientForgeHost: ClientForgeHostSnapshot = BUILTIN_CLIENT_FORGE_HOST,
 ): PrPaneData | null {
   if (!status) {
     return null;
@@ -125,8 +130,8 @@ export function mapPrPaneData(
   }
 
   const timelineMatchesStatus = timeline?.prNumber === number;
-  const provider = toProviderMetadata(forge);
-  const forgeSpecific = parseClientForgeFacts(status.forgeSpecific);
+  const provider = toProviderMetadata(forge, clientForgeHost);
+  const forgeSpecific = parseHostForgeFacts(clientForgeHost, status.forgeSpecific);
 
   return {
     provider,
@@ -149,8 +154,11 @@ export function mapPrPaneData(
   };
 }
 
-function toProviderMetadata(forge: Forge): PullRequestProviderMetadata {
-  return { id: forge, label: getForgePresentation(forge).brandLabel };
+function toProviderMetadata(
+  forge: Forge,
+  clientForgeHost: ClientForgeHostSnapshot,
+): PullRequestProviderMetadata {
+  return { id: forge, label: getForgePresentation(forge, clientForgeHost).brandLabel };
 }
 
 // Avatars are identity, not status: they draw from the shared identity table so a PR

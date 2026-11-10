@@ -1,4 +1,5 @@
 import type { MessageSubmissionWriter } from "@/composer/actions";
+import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { useSessionStore } from "@/stores/session-store";
 import {
   appendSubmittedUserMessage,
@@ -69,4 +70,67 @@ export function handoffCreatedAgentMessageSubmission(
   message: UserMessageItem,
 ): boolean {
   return useSessionStore.getState().handoffCreatedAgentUserMessage(serverId, agentId, message);
+}
+
+function streamShowsMessage(serverId: string, agentId: string, clientMessageId: string): boolean {
+  const session = useSessionStore.getState().sessions[serverId];
+  if (!session) return false;
+  return [
+    ...(session.agentStreamHead.get(agentId) ?? []),
+    ...(session.agentStreamTail.get(agentId) ?? []),
+  ].some((item) => item.kind === "user_message" && item.clientMessageId === clientMessageId);
+}
+
+/**
+ * Shows a message the daemon sends for this client, such as the first prompt of an agent a plugin
+ * created, until its canonical copy arrives. No client RPC settles it, so it is accepted at once
+ * and the canonical echo retires it, the same way it retires a composer send.
+ */
+export function showDaemonSentAgentMessage(
+  serverId: string,
+  agentId: string,
+  message: UserMessageItem,
+): void {
+  const clientMessageId = message.clientMessageId;
+  const session = useSessionStore.getState().sessions[serverId];
+  if (!session || !clientMessageId) return;
+  const tracked = session.messageSubmissions
+    .get(agentId)
+    ?.some((submission) => submission.clientMessageId === clientMessageId);
+  // Already painted, or already canonical: a new submission would never be retired.
+  if (tracked || streamShowsMessage(serverId, agentId, clientMessageId)) return;
+  const writer = createMessageSubmissionWriter(serverId);
+  writer.begin(agentId, message);
+  writer.accept(agentId, clientMessageId);
+}
+
+/**
+ * Redraws a message the agent's stream already shows, such as images stored after it was first
+ * shown. Its canonical identity is kept; a message no longer in the stream is left out.
+ */
+export function updateShownAgentMessage(
+  serverId: string,
+  agentId: string,
+  message: UserMessageItem,
+): void {
+  const clientMessageId = message.clientMessageId;
+  if (!clientMessageId || !streamShowsMessage(serverId, agentId, clientMessageId)) return;
+  useSessionStore.getState().handoffCreatedAgentUserMessage(serverId, agentId, message);
+}
+
+/**
+ * Withdraws a message shown with `showDaemonSentAgentMessage` that the daemon will not send, so the
+ * agent stops reading as busy. Once its canonical copy has arrived, the message stays.
+ */
+export function withdrawDaemonSentAgentMessage(
+  serverId: string,
+  agentId: string,
+  clientMessageId: string,
+): void {
+  const session = useSessionStore.getState().sessions[serverId];
+  const pending = getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).some(
+    (submission) => submission.clientMessageId === clientMessageId,
+  );
+  if (!pending) return;
+  useSessionStore.getState().rejectAgentMessageSubmission(serverId, agentId, clientMessageId);
 }

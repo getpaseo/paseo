@@ -9,6 +9,8 @@ import type {
   PluginWorkspaceCommandContext,
 } from "@getpaseo/plugin/client";
 import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
+import { createPluginNotifier } from "./notify";
+import { pluginOverlayStore } from "./overlays/store";
 import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
 import { parsePluginOpenScreenInput } from "./surface-contribution";
 import type { InstalledPlugin } from "./types";
@@ -35,6 +37,7 @@ export function createPluginCapabilities(
   }
   return {
     paseo: getPluginClientApi(plugin).paseo,
+    notify: createPluginNotifier(),
     rpc: (contract, input) => callPluginRpc(contract, plugin.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))
@@ -45,6 +48,8 @@ export function createPluginCapabilities(
     composers: (selector) => pluginComposersSource(plugin).resolve(selector),
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     openSurface: (screenId) => openScreen({ screenId }),
+    openOverlay: (Component) =>
+      pluginOverlayStore.open({ serverId: plugin.serverId, pluginId: plugin.id, Component }),
   };
 }
 

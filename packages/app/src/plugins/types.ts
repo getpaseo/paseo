@@ -20,6 +20,7 @@ import type {
   PluginWorkspaceRowBadgeItemContribution as SDKPluginWorkspaceRowBadgeItemContribution,
   PluginScreenContribution as SDKPluginScreenContribution,
   PluginSettingsScreenContribution as SDKPluginSettingsScreenContribution,
+  PluginForgeClientProviderContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginNotificationOpenHandler,
@@ -72,6 +73,7 @@ export interface EvaluatedPlugin {
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
   notificationOpenHandlers: PluginNotificationOpenHandler[];
+  forgeClientProviders: PluginForgeClientProviderContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -99,6 +101,7 @@ export type {
   PluginComposerItemContribution,
   PluginNewWorkspaceItemContribution,
   PluginComposerPillContribution,
+  PluginForgeClientProviderContribution,
   PluginSidebarContribution,
   PluginSidebarItemContribution,
   PluginWorkspaceRowBadgeItemContribution,

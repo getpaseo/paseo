@@ -1,3 +1,8 @@
+import {
+  getPluginCommandShortcuts,
+  runPluginCommandShortcut,
+  subscribeToPluginCommandShortcuts,
+} from "@/plugins/command-center/shortcuts";
 import { usesDesktopBindings } from "./internal/conventions";
 import { createKeyboardPipeline } from "./internal/pipeline";
 import { overlays } from "./internal/overlays";
@@ -6,7 +11,7 @@ import { attachKeyboardSources, publishKeyboardPolicy } from "./internal/sources
 import type { KeyboardSourceInput } from "./internal/sources/contract";
 import type { KeyboardInputEvent } from "./internal/overlays";
 import { hasActiveOverlay } from "./internal/overlay-dispatch";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -56,7 +61,15 @@ export function useKeyboardShortcuts({
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
-  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const pluginShortcuts = useSyncExternalStore(
+    subscribeToPluginCommandShortcuts,
+    getPluginCommandShortcuts,
+    getPluginCommandShortcuts,
+  );
+  const bindings = useMemo(
+    () => buildEffectiveBindings(overrides, pluginShortcuts),
+    [overrides, pluginShortcuts],
+  );
   const isMac = getShortcutOs() === "mac";
   const openProjectPickerAction = useOpenAddProject();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -156,6 +169,8 @@ export function useKeyboardShortcuts({
         useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen, action.tab);
         return true;
       }
+      case "plugin-command":
+        return runPluginCommandShortcut(action.commandId);
       case "shortcuts-dialog-toggle":
         useKeyboardShortcutsStore.getState().setShortcutsDialogOpen(action.nextOpen);
         return true;

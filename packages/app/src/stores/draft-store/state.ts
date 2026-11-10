@@ -6,7 +6,7 @@ import {
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
-export const DRAFT_STORE_VERSION = 5;
+export const DRAFT_STORE_VERSION = 6;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
@@ -23,13 +23,36 @@ export interface DraftInput {
 
 export type DraftLifecycleState = "active" | "abandoned" | "sent";
 
+export interface AgentLaunchDraftMetadata {
+  draftId: string;
+  serverId: string;
+  pluginId: string;
+  projectId: string;
+  launchId: string;
+  documentIncarnationId: string;
+  journalKey: string;
+  requestFingerprint: string;
+  labels: Readonly<Record<string, string>>;
+  clientMessageId: string;
+  submissionState: "editable" | "outcome_unknown_readonly";
+}
+
 export type CanonicalDraftInput = DraftInput;
 
 export interface DraftRecord {
   input: CanonicalDraftInput;
   lifecycle: DraftLifecycleState;
+  agentLaunch?: AgentLaunchDraftMetadata;
   updatedAt: number;
   version: number;
+}
+
+/**
+ * Emptying a plugin launch draft is an edit, not a close. It stays active and bound so finalized
+ * draft pruning cannot drop the launch binding; only closing its draft tab discards the launch.
+ */
+export function keepsEmptiedDraftBound(record: DraftRecord | undefined): boolean {
+  return record?.agentLaunch !== undefined;
 }
 
 export function editDraftRecordText(
@@ -39,9 +62,11 @@ export function editDraftRecordText(
 ): DraftRecord {
   if (record?.lifecycle === "active" && record.input.text === text) return record;
   const attachments = record?.lifecycle === "active" ? record.input.attachments : [];
+  const emptyLifecycle = record && keepsEmptiedDraftBound(record) ? record.lifecycle : "abandoned";
   return {
     input: { text, attachments },
-    lifecycle: text.length > 0 || attachments.length > 0 ? "active" : "abandoned",
+    lifecycle: text.length > 0 || attachments.length > 0 ? "active" : emptyLifecycle,
+    ...(record?.agentLaunch ? { agentLaunch: record.agentLaunch } : {}),
     updatedAt: now,
     version: (record?.version ?? 0) + 1,
   };
@@ -128,6 +153,21 @@ export const CanonicalDraftInputSchema = z.strictObject({
 const DraftRecordSchema: z.ZodType<DraftRecord> = z.strictObject({
   input: CanonicalDraftInputSchema,
   lifecycle: z.enum(["active", "abandoned", "sent"]),
+  agentLaunch: z
+    .strictObject({
+      draftId: z.string(),
+      serverId: z.string(),
+      pluginId: z.string(),
+      projectId: z.string(),
+      launchId: z.string(),
+      documentIncarnationId: z.string(),
+      journalKey: z.string(),
+      requestFingerprint: z.string(),
+      labels: z.record(z.string(), z.string()),
+      clientMessageId: z.string(),
+      submissionState: z.enum(["editable", "outcome_unknown_readonly"]),
+    })
+    .optional(),
   updatedAt: z.number(),
   version: z.number().int().positive(),
 });

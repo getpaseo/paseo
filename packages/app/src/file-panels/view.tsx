@@ -7,8 +7,7 @@ import { withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import { useHosts } from "@/runtime/host-runtime";
-import { usePluginHostNavigation } from "@/plugins/host-navigation";
-import { resolvePluginPlatform } from "@/plugins/platform";
+import { usePluginLayout } from "@/plugins/layout";
 import { toPluginTheme } from "@/plugins/theme";
 import type { Theme } from "@/styles/theme";
 import type { FilePanel } from "./panels";
@@ -24,10 +23,9 @@ function FilePanelHost({ panel, theme, ...input }: Props & { theme: PluginTheme 
   const hosts = useHosts();
   const label = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label }), [serverId, label]);
-  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
-  const navigation = usePluginHostNavigation(serverId);
-  const props: PluginFilePanelProps = { ...input, workspaceId, theme, host, layout, navigation };
+  const props: PluginFilePanelProps = { ...input, workspaceId, theme, host, layout };
   if (panel.builtin)
     return (
       <PluginClientStateProvider source={stateSource}>

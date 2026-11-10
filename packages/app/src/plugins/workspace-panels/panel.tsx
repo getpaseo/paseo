@@ -25,7 +25,7 @@ import { useInstalledPlugin } from "../registry";
 import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
-import { resolvePluginPlatform } from "../platform";
+import { usePluginLayout } from "../layout";
 
 const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
@@ -64,8 +64,8 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
-  const navigation = usePluginHostNavigation(serverId);
+  const layout = usePluginLayout(compact);
+  const navigation = usePluginHostNavigation(serverId, target.pluginId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;

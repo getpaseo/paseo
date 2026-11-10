@@ -48,6 +48,7 @@ function plugin(input: {
     ],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    forgeClientProviders: [],
   };
 }
 

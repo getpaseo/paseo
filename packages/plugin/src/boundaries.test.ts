@@ -15,6 +15,7 @@ const entries = {
   "./server/acp": "server",
   "./internal/lifecycle": "server",
   "./internal/windows-command": "server",
+  "./server/forge-toolkit": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",

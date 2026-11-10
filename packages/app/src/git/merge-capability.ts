@@ -3,26 +3,14 @@ import {
   type LegacyGithubMergeFacts,
   type MergeCapability,
 } from "@/git/client-forge-module";
-import { CLIENT_FORGE_LOGIC_MODULES } from "@/git/forges";
+import {
+  deriveHostMergeCapability,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 
 export type ForgeSpecificStatusFacts = ForgeSpecificEnvelope;
 
 export type { LegacyGithubMergeFacts, MergeCapability };
-
-/**
- * Resolve the neutral merge capability from a registered forge's runtime facts.
- * Returns null for an unregistered, unknown, or schema-mismatched facts family;
- * callers then fall back to raw git state.
- */
-function deriveForgeMergeCapability(facts: unknown): MergeCapability | null {
-  for (const module of CLIENT_FORGE_LOGIC_MODULES) {
-    const capability = module.facts?.deriveMergeCapability(facts);
-    if (capability) {
-      return capability;
-    }
-  }
-  return null;
-}
 
 /**
  * Build the neutral merge capability from a forge's PR status facts. Returns
@@ -38,13 +26,14 @@ function deriveForgeMergeCapability(facts: unknown): MergeCapability | null {
  */
 export function deriveMergeCapability(
   forgeSpecific: unknown,
+  host: ClientForgeHostSnapshot,
   legacyGithubFacts?: LegacyGithubMergeFacts | null,
 ): MergeCapability | null {
   if (forgeSpecific === null || forgeSpecific === undefined) {
     if (legacyGithubFacts) {
-      return deriveForgeMergeCapability({ forge: "github", ...legacyGithubFacts });
+      return deriveHostMergeCapability(host, { forge: "github", ...legacyGithubFacts });
     }
     return null;
   }
-  return deriveForgeMergeCapability(forgeSpecific);
+  return deriveHostMergeCapability(host, forgeSpecific);
 }

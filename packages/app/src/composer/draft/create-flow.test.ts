@@ -4,13 +4,91 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useDraftStore } from "@/stores/draft-store";
+import { markLaunchOutcomeUnknown } from "@/plugins/agent-launch";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow";
 
+vi.mock("@/plugins/agent-launch", () => ({
+  markLaunchOutcomeUnknown: vi.fn(),
+}));
+
+const markLaunchOutcomeUnknownMock = vi.mocked(markLaunchOutcomeUnknown);
+
 describe("useDraftAgentCreateFlow", () => {
   beforeEach(() => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
+    useDraftStore.setState({ drafts: {}, createModalDraft: null });
+    markLaunchOutcomeUnknownMock.mockReset();
+  });
+
+  it("uses persisted launch identity and keeps request-start failures read-only", async () => {
+    const metadata = {
+      draftId: "draft-launch",
+      serverId: "server-1",
+      pluginId: "todo",
+      projectId: "project-1",
+      launchId: "attempt-1",
+      documentIncarnationId: "incarnation-1",
+      journalKey: "journal-1",
+      requestFingerprint: "fingerprint-1",
+      labels: { "paseo.plugin.todo": "v1" },
+      clientMessageId: "message-stable",
+      submissionState: "editable" as const,
+    };
+    useDraftStore.getState().setAgentLaunchMetadata({
+      draftKey: "draft:server-1:draft-launch",
+      draft: { text: "edited prompt", attachments: [] },
+      metadata,
+    });
+    markLaunchOutcomeUnknownMock.mockImplementation(async () => {
+      useDraftStore.getState().updateAgentLaunchSubmissionState({
+        draftId: metadata.draftId,
+        submissionState: "outcome_unknown_readonly",
+      });
+    });
+    const createRequest = vi.fn(async () => {
+      throw new Error("agent_create_failed");
+    });
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: metadata.draftId,
+        getPendingServerId: () => "server-1",
+        buildDraftAgent: (attempt) => ({ attempt }),
+        createRequest,
+        onCreateSuccess: () => undefined,
+      }),
+    );
+
+    await act(async () => {
+      await expect(
+        result.current.handleCreateFromInput({
+          text: "final composer edit",
+          attachments: [],
+          cwd: "/repo",
+        }),
+      ).rejects.toThrow("agent_create_failed");
+    });
+
+    expect(createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: expect.objectContaining({
+          clientMessageId: "message-stable",
+          labels: { "paseo.plugin.todo": "v1" },
+          text: "final composer edit",
+        }),
+      }),
+    );
+    expect(useCreateFlowStore.getState().pendingByDraftId[metadata.draftId]).toMatchObject({
+      lifecycle: "active",
+      clientMessageId: "message-stable",
+      labels: metadata.labels,
+    });
+    expect(result.current.isSubmitting).toBe(true);
+    expect(useDraftStore.getState().getAgentLaunchMetadata(metadata.draftId)?.submissionState).toBe(
+      "outcome_unknown_readonly",
+    );
   });
 
   it("renders a prepared new-workspace submission before continuing it", async () => {

@@ -89,6 +89,7 @@ import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visua
 import { useToast } from "@/contexts/toast-context";
 import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -309,8 +310,17 @@ interface WorkspaceRowInnerProps {
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
-export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
+export function PrBadge({
+  hint,
+  serverId,
+  style,
+}: {
+  hint: PrHint;
+  serverId: string;
+  style?: StyleProp<ViewStyle>;
+}) {
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const [isHovered, setIsHovered] = useState(false);
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => {
@@ -343,7 +353,7 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const textStyle = isHovered
     ? [prBadgeStyles.text, prBadgeStyles.textHovered]
     : prBadgeStyles.text;
-  const presentation = getForgePresentation(normalizeForge(hint.forge));
+  const presentation = getForgePresentation(normalizeForge(hint.forge), clientForgeHost);
 
   return (
     <Pressable

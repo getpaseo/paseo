@@ -11,8 +11,12 @@ import {
   type ForgeBrandColor,
   type ForgeIconColorMapping,
   type ForgeIconComponent,
+  type ForgeIconProps,
 } from "@/git/client-forge-module";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
+import { SvgPathIcon } from "@/components/icons/svg-path-icon";
+import type { ClientForgeHostSnapshot } from "@/git/client-forge-registry";
+import type { PluginForgeSvgPathIcon } from "@getpaseo/plugin";
 
 const FORGE_ICON_BY_KIND = new Map(
   CLIENT_FORGE_VIEW_MODULES.map((module) => [module.id, module.icon]),
@@ -22,8 +26,29 @@ const FORGE_ICON_BY_KIND = new Map(
  * Raw brand icon component for an `iconKind`, for call sites that style with a
  * plain `color` prop. Falls back to a generic pull-request glyph.
  */
-export function getForgeIconComponent(iconKind: string): ForgeIconComponent {
-  return FORGE_ICON_BY_KIND.get(iconKind) ?? GitPullRequest;
+const pluginIconComponents = new WeakMap<PluginForgeSvgPathIcon, ForgeIconComponent>();
+
+function createPluginIconComponent(icon: PluginForgeSvgPathIcon): ForgeIconComponent {
+  const existing = pluginIconComponents.get(icon);
+  if (existing) {
+    return existing;
+  }
+  const viewBox = icon.viewBox.join(" ");
+  const PluginForgeIcon = (props: { size?: number; color?: string }) => (
+    <SvgPathIcon {...props} viewBox={viewBox} path={icon.path} />
+  );
+  pluginIconComponents.set(icon, PluginForgeIcon);
+  return PluginForgeIcon;
+}
+
+export function getForgeIconComponent(
+  iconKind: string,
+  host: ClientForgeHostSnapshot,
+): ForgeIconComponent {
+  const pluginIcon = host.pluginViewsById.get(iconKind)?.icon;
+  return pluginIcon
+    ? createPluginIconComponent(pluginIcon)
+    : (FORGE_ICON_BY_KIND.get(iconKind) ?? GitPullRequest);
 }
 
 const THEMED_ICON_BY_KIND = Object.fromEntries(
@@ -31,11 +56,32 @@ const THEMED_ICON_BY_KIND = Object.fromEntries(
 );
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 
+function PluginForgeIconRenderer({
+  icon,
+  ...props
+}: ForgeIconProps & { icon: PluginForgeSvgPathIcon }) {
+  return <SvgPathIcon {...props} viewBox={icon.viewBox.join(" ")} path={icon.path} />;
+}
+
+const ThemedPluginForgeIconRenderer = withUnistyles(PluginForgeIconRenderer);
+
 /** Theme-driven color mapping, e.g. `(theme) => ({ color: theme.colors.foregroundMuted })`. */
 export type { ForgeIconColorMapping };
 
 function brandColorMapping(colors: ForgeBrandColor): ForgeIconColorMapping {
   return (theme) => ({ color: theme.colorScheme === "light" ? colors.light : colors.dark });
+}
+
+const pluginBrandColorMappings = new WeakMap<ForgeBrandColor, ForgeIconColorMapping>();
+
+function pluginBrandColorMapping(colors: ForgeBrandColor): ForgeIconColorMapping {
+  const existing = pluginBrandColorMappings.get(colors);
+  if (existing) {
+    return existing;
+  }
+  const mapping = brandColorMapping(colors);
+  pluginBrandColorMappings.set(colors, mapping);
+  return mapping;
 }
 
 const BRAND_COLOR_MAPPING_BY_KIND = new Map(
@@ -50,8 +96,14 @@ const BRAND_COLOR_MAPPING_BY_KIND = new Map(
  * sites pair this with {@link ForgeBrandIcon}: use it to tint the icon, or to
  * decide whether to show a brand badge at all.
  */
-export function getForgeBrandColorMapping(iconKind: string): ForgeIconColorMapping | null {
-  return BRAND_COLOR_MAPPING_BY_KIND.get(iconKind) ?? null;
+export function getForgeBrandColorMapping(
+  iconKind: string,
+  host: ClientForgeHostSnapshot,
+): ForgeIconColorMapping | null {
+  const pluginColor = host.pluginViewsById.get(iconKind)?.brandColor;
+  return pluginColor
+    ? pluginBrandColorMapping(pluginColor)
+    : (BRAND_COLOR_MAPPING_BY_KIND.get(iconKind) ?? null);
 }
 
 /**
@@ -62,11 +114,17 @@ export function ForgeBrandIcon({
   iconKind,
   size,
   uniProps,
+  host,
 }: {
   iconKind: string;
   size: number;
   uniProps: ForgeIconColorMapping;
+  host: ClientForgeHostSnapshot;
 }) {
+  const pluginIcon = host.pluginViewsById.get(iconKind)?.icon;
+  if (pluginIcon) {
+    return <ThemedPluginForgeIconRenderer icon={pluginIcon} size={size} uniProps={uniProps} />;
+  }
   const ThemedIcon = THEMED_ICON_BY_KIND[iconKind] ?? ThemedGitPullRequest;
   return <ThemedIcon size={size} uniProps={uniProps} />;
 }

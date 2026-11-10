@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { GitPullRequest } from "lucide-react-native";
-import { getForgeBrandColorMapping, getForgeIconComponent } from "./forge-icon";
+import {
+  getForgeBrandColorMapping as getForgeBrandColorMappingForHost,
+  getForgeIconComponent as getForgeIconComponentForHost,
+} from "./forge-icon";
 import { CLIENT_FORGE_VIEW_MODULES } from "./forges/view";
+import { BUILTIN_CLIENT_FORGE_HOST } from "./client-forge-registry";
+
+const getForgeIconComponent = (iconKind: string) =>
+  getForgeIconComponentForHost(iconKind, BUILTIN_CLIENT_FORGE_HOST);
+const getForgeBrandColorMapping = (iconKind: string) =>
+  getForgeBrandColorMappingForHost(iconKind, BUILTIN_CLIENT_FORGE_HOST);
 
 describe("getForgeIconComponent", () => {
   it("resolves a dedicated brand icon for every registered forge module", () => {
