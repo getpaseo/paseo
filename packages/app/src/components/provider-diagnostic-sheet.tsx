@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Plus, RotateCw, Star, Trash2 } from "lucide-react-native";
+import { AlertTriangle, Copy, FileText, Pin, Plus, RotateCw, Trash2 } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -83,7 +83,7 @@ function DiscoveredModelRow({
         }
         testID={`provider-model-default-${model.id}`}
       >
-        <Star
+        <Pin
           size={theme.iconSize.sm}
           color={isDefault ? theme.colors.foreground : theme.colors.foregroundMuted}
           fill={isDefault ? theme.colors.foregroundMuted : "none"}
