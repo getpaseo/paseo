@@ -20,6 +20,8 @@ import { resolveProviderIconName } from "@/components/provider-icon-name";
 export interface ProviderIconProps {
   size: number;
   color: string;
+  /** Honoured by outline glyphs such as the fallback; brand marks are filled and ignore it. */
+  strokeWidth?: number;
 }
 
 export type ProviderIconComponent = ComponentType<ProviderIconProps>;

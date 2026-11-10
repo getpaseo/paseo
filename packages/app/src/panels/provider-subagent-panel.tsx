@@ -16,21 +16,23 @@ import { usePaneContext } from "@/panels/pane-context";
 import { PaneSubtitle } from "@/panels/pane-subtitle";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
+import type { SheetTab } from "@/stores/workspace-layout-store";
 import { ParentAgentCallout } from "@/subagents/parent";
 import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
-import { useSubagentOpensInSheet } from "@/subagents/opens-in-sheet";
+import { useSubagentSheetTab } from "@/subagents/sheet-tab";
 import { SubagentsTrack } from "@/subagents/track";
 import {
   providerSubagentKey,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
+  loadOlderProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveSubagentStatusBucket } from "@/subagents";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -51,12 +53,12 @@ function ProviderSubagentChildTrack({
   serverId,
   rows,
   onOpenProviderSubagent,
-  opensInSheet,
+  sheetTabFor,
 }: {
   serverId: string;
   rows: ReturnType<typeof useSubagentsForParent>;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
-  opensInSheet: (row: SubagentRow) => boolean;
+  sheetTabFor: (row: SubagentRow) => SheetTab | null;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -66,7 +68,7 @@ function ProviderSubagentChildTrack({
         rows={rows}
         onOpenSubagent={NOOP_SUBAGENT}
         onOpenProviderSubagent={onOpenProviderSubagent}
-        opensInSheet={opensInSheet}
+        sheetTabFor={sheetTabFor}
         onArchiveSubagent={NOOP_SUBAGENT}
       />
     </ComposerTrackBar>
@@ -106,17 +108,14 @@ function useProviderSubagentDescriptor(
     titleState: descriptor ? "ready" : "loading",
     icon: useProviderIcon(provider, context.serverId),
     statusBucket: descriptor
-      ? deriveSidebarStateBucket({
-          status: providerSubagentLifecycleStatus(descriptor.status),
-          requiresAttention: descriptor.status === "failed",
-        })
+      ? deriveSubagentStatusBucket(providerSubagentLifecycleStatus(descriptor.status))
       : null,
   };
 }
 
 function ProviderSubagentPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, openFileInWorkspace, openTab } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openFileInWorkspace, openTab } = usePaneContext();
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
   const streamId = `provider:${encodeURIComponent(target.parentAgentId)}:${encodeURIComponent(target.subagentId)}`;
@@ -144,8 +143,9 @@ function ProviderSubagentPanel() {
     providerParentSubagentId: target.subagentId,
   });
   const childTrackClearance = resolveChildTrackClearance(childRows.length, isCompact);
-  const opensInSheet = useSubagentOpensInSheet(
+  const sheetTabFor = useSubagentSheetTab(
     buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+    tabId,
   );
   const openProviderChild = useCallback(
     (parentAgentId: string, subagentId: string) => {
@@ -178,26 +178,24 @@ function ProviderSubagentPanel() {
     });
   }, [client, supported, serverId, target.parentAgentId, target.subagentId]);
 
-  const loadOlder = useCallback((): boolean => {
+  const loadOlder = useCallback(async (): Promise<boolean> => {
     if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
       return false;
     }
-    const firstSeq = timeline.cursor?.startSeq ?? null;
-    if (firstSeq === null) return false;
     setIsLoadingOlder(true);
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
-        direction: "before",
-        cursor: { epoch: timeline.epoch, seq: firstSeq },
+    try {
+      return await loadOlderProviderSubagentTimeline({
+        client,
+        serverId,
+        parentAgentId: target.parentAgentId,
+        subagentId: target.subagentId,
         limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined)
-      .finally(() => setIsLoadingOlder(false));
-    return true;
+      });
+    } catch {
+      return false;
+    } finally {
+      setIsLoadingOlder(false);
+    }
   }, [
     client,
     isLoadingOlder,
@@ -274,7 +272,7 @@ function ProviderSubagentPanel() {
           serverId={serverId}
           rows={childRows}
           onOpenProviderSubagent={openProviderChild}
-          opensInSheet={opensInSheet}
+          sheetTabFor={sheetTabFor}
         />
       </View>
       <ParentAgentCallout serverId={serverId} parentAgentId={target.parentAgentId} />

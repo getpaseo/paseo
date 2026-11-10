@@ -95,7 +95,7 @@ describe("bootstrap provider availability", () => {
 
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
     try {
-      await expect(daemon.agentStorage.list()).resolves.toHaveLength(1);
+      await expect(daemon.agentStorage.listAll()).resolves.toHaveLength(1);
       await expect(daemon.agentManager.listProviderAvailability()).resolves.toContainEqual({
         provider: "codex",
         available: false,

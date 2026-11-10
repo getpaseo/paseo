@@ -78,6 +78,7 @@ describe("ensureAgentIsInitialized", () => {
           cursor: { epoch: "epoch-1", seq: 42 },
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);
@@ -105,6 +106,7 @@ describe("ensureAgentIsInitialized", () => {
           direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);
@@ -148,6 +150,7 @@ describe("ensureAgentIsInitialized", () => {
           direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);
@@ -192,6 +195,7 @@ describe("ensureAgentIsInitialized", () => {
           cursor: { epoch: "epoch-1", seq: 12 },
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);
@@ -283,6 +287,7 @@ describe("refreshAgent", () => {
           direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          wholeTurns: true,
         },
       },
     ]);

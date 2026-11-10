@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import { createContext, runInContext } from "node:vm";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -432,6 +433,54 @@ function snapshotResult(nodes: FakeTab["snapshotNodes"]) {
 
 function containsScript(tab: FakeTab, ...parts: string[]): boolean {
   return tab.scripts.some((script) => parts.every((part) => script.includes(part)));
+}
+
+/**
+ * A browser whose tab runs the network script the host injects against `performance`, the way a
+ * page runs it, so the test sees what the script reads from Chromium's timing entries.
+ */
+function browserWithTimingEntries(entries: { resource: unknown[]; navigation: unknown[] }) {
+  const browser = new BrowserAutomationHarness();
+  const fakeAnswer = browser.tab.executeJavaScript.bind(browser.tab);
+  const page = createContext({
+    performance: {
+      getEntriesByType: (type: string) =>
+        type === "navigation" ? entries.navigation : entries.resource,
+    },
+  });
+  browser.tab.executeJavaScript = async (script: string) =>
+    script.includes("performance.getEntriesByType")
+      ? runInContext(script, page)
+      : fakeAnswer(script);
+  return browser;
+}
+
+/**
+ * Runs the script the host injects into a page the way Chromium runs it on a page whose Content
+ * Security Policy omits 'unsafe-eval': injected code runs, but code in the page cannot turn a
+ * string into code (eval, new Function). Node's vm refuses string code generation the same way.
+ */
+function pageRunningInjectedScripts(input: {
+  allowEval: boolean;
+  globals?: Record<string, unknown>;
+}) {
+  const page = createContext(
+    { document: { title: "Fixture" }, ...input.globals },
+    { codeGeneration: { strings: input.allowEval, wasm: input.allowEval } },
+  );
+  return (script: string): unknown => runInContext(script, page);
+}
+
+/** A browser whose tab runs the evaluate script in `page`; its other scripts keep the fake answers. */
+function browserEvaluatingIn(page: (script: string) => unknown) {
+  const browser = new BrowserAutomationHarness();
+  const fakeAnswer = browser.tab.executeJavaScript.bind(browser.tab);
+  browser.tab.executeJavaScript = async (script: string) => {
+    if (!script.includes("__PASEO_BROWSER_EVALUATE__")) return fakeAnswer(script);
+    browser.tab.scripts.push(script);
+    return page(script);
+  };
+  return browser;
 }
 
 function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness["snapshot"]>>) {
@@ -1406,6 +1455,72 @@ describe("executeAutomationCommand", () => {
     });
   });
 
+  test("logs reports the HTTP status the browser recorded, and none it did not", async () => {
+    const timing = (name: string, initiatorType: string, responseStatus?: number) => ({
+      name,
+      initiatorType,
+      startTime: 1,
+      duration: 2,
+      transferSize: 3,
+      ...(responseStatus === undefined ? {} : { responseStatus }),
+    });
+    const browser = browserWithTimingEntries({
+      resource: [
+        timing("https://a.test/api/orders", "fetch", 404),
+        // Chromium reports 0 for a cross-origin response that sends no Timing-Allow-Origin.
+        timing("https://cdn.test/lib.js", "script", 0),
+        // A browser without the field.
+        timing("https://a.test/old.css", "css"),
+      ],
+      navigation: [timing("https://a.test/form", "navigation", 200)],
+    });
+
+    const result = await browser.execute({ command: "logs", args: { browserId: BROWSER_A } });
+
+    expect(result).toEqual({
+      requestId: "req-logs",
+      ok: true,
+      result: {
+        command: "logs",
+        browserId: BROWSER_A,
+        console: [],
+        network: [
+          {
+            url: "https://a.test/api/orders",
+            type: "fetch",
+            status: 404,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://cdn.test/lib.js",
+            type: "script",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/old.css",
+            type: "css",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/form",
+            method: "GET",
+            type: "navigation",
+            status: 200,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+        ],
+      },
+    });
+  });
+
   test("evaluate returns primitive JSON from the page context", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.evaluateScriptResult = { ok: true, resultJson: "42" };
@@ -1556,6 +1671,99 @@ describe("executeAutomationCommand", () => {
       containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__", "resultJson.length <= 80000"),
     ).toBe(true);
     expect(containsScript(browser.tab, "resultJson.slice(0, 79000)")).toBe(true);
+  });
+
+  describe.each([
+    { page: "allows eval", allowEval: true },
+    { page: "forbids eval (its Content Security Policy omits 'unsafe-eval')", allowEval: false },
+  ])("evaluate on a page that $page", ({ allowEval }) => {
+    const evaluate = (browser: BrowserAutomationHarness, source: string) =>
+      browser.execute({
+        command: "evaluate",
+        args: { browserId: BROWSER_A, function: source },
+      });
+
+    test("runs the function and returns its result as JSON", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "() => document.title")).toEqual({
+        requestId: "req-evaluate",
+        ok: true,
+        result: {
+          command: "evaluate",
+          browserId: BROWSER_A,
+          resultJson: '"Fixture"',
+          truncated: false,
+        },
+      });
+    });
+
+    test("awaits an async function", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      const result = await evaluate(
+        browser,
+        "async () => { await Promise.resolve(); return 6 * 7; }",
+      );
+
+      expect(result).toMatchObject({ ok: true, result: { resultJson: "42" } });
+    });
+
+    test("resolves names against the page's globals, never the wrapper's own", async () => {
+      const globals = {
+        element: "page element",
+        args: "page args",
+        value: "page value",
+        resultJson: "page json",
+        userFunction: "page function",
+        __paseoEvaluate: "page wrapper",
+        readFunction: "page reader",
+      };
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval, globals }));
+
+      const result = await evaluate(
+        browser,
+        "() => [element, args, value, resultJson, userFunction, __paseoEvaluate, readFunction]",
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        result: { resultJson: JSON.stringify(Object.values(globals)) },
+      });
+    });
+
+    test("reports what the function throws", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "() => { throw new Error('boom'); }")).toMatchObject({
+        ok: false,
+        error: { code: "browser_unknown_error", message: "boom" },
+      });
+    });
+
+    test("reports an expression that is not a function", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "document.title")).toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_unknown_error",
+          message: "browser_evaluate input must evaluate to a function.",
+        },
+      });
+    });
+
+    test("reports a syntax error with the compiler's own message, without touching the page", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      const result = await evaluate(browser, "() => {");
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "browser_unknown_error", message: expect.stringMatching(/^Unexpected /) },
+      });
+      expect(containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__")).toBe(false);
+    });
   });
 
   test("screenshot captures the painted viewport", async () => {

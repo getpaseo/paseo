@@ -1,3 +1,6 @@
+import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import pino from "pino";
 import { createPaseoDaemon } from "../bootstrap.js";
 import { loadConfig } from "../config.js";
@@ -228,21 +231,12 @@ test("password-protected config reload preserves startup auth and session constr
     await client.fetchAgents({ subscribe: {} });
     const configPath = path.join(home, "config.json");
     await writeFile(configPath, JSON.stringify({ daemon: { browserTools: { enabled: true } } }));
-    let longestGap = 0;
-    let previous = performance.now();
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - previous);
-      previous = now;
-    }, 1);
-    try {
-      const reloaded = await client.reloadDaemonConfig();
-      longestGap = Math.max(longestGap, performance.now() - previous);
-      expect(reloaded.appliedPaths).toContain("daemon.browserTools.enabled");
-      expect(longestGap).toBeLessThan(50);
-    } finally {
-      clearInterval(probe);
-    }
+    const { result: reloaded, blockingMs } = await measureMainThreadWork(
+      "daemon config reload main-thread work",
+      () => client.reloadDaemonConfig(),
+    );
+    expect(reloaded.appliedPaths).toContain("daemon.browserTools.enabled");
+    expect(blockingMs).toBeLessThan(50);
     expect((await client.getDaemonConfig()).config.browserTools.enabled).toBe(true);
     // A new physical session uses ready daemon state; corrupt config is reported only by an explicit read.
     await writeFile(configPath, "invalid JSON");
@@ -522,3 +516,24 @@ export default function contribute(server: PluginServerContext) {
     await daemon.close();
   }
 }, 60_000);
+
+test("keeps reload and enable responsive while compiling a real plugin", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-responsive-plugin-"));
+  roots.push(directory);
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("./test-fixtures/compile-responsiveness.e2e.ts", import.meta.url)),
+      directory,
+    ],
+    { timeout: 20_000 },
+  );
+  process.stderr.write(stderr);
+  const results = z
+    .array(z.object({ blockingMs: z.number() }))
+    .length(2)
+    .parse(JSON.parse(stdout));
+  for (const result of results) expect(result.blockingMs).toBeLessThan(20);
+});

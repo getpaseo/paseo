@@ -11,6 +11,8 @@ export interface UsageListRequest {
 export interface UsageReportsFixture {
   listRequests(): UsageListRequest[];
   waitForListRequests(count: number): Promise<void>;
+  /** Runs `action`, then waits until the app has received the agent's next usage scope. */
+  untilUsageScopeChanges(agentId: string, action: () => Promise<unknown>): Promise<void>;
 }
 
 interface UsageReportsFixtureOptions {
@@ -25,6 +27,7 @@ interface UsageReportsFixtureOptions {
    * app connects, so a reload can switch it.
    */
   usageSupported?: boolean | (() => boolean);
+  usageSettingSupported?: boolean;
   /** Released hosts expose provider.usage.list with no source icons. */
   providerUsageListOnly?: boolean;
   /** The host daemon's port; defaults to the E2E daemon. */
@@ -63,6 +66,7 @@ function withUsageSupportFeature(
   message: WebSocketMessage,
   enabled: boolean,
   providerUsageListOnly: boolean,
+  usageSettingSupported: boolean,
 ): string | null {
   const envelope = parseJson(message) as {
     type?: unknown;
@@ -86,12 +90,33 @@ function withUsageSupportFeature(
         ...payload,
         features: {
           ...features,
+          usageSetting: usageSettingSupported ? true : undefined,
           usageSources: enabled && !providerUsageListOnly,
           providerUsageList: enabled,
         },
       },
     },
   });
+}
+
+function agentUsageScope(message: WebSocketMessage): { agentId: string; key: string } | null {
+  const envelope = parseJson(message) as {
+    type?: unknown;
+    message?: {
+      type?: unknown;
+      payload?: { kind?: unknown; agent?: { id?: unknown; usageScopeKey?: unknown } };
+    };
+  } | null;
+  const agent = envelope?.message?.payload?.agent;
+  if (
+    envelope?.message?.type !== "agent_update" ||
+    envelope.message.payload?.kind !== "upsert" ||
+    typeof agent?.id !== "string" ||
+    typeof agent.usageScopeKey !== "string"
+  ) {
+    return null;
+  }
+  return { agentId: agent.id, key: agent.usageScopeKey };
 }
 
 function pick<T>(values: T[], index: number): T {
@@ -124,6 +149,16 @@ export async function installUsageReportsFixture(
 ): Promise<UsageReportsFixture> {
   const listRequests: UsageListRequest[] = [];
   const listCounter = createCounter();
+  const usageScopes = new Map<string, string>();
+  const usageScopeChanges = new Map<string, ReturnType<typeof createCounter>>();
+  const usageScopeCounts = new Map<string, number>();
+  const usageScopeCounter = (agentId: string) => {
+    const existing = usageScopeChanges.get(agentId);
+    if (existing) return existing;
+    const created = createCounter();
+    usageScopeChanges.set(agentId, created);
+    return created;
+  };
   const usageSupported = options.usageSupported ?? true;
   const isUsageSupported = () =>
     typeof usageSupported === "function" ? usageSupported() : usageSupported;
@@ -229,8 +264,22 @@ export async function installUsageReportsFixture(
     server.onMessage((message) => {
       const serverInfo =
         typeof message === "string"
-          ? withUsageSupportFeature(message, isUsageSupported(), providerUsageListOnly)
+          ? withUsageSupportFeature(
+              message,
+              isUsageSupported(),
+              providerUsageListOnly,
+              options.usageSettingSupported ?? true,
+            )
           : null;
+      const scope = agentUsageScope(message);
+      if (scope && usageScopes.get(scope.agentId) !== scope.key) {
+        usageScopes.set(scope.agentId, scope.key);
+        usageScopeCounts.set(scope.agentId, (usageScopeCounts.get(scope.agentId) ?? 0) + 1);
+        // The app must hold the new scope before a test acts on it.
+        ws.send(serverInfo ?? message);
+        usageScopeCounter(scope.agentId).increment();
+        return;
+      }
       ws.send(serverInfo ?? message);
     });
   });
@@ -238,5 +287,10 @@ export async function installUsageReportsFixture(
   return {
     listRequests: () => [...listRequests],
     waitForListRequests: (count) => listCounter.waitFor(count),
+    untilUsageScopeChanges: async (agentId, action) => {
+      const next = (usageScopeCounts.get(agentId) ?? 0) + 1;
+      await action();
+      await usageScopeCounter(agentId).waitFor(next);
+    },
   };
 }

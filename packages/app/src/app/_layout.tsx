@@ -1,3 +1,13 @@
+import { useHardwareKeyboardPresent } from "@/keyboard";
+import {
+  WindowLayoutProvider,
+  WindowLayoutActionsHost,
+  WindowLayoutSurface,
+  WindowLayoutDivisionGap,
+  useWindowLayout,
+  resolveDesktopDivisionLayout,
+} from "@/window-layout";
+import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -15,6 +25,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -35,6 +46,7 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { ChangelogHost } from "@/changelog";
+import { OnboardingHost, useIsSetupDecisionPending } from "@/onboarding";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/left-sidebar";
@@ -43,6 +55,7 @@ import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
+import { WorkspaceArchiveUndoShortcutHost } from "@/workspace/archive-undo";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
@@ -56,6 +69,8 @@ import {
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
+  resolveSidebarActivity,
+  resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
@@ -88,7 +103,7 @@ import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-acti
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useKeyboardShortcuts } from "@/keyboard/use-shortcuts";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
@@ -109,7 +124,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { usePanelStore } from "@/stores/panel-store";
+import { usePanelStore, type LeftSidebarPresentation } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
@@ -137,6 +152,7 @@ export interface HostRuntimeBootstrapState {
   splashError: string | null;
   retry: () => void;
   hasGivenUpWaitingForHost: boolean;
+  isWaitingForSetup: boolean;
   storeReady: boolean;
   startupBlocker: StartupBlocker;
 }
@@ -145,6 +161,7 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   splashError: null,
   retry: () => {},
   hasGivenUpWaitingForHost: false,
+  isWaitingForSetup: false,
   storeReady: false,
   startupBlocker: { kind: "none" },
 });
@@ -241,6 +258,9 @@ function useDaemonStartIsRunning(): boolean {
 }
 
 const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
+// How long the splash waits on top of host startup to learn whether setup opens. A slow host
+// lands on the home instead, and setup opens over it once it is decided.
+const STARTUP_SETUP_WAIT_TIMEOUT_MS = 3_000;
 
 async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
@@ -302,6 +322,23 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     };
   }, [shouldRunGiveUpTimer]);
 
+  const isSetupDecisionPending = useIsSetupDecisionPending();
+  const [hasGivenUpWaitingForSetup, setHasGivenUpWaitingForSetup] = useState(false);
+  const isWaitingForSetup = isSetupDecisionPending && !hasGivenUpWaitingForSetup;
+  const shouldRunSetupWaitTimer = isWaitingForSetup && startupBlocker.kind === "none";
+
+  useEffect(() => {
+    if (!shouldRunSetupWaitTimer) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      setHasGivenUpWaitingForSetup(true);
+    }, STARTUP_SETUP_WAIT_TIMEOUT_MS);
+    return () => {
+      clearTimeout(handle);
+    };
+  }, [shouldRunSetupWaitTimer]);
+
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
     void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
@@ -312,8 +349,15 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const storeReady = resolveStartupNavigationReady({ startupBlocker });
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker }),
-    [splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker],
+    () => ({
+      splashError,
+      retry,
+      hasGivenUpWaitingForHost,
+      isWaitingForSetup,
+      storeReady,
+      startupBlocker,
+    }),
+    [splashError, retry, hasGivenUpWaitingForHost, isWaitingForSetup, storeReady, startupBlocker],
   );
 
   return (
@@ -352,9 +396,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
+  const divisionLayout = resolveDesktopDivisionLayout({
+    geometry: useWindowLayout(),
+    windowWidth,
+    windowHeight,
+    leftInset: insets.left,
+    rightInset: insets.right,
+  });
 
   const cycleTheme = useCallback(() => {
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
@@ -415,12 +466,24 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isCompactLayout,
     isMounted: desktopSidebarMounted,
     isOpen: isDesktopAgentListOpen,
+    divisionLayout,
     canShare: canDesktopAppSidebarShare({
       contentMinimumWidth: appContentMinimumWidth,
       requestedSidebarWidth: sidebarWidth,
       viewportWidth,
     }),
   });
+  const sidebarPresentation = resolveLeftSidebarPresentation({
+    chromeEnabled,
+    isCompactLayout,
+    isFocusModeEnabled: isWorkspaceFocusModeEnabled,
+    desktopSidebarVisible,
+  });
+  const applyPanelLayout = usePanelStore((state) => state.applyPanelLayout);
+  // Publishes the layout to the store, which owns the panel targets each layout allows.
+  useLayoutEffect(() => {
+    applyPanelLayout({ isCompact: isCompactLayout, leftSidebar: sidebarPresentation });
+  }, [applyPanelLayout, isCompactLayout, sidebarPresentation]);
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,
@@ -430,7 +493,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const sidebarChrome = (
     <SidebarChrome
       mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
-      visible={isCompactLayout ? chromeEnabled : desktopSidebarVisible}
+      presentation={sidebarPresentation}
       keyboardShortcutsEnabled={keyboardShortcutsEnabled}
     />
   );
@@ -438,18 +501,19 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   if (isWeb) {
     themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
   }
-  const workspaceChromeStyle = useMemo(
-    () => [rowStyle, !isCompactLayout && { paddingLeft: insets.left, paddingRight: insets.right }],
-    [insets.left, insets.right, isCompactLayout],
-  );
   const workspaceChrome = (
-    <View style={workspaceChromeStyle}>
+    <WindowLayoutSurface compact={isCompactLayout} style={rowStyle}>
       <WorkspaceLayoutModePublisher />
       {!isCompactLayout ? (
         <WindowChromeRegion corners={appChromeLayout.sidebarCorners}>
           {themedSidebarChrome}
         </WindowChromeRegion>
       ) : null}
+      <WindowLayoutDivisionGap
+        layout={divisionLayout}
+        sidebarVisible={desktopSidebarVisible}
+        compact={isCompactLayout}
+      />
       <WorkspaceExplorerOpenGesture enabled={chromeEnabled && isCompactLayout}>
         <WindowChromeRegion
           corners={isCompactLayout && chromeEnabled ? "both" : appChromeLayout.contentCorners}
@@ -457,7 +521,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           <View style={flexStyle}>{children}</View>
         </WindowChromeRegion>
       </WorkspaceExplorerOpenGesture>
-    </View>
+    </WindowLayoutSurface>
   );
 
   // Native panel gesture hosts outlive appearance keys, like native navigators.
@@ -465,6 +529,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const surface = (
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
+      <AddHostFlowHost />
       <AppearanceStyleBoundary>
         {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
           <WindowChromeRegion corners="top-left">
@@ -493,6 +558,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <PluginCommandCenterActions />
         <WorkspacePinShortcutHandler />
         <WorkspaceRenameHost />
+        <WorkspaceArchiveUndoShortcutHost />
         <CommandCenter />
         <AddProjectFlowHost />
         <HostChooserModal />
@@ -504,11 +570,15 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <ChangelogHost />
         <QuittingOverlay />
       </AppearanceStyleBoundary>
+      {/* Setup changes the theme while it is open, so it stays out of the remount above. Its
+          colors are CSS variables and themed props, which update in place, and setup changes no
+          font size. */}
+      <OnboardingHost />
     </View>
   );
 
   return (
-    <AppContainerLifetime compactGesturesEnabled={chromeEnabled && isCompactLayout}>
+    <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation === "overlay"}>
       <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
     </AppContainerLifetime>
   );
@@ -516,15 +586,15 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
 function AppContainerLifetime({
   children,
-  compactGesturesEnabled,
+  sidebarGesturesEnabled,
 }: {
   children: ReactNode;
-  compactGesturesEnabled: boolean;
+  sidebarGesturesEnabled: boolean;
 }) {
   return (
     <ComposerEditingSessionsProvider>
       <CommandCenterProvider>
-        <MobileGestureWrapper chromeEnabled={compactGesturesEnabled}>
+        <MobileGestureWrapper chromeEnabled={sidebarGesturesEnabled}>
           {children}
         </MobileGestureWrapper>
       </CommandCenterProvider>
@@ -534,20 +604,26 @@ function AppContainerLifetime({
 
 function SidebarChrome({
   mounted,
-  visible,
+  presentation,
   keyboardShortcutsEnabled,
 }: {
   mounted: boolean;
-  visible: boolean;
+  presentation: LeftSidebarPresentation;
   keyboardShortcutsEnabled: boolean;
 }) {
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
-  const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
-  const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
+  const overlay = presentation === "overlay";
+  const active = resolveSidebarActivity(presentation !== "hidden", overlay, isMobileActive);
+  const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   return (
-    <SidebarModelProvider active={active}>
-      {mounted ? <LeftSidebar active={active} /> : null}
+    <SidebarModelProvider
+      active={active}
+      keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
+    >
+      {mounted ? (
+        <LeftSidebar active={active} desktopOverlay={overlay && !isCompactLayout} />
+      ) : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
   );
@@ -560,8 +636,8 @@ function MobileGestureWrapper({
   children: ReactNode;
   chromeEnabled: boolean;
 }) {
-  const openGesture = useOpenAgentListGesture(chromeEnabled);
   const isCompactLayout = useIsCompactFormFactor();
+  const openGesture = useOpenAgentListGesture(chromeEnabled);
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
@@ -805,7 +881,6 @@ function RootStack() {
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
         <Stack.Screen name="schedules" />
-        <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
@@ -867,20 +942,31 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 // auth, settings, ...) must wrap PortalProvider, not be wrapped by it.
 // BottomSheetModalProvider is the exception: Gorhom modals consume portal
 // context and need one shared provider for sibling sheets to stack.
+function RootOverlayProviders({ children }: { children: ReactNode }) {
+  return (
+    <ToastProvider>
+      <PortalProvider>
+        <BottomSheetModalProvider>
+          {children}
+          <WindowLayoutActionsHost />
+        </BottomSheetModalProvider>
+      </PortalProvider>
+    </ToastProvider>
+  );
+}
+
 function RootProviders({ children }: { children: ReactNode }) {
   return (
     <KeyboardActionDispatcherProvider>
-      <WindowChromeProvider>
-        <KeyboardProvider>
-          <KeyboardShiftProvider>
-            <ToastProvider>
-              <PortalProvider>
-                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-              </PortalProvider>
-            </ToastProvider>
-          </KeyboardShiftProvider>
-        </KeyboardProvider>
-      </WindowChromeProvider>
+      <WindowLayoutProvider>
+        <WindowChromeProvider>
+          <KeyboardProvider>
+            <KeyboardShiftProvider>
+              <RootOverlayProviders>{children}</RootOverlayProviders>
+            </KeyboardShiftProvider>
+          </KeyboardProvider>
+        </WindowChromeProvider>
+      </WindowLayoutProvider>
     </KeyboardActionDispatcherProvider>
   );
 }
@@ -890,11 +976,13 @@ function RootAppTree() {
     <GestureHandlerRootView style={flexStyle}>
       <View style={layoutStyles.surfaceFill}>
         <LucideProvider strokeWidth={ICON_STROKE_WIDTH}>
-          <RootProviders>
-            <RuntimeProviders>
-              <AppShell />
-            </RuntimeProviders>
-          </RootProviders>
+          <AddHostProvider>
+            <RootProviders>
+              <RuntimeProviders>
+                <AppShell />
+              </RuntimeProviders>
+            </RootProviders>
+          </AddHostProvider>
         </LucideProvider>
       </View>
     </GestureHandlerRootView>

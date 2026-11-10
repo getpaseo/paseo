@@ -12,7 +12,64 @@ import {
   WorkspaceSetupSnapshotSchema,
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
+  CheckoutStatusResponseSchema,
+  BranchSuggestionsRequestSchema,
+  WorkspaceBaseBranchSetRequestSchema,
+  WorkspaceBaseBranchSetResponseSchema,
 } from "./messages.js";
+
+test("base selection RPCs are correlated while older checkout and branch messages remain valid", () => {
+  const payload = {
+    cwd: "/repo",
+    requestId: "status",
+    error: null,
+    isGit: true,
+    isPaseoOwnedWorktree: false,
+    repoRoot: "/repo",
+    currentBranch: "feature",
+    isDirty: false,
+    baseRef: "release",
+    aheadBehind: null,
+    aheadOfOrigin: null,
+    behindOfOrigin: null,
+    hasRemote: false,
+    remoteUrl: null,
+  };
+  expect(
+    CheckoutStatusResponseSchema.safeParse({ type: "checkout_status_response", payload }).success,
+  ).toBe(true);
+  expect(
+    CheckoutStatusResponseSchema.parse({
+      type: "checkout_status_response",
+      payload: { ...payload, baseRefExact: "refs/remotes/upstream/release" },
+    }).payload.baseRefExact,
+  ).toBe("refs/remotes/upstream/release");
+  expect(
+    BranchSuggestionsRequestSchema.safeParse({
+      type: "branch_suggestions_request",
+      cwd: "/repo",
+      requestId: "branches",
+    }).success,
+  ).toBe(true);
+  const request = {
+    type: "workspace.base_branch.set.request",
+    workspaceId: "workspace",
+    baseRef: "refs/heads/release",
+    requestId: "base",
+  };
+  expect(WorkspaceBaseBranchSetRequestSchema.parse(request)).toEqual(request);
+  const response = {
+    type: "workspace.base_branch.set.response",
+    payload: {
+      workspaceId: "workspace",
+      baseRef: "refs/heads/release",
+      requestId: "base",
+      accepted: true,
+      error: null,
+    },
+  };
+  expect(WorkspaceBaseBranchSetResponseSchema.parse(response)).toEqual(response);
+});
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
@@ -200,8 +257,8 @@ describe("wire schema compatibility", () => {
     });
   });
 
-  test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {
-    const parsed = LegacySubAgentToolCallSchema.parse({
+  test("a sub-agent launch marker still parses against the v0.1.65-beta.3 schema", () => {
+    const card = {
       type: "tool_call",
       callId: "call-sub-agent-1",
       name: "Task",
@@ -212,12 +269,26 @@ describe("wire schema compatibility", () => {
         subAgentType: "Explore",
         description: "Inspect repository structure",
         childSessionId: "child-session-1",
-        log: "[Read] README.md",
+        log: "",
         actions: [],
       },
-    });
+    } as const;
 
-    expect(parsed.detail.actions).toEqual([]);
+    const parsed = LegacySubAgentToolCallSchema.parse(JSON.parse(JSON.stringify(card)));
+    expect(parsed.detail).toMatchObject({ log: "", actions: [] });
+    const { log: _log, ...withoutLog } = card.detail;
+    expect(LegacySubAgentToolCallSchema.safeParse({ ...card, detail: withoutLog }).success).toBe(
+      false,
+    );
+    expect(AgentTimelineItemPayloadSchema.parse({ ...card, detail: withoutLog })).toMatchObject({
+      detail: { type: "sub_agent", description: "Inspect repository structure" },
+    });
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        ...card,
+        detail: { ...card.detail, log: "[Read] README.md" },
+      }),
+    ).toMatchObject({ detail: { log: "[Read] README.md" } });
   });
 
   test("old clients parse agent snapshots with rewind capabilities", () => {

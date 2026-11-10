@@ -30,11 +30,11 @@ export function FileConflictAlert({ state }: { state: FileConflictAlertState }) 
       {state.kind === "changed" ? (
         <View style={styles.actions}>
           {state.canOverwrite ? (
-            <Button variant="outline" size="sm" onPress={state.onOverwrite}>
+            <Button variant="outline" onPress={state.onOverwrite}>
               {t("panels.file.editor.overwrite")}
             </Button>
           ) : null}
-          <Button variant="outline" size="sm" onPress={state.onReload}>
+          <Button variant="outline" onPress={state.onReload}>
             {t("panels.file.editor.reload")}
           </Button>
         </View>
