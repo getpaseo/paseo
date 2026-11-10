@@ -139,11 +139,11 @@ export async function ensureAgentLoaded(
         // bringing one back, so it stamps activity and carries no stored attention. Records
         // without a handle never got far enough to accumulate either. The manager rereads the
         // record inside the agent's lane, so a write that lands after this read is not lost.
-        snapshot = await deps.agentManager.createAgentFromRecord(
+        snapshot = await deps.agentManager.createAgentFromRecord({
           agentId,
-          deps.configOverrides,
-          deps.onConfigApplied,
-        );
+          overrides: deps.configOverrides,
+          onConfigApplied: deps.onConfigApplied,
+        });
         deps.logger.info(
           { agentId, provider: record.provider },
           "Agent created from stored config",

@@ -373,6 +373,12 @@ interface StoredConfigChange {
   change: AgentSessionConfigChange | undefined;
 }
 
+interface CreateStoredAgentInput {
+  agentId: string;
+  overrides?: AgentSessionConfigChange;
+  onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"];
+}
+
 function assertUnarchivedConfigChange({ agentId, record, change }: StoredConfigChange): void {
   if (change && record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
 }
@@ -1535,11 +1541,11 @@ export class AgentManager {
    * from the record as it is when the lane reaches it. A write queued ahead (`setMetadata`,
    * `setLabels`) is in that record; one queued behind applies to the live agent.
    */
-  createAgentFromRecord(
-    agentId: string,
-    overrides?: AgentSessionConfigChange,
-    onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"],
-  ): Promise<ManagedAgent> {
+  createAgentFromRecord({
+    agentId,
+    overrides,
+    onConfigApplied,
+  }: CreateStoredAgentInput): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "createAgentFromRecord");
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, async () => {
@@ -1797,6 +1803,11 @@ export class AgentManager {
       // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
       // it has saved a newer record, the one the open hooks saw.
       ...(record ? { metadata: record.metadata } : {}),
+      // Explicit settings are activity, unlike an ordinary restore. Advance from
+      // the lane's record so queued metadata cannot make the new settings look stale.
+      ...(initialization && record
+        ? { updatedAt: new Date(this.nextStoredUpdatedAt(record)) }
+        : {}),
       workspaceId,
       launchEnv,
       persistence: handle,

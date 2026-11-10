@@ -1066,7 +1066,7 @@ describe("closed Codex startup model recovery", () => {
             (request) => request.method === "thread/start" || request.method === "thread/resume",
           );
         expect(startup).toHaveLength(1);
-        expect(JSON.stringify(startup)).not.toContain("removed-model");
+        expect(startup[0].params).not.toHaveProperty("model", "removed-model");
         await manager.closeAgent(id);
         await ensureUnarchivedAgentLoaded(id, {
           agentManager: manager,

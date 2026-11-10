@@ -2418,6 +2418,50 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test.each([
+    { label: "complete change", modeId: undefined, accepted: true },
+    { label: "successful prefix", modeId: "invalid-mode", accepted: false },
+  ])("publishes a resumed $label after queued metadata", async ({ modeId, accepted }) => {
+    const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: true });
+    const initialization = pauseAgentInitialization(f.manager);
+    const published: Array<{ model: string | undefined; updatedAt: number }> = [];
+    const unsubscribe = f.manager.subscribe((event) => {
+      if (event.type === "agent_state") {
+        published.push({
+          model: event.agent.config.model,
+          updatedAt: event.agent.updatedAt.getTime(),
+        });
+      }
+    });
+    try {
+      const repair = f.configSession.handleAgentConfigApplyRequest({
+        type: "agent.config.apply.request",
+        agentId: f.id,
+        requestId: "timestamp-repair",
+        config: { modelId: "claude-sonnet-5-5", modeId },
+      });
+      await initialization.entered;
+      await f.manager.setMetadata(f.id, { note: "queued metadata" });
+      const metadata = await f.storage.get(f.id);
+      const metadataTime = Date.parse(metadata!.updatedAt);
+      initialization.release();
+      await repair;
+      await f.manager.flush();
+      expect(f.messages.at(-1)).toMatchObject({ payload: { accepted } });
+      expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+      const selected = published.filter((event) => event.model === "claude-sonnet-5-5");
+      expect(selected.length).toBeGreaterThan(0);
+      expect(selected.every((event) => event.updatedAt > metadataTime)).toBe(true);
+      const stored = await f.storage.get(f.id);
+      expect(stored?.metadata).toEqual({ note: "queued metadata" });
+      expect(Date.parse(stored!.updatedAt)).toBeGreaterThan(metadataTime);
+    } finally {
+      initialization.release();
+      unsubscribe();
+      await f.cleanup();
+    }
+  });
+
   describe.each([false, true])("plain-first lazy Claude model repair (resume=%s)", (resume) => {
     test.each([
       { label: "replacement", modelId: "claude-sonnet-5-5", expected: "claude-sonnet-5-5" },
