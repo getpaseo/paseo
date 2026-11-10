@@ -134,7 +134,7 @@ function ReadonlyTextFile({
   return (
     <View style={styles.container}>
       <TextFileToolbar
-        path={file.path}
+        path={params.path}
         workspaceId={workspaceId}
         size={file.size}
         lineCount={text.text.split("\n").length}
@@ -230,7 +230,7 @@ function EditableTextFile({
   return (
     <View style={styles.container}>
       <TextFileToolbar
-        path={file.path}
+        path={params.path}
         workspaceId={workspaceId}
         size={file.size}
         lineCount={snapshot.content.split("\n").length}

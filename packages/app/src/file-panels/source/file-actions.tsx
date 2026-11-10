@@ -1,9 +1,11 @@
 import { useWorkspace } from "@getpaseo/plugin/client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
 import { Copy } from "lucide-react-native";
-import { withUnistyles } from "react-native-unistyles";
+import { Text, View } from "react-native";
+import { Button } from "@/components/ui/button";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -31,6 +33,9 @@ export function FilePathActions({ path, workspaceId }: { path: string; workspace
   const copying = useRef(false);
   const dismissError = useRef<DismissToast | null>(null);
 
+  const dismissCopyError = useStableEvent(() => dismissError.current?.());
+  useEffect(() => () => dismissError.current?.(), [path]);
+
   const copy = useStableEvent(async (value: string) => {
     if (copying.current) return;
     copying.current = true;
@@ -41,17 +46,22 @@ export function FilePathActions({ path, workspaceId }: { path: string; workspace
       if (!copied) throw new Error("Clipboard write failed");
       toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
     } catch {
-      dismissError.current = toast.show(t("workspace.tabs.toasts.copyFailed"), {
-        variant: "error",
-        durationMs: null,
-      });
+      dismissError.current = toast.show(
+        <View style={styles.error}>
+          <Text style={styles.message}>{t("workspace.tabs.toasts.copyFailed")}</Text>
+          <Button variant="ghost" size="sm" onPress={dismissCopyError}>
+            {t("common.actions.dismiss")}
+          </Button>
+        </View>,
+        { variant: "error", durationMs: null },
+      );
     } finally {
       copying.current = false;
       setPending(false);
     }
   });
   const copyPath = useStableEvent(() => {
-    void copy(path);
+    void copy(paths?.absolutePath ?? path);
   });
   const copyRelativePath = useStableEvent(() => {
     if (relativePath) void copy(relativePath);
@@ -81,3 +91,8 @@ export function FilePathActions({ path, workspaceId }: { path: string; workspace
     </DropdownMenu>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  error: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  message: { color: theme.colors.foreground, fontSize: theme.fontSize.sm, flexShrink: 1 },
+}));

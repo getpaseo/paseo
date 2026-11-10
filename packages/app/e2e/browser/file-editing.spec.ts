@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
@@ -27,6 +28,22 @@ async function delayNextClipboardWrite(page: Page): Promise<void> {
       navigator.clipboard.writeText = write;
       await released;
       await write(value);
+    };
+  });
+}
+
+async function failNextClipboardWrite(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    const exec = document.execCommand.bind(document);
+    document.execCommand = (command, ...args) => {
+      if (command !== "copy") return exec(command, ...args);
+      document.execCommand = exec;
+      throw new DOMException("Clipboard access denied", "NotAllowedError");
+    };
+    navigator.clipboard.writeText = async () => {
+      navigator.clipboard.writeText = write;
+      throw new DOMException("Clipboard access denied", "NotAllowedError");
     };
   });
 }
@@ -201,6 +218,39 @@ test.describe("CodeMirror workspace file editing", () => {
     }
   });
 
+  test("copies a home-relative link without offering a workspace-relative path", async ({
+    page,
+    context,
+    projectPickerFixture,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const absolutePath = path.join(projectPickerFixture.projectPath, "home-report.md");
+    const target = `~/${path.relative(homedir(), absolutePath).split(path.sep).join("/")}`;
+    await writeFile(absolutePath, "# Home report", "utf8");
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "linked-home-file-",
+      title: "Home file link",
+      initialPrompt: "Show the home report",
+      featureValues: { mockAssistantResponse: `[Home report](${target})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "Home report");
+      await expect(page.getByTestId("markdown-preview-frame")).toBeVisible();
+      const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+      await trigger.click();
+      await expect(page.getByTestId("file-path-actions-copy-relative-path")).toHaveCount(0);
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(target);
+      await selectFileView(page, "Source");
+      await trigger.click();
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(target);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("keeps a failed clipboard write visible and lets the reader retry", async ({
     page,
     context,
@@ -211,19 +261,7 @@ test.describe("CodeMirror workspace file editing", () => {
     await writeFile(path.join(workspace.repoPath, "report.md"), "# Report", "utf8");
     await workspace.navigateTo();
     await openWorkspaceFile(page, "report.md");
-    await page.evaluate(() => {
-      const write = navigator.clipboard.writeText.bind(navigator.clipboard);
-      const exec = document.execCommand.bind(document);
-      document.execCommand = (command, ...args) => {
-        if (command !== "copy") return exec(command, ...args);
-        document.execCommand = exec;
-        throw new DOMException("Clipboard access denied", "NotAllowedError");
-      };
-      navigator.clipboard.writeText = async () => {
-        navigator.clipboard.writeText = write;
-        throw new DOMException("Clipboard access denied", "NotAllowedError");
-      };
-    });
+    await failNextClipboardWrite(page);
     const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
     await trigger.click();
     await page.getByTestId("file-path-actions-copy-path").click();
@@ -238,6 +276,13 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect.poll(() => readClipboard(page)).toBe(path.join(workspace.repoPath, "report.md"));
     await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
     await expect(page.getByText("Copied File path", { exact: true })).toBeVisible();
+
+    await failNextClipboardWrite(page);
+    await trigger.click();
+    await page.getByTestId("file-path-actions-copy-path").click();
+    await expect(page.getByText("Copy failed", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
   });
 
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
