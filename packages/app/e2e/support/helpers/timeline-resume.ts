@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { readReplicaCache } from "./replica-cache-storage";
 import type { LongTimelineAgent } from "./timeline-pagination";
 import {
   expectReconnectingToastGone,
@@ -13,6 +14,12 @@ const SUBSCRIPTION_REQUEST = "agent.timeline.set_subscription.request";
 const SUBSCRIPTION_RESPONSE = "agent.timeline.set_subscription.response";
 const TIMELINE_REQUEST = "fetch_agent_timeline_request";
 const TIMELINE_RESPONSE = "fetch_agent_timeline_response";
+/**
+ * `FRESHNESS_CHECK_QUIET_MS` is 500: an opening check unanswered that long reports Updating messages by
+ * design, however long the daemon takes. The app starts that wait just before it sends the question
+ * this helper times, so the bound stops short of 500.
+ */
+const QUIET_WINDOW_FLOOR_MS = 300;
 
 export interface TimelineRequestCounts {
   agentId?: string;
@@ -77,48 +84,99 @@ export async function waitForResumeAnswer(
   ]);
 }
 
+interface UpdatingToastTiming {
+  askedAt: number | null;
+  shownAt: number | null;
+}
+
+declare global {
+  interface Window {
+    __updatingToastTiming?: UpdatingToastTiming;
+  }
+}
+
+/** Runs in the page: times the freshness question and the toast's first commit on its own clock. */
+function recordUpdatingToastTiming(): void {
+  const noteToast = (timing: UpdatingToastTiming) => {
+    if (document.querySelector('[data-testid="agent-updating-toast"]') === null) return;
+    timing.shownAt ??= performance.now();
+  };
+  const existing = window.__updatingToastTiming;
+  if (existing) {
+    existing.askedAt = null;
+    existing.shownAt = null;
+    noteToast(existing);
+    return;
+  }
+  const timing: UpdatingToastTiming = { askedAt: null, shownAt: null };
+  window.__updatingToastTiming = timing;
+  const send = WebSocket.prototype.send;
+  WebSocket.prototype.send = function sendRecordingQuestion(data) {
+    if (
+      typeof data === "string" &&
+      data.includes("agent.timeline.set_subscription.request") &&
+      data.includes('"agentIds":["')
+    ) {
+      timing.askedAt ??= performance.now();
+    }
+    return send.call(this, data);
+  };
+  new MutationObserver(() => noteToast(timing)).observe(document, {
+    childList: true,
+    subtree: true,
+  });
+  noteToast(timing);
+}
+
+/** A toast may only follow an unanswered question; nothing about the daemon's speed changes that. */
+async function expectToastWaitedForTheDaemon(page: Page): Promise<void> {
+  await waitForNextPaint(page);
+  const showedTooSoon = await page.evaluate((floorMs) => {
+    const { askedAt, shownAt } = window.__updatingToastTiming as UpdatingToastTiming;
+    if (shownAt === null) return false;
+    return askedAt === null || shownAt - askedAt < floorMs;
+  }, QUIET_WINDOW_FLOOR_MS);
+  expect(showedTooSoon, "the Updating messages toast did not wait for the daemon").toBe(false);
+}
+
 /** Records every appearance of the toast, including one that lasts a single commit. */
 export async function watchForUpdatingToast(page: Page): Promise<() => Promise<void>> {
-  const watch = await page.evaluateHandle(() => {
-    let shown = false;
-    const check = () => {
-      shown ||= document.querySelector('[data-testid="agent-updating-toast"]') !== null;
-    };
-    const observer = new MutationObserver(check);
-    observer.observe(document.body, { childList: true, subtree: true });
-    check();
-    return {
-      stop() {
-        observer.disconnect();
-        return shown;
-      },
-    };
-  });
-  return async () => {
-    await waitForNextPaint(page);
-    const shown = await watch.evaluate((recorder) => recorder.stop());
-    await watch.dispose();
-    expect(shown, "the Updating messages toast appeared").toBe(false);
-  };
+  await page.evaluate(recordUpdatingToastTiming);
+  return () => expectToastWaitedForTheDaemon(page);
 }
 
 /** Reopens the app on this chat, recording the toast from the first paint of the new page. */
 export async function reopenAppWatchingForUpdatingToast(page: Page): Promise<() => Promise<void>> {
-  await page.addInitScript(() => {
-    const recorder = window as Window & { updatingToastShown?: boolean };
-    new MutationObserver(() => {
-      recorder.updatingToastShown ||=
-        document.querySelector('[data-testid="agent-updating-toast"]') !== null;
-    }).observe(document, { childList: true, subtree: true });
-  });
+  await page.addInitScript(recordUpdatingToastTiming);
   await page.reload();
-  return async () => {
-    await waitForNextPaint(page);
-    const shown = await page.evaluate(
-      () => (window as Window & { updatingToastShown?: boolean }).updatingToastShown === true,
-    );
-    expect(shown, "the Updating messages toast appeared").toBe(false);
-  };
+  return () => expectToastWaitedForTheDaemon(page);
+}
+
+/** Opens persisted history with the daemon's freshness answer held. */
+export async function reopenWithFreshnessCheckUnanswered(
+  page: Page,
+  gate: DaemonWebSocketGate,
+  agent: LongTimelineAgent,
+): Promise<void> {
+  // A cold open needs a persisted authoritative cursor to ask a freshness question.
+  await expect
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      return cache?.hosts
+        ?.flatMap((host) => host.timelines)
+        .find((timeline) => timeline.agentId === agent.agentId)?.range?.endSeq;
+    })
+    .toBeGreaterThan(0);
+  gate.holdNextClientRequest(SUBSCRIPTION_REQUEST);
+  await page.reload();
+  await expect(page.getByText(agent.newestPrompt, { exact: true })).toBeVisible();
+  await gate.waitForHeldClientRequest();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toBeVisible();
+}
+
+export async function answerFreshnessCheck(page: Page, gate: DaemonWebSocketGate): Promise<void> {
+  gate.releaseHeldClientRequest();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
 }
 
 async function waitForNextPaint(page: Page): Promise<void> {

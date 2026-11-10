@@ -271,6 +271,19 @@ describe("toAgentPayload", () => {
     expect(permissionA.title).toBe("Run command");
   });
 
+  it("changes the usage scope key when the harness session or its model changes", () => {
+    function usageScopeKey(usageSession: ReturnType<NonNullable<AgentSession["usageSession"]>>) {
+      const session = { usageSession: () => usageSession } as unknown as AgentSession;
+      return toAgentPayload(createManagedAgent({ session })).usageScopeKey;
+    }
+    const scope = { provider: "claude", model: "opus", env: {}, sessionKey: "session-a" };
+
+    expect(usageScopeKey(scope)).toBe(usageScopeKey({ ...scope }));
+    expect(usageScopeKey({ ...scope, sessionKey: "session-b" })).not.toBe(usageScopeKey(scope));
+    expect(usageScopeKey({ ...scope, model: "sonnet" })).not.toBe(usageScopeKey(scope));
+    expect(usageScopeKey(null)).toBeUndefined();
+  });
+
   it("omits usage when any numeric usage field is NaN", () => {
     const fields = [
       "inputTokens",

@@ -7,6 +7,10 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import { composerModelFromHalves } from "@/composer/halves-model";
 import type { ComposerAgent, ComposerInput } from "@/composer/session";
+import {
+  setCommandCenterFocusRestoreElement,
+  takeCommandCenterFocusRestoreElement,
+} from "@/utils/command-center-focus-restore";
 import type { InstalledPlugin } from "../types";
 import { toPluginComposer } from "./model";
 
@@ -94,10 +98,16 @@ function fakeAgent(context: ComposerAgent["context"], locked = false) {
 
 function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
   const state = { text: "", attachments: initial };
+  const view = { revealed: true, focused: [] as unknown[] };
   const input: ComposerInput = {
     locked,
     isLocked: () => locked,
     isLive: () => true,
+    revealed: true,
+    isRevealed: () => view.revealed,
+    focus: async (options) => {
+      view.focused.push(options);
+    },
     textSource: { getSnapshot: () => state.text, subscribe: () => () => {} },
     setText: (text) => {
       state.text = text;
@@ -112,7 +122,7 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
       state.attachments = updater(state.attachments);
     },
   };
-  return { input, state };
+  return { input, state, view };
 }
 
 function compose(agent: ComposerAgent, input: ComposerInput) {
@@ -219,6 +229,47 @@ describe("toPluginComposer", () => {
       "The composer is locked",
     );
     await expect(composer.setOptions({ effort: "low" })).rejects.toThrow("The composer is locked");
+  });
+
+  it("focuses the input of the draft composer on screen, with the selection asked for", async () => {
+    const { agent } = fakeAgent("draft");
+    const { input, view } = fakeInput();
+    const composer = compose(agent, input);
+
+    await composer.focus({ selection: { start: 0, end: 4 } });
+
+    expect(view.focused).toEqual([{ selection: { start: 0, end: 4 } }]);
+  });
+
+  it("rejects focus on a draft composer that is not on screen, leaving the user where they are", async () => {
+    const { agent } = fakeAgent("draft");
+    const { input, view } = fakeInput();
+    view.revealed = false;
+    const composer = compose(agent, input);
+
+    await expect(composer.focus()).rejects.toThrow("not on screen");
+    expect(view.focused).toEqual([]);
+  });
+
+  it("focuses while the composer is locked, since the cursor changes nothing it holds", async () => {
+    const { agent } = fakeAgent("new-workspace");
+    const { input, view } = fakeInput([], true);
+    const composer = compose(agent, input);
+
+    await composer.focus();
+
+    expect(view.focused).toEqual([undefined]);
+  });
+
+  it("keeps the Command Center from taking focus back when it closes", async () => {
+    const { agent } = fakeAgent("draft");
+    const { input } = fakeInput();
+    const composer = compose(agent, input);
+    setCommandCenterFocusRestoreElement({} as HTMLElement);
+
+    await composer.focus();
+
+    expect(takeCommandCenterFocusRestoreElement()).toBeNull();
   });
 
   it("hands out options and metadata a plugin cannot change", () => {

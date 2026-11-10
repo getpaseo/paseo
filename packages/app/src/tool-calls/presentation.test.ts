@@ -58,6 +58,24 @@ describe("tool-call presentation", () => {
     });
   });
 
+  it("shows a shell call awaiting its command as Shell, loading its details", () => {
+    const presentation = buildToolCallPresentation({
+      toolName: "Bash",
+      status: "running",
+      error: null,
+      detail: { type: "shell", command: "" },
+      resolveIcon: fakeResolveIcon,
+    });
+
+    expect(presentation).toMatchObject({
+      displayName: "Shell",
+      summary: undefined,
+      isLoadingDetails: true,
+      hasDetails: false,
+      canOpenDetails: true,
+    });
+  });
+
   it("marks running calls without meaningful detail as loading details", () => {
     const presentation = buildToolCallPresentation({
       toolName: "exec_command",

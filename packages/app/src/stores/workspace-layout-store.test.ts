@@ -4569,6 +4569,24 @@ describe("compact workspace sheet", () => {
     );
   }
 
+  it("opens a subagent as a tab when a deferred request asks for one", () => {
+    const store = createCompactStore();
+    seedAgents([
+      { id: "parent", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child", parentAgentId: "parent", workspaceId: "sheet-ws" },
+    ]);
+
+    store.getState().deferOpenTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      intent: "reveal",
+      asTab: true,
+    });
+    store.getState().consumePendingOpen(workspaceKey);
+
+    expect(topSheet(store)).toBeUndefined();
+    expect(tabKinds(store)).toContain("agent");
+  });
   it("reveals a file in the sheet and leaves the tab strip unchanged", () => {
     const store = createCompactStore();
     const before = tabKinds(store);
