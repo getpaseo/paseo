@@ -114,6 +114,10 @@ class InMemoryAgentManager {
     };
   }
 
+  getAgentBackgroundWorkSummary() {
+    return undefined;
+  }
+
   fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
     return this.timeline.fetch("agent-1", options);
   }
@@ -254,7 +258,7 @@ function createSessionForWireCompatTest(options?: {
     directorySync: options?.directorySync,
     scheduleService: {} as SessionOptions["scheduleService"],
     checkoutDiffManager: {
-      scheduleRefreshForCwd() {},
+      async scheduleRefreshForCwd() {},
       onWorkspaceStateMayHaveChanged() {},
     } as unknown as SessionOptions["checkoutDiffManager"],
     github: {

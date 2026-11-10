@@ -557,6 +557,15 @@ interface AssistantTurnFooterProps {
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   container: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+  },
+  actions: {
+    height: 24,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -568,20 +577,24 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     marginTop: 0,
     marginLeft: -theme.spacing[1],
   },
-  labelWrapper: {
-    position: "relative",
+  labelButton: {
+    flex: 1,
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
   },
-  labelSizer: {
+  label: {
+    width: "100%",
+    flexShrink: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+  },
+  overlappingLabel: {
+    marginLeft: "-100%",
+  },
+  hiddenLabel: {
     opacity: 0,
-  },
-  labelOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));
 
@@ -649,31 +662,51 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
-      {getContent ? (
-        <TurnCopyButton
-          getContent={getContent}
-          containerStyle={assistantTurnFooterStylesheet.copyButton}
-        />
+      {getContent || canFork ? (
+        <View style={assistantTurnFooterStylesheet.actions}>
+          {getContent ? (
+            <TurnCopyButton
+              getContent={getContent}
+              containerStyle={assistantTurnFooterStylesheet.copyButton}
+            />
+          ) : null}
+          {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+        </View>
       ) : null}
-      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {primaryLabel ? (
         <Pressable
+          style={assistantTurnFooterStylesheet.labelButton}
           onPress={handlePress}
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
         >
-          <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
-                container width is stable across hover transitions. */}
-            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
+          {/* Both labels participate in layout at the available width. Overlapping their
+              columns reserves the taller wrapped height without measuring text or characters. */}
+          <Text
+            testID={!showTimestamp ? "turn-footer-timing-label" : undefined}
+            aria-hidden={showTimestamp}
+            style={[
+              assistantTurnFooterStylesheet.label,
+              showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+            ]}
+          >
+            {primaryLabel}
+          </Text>
+          {canSwap ? (
+            <Text
+              testID={showTimestamp ? "turn-footer-timing-label" : undefined}
+              aria-hidden={!showTimestamp}
+              style={[
+                assistantTurnFooterStylesheet.label,
+                assistantTurnFooterStylesheet.overlappingLabel,
+                !showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+              ]}
+            >
+              {timestampLabel}
             </Text>
-            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : primaryLabel}
-            </Text>
-          </View>
+          ) : null}
         </Pressable>
       ) : null}
     </View>

@@ -81,13 +81,48 @@ export async function scrollWorkspaceList(page: Page): Promise<void> {
 }
 
 export async function expectWorkspaceHoverCardOpen(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
+  const cards = page.getByTestId("workspace-hover-card");
+  // Keyboard navigation can leave the previous card closing while the next opens.
+  // Retry both checks together: another card may mount between count and visibility.
+  await expect(async () => {
+    expect(await cards.count()).toBe(1);
+    expect(await cards.isVisible()).toBe(true);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function expectWorkspaceHoverCardStaysOpen(page: Page): Promise<void> {
   // Longer than the hover card's close grace period.
   await page.waitForTimeout(300);
   await expectWorkspaceHoverCardOpen(page);
+}
+
+/** Scans the rows in the given order at about a user's pace, then rests on the last one. */
+export async function sweepPointerAcrossWorkspaceRows(
+  page: Page,
+  workspaceIds: string[],
+): Promise<void> {
+  const centers: Array<{ x: number; y: number }> = [];
+  for (const workspaceId of workspaceIds) {
+    const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    const bounds = await row.boundingBox();
+    if (!bounds) throw new Error(`Could not measure the row of ${workspaceId}`);
+    centers.push({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
+  }
+  const [first, ...rest] = centers;
+  await page.mouse.move(first!.x, first!.y);
+  for (const center of rest) {
+    await page.mouse.move(center.x, center.y, { steps: 3 });
+  }
+}
+
+export async function expectOnlyWorkspaceHoverCardFor(
+  page: Page,
+  workspaceName: string,
+): Promise<void> {
+  const cards = page.getByTestId("workspace-hover-card");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.getByTestId("hover-card-workspace-name")).toHaveText(workspaceName);
 }
 
 export async function expectWorkspaceHoverCardClosed(page: Page): Promise<void> {

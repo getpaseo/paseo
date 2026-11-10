@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, onTestFinished } from "vitest";
 import { execFileSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { createServer } from "node:net";
+import { promisify } from "node:util";
 import {
   buildWorktreeSetupDetail,
   runWorktreeAutoTerminals,
@@ -943,6 +945,15 @@ describe("runWorktreeAutoTerminals", () => {
     });
     expect(routeStore.getRouteEntry("api--feature-respawn-service--repo.localhost")).toBeNull();
 
+    // A released ephemeral port can be allocated again. Occupy the old port so
+    // this journey requires a different port when the service is restarted.
+    const occupiedPort = createServer();
+    onTestFinished(() => promisify(occupiedPort.close.bind(occupiedPort))());
+    await new Promise<void>((resolve, reject) => {
+      occupiedPort.once("error", reject);
+      occupiedPort.listen(firstPort, "127.0.0.1", resolve);
+    });
+
     const secondResult = await spawnWorkspaceScript({
       repoRoot: repoDir,
       workspaceId: repoDir,
@@ -962,6 +973,7 @@ describe("runWorktreeAutoTerminals", () => {
     }
     expect(secondPort).not.toBe(firstPort);
     expect(secondPort).toEqual(expect.any(Number));
+    expect(createTerminalCalls[2]?.env?.PASEO_PORT).toBe(String(secondPort));
     expect(createTerminalCalls[2]?.env?.PASEO_SERVICE_WORKER_PORT).toBe(String(workerPort));
     expect(routeStore.getRouteEntry("api--feature-respawn-service--repo.localhost")).toMatchObject({
       hostname: "api--feature-respawn-service--repo.localhost",

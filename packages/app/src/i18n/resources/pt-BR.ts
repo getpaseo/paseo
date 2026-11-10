@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  pluginCombobox: {
+    searching: "Pesquisando…",
+    empty: "Nenhum resultado",
+    failed: "Falha na pesquisa: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
@@ -382,6 +387,24 @@ export const ptBR: TranslationResources = {
       next: "Próximo",
       answerPlaceholder: "Digite sua resposta...",
       otherPlaceholder: "Outro...",
+    },
+    backgroundWork: {
+      pillOne: "1 tarefa em segundo plano",
+      pillMany: "{{count}} tarefas em segundo plano",
+      notRunning: "Não está mais em execução",
+      dismiss: "Dispensar",
+      stop: "Parar",
+      stopping: "Parando…",
+      stopError: "Não foi possível confirmar a parada.",
+      label: "Segundo plano",
+      title: "Trabalho em segundo plano",
+      waiting: "Aguardando os detalhes",
+      error: "Não foi possível carregar o trabalho em segundo plano",
+      retry: "Tentar novamente",
+      running: "Trabalho em segundo plano em andamento",
+      shell: "Shell",
+      monitor: "Monitor",
+      other: "Outro trabalho",
     },
     todo: {
       title: "Tarefas",
@@ -953,6 +976,9 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branch base",
+        },
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
@@ -1184,6 +1210,14 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Não foi possível carregar a visualização da barra lateral.",
+      useDefault: "Usar visualização padrão",
+      readFailed: "Não foi possível carregar sua preferência de visualização da barra lateral.",
+      agentUnavailable: "O agente não está mais disponível",
+      terminalUnavailable: "O terminal não está mais disponível",
+      projectUnavailable: "O projeto não está mais disponível",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Precisa de resposta",
@@ -1263,6 +1297,7 @@ export const ptBR: TranslationResources = {
       hosts: "Hosts",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      moreActions: "Mais ações",
     },
     footer: {
       usage: "Uso",
@@ -1367,6 +1402,9 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
+        archived: "Workspace arquivado",
+        undoArchive: "Desfazer",
+        undoArchiveFailed: "Não foi possível desfazer o arquivamento",
       },
     },
   },
@@ -1629,6 +1667,7 @@ export const ptBR: TranslationResources = {
     openPath: "Abrir caminho",
   },
   branchSwitcher: {
+    failedToLoad: "Não foi possível carregar as branches. Reabra o seletor para tentar novamente.",
     triggerTooltip: "Trocar branch do workspace",
     currentBranch: "Branch atual: {{branchName}}. Pressione para trocar de branch.",
     placeholder: "Trocar branch...",
@@ -1652,7 +1691,11 @@ export const ptBR: TranslationResources = {
     loadingCommands: "Carregando comandos...",
     noFiles: "Nenhum arquivo ou diretório encontrado",
     noCommands: "Nenhum comando encontrado",
-    failedToLoad: "Falha ao carregar",
+    loadingProviderCommands: "Carregando comandos do {{provider}}...",
+    commandsFailed: "Não foi possível carregar os comandos",
+    providerCommandsFailed: "Não foi possível carregar os comandos do {{provider}}",
+    filesFailed: "Não foi possível buscar arquivos",
+    skillTag: "Skill",
     chooseProjectForCommands: "Escolha um projeto para ver os comandos",
     chooseModelForCommands: "Selecione um modelo para ver os comandos",
   },
@@ -2583,6 +2626,13 @@ export const ptBR: TranslationResources = {
         description: "Mostrar uma estrutura para navegar entre prompts",
       },
       sidebar: {
+        view: {
+          title: "Visualização da barra lateral",
+          label: "Visualização",
+          default: "Visualização padrão",
+          unavailable:
+            "A visualização selecionada está indisponível ou desativada. Exibindo a visualização padrão.",
+        },
         header: {
           title: "Cabeçalho",
           description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",

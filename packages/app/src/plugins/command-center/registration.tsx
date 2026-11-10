@@ -1,5 +1,5 @@
 import { usePathname } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useCommandCenterActions } from "@/command-center/provider";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -9,6 +9,7 @@ import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
+import { publishFocusedAgent } from "../focused-agent";
 import { hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
 import { buildPluginCommandCenterContributions } from "./contributions";
@@ -37,6 +38,15 @@ export function PluginCommandCenterActions() {
       normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
     );
   });
+  const handedAgentId = agentExists ? focusedAgentId : null;
+  // The agent a plugin's `{ focused: true }` composer names is the one handed to agent items.
+  // Known limit: this publishes in an effect, so a command that runs on the first commit after a
+  // route change can still see the previous route's agent. Publishing from a shared
+  // navigation/focus context would remove the gap.
+  useEffect(() => {
+    publishFocusedAgent(serverId && handedAgentId ? { serverId, agentId: handedAgentId } : null);
+    return () => publishFocusedAgent(null);
+  }, [handedAgentId, serverId]);
   const client = useHostRuntimeClient(serverId ?? "");
   const installed = useInstalledPlugins();
   const plugins = useMemo(
@@ -54,23 +64,13 @@ export function PluginCommandCenterActions() {
       plugins,
       state: stateSource,
       workspaceId: workspaceExists ? workspaceId : null,
-      agentId: agentExists ? focusedAgentId : null,
+      agentId: handedAgentId,
       navigation: createPluginNavigation({ serverId, workspaceId }),
       reportError(error) {
         toast.error(error instanceof Error ? error.message : String(error));
       },
     });
-  }, [
-    agentExists,
-    client,
-    focusedAgentId,
-    plugins,
-    serverId,
-    stateSource,
-    toast,
-    workspaceExists,
-    workspaceId,
-  ]);
+  }, [client, handedAgentId, plugins, serverId, stateSource, toast, workspaceExists, workspaceId]);
 
   useCommandCenterActions({
     sourceId: serverId ? `plugins:${serverId}` : "plugins",

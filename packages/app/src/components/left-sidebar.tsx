@@ -1,3 +1,4 @@
+import { SidebarViewSlot } from "@/plugins/sidebar-view";
 import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
 import {
@@ -16,6 +17,7 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
@@ -28,7 +30,7 @@ import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -36,9 +38,21 @@ import {
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
+import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
+import { SidebarFooterOverflowMenu } from "@/components/sidebar/sidebar-footer-overflow-menu";
+import {
+  resolveSidebarFooterLayout,
+  SIDEBAR_FOOTER_ACTIONS,
+  type SidebarFooterAction,
+} from "@/components/sidebar-footer-layout";
+import {
+  controlSizingForLayout,
+  mapLayout,
+  TOOLBAR_CONTROL_SIZES,
+} from "@/components/ui/control-geometry";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
@@ -53,6 +67,7 @@ import {
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { density } from "@/styles/density";
+import { SPACING } from "@/styles/theme";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
@@ -76,6 +91,9 @@ import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
+
+/** The footer icon line's inset; the overflow layout counts it as space the buttons can't use. */
+const FOOTER_ROW_PADDING = SPACING[2];
 
 const DEV_BUILD_LABEL = process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() || null;
 
@@ -422,35 +440,72 @@ function SidebarFooter({
     },
     [onHeightChange],
   );
+  const isCompactLayout = useIsCompactFormFactor();
+  const [rowWidth, setRowWidth] = useState(0);
+  const handleRowLayout = useCallback((event: LayoutChangeEvent) => {
+    setRowWidth(event.nativeEvent.layout.width);
+  }, []);
+  const { inline, overflow } = useMemo(
+    () =>
+      resolveSidebarFooterLayout({
+        rowWidth,
+        controlSize: TOOLBAR_CONTROL_SIZES[controlSizingForLayout(isCompactLayout)],
+        rowPadding: FOOTER_ROW_PADDING,
+        actions: SIDEBAR_FOOTER_ACTIONS,
+      }),
+    [rowWidth, isCompactLayout],
+  );
+  const isInline = (action: SidebarFooterAction) => inline.includes(action);
 
-  // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
+  // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end. Actions that
+  // don't fit move behind a caret before Settings.
   return (
     <UsageSidebarRoot>
       <View style={styles.footerContainer} testID="sidebar-footer" onLayout={handleLayout}>
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
-        <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
-          <FooterIconButton
-            onPress={handleOpenProject}
-            testID="sidebar-add-project"
-            label={labels.addProject}
-            icon={FolderPlus}
-            shortcutKeys={newAgentKeys}
-          />
-          <SidebarUsageIcon label={labels.usage} />
-          <SidebarHostPicker
-            label={labels.hosts}
-            onAddHost={handleAddHost}
-            onOpenHostSettings={handleOpenHostSettings}
-          />
+        <View
+          style={styles.sidebarFooter}
+          onLayout={handleRowLayout}
+          testID="sidebar-footer-bottom-line"
+        >
+          {isInline("add-project") ? (
+            <FooterIconButton
+              onPress={handleOpenProject}
+              testID="sidebar-add-project"
+              label={labels.addProject}
+              icon={FolderPlus}
+              shortcutKeys={newAgentKeys}
+            />
+          ) : null}
+          {isInline("usage") ? <SidebarUsageIcon label={labels.usage} /> : null}
+          {isInline("hosts") ? (
+            <SidebarHostPicker
+              label={labels.hosts}
+              onAddHost={handleAddHost}
+              onOpenHostSettings={handleOpenHostSettings}
+            />
+          ) : null}
           <View style={styles.footerSpacer} />
-          <SidebarHelpMenu />
-          <FooterIconButton
-            onPress={handleSettings}
-            testID="sidebar-settings"
-            label={labels.settings}
-            icon={Settings}
-            shortcutKeys={settingsKeys}
-          />
+          {isInline("help") ? <SidebarHelpMenu /> : null}
+          {overflow.length > 0 ? (
+            <SidebarFooterOverflowMenu
+              actions={overflow}
+              labels={labels}
+              onAddProject={handleOpenProject}
+              onSettings={handleSettings}
+              onAddHost={handleAddHost}
+              onOpenHostSettings={handleOpenHostSettings}
+            />
+          ) : null}
+          {isInline("settings") ? (
+            <FooterIconButton
+              onPress={handleSettings}
+              testID="sidebar-settings"
+              label={labels.settings}
+              icon={Settings}
+              shortcutKeys={settingsKeys}
+            />
+          ) : null}
         </View>
       </View>
     </UsageSidebarRoot>
@@ -577,31 +632,35 @@ function MobileSidebar({
           headerTrailing={closeButton}
         />
 
-        {isInitialLoad && !hasActiveHostFilter ? (
-          <SidebarAgentListSkeleton />
-        ) : (
-          <SidebarWorkspaceList
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            groupMode={groupMode}
-            workspaceGroups={workspaceGroups}
-            projectIconTargets={projectIconTargets}
-            pinnedGroups={pinnedGroups}
-            projects={projects}
-            hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-            hasActiveProjectFilter={hasActiveProjectFilter}
-            workspaceEntriesByKey={workspaceEntriesByKey}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onWorkspacePress={handleWorkspacePress}
-            onAddProject={handleOpenProject}
-            onImportSession={handleImportSession}
-            parentGestureRef={closeGestureRef}
-            dragGestureHostActive={active}
-            listHeaderComponent={workspacesSectionHeaderElement}
-          />
-        )}
+        <SidebarViewSlot dismiss={handleWorkspacePress}>
+          <SidebarToastRegion active={active}>
+            {isInitialLoad && !hasActiveHostFilter ? (
+              <SidebarAgentListSkeleton />
+            ) : (
+              <SidebarWorkspaceList
+                collapsedProjectKeys={collapsedProjectKeys}
+                onToggleProjectCollapsed={toggleProjectCollapsed}
+                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                groupMode={groupMode}
+                workspaceGroups={workspaceGroups}
+                projectIconTargets={projectIconTargets}
+                pinnedGroups={pinnedGroups}
+                projects={projects}
+                hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+                hasActiveProjectFilter={hasActiveProjectFilter}
+                workspaceEntriesByKey={workspaceEntriesByKey}
+                isRefreshing={isManualRefresh && isRevalidating}
+                onRefresh={handleRefresh}
+                onWorkspacePress={handleWorkspacePress}
+                onAddProject={handleOpenProject}
+                onImportSession={handleImportSession}
+                parentGestureRef={closeGestureRef}
+                dragGestureHostActive={active}
+                listHeaderComponent={workspacesSectionHeaderElement}
+              />
+            )}
+          </SidebarToastRegion>
+        </SidebarViewSlot>
 
         <SidebarFooter
           handleOpenProject={handleOpenProject}
@@ -738,9 +797,11 @@ function DesktopSidebar({
     ],
     [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
+  // Below the window controls' row, or in the top band's place, the first row starts flush.
+  const inTopBand = useTopBand() !== null;
   const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
-    [ownsTopLeft],
+    () => [styles.sidebarHeaderGroup, (ownsTopLeft || inTopBand) && styles.sidebarHeaderGroupFlush],
+    [ownsTopLeft, inTopBand],
   );
   return (
     <MobilePanelOverlay
@@ -779,31 +840,35 @@ function DesktopSidebar({
             />
           </View>
 
-          {isInitialLoad && !hasActiveHostFilter ? (
-            <SidebarAgentListSkeleton />
-          ) : (
-            <SidebarWorkspaceList
-              collapsedProjectKeys={collapsedProjectKeys}
-              onToggleProjectCollapsed={toggleProjectCollapsed}
-              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-              groupMode={groupMode}
-              workspaceGroups={workspaceGroups}
-              projectIconTargets={projectIconTargets}
-              pinnedGroups={pinnedGroups}
-              projects={projects}
-              hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-              hasActiveProjectFilter={hasActiveProjectFilter}
-              workspaceEntriesByKey={workspaceEntriesByKey}
-              isRefreshing={isManualRefresh && isRevalidating}
-              onRefresh={handleRefresh}
-              onAddProject={handleOpenProject}
-              onImportSession={handleImportSession}
-              onWorkspacePress={closeSidebar}
-              parentGestureRef={closeGestureRef}
-              dragGestureHostActive={active}
-              listHeaderComponent={workspacesSectionHeaderElement}
-            />
-          )}
+          <SidebarViewSlot dismiss={closeSidebar}>
+            <SidebarToastRegion active={active}>
+              {isInitialLoad && !hasActiveHostFilter ? (
+                <SidebarAgentListSkeleton />
+              ) : (
+                <SidebarWorkspaceList
+                  collapsedProjectKeys={collapsedProjectKeys}
+                  onToggleProjectCollapsed={toggleProjectCollapsed}
+                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                  groupMode={groupMode}
+                  workspaceGroups={workspaceGroups}
+                  projectIconTargets={projectIconTargets}
+                  pinnedGroups={pinnedGroups}
+                  projects={projects}
+                  hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+                  hasActiveProjectFilter={hasActiveProjectFilter}
+                  workspaceEntriesByKey={workspaceEntriesByKey}
+                  isRefreshing={isManualRefresh && isRevalidating}
+                  onRefresh={handleRefresh}
+                  onAddProject={handleOpenProject}
+                  onImportSession={handleImportSession}
+                  onWorkspacePress={closeSidebar}
+                  parentGestureRef={closeGestureRef}
+                  dragGestureHostActive={active}
+                  listHeaderComponent={workspacesSectionHeaderElement}
+                />
+              )}
+            </SidebarToastRegion>
+          </SidebarViewSlot>
 
           <SidebarCalloutSlot />
 
@@ -870,7 +935,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  sidebarHeaderGroupBelowChrome: {
+  sidebarHeaderGroupFlush: {
     paddingTop: 0,
   },
   sidebarContent: {
@@ -920,10 +985,12 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border,
   },
   // Buttons sit edge to edge; their own inset spaces the glyphs.
+  // As tall as its buttons from the first frame, which places none until the row has measured.
   sidebarFooter: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: theme.spacing[2],
+    minHeight: mapLayout(density.iconButton, (height) => height + theme.spacing[1.5] * 2),
+    paddingHorizontal: FOOTER_ROW_PADDING,
     paddingVertical: theme.spacing[1.5],
   },
   // Pushes Help and Settings to the end of the icon line.

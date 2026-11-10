@@ -216,6 +216,19 @@ function timeline(text = "Cached") {
   };
 }
 
+it("keeps the unsettled turn with the cached messages", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const cached = {
+    ...timeline(),
+    unsettledTurn: { startedAt: new Date("2026-08-26T09:59:00.000Z"), turnId: "turn-1" },
+  };
+  writer.commitTimeline(SERVER_ID, "agent-1", cached);
+  await writer.flush();
+
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(cached);
+});
+
 function commitDirectory(
   cache: ReplicaCache,
   serverId: string,
@@ -319,6 +332,26 @@ describe("ReplicaCache", () => {
     const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
     expect(restored?.items.map((item) => item.id)).toEqual(items.map((item) => item.id));
     expect(restored?.range).toBeNull();
+  });
+
+  it("preserves workspace parentage and its checkpoint across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      parentWorkspaceId: "parent",
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(baseline.checkpoint);
+    expect(restored.workspaces.get(workspace.id)?.parentWorkspaceId).toBe("parent");
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.parentWorkspaceId).toBe(
+      "parent",
+    );
   });
 
   it("preserves workspace sorting timestamps across cache reopen", async () => {

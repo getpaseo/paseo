@@ -18,7 +18,7 @@ export interface AgentCommandsDraftConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
+  providerOptions?: Record<string, unknown>;
 }
 
 export function normalizeAgentCommandsCwd(cwd: string): string {
@@ -98,7 +98,7 @@ export function draftAgentCommandsQueryKey(input: {
     "thinking",
     draftConfig.thinkingOptionId ?? null,
     "features",
-    draftConfig.featureValues ?? null,
+    draftConfig.providerOptions ?? null,
   ] as const;
 }
 

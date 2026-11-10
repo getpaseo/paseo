@@ -281,23 +281,26 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
-### Instant-admit release (rollout_hours=0 from publish)
+### Instant-admit release (rollout_hours=0)
 
-For a fresh release that should admit everyone immediately (low-risk change, doc-only, hotfix, or just a release you want out fast), cut the release normally and queue the rollout flip immediately after:
+`npm run release:patch` and `npm run release:minor` tag-push, and tag-push runs always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), cut the release normally, wait for it to publish, then flip the manifests:
 
 ```bash
-# 1. Cut and publish (default 36h ramp from tag push).
+# 1. Cut and publish (36h ramp from tag push).
 npm run release:patch
 
-# 2. Immediately queue the flip — runs as soon as finalize-rollout completes.
+# 2. Wait for Desktop Release to publish the GitHub Release.
+gh run watch <desktop-release-run-id> --exit-status
+
+# 3. Flip the published manifests to instant admit.
 gh workflow run desktop-rollout.yml \
   -f tag=v0.1.64 \
   -f rollout_hours=0
 ```
 
-**Why this is gap-free:** `desktop-release.yml`'s `finalize-rollout` job and `desktop-rollout.yml` share the concurrency group `desktop-rollout-<tag>`. Dispatching `desktop-rollout.yml` while the tag-push pipeline is still running queues it safely behind `finalize-rollout`. The first public manifests already carry `rolloutHours=36`, then `desktop-rollout.yml` flips them to `rolloutHours=0` shortly afterward. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
+Dispatch only after `finalize-rollout` has published the release. Until then the release is a draft, and a draft has no tag: `desktop-rollout.yml` looks the release up by tag and fails with `release not found`. The concurrency group `desktop-rollout-<tag>` that the two workflows share orders them only once both are queued; it does not hold an early dispatch until the draft is published.
 
-Run the dispatch right after `release:patch` or `release:minor` returns. Don't wait for the tag-push CI to finish.
+The first public manifests carry `rolloutHours=36` for the minutes between publish and the flip. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
 
 ### Adjusting an already-published release
 

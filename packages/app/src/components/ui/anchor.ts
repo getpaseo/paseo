@@ -120,6 +120,27 @@ function clampToDisplayArea(input: {
   };
 }
 
+export interface SurfaceWidth {
+  width?: number;
+  minWidth?: number;
+  maxWidth?: number;
+}
+
+/**
+ * Caps a surface's requested width to the display. Position clamping can move a surface but not
+ * shrink it, so a menu wider than a narrow screen would otherwise hang off the far edge.
+ */
+export function fitSurfaceWidth(requested: SurfaceWidth, displayWidth: number): SurfaceWidth {
+  const available = Math.max(displayWidth - EDGE_PADDING * 2, 0);
+  const cap = (value: number | undefined) =>
+    typeof value === "number" ? Math.min(value, available) : undefined;
+  return {
+    width: cap(requested.width),
+    minWidth: cap(requested.minWidth),
+    maxWidth: cap(requested.maxWidth) ?? available,
+  };
+}
+
 export function computePosition({
   triggerRect,
   contentSize,

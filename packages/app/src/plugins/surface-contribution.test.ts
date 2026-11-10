@@ -49,6 +49,7 @@ function installation(
     cleanup: () => undefined,
     settingsScreens: [],
     surfaces: surfaces.map((id) => ({ id, title: id, Component: () => null })),
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: sidebarItems.map((item) => ({
       ...item,
@@ -56,6 +57,8 @@ function installation(
       icon: "Blocks",
     })),
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
