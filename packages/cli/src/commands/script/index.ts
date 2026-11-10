@@ -1,6 +1,11 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import {
+  addDaemonHostOption,
+  addJsonAndDaemonHostOptions,
+  withGlobalOptions,
+} from "../../utils/command-options.js";
+import { runForwardCommand } from "./forward.js";
 import { runLsCommand } from "./ls.js";
 import { runStartCommand } from "./start.js";
 import { runStopCommand } from "./stop.js";
@@ -34,6 +39,21 @@ export function createScriptCommand(): Command {
       script.command("stop").description("Stop a running workspace script").argument("<name>"),
     ),
   ).action(withOutput(runStopCommand));
+
+  addDaemonHostOption(
+    addWorkspaceSelectionOptions(
+      script
+        .command("forward")
+        .description(
+          "Forward a running workspace service to this computer over the encrypted tunnel",
+        )
+        .argument("<name>")
+        .option(
+          "--local-port <port>",
+          "Local loopback port (default: service port; falls back if busy)",
+        ),
+    ),
+  ).action(withGlobalOptions(runForwardCommand));
 
   return script;
 }
