@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceDesktopTabActions,
+  buildWorkspaceTabActionEntries,
   buildWorkspaceTabMenuEntries,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -365,5 +366,58 @@ describe("buildWorkspaceTabMenuEntries", () => {
       .find((entry) => entry.kind === "separator");
     expect(agentSeparator?.key).toBe("rename-separator");
     expect(terminalSeparator?.key).toBe("rename-separator");
+  });
+});
+
+describe("buildWorkspaceTabActionEntries", () => {
+  function actionEntries(tab: WorkspaceTabDescriptor, onReloadAgent = vi.fn()) {
+    return buildWorkspaceTabActionEntries({
+      tab,
+      menuTestIDBase: "sidebar-tab",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent,
+      onRenameTab: vi.fn(),
+    });
+  }
+
+  it("offers an agent's own actions without any close rows", () => {
+    const onReloadAgent = vi.fn();
+    const entries = actionEntries(createAgentTab(), onReloadAgent);
+
+    expect(entries.map((entry) => (entry.kind === "item" ? entry.label : entry.kind))).toEqual([
+      "Copy resume command",
+      "Copy agent id",
+      "Rename",
+      "separator",
+      "Reload agent",
+    ]);
+    const reload = entries.find((entry) => entry.kind === "item" && entry.key === "reload-agent");
+    if (reload?.kind === "item") reload.onSelect();
+    expect(onReloadAgent).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("keeps a file's Open with slot after copying its path", () => {
+    const entries = actionEntries({
+      key: "file_a",
+      tabId: "file_a",
+      kind: "file",
+      target: { kind: "file", path: "src/a.ts" },
+    });
+
+    expect(entries.map((entry) => entry.key)).toEqual(["copy-file-path", "file-panel-open-with"]);
+  });
+
+  it("has nothing for a tab with no actions of its own", () => {
+    expect(
+      actionEntries({
+        key: "new_tab_1",
+        tabId: "new_tab_1",
+        kind: "new_tab",
+        target: { kind: "new_tab" },
+      }),
+    ).toEqual([]);
   });
 });
