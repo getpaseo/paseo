@@ -60,19 +60,11 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   );
   const handleClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>) => {
-      if (
-        !forgeUrl &&
-        scrollToMarkdownHeading(
-          event.currentTarget as unknown as Parameters<typeof scrollToMarkdownHeading>[0],
-          link.url,
-        )
-      ) {
+      if (!forgeUrl && scrollToMarkdownHeading(event.currentTarget, link.url)) {
         event.preventDefault();
         return;
       }
-      (anchorProps as { onClick?: (event: MouseEvent<HTMLAnchorElement>) => void }).onClick?.(
-        event,
-      );
+      anchorProps.onClick?.(event);
     },
     [anchorProps, forgeUrl, link.url],
   );
