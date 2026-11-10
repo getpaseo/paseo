@@ -540,7 +540,7 @@ export function TooltipContent({
   if (isWeb) {
     return createPortal(
       <View pointerEvents="none" style={styles.portalOverlay}>
-        <View style={frame.holder}>
+        <View pointerEvents="box-none" style={frame.holder}>
           <FloatingSurface
             pointerEvents="none"
             entering={FadeIn.duration(80)}
@@ -569,7 +569,7 @@ export function TooltipContent({
       onRequestClose={handleDismiss}
     >
       <Pressable testID="tooltip-dismiss" style={styles.overlay} onPress={handleDismiss}>
-        <View style={frame.holder}>
+        <View pointerEvents="box-none" style={frame.holder}>
           <FloatingSurface
             pointerEvents="none"
             entering={FadeIn.duration(80)}

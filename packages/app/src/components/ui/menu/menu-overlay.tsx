@@ -345,7 +345,7 @@ export function AnchoredSurface({
           testID={testID ? `${testID}-backdrop` : undefined}
         />
       ) : null}
-      <View style={frame.holder}>
+      <View pointerEvents="box-none" style={frame.holder}>
         <FloatingSurface
           key={placed ? "placed" : "measuring"}
           collapsable={false}

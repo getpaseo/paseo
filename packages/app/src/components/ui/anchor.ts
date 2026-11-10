@@ -197,7 +197,9 @@ export function holdSurfaceEdge(
 
 /**
  * Styles for a surface and the holder it sits in. Both fill the display area's width, so the
- * surface lays out exactly as it would without the holder. A bottom-held surface sits on the
+ * surface lays out exactly as it would without the holder. Render the holder with the
+ * `pointerEvents="box-none"` prop so presses outside the surface reach what is behind it;
+ * react-native-web drops `box-none` given as an inline style. A bottom-held surface sits on the
  * bottom of a holder that ends at its bottom edge, so layout keeps that edge in place however
  * the content changes. Until it is placed, the surface waits off-screen to be measured.
  */
@@ -205,13 +207,7 @@ export function surfaceFrameStyles(position: SurfacePosition | null): {
   holder: ViewStyle;
   surface: ViewStyle;
 } {
-  const fill: ViewStyle = {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    pointerEvents: "box-none",
-  };
+  const fill: ViewStyle = { position: "absolute", top: 0, left: 0, right: 0 };
   if (!position) {
     return {
       holder: { ...fill, bottom: 0 },
