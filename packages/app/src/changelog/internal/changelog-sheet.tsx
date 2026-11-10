@@ -189,17 +189,19 @@ const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseVie
           {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
         </Button>
       ) : null}
-      {showsSections
-        ? keyChangelogSections(release.sections).map(({ key, section }) => (
-            <View key={key} style={styles.section}>
-              {section.title ? <Text style={styles.sectionTitle}>{section.title}</Text> : null}
-              {section.body ? <MarkdownRenderer text={section.body} compact /> : null}
-            </View>
-          ))
-        : null}
+      {showsSections ? <ReleaseSections sections={release.sections} /> : null}
     </View>
   );
 });
+
+function ReleaseSections({ sections }: { sections: readonly ChangelogSection[] }) {
+  return keyChangelogSections(sections).map(({ key, section }) => (
+    <View key={key} style={styles.section}>
+      {section.title ? <Text style={styles.sectionTitle}>{section.title}</Text> : null}
+      {section.body ? <MarkdownRenderer text={section.body} compact /> : null}
+    </View>
+  ));
+}
 
 /** A release can repeat a section title; the occurrence keeps the key stable. */
 function keyChangelogSections(
