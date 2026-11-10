@@ -124,6 +124,84 @@ describe("pi-subagents adapter", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("tracks a workflow fan-out the parent tool call reports only on disk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-pi-workflow-"));
+    const file = join(dir, "task-1.jsonl");
+    const received: AgentStreamEvent[] = [];
+    const host = createPiExtensionHost();
+    // The store keeps the last upsert per id, so assert the same way instead of event order.
+    const latest = () =>
+      new Map(
+        received.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [
+                [
+                  event.event.id,
+                  {
+                    title: event.event.title,
+                    description: event.event.description,
+                    status: event.event.status,
+                  },
+                ] as const,
+              ]
+            : [],
+        ),
+      );
+    try {
+      host.follow((event) => received.push(event));
+      const launch = host.mapToolCall({
+        callId: "call-flow",
+        toolName: "subagent",
+        args: { workflow: "parallel", args: { tasks: [] } },
+        status: "completed",
+        result: {
+          details: {
+            mode: "workflow",
+            runId: "run-flow",
+            asyncId: "run-flow",
+            asyncDir: dir,
+            results: [],
+          },
+        },
+      });
+      // A workflow launch has no top-level agent/task: the launch itself owns no row.
+      expect(launch).toBeUndefined();
+      await writeFile(
+        file,
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"BEGIN"}]}}\n',
+      );
+      await writeFile(
+        join(dir, "status.json"),
+        JSON.stringify({
+          state: "running",
+          steps: [
+            { agent: "worker", label: "task-1", status: "running", sessionFile: file },
+            { agent: "worker", label: "task-2", status: "running" },
+          ],
+        }),
+      );
+      await expect.poll(() => latest().size).toBe(2);
+      expect([...latest()]).toEqual([
+        ["call-flow:0", { title: "worker", description: "task-1", status: "running" }],
+        ["call-flow:1", { title: "worker", description: "task-2", status: "running" }],
+      ]);
+      await expect.poll(() => hasChildTimeline(received)).toBe(true);
+      await writeFile(
+        join(dir, "status.json"),
+        JSON.stringify({
+          state: "complete",
+          steps: [
+            { agent: "worker", label: "task-1", status: "completed", sessionFile: file },
+            { agent: "worker", label: "task-2", status: "failed" },
+          ],
+        }),
+      );
+      await expect.poll(() => latest().get("call-flow:1")?.status).toBe("failed");
+      expect(latest().get("call-flow:0")?.status).toBe("completed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("maps completed subagent calls with task input to sub-agent detail", () => {
     const toolCall = parseToolArgs("subagent", {
       agent: "reviewer",

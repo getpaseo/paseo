@@ -10,6 +10,8 @@ const Args = z
     task: z.string().trim().min(1).optional(),
     async: z.boolean().optional(),
     action: z.unknown().optional(),
+    /** A `subagent({ workflow })` fan-out has no top-level agent/task; its children live in `args`. */
+    workflow: z.union([z.boolean(), z.string()]).optional(),
   })
   .passthrough();
 const Row = z
@@ -42,6 +44,8 @@ const AsyncStatus = z
         .object({
           agent: z.string().trim().min(1),
           status: z.string().optional(),
+          /** Workflow children carry the author's stable key; it names the row in a fan-out. */
+          label: z.string().trim().min(1).optional(),
           sessionFile: z.string().trim().min(1).optional(),
         })
         .passthrough(),
@@ -123,10 +127,24 @@ export const piSubagents: PiExtension = {
       }
       return subagents.length ? { subagents, childSessions } : undefined;
     };
+    /**
+     * A `subagent({ workflow })` fan-out has no rows of its own: its children only exist on disk.
+     * Remember the async directory and let poll() build one row per child from status.json.
+     */
+    const mapWorkflowSpawn = (call: PiExtensionToolCall) => {
+      const details = Details.safeParse(
+        typeof call.result === "object" ? call.result?.details : null,
+      );
+      if (!details.success) return undefined;
+      if (details.data.runId) callsByRun.set(details.data.runId, call.callId);
+      rememberAsyncRun(details.data, call);
+      return undefined;
+    };
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = Args.safeParse(call.args);
-      if (!args.success || args.data.action !== undefined || !args.data.agent || !args.data.task)
-        return undefined;
+      if (!args.success || args.data.action !== undefined) return undefined;
+      if (args.data.workflow !== undefined) return mapWorkflowSpawn(call);
+      if (!args.data.agent || !args.data.task) return undefined;
       const detail = {
         type: "sub_agent" as const,
         subAgentType: args.data.agent,
@@ -224,7 +242,13 @@ export const piSubagents: PiExtension = {
           for (const [index, step] of parsed.data.steps.entries()) {
             const id = parsed.data.steps.length === 1 ? run.owner : `${run.owner}:${index}`;
             const status = asyncChildStatus(parsed.data.state, step.status);
-            subagents.push({ type: "upsert", id, title: step.agent, status });
+            subagents.push({
+              type: "upsert",
+              id,
+              title: step.agent,
+              description: step.label,
+              status,
+            });
             if (step.sessionFile && !readSessions.has(step.sessionFile)) {
               readSessions.add(step.sessionFile);
               childSessions.push({ id, file: step.sessionFile });
