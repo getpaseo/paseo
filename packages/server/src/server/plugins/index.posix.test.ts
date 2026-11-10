@@ -841,69 +841,82 @@ export default function contribute(server: PluginServerContext) {
     );
   });
 
-  it("keeps the running commit when a Git update build command fails", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
-    roots.push(home);
-    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
-    roots.push(repository);
-    await runGitCommand(["init", "-b", "main"], { cwd: repository });
-    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
-    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
-    await writeFile(
-      path.join(repository, "paseo-plugin.json"),
-      JSON.stringify({ id: "git-update" }),
-    );
-    await writeFile(
-      path.join(repository, "index.server.ts"),
-      "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
-    );
-    await runGitCommand(["add", "-A"], { cwd: repository });
-    await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
+  describe("a Git update whose build command fails", () => {
+    let home: string;
+    let service: PluginService;
+    let installedPath: string;
+    let installedCommit: string | undefined;
 
-    const store = createStore(home);
-    const service = bindTestSessionHost(
-      new PluginService(pino({ level: "silent" }), store, "0.4.0", {
-        managedSources: new ManagedPluginSources(home),
-      }),
-    );
-    await service.start();
-    const installed = await service.installSource({ source: pathToFileURL(repository).href });
-    const installedPath = installed.path;
-    const installedCommit = installed.commit;
+    // Prepare the installed revision and its broken update before the update deadline.
+    beforeEach(async () => {
+      home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
+      roots.push(repository);
+      await runGitCommand(["init", "-b", "main"], { cwd: repository });
+      await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+      await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+      await writeFile(
+        path.join(repository, "paseo-plugin.json"),
+        JSON.stringify({ id: "git-update" }),
+      );
+      await writeFile(
+        path.join(repository, "index.server.ts"),
+        "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
+      );
+      await runGitCommand(["add", "-A"], { cwd: repository });
+      await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
 
-    await writeFile(
-      path.join(repository, "paseo-plugin.json"),
-      JSON.stringify({
-        id: "git-update",
-        build: [
-          [process.execPath, "-e", 'process.stderr.write("build exploded") ; process.exit(1)'],
-        ],
-      }),
-    );
-    await writeFile(
-      path.join(repository, "index.server.ts"),
-      'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
-    );
-    await runGitCommand(["add", "-A"], { cwd: repository });
-    await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
+      const store = createStore(home);
+      service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+          managedSources: new ManagedPluginSources(home),
+        }),
+      );
+      await service.start();
+      const installed = await service.installSource({ source: pathToFileURL(repository).href });
+      installedPath = installed.path;
+      installedCommit = installed.commit;
 
-    expect(await applyReviewedUpdate(service, "git-update")).toMatchObject([
-      { outcome: "error", error: expect.stringContaining("build exploded") },
-    ]);
-    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
-    expect(service.catalog()).toEqual([
-      expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
-    ]);
-    expect(await service.listPlugins()).toMatchObject([
-      expect.objectContaining({
-        id: "git-update",
-        path: installedPath,
-        commit: installedCommit,
-        status: "running",
-      }),
-    ]);
-    await service.stopAllPlugins();
-  }, 30_000);
+      await writeFile(
+        path.join(repository, "paseo-plugin.json"),
+        JSON.stringify({
+          id: "git-update",
+          build: [
+            [process.execPath, "-e", 'process.stderr.write("build exploded") ; process.exit(1)'],
+          ],
+        }),
+      );
+      await writeFile(
+        path.join(repository, "index.server.ts"),
+        'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
+      );
+      await runGitCommand(["add", "-A"], { cwd: repository });
+      await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
+    });
+
+    afterEach(async () => {
+      await service?.stopAllPlugins();
+    });
+
+    it("keeps the running commit when a Git update build command fails", async () => {
+      expect(await applyReviewedUpdate(service, "git-update")).toMatchObject([
+        { outcome: "error", error: expect.stringContaining("build exploded") },
+      ]);
+      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      expect(service.catalog()).toEqual([
+        expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
+      ]);
+      expect(await service.listPlugins()).toMatchObject([
+        expect.objectContaining({
+          id: "git-update",
+          path: installedPath,
+          commit: installedCommit,
+          status: "running",
+        }),
+      ]);
+    }, 30_000);
+  });
 
   it("runs Git build commands in staging before validation and activation on install and update", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
