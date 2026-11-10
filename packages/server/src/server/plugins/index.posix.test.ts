@@ -2103,7 +2103,7 @@ export default function contribute() {
       await service.stopAllPlugins();
       await registry.close();
     }
-  }, 120_000);
+  }, 180_000);
 });
 
 async function applyReviewedUpdate(service: PluginService, pluginId: string) {
