@@ -77,7 +77,7 @@ export interface FakeCodexAppServer {
   completeTurn(params?: {
     threadId?: string;
     status?: "completed" | "failed" | "interrupted";
-    error?: { message: string } | null;
+    error?: { message: string; codexErrorInfo?: unknown } | null;
   }): void;
   startsSubAgent(params: {
     callId: string;
