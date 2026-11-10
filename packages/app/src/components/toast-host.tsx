@@ -35,6 +35,8 @@ export interface ToastShowOptions {
   durationMs?: number | null;
   nativeAndroid?: boolean;
   testID?: string;
+  /** Runs once when this toast leaves the screen: timed out, dismissed, or replaced. */
+  onDismiss?: () => void;
 }
 
 export interface ToastState {
@@ -45,6 +47,7 @@ export interface ToastState {
   variant: ToastVariant;
   durationMs: number | null;
   testID?: string;
+  onDismiss?: () => void;
 }
 
 /** Dismisses the toast it was returned for; a no-op once another toast replaced it. */
@@ -78,39 +81,55 @@ export function useToastHost(): {
   dismiss: () => void;
 } {
   const { t } = useTranslation();
-  const [toast, setToast] = useState<ToastState | null>(null);
+  const [toast, setToastState] = useState<ToastState | null>(null);
+  const toastRef = useRef<ToastState | null>(null);
   const idRef = useRef(0);
 
-  const show = useCallback((content: ReactNode, options?: ToastShowOptions): DismissToast => {
-    const nativeMessage = typeof content === "string" ? content.trim() : null;
-    if (!content || nativeMessage === "") {
-      return noopDismiss;
-    }
-
-    const variant = options?.variant ?? "default";
-    const durationMs = options?.durationMs === undefined ? DEFAULT_DURATION_MS : options.durationMs;
-    const nativeAndroid = options?.nativeAndroid ?? false;
-
-    if (Platform.OS === "android" && nativeAndroid && nativeMessage) {
-      const duration =
-        durationMs !== null && durationMs <= 2500 ? ToastAndroid.SHORT : ToastAndroid.LONG;
-      ToastAndroid.showWithGravity(nativeMessage, duration, ToastAndroid.TOP);
-      return noopDismiss;
-    }
-
-    idRef.current += 1;
-    const id = idRef.current;
-    setToast({
-      id,
-      content,
-      nativeMessage,
-      icon: options?.icon,
-      variant,
-      durationMs,
-      testID: options?.testID,
-    });
-    return () => setToast((current) => (current?.id === id ? null : current));
+  const setToast = useCallback((next: ToastState | null) => {
+    const previous = toastRef.current;
+    if (previous === next) return;
+    toastRef.current = next;
+    setToastState(next);
+    previous?.onDismiss?.();
   }, []);
+
+  const show = useCallback(
+    (content: ReactNode, options?: ToastShowOptions): DismissToast => {
+      const nativeMessage = typeof content === "string" ? content.trim() : null;
+      if (!content || nativeMessage === "") {
+        return noopDismiss;
+      }
+
+      const variant = options?.variant ?? "default";
+      const durationMs =
+        options?.durationMs === undefined ? DEFAULT_DURATION_MS : options.durationMs;
+      const nativeAndroid = options?.nativeAndroid ?? false;
+
+      if (Platform.OS === "android" && nativeAndroid && nativeMessage) {
+        const duration =
+          durationMs !== null && durationMs <= 2500 ? ToastAndroid.SHORT : ToastAndroid.LONG;
+        ToastAndroid.showWithGravity(nativeMessage, duration, ToastAndroid.TOP);
+        return noopDismiss;
+      }
+
+      idRef.current += 1;
+      const id = idRef.current;
+      setToast({
+        id,
+        content,
+        nativeMessage,
+        icon: options?.icon,
+        variant,
+        durationMs,
+        testID: options?.testID,
+        onDismiss: options?.onDismiss,
+      });
+      return () => {
+        if (toastRef.current?.id === id) setToast(null);
+      };
+    },
+    [setToast],
+  );
 
   const api = useMemo<ToastApi>(
     () => ({
@@ -127,7 +146,7 @@ export function useToastHost(): {
 
   const dismiss = useCallback(() => {
     setToast(null);
-  }, []);
+  }, [setToast]);
 
   return { api, toast, dismiss };
 }

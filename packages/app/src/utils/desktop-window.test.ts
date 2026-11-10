@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   intersectWindowChromeCorners,
+  resolveChildWindowChromeCorners,
   resolveHasOwnedWindowChromeObstruction,
   resolveWindowChromeObstruction,
   resolveWindowChromeSafeArea,
@@ -86,4 +87,55 @@ describe("window chrome", () => {
       }),
     ).toBe(false);
   });
+});
+
+it("assigns window buttons only to exposed split edges", () => {
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: true,
+      isLast: false,
+    }),
+  ).toBe("top-left");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: false,
+      isLast: true,
+    }),
+  ).toBe("top-right");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: false,
+      isLast: false,
+    }),
+  ).toBe("none");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "vertical",
+      isFirst: true,
+      isLast: false,
+    }),
+  ).toBe("both");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "vertical",
+      isFirst: false,
+      isLast: true,
+    }),
+  ).toBe("none");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "top-right",
+      direction: "horizontal",
+      isFirst: true,
+      isLast: true,
+    }),
+  ).toBe("top-right");
 });

@@ -593,6 +593,92 @@ describe("timeline presentation", () => {
   });
 });
 
+it("folds work before a plugin-rendered reply and leaves the reply visible", () => {
+  const timestamp = new Date("2026-01-01T00:00:00.000Z");
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Calculate", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "$$x^2$$", timestamp },
+  ];
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: installedTransform(installProbe("assistant_message", "phase === 'complete'")),
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: false,
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "probe-plugin/reply/0"]);
+  expect([...result.turns.turnsByHostId.keys()]).toEqual(["prompt"]);
+  expect(pluginData(result.tail)).toEqual([{ text: "$$x^2$$", phase: "complete" }]);
+});
+
+it("keeps streaming replies native, then folds work without losing manual expansion", () => {
+  const timestamp = new Date("2026-01-01T00:00:00.000Z");
+  const work: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Calculate", timestamp },
+    toolCall("one", "Bash"),
+  ];
+  const reply: StreamItem = {
+    kind: "assistant_message",
+    id: "reply",
+    text: "$$x^2$$",
+    timestamp,
+  };
+  const input = {
+    ...presentationOptions,
+    transform: installedTransform(installProbe("assistant_message", "phase === 'complete'")),
+    display: "collapseTurns" as const,
+  };
+  const present = createStreamPresentation();
+  const live = present({ ...input, tail: work, head: [reply], isTurnActive: true });
+  expect(rows(live).map((item) => item.id)).toEqual(["prompt", "tool-one", "reply"]);
+  const completed = { ...input, tail: [...work, reply], head: [], isTurnActive: false };
+  expect(present(completed).tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "probe-plugin/reply/0",
+  ]);
+  const expandedTurnHostIds = new Set(["prompt"]);
+  const opened = present({ ...completed, expandedTurnHostIds });
+  expect(opened.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "tool-one",
+    "probe-plugin/reply/0",
+  ]);
+  expect(opened.turns.nestedItemIds.has("probe-plugin/reply/0")).toBe(false);
+  expect(present({ ...completed, expandedTurnHostIds }).tail).toEqual(opened.tail);
+  expect(present(completed).tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "probe-plugin/reply/0",
+  ]);
+});
+
+it.each(["full", "collapseToolCalls"] as const)(
+  "leaves plugin replies and individual work visible in %s",
+  (display) => {
+    const timestamp = new Date("2026-01-01T00:00:00.000Z");
+    const tail: StreamItem[] = [
+      { kind: "user_message", id: "prompt", text: "Calculate", timestamp },
+      toolCall("one", "Bash"),
+      { kind: "assistant_message", id: "reply", text: "$$x^2$$", timestamp },
+    ];
+    const result = createStreamPresentation()({
+      ...presentationOptions,
+      transform: installedTransform(installProbe("assistant_message")),
+      tail,
+      head: [],
+      display,
+      isTurnActive: false,
+    });
+    expect(result.tail.map((item) => item.id)).toEqual([
+      "prompt",
+      "tool-one",
+      "probe-plugin/reply/0",
+    ]);
+    expect(result.turns.turnsByHostId.size).toBe(0);
+  },
+);
+
 it("opening a turn reveals individual calls rather than another tool group", () => {
   const present = createStreamPresentation();
   const timestamp = new Date();

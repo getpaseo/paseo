@@ -588,7 +588,7 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
-Agent hooks exclude the daemon's private disposable helpers. Public background workspaces and their ordinary agents use the same hooks.
+Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
 
 ## Ordering and returned values
 
@@ -598,7 +598,7 @@ Creation request
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
   → agent.open.before hooks (same ordering; env and plugin-local tools and MCP servers)
-  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
+  → set PASEO_AGENT_ID, PASEO_AGENT_CWD, and PASEO_WORKSPACE_ID when the agent has a workspace
   → open provider session and save agent configuration
 ```
 

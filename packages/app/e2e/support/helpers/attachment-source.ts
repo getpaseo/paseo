@@ -9,7 +9,7 @@ import { getServerId } from "./server-id";
 import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./workspace-ui";
 
 const RESULT_TITLE = "Example conversation";
-const SOURCE_PLUGIN_ID = "test-attachment-source";
+const PLUGIN_ID = "test-attachment-source";
 const SOURCE_SEARCH_METHOD = "context.search";
 const SNAPSHOT_TEXT = "[User] Example context\n[Assistant] Example response";
 
@@ -20,7 +20,7 @@ const EXPECTED_REMOTE_ATTACHMENT = {
   text: SNAPSHOT_TEXT,
   contextKind: "chat_history",
   externalResource: {
-    provider: SOURCE_PLUGIN_ID,
+    provider: PLUGIN_ID,
     providerLabel: "Conversation context · Secondary",
     resourceType: "conversation",
     id: "sample",
@@ -48,7 +48,7 @@ export async function observeCrossHostAttachmentTraffic(page: Page, sourcePort: 
       if (
         socketPort === String(sourcePort) &&
         message?.type === "plugin.rpc.invoke.request" &&
-        message.pluginId === SOURCE_PLUGIN_ID &&
+        message.pluginId === PLUGIN_ID &&
         message.method === SOURCE_SEARCH_METHOD
       ) {
         searchRequestCount += 1;
@@ -73,7 +73,7 @@ export async function observeCrossHostAttachmentTraffic(page: Page, sourcePort: 
           typeof attachment.externalResource === "object" &&
           attachment.externalResource !== null &&
           "provider" in attachment.externalResource &&
-          attachment.externalResource.provider === SOURCE_PLUGIN_ID,
+          attachment.externalResource.provider === PLUGIN_ID,
       );
     });
   });
@@ -95,16 +95,29 @@ export async function withAttachmentSourceFixture(
   page: Page,
   info: TestInfo,
   run: (actions: AttachmentSourceActions) => Promise<void>,
+  options?: { fixtureName?: string },
 ): Promise<void> {
   info.setTimeout(120_000);
   const workspace = await seedWorkspace({ repoPrefix: "attachment-source-" });
-  const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-  const previousConfig = await pluginClient.getDaemonConfig();
-  const plugin = await copyPluginFixture("attachment-source");
+  const cleanupSteps: Array<() => Promise<unknown>> = [() => workspace.cleanup()];
   let journeyFailed = false;
   let journeyError: unknown;
 
   try {
+    const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    cleanupSteps.unshift(() => pluginClient.close());
+    const previousConfig = await pluginClient.getDaemonConfig();
+    const plugin = await copyPluginFixture(options?.fixtureName ?? "attachment-source");
+    cleanupSteps.unshift(() => plugin.cleanup());
+    cleanupSteps.unshift(() =>
+      pluginClient.patchDaemonConfig({
+        pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
+      }),
+    );
+    cleanupSteps.unshift(async () => {
+      const source = (await pluginClient.getDaemonConfig()).config.plugins?.[PLUGIN_ID];
+      if (source?.path === plugin.directory) await pluginClient.removePlugin(PLUGIN_ID);
+    });
     await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
     await pluginClient.installDirectoryPlugin(plugin.directory);
 
@@ -154,16 +167,6 @@ export async function withAttachmentSourceFixture(
     journeyFailed = true;
     journeyError = error;
   }
-  const cleanupSteps: Array<() => Promise<unknown>> = [
-    () => pluginClient.removePlugin("test-attachment-source"),
-    () =>
-      pluginClient.patchDaemonConfig({
-        pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
-      }),
-    () => pluginClient.close(),
-    () => plugin.cleanup(),
-    () => workspace.cleanup(),
-  ];
   const errors: unknown[] = [];
   for (const cleanup of cleanupSteps) {
     try {

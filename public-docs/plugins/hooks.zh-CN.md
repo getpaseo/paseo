@@ -571,7 +571,7 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
-Agent 钩子不包括 daemon 的私有临时辅助 Agent。公开的后台工作区及其普通 Agent 使用相同钩子。
+Agent 钩子不包括 daemon 的私有临时辅助 Agent。后台 Agent 和后台工作区中的 Agent 使用相同钩子。
 
 ## 顺序与返回值 {#ordering-and-returned-values}
 
@@ -581,7 +581,7 @@ Creation request
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
   → agent.open.before hooks (same ordering; env and plugin-local tools and MCP servers)
-  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
+  → set PASEO_AGENT_ID, PASEO_AGENT_CWD, and PASEO_WORKSPACE_ID when the agent has a workspace
   → open provider session and save agent configuration
 ```
 

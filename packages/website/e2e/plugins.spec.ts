@@ -1,5 +1,5 @@
 import securityPlugin from "./overview.fixture.json" with { type: "json" };
-import { expect, test, type Page, type Locator } from "playwright/test";
+import { expect, test, type Page, type Locator } from "./fixtures";
 import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
 import copy from "../src/i18n/resources/en.json" with { type: "json" };

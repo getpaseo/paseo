@@ -435,7 +435,8 @@ test.describe("CodeMirror workspace file editing", () => {
     });
 
     try {
-      await page.setViewportSize({ width: 1280, height: 900 });
+      // Keep both tab rails available alongside the docked Explorer.
+      await page.setViewportSize({ width: 1900, height: 900 });
       await openAgentRoute(page, session);
 
       await openWorkspaceFile(page, "target.ts");

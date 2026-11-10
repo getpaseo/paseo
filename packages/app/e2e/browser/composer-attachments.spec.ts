@@ -85,7 +85,10 @@ test.describe("Composer attachments", () => {
     const destinationClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const plugin = await copyPluginFixture("attachment-source");
     const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
+    let previousDestinationPluginsEnabled: boolean | null = null;
     try {
+      const previousDestinationConfig = await destinationClient.getDaemonConfig();
+      previousDestinationPluginsEnabled = previousDestinationConfig.config.pluginsEnabled ?? false;
       await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
       await sourceClient.installDirectoryPlugin(plugin.directory);
       await destinationClient.patchDaemonConfig({ pluginsEnabled: true });
@@ -139,11 +142,53 @@ test.describe("Composer attachments", () => {
       await submitMessage(page, "Use the attached conversation.");
       await traffic.expectSnapshotSubmittedToDestination();
     } finally {
-      await destinationClient.close();
-      await sourceClient.close();
-      await sourceHost.close();
-      await plugin.cleanup();
-      await workspace.cleanup();
+      try {
+        const installed = (await destinationClient.getDaemonConfig()).config.plugins?.[
+          "test-attachment-source"
+        ];
+        if (installed?.path === plugin.directory) {
+          await destinationClient.removePlugin("test-attachment-source");
+        }
+      } finally {
+        try {
+          if (previousDestinationPluginsEnabled !== null) {
+            await destinationClient.patchDaemonConfig({
+              pluginsEnabled: previousDestinationPluginsEnabled,
+            });
+          }
+        } finally {
+          await destinationClient.close();
+          await sourceClient.close();
+          await sourceHost.close();
+          await plugin.cleanup();
+          await workspace.cleanup();
+        }
+      }
+    }
+  });
+
+  test("failed attachment source setup releases its workspace", async ({ page }, info) => {
+    await expect(
+      withAttachmentSourceFixture(page, info, async () => {}, {
+        fixtureName: "missing-attachment-source",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("failed attachment source startup removes its configured plugin", async ({ page }, info) => {
+    const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    try {
+      const before = (await client.getDaemonConfig()).config;
+      await expect(
+        withAttachmentSourceFixture(page, info, async () => {}, {
+          fixtureName: "attachment-source-failed-startup",
+        }),
+      ).rejects.toThrow("Intentional attachment source startup failure");
+      const after = (await client.getDaemonConfig()).config;
+      expect(after.plugins?.["test-attachment-source"]).toBeUndefined();
+      expect(after.pluginsEnabled).toBe(before.pluginsEnabled);
+    } finally {
+      await client.close();
     }
   });
 
