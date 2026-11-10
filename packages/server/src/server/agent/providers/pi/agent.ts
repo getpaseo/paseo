@@ -2796,7 +2796,16 @@ export class PiRpcAgentClient implements AgentClient {
       throw new Error("Pi history read requires a native session file handle");
     }
 
-    const { messages, userEntries } = readPiTranscript(await readFile(sessionFile, "utf8"));
+    let history: Awaited<ReturnType<typeof readPiTranscript>>;
+    try {
+      history = readPiTranscript(await readFile(sessionFile, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { events: [], coverage: { kind: "complete" } };
+      }
+      throw error;
+    }
+    const { messages, userEntries } = history;
     const events: AgentStreamEvent[] = [];
     for await (const event of streamPiHistory(this.provider, messages, userEntries)) {
       events.push(event);

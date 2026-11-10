@@ -4,7 +4,7 @@ import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
 import { projectTimelineRows } from "./timeline-projection.js";
-import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
+import type { PluginLifecycle, PluginWireBeforeRequests } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import { applyRecordPatch } from "../record-patch.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -113,7 +113,13 @@ import {
 } from "./provider-subagents/store.js";
 import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
+import {
+  buildSessionConfig,
+  buildConfigOverrides,
+  extractAttention,
+  extractTimestamps,
+  toAgentPersistenceHandle,
+} from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -1774,7 +1780,6 @@ export class AgentManager {
       launchContext,
       currentResumeOptions,
     );
-    if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1858,19 +1863,22 @@ export class AgentManager {
 
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
     const workspaceId = resolveResumeWorkspaceId({ options, record });
-    const historyEnv = await this.resolveHistoryReadEnv({
-      agentId: resolvedAgentId,
-      provider: client.provider,
-      cwd: storedConfig.cwd,
-      workspaceId,
-      reason: "resume",
-      purpose: "history",
-      env: { ...record?.launchEnv },
-      title: record?.title ?? storedConfig.title ?? null,
-      ...agentEntityData(record ?? options),
-      tools: [],
-      mcpServers: {},
-    });
+    const historyEnv = await this.resolveHistoryReadEnv(
+      {
+        agentId: resolvedAgentId,
+        provider: client.provider,
+        cwd: storedConfig.cwd,
+        workspaceId: workspaceId ?? null,
+        reason: "resume",
+        purpose: "history",
+        env: { ...record?.launchEnv },
+        title: record?.title ?? storedConfig.title ?? null,
+        ...agentEntityData(record ?? options),
+        tools: [],
+        mcpServers: {},
+      },
+      record?.launchEnv,
+    );
     const history = await client.readSessionHistory(handle, {
       agentId: resolvedAgentId,
       cwd: storedConfig.cwd,
@@ -1879,9 +1887,7 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
 
     const now = new Date();
-    if (!this.timelineStore.has(resolvedAgentId)) {
-      this.timelineStore.initialize(resolvedAgentId, { timestamp: now.toISOString() });
-    }
+    const preserveRootTimeline = await this.initializeTimelineForHistory(resolvedAgentId, now);
     const snapshot = this.buildHistorySnapshot({
       resolvedAgentId,
       client,
@@ -1900,12 +1906,15 @@ export class AgentManager {
       await this.primeTimelineFromProviderEvents(
         snapshot,
         history.events,
-        hydrateOptions?.broadcast ?? false,
-        { writeDurableTimeline: false },
+        () => {
+          if (snapshot.internal) return false;
+          const broadcast = hydrateOptions?.broadcast;
+          return typeof broadcast === "function" ? broadcast() : broadcast === true;
+        },
+        { writeDurableTimeline: false, preserveRootTimeline },
       );
     } catch (error) {
-      this.timelineStore.delete(resolvedAgentId);
-      this.providerSubagents.deleteParent(resolvedAgentId);
+      if (!preserveRootTimeline) this.timelineStore.delete(resolvedAgentId);
       throw error;
     }
     this.historySnapshots.set(resolvedAgentId, snapshot);
@@ -3369,6 +3378,11 @@ export class AgentManager {
   }
 
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
+    if (this.historySnapshots.has(agentId)) {
+      return this.runLifecycleMutation(agentId, () =>
+        this.ensureInteractiveSessionUnlocked(agentId),
+      );
+    }
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       await this.runLifecycleMutation(agentId, () =>
@@ -3380,6 +3394,24 @@ export class AgentManager {
 
   /** Inside the agent's lane: a history session is upgraded before anything is applied to it. */
   private async ensureInteractiveSessionUnlocked(agentId: string): Promise<ActiveManagedAgent> {
+    const snapshot = this.historySnapshots.get(agentId);
+    if (snapshot) {
+      const record = await this.requireRegistry().get(agentId);
+      if (!record) throw new AgentNotFoundError(agentId);
+      if (record.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+      const handle = toAgentPersistenceHandle(this.getRegisteredProviderIds(), record.persistence);
+      if (!handle) throw new Error(`Agent history has no persistence: ${agentId}`);
+      await this.trackAgentRegistrationOperation(
+        this.resumeAgentFromPersistenceInternal(
+          handle,
+          buildConfigOverrides(record),
+          agentId,
+          { ...extractTimestamps(record), attention: extractAttention(record) },
+          { purpose: "interactive" },
+        ),
+      );
+      return this.requireSessionAgent(agentId);
+    }
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       const record = await this.registry?.get(agentId);
@@ -4109,6 +4141,7 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    if (this.historySnapshots.has(agentId)) await this.ensureInteractiveSession(agentId);
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       agent = await this.ensureInteractiveSession(agentId);
@@ -4712,6 +4745,15 @@ export class AgentManager {
     } as ActiveManagedAgent;
   }
 
+  private async initializeTimelineForHistory(agentId: string, now: Date): Promise<boolean> {
+    // Keep Paseo's committed user identities and root rows when the provider only replays output.
+    if (this.timelineStore.has(agentId) && this.timelineStore.getRows(agentId).length > 0)
+      return true;
+    const rows = (await this.durableTimelineStore?.getCommittedRows(agentId)) ?? [];
+    this.timelineStore.initialize(agentId, { rows, timestamp: now.toISOString() });
+    return rows.length > 0;
+  }
+
   private buildHistorySnapshot(params: {
     resolvedAgentId: string;
     client: AgentClient;
@@ -4764,7 +4806,7 @@ export class AgentManager {
       foregroundTurnWaiters: new Set(),
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
-      persistence: attachPersistenceCwd(handle, config.cwd),
+      persistence: normalizePersistenceForConfig(handle, config),
       historyPrimed: false,
       lastUserMessageAt: options.lastUserMessageAt ?? null,
       attention: resolveInitialAttention(options.attention),
@@ -5176,11 +5218,24 @@ export class AgentManager {
     await this.primeTimelineFromProviderEvents(agent, history, broadcast);
   }
 
+  private clearHistoryProviderSubagents(input: {
+    agentId: string;
+    broadcast: boolean | (() => boolean);
+    deferredEvents: AgentManagerEvent[];
+  }): void {
+    const { agentId, broadcast, deferredEvents } = input;
+    for (const update of this.providerSubagents.deleteParent(agentId)) {
+      const event: AgentManagerEvent = { type: "provider_subagent", event: update };
+      if (typeof broadcast === "function") deferredEvents.push(event);
+      else if (broadcast) this.dispatch(event);
+    }
+  }
+
   private async primeTimelineFromProviderEvents(
     agent: Pick<ManagedAgentBase, "id" | "historyPrimed">,
     events: AsyncIterable<AgentStreamEvent> | Iterable<AgentStreamEvent>,
     broadcast: boolean | (() => boolean),
-    options?: { writeDurableTimeline?: boolean },
+    options?: { writeDurableTimeline?: boolean; preserveRootTimeline?: boolean },
   ): Promise<void> {
     if (agent.historyPrimed) {
       return;
@@ -5211,6 +5266,13 @@ export class AgentManager {
       row: AgentTimelineRow;
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
+    if (!writeDurableTimeline) {
+      this.clearHistoryProviderSubagents({
+        agentId: agent.id,
+        broadcast,
+        deferredEvents: providerSubagentEvents,
+      });
+    }
     for (const event of historySubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
@@ -5220,7 +5282,7 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const event of historyEvents) {
+    for (const event of options?.preserveRootTimeline ? [] : historyEvents) {
       const timelineOptions = event.timestamp ? { timestamp: event.timestamp } : undefined;
       const row = writeDurableTimeline
         ? this.recordTimeline(agent.id, event.item, timelineOptions)
@@ -6381,9 +6443,10 @@ export class AgentManager {
    * environment rather than being handed a synthetic one.
    */
   private async resolveHistoryReadEnv(
-    request: PluginSessionOpenRequest,
+    request: PluginWireBeforeRequests["agent.open.before"],
+    storedEnv?: Record<string, string>,
   ): Promise<Record<string, string> | undefined> {
-    if (!this.pluginLifecycle) return request.env;
+    if (!this.pluginLifecycle) return storedEnv;
     const transformed = await this.pluginLifecycle.before("agent.open.before", request);
     return transformed.env;
   }
@@ -6567,6 +6630,12 @@ export class AgentManager {
     if (!agent) {
       throw new Error(`Unknown agent '${normalizedId}'`);
     }
+    return agent;
+  }
+
+  private requirePublicAgent(id: string): LiveManagedAgent {
+    const agent = this.requireAgent(id);
+    if (agent.internal) throw new Error(`Unknown agent '${agent.id}'`);
     return agent;
   }
 

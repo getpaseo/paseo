@@ -3644,6 +3644,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly goalsEnabled: boolean = false,
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
+    private readonly initialResumePurpose: NonNullable<
+      AgentResumeSessionOptions["purpose"]
+    > = "interactive",
   ) {
     this.logger = logger.child({
       module: "agent",

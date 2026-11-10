@@ -95,7 +95,6 @@ import {
   claudeConfigDir,
   claudeProjectDirSync,
   claudeTranscriptPath,
-  claudeTranscriptPathSync,
   resolveClaudeConfigDir,
 } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";

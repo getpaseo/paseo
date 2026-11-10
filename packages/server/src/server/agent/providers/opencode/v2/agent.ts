@@ -27,6 +27,7 @@ import type {
   AgentPersistenceHandle,
   AgentSession,
   AgentSessionConfig,
+  AgentStreamEvent,
   FetchCatalogOptions,
   ImportableProviderSession,
   ImportProviderSessionInput,
@@ -179,11 +180,12 @@ export class OpenCodeV2AgentClient implements AgentClient {
     try {
       const info = await connection.client.session.get({ sessionID });
       const timeline = new V2Timeline(false);
+      const events: AgentStreamEvent[] = [];
+      await timeline.messages(await messages(connection.client, info.id), (event) => {
+        events.push(event);
+      });
       return {
-        events: [
-          ...timeline.messages(await messages(connection.client, info.id)),
-          ...(await readSessionChildrenHistory(connection.client, info.id)),
-        ],
+        events: [...events, ...(await readSessionChildrenHistory(connection.client, info.id))],
         coverage: { kind: "complete" },
       };
     } finally {
