@@ -259,23 +259,6 @@ describe("managed Git plugin sources", () => {
         await rename(path.join(repository, name), path.join(nested, name));
       await commitAll(repository, "nested plugin");
       await runGitCommand(["update-server-info"], { cwd: repository });
-      const server = createServer((request, response) => {
-        const pathname = new URL(request.url!, "http://localhost").pathname;
-        const file = path.resolve(repository, ".git", `.${pathname}`);
-        if (!file.startsWith(path.join(repository, ".git") + path.sep)) {
-          response.writeHead(404).end();
-          return;
-        }
-        try {
-          response.end(readFileSync(file));
-        } catch {
-          response.writeHead(404).end();
-        }
-      });
-      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const address = server.address();
-      if (!address || typeof address === "string") throw new Error("Expected HTTP port");
-      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/`;
       const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-"));
       roots.push(home);
       const helper = path.join(home, "credential-helper.cjs");
@@ -298,6 +281,23 @@ describe("managed Git plugin sources", () => {
         ["config", "--file", globalConfig, "--add", "credential.helper", helperCommand],
         { cwd: repository },
       );
+      const server = createServer((request, response) => {
+        const pathname = new URL(request.url!, "http://localhost").pathname;
+        const file = path.resolve(repository, ".git", `.${pathname}`);
+        if (!file.startsWith(path.join(repository, ".git") + path.sep)) {
+          response.writeHead(404).end();
+          return;
+        }
+        try {
+          response.end(readFileSync(file));
+        } catch {
+          response.writeHead(404).end();
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/`;
       const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
       process.env.GIT_CONFIG_GLOBAL = globalConfig;
       try {
@@ -336,6 +336,13 @@ describe("managed Git plugin sources", () => {
           existsSync(helperCalls),
           "HTTP fixture must not invoke ambient credential helpers",
         ).toBe(false);
+        // Verify the sentinel can run on this platform, so a broken executable
+        // cannot make the no-invocation assertion pass without a working guard.
+        await runGitCommand(["-c", `credential.helper=${helperCommand}`, "credential", "approve"], {
+          cwd: repository,
+          input: "protocol=http\nhost=127.0.0.1\nusername=fixture\npassword=fake-secret\n\n",
+        });
+        expect(await readFile(helperCalls, "utf8")).toBe("store");
       } finally {
         if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
         else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
