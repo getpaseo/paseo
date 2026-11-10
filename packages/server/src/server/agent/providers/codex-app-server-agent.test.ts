@@ -2437,6 +2437,7 @@ describe("Codex app-server provider", () => {
 
   test("reads archived Codex history without resuming an unarchived native thread", async () => {
     const threadRequests: string[] = [];
+    const historyRequests: unknown[] = [];
     const appServer = createFakeCodexAppServer({
       "collaborationMode/list": () => {
         threadRequests.push("collaborationMode/list");
@@ -2454,7 +2455,8 @@ describe("Codex app-server provider", () => {
         threadRequests.push("thread/resume");
         return { thread: { id: "archived-thread-id" } };
       },
-      "thread/read": () => {
+      "thread/read": (params) => {
+        historyRequests.push(params);
         threadRequests.push("thread/read");
         return { thread: { turns: [] } };
       },
@@ -2467,7 +2469,11 @@ describe("Codex app-server provider", () => {
       coverage: { kind: "complete" },
     });
 
-    expect(threadRequests).toEqual(["thread/read"]);
+    expect(threadRequests).toEqual(["thread/read", "thread/read"]);
+    expect(historyRequests).toEqual([
+      { threadId: "archived-thread-id", includeTurns: false },
+      { threadId: "archived-thread-id", includeTurns: true },
+    ]);
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
     appServer.assertNoErrors();
   });
@@ -5918,7 +5924,8 @@ describe("Codex app-server provider", () => {
         if (method !== "thread/read") {
           return {};
         }
-        const threadId = (params as { threadId?: string }).threadId;
+        const { threadId, includeTurns } = params as { threadId?: string; includeTurns?: boolean };
+        if (includeTurns === false) return { thread: { historyMode: "legacy" } };
         if (threadId === "test-thread") {
           return {
             thread: {
@@ -5964,7 +5971,7 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    const historyLoad = asInternals(session).loadPersistedHistory(session.client);
+    const historyLoad = Array.fromAsync(session.streamHistory());
     try {
       await vi.waitFor(() => {
         expect(peakChildReads).toBe(8);
@@ -5986,10 +5993,7 @@ describe("Codex app-server provider", () => {
       }
     }
 
-    const history: AgentStreamEvent[] = [];
-    for await (const event of session.streamHistory()) {
-      history.push(event);
-    }
+    const history = await historyLoad;
     const childTimelineOrder = history.flatMap((event) =>
       event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event.id] : [],
     );
@@ -6015,7 +6019,8 @@ describe("Codex app-server provider", () => {
         if (method !== "thread/read") {
           return {};
         }
-        const threadId = (params as { threadId?: string }).threadId;
+        const { threadId, includeTurns } = params as { threadId?: string; includeTurns?: boolean };
+        if (includeTurns === false) return { thread: { historyMode: "legacy" } };
         if (threadId === "test-thread") {
           return {
             thread: {
@@ -6051,10 +6056,6 @@ describe("Codex app-server provider", () => {
         };
       }),
     };
-
-    await expect(
-      asInternals(session).loadPersistedHistory(session.client),
-    ).resolves.toBeUndefined();
 
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {
