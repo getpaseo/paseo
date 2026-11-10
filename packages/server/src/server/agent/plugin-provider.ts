@@ -976,13 +976,41 @@ class PluginAgentClient implements AgentClient {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
   }
 
+  // Plugins can validate the model/thinking pair during session.open. Reconcile only
+  // advertised restrictions; native startup chooses the actual default when omitted.
+  private async prepareStartupConfig(
+    config: AgentSessionConfig,
+    change?: AgentSessionConfigChange,
+  ): Promise<AgentSessionConfig> {
+    if (!change) return config;
+    const startup = {
+      ...config,
+      model: "model" in change ? change.model : config.model,
+      thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+    };
+    const reconcileSavedThinking =
+      "model" in change &&
+      !("thinkingOptionId" in change) &&
+      startup.thinkingOptionId !== undefined;
+    if (!reconcileSavedThinking) return startup;
+    const catalog = await this.fetchCatalog({ scope: "workspace", cwd: config.cwd, force: false });
+    const target = startup.model
+      ? catalog.models.find((model) => model.id === startup.model)
+      : catalog.models.find((model) => model.isDefault);
+    const options = target?.thinkingOptions;
+    if (options && !options.some((option) => option.id === startup.thinkingOptionId)) {
+      return { ...startup, thinkingOptionId: undefined };
+    }
+    return startup;
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     return await this.openSession({
-      config: preparePluginStartupConfig(config, options?.configChange),
+      config: await this.prepareStartupConfig(config, options?.configChange),
       launchContext,
       history: "skip",
       persist: options?.persistSession !== false,
@@ -999,7 +1027,7 @@ class PluginAgentClient implements AgentClient {
       throw new Error(`Plugin provider '${this.provider}' requires cwd to resume a session`);
     }
     return await this.openSession({
-      config: preparePluginStartupConfig(
+      config: await this.prepareStartupConfig(
         { ...overrides, provider: this.provider, cwd: overrides.cwd },
         options?.purpose === "history" ? undefined : options?.configChange,
       ),
@@ -1933,20 +1961,6 @@ function mapModel(
     metadata: model.metadata ? { ...model.metadata } : undefined,
     thinkingOptions: thinkingOptions?.map((option) => Object.assign({}, option)),
     defaultThinkingOptionId: model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
-  };
-}
-
-// Plugins can validate or launch the model during session.open. Prepare the repair
-// there, while leaving requested thinking for the manager's ordered setter calls.
-function preparePluginStartupConfig(
-  config: AgentSessionConfig,
-  change?: AgentSessionConfigChange,
-): AgentSessionConfig {
-  if (!change) return config;
-  return {
-    ...config,
-    model: "model" in change ? change.model : config.model,
-    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
   };
 }
 

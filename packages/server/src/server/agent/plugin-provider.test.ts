@@ -2616,18 +2616,52 @@ test("plugin provider import launches with runtime MCP servers and returns only 
 });
 
 describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume) => {
-  async function fixture() {
+  async function fixture({
+    savedThinking = "high",
+    globalThinking = false,
+    unknownThinking = false,
+  }: { savedThinking?: string; globalThinking?: boolean; unknownThinking?: boolean } = {}) {
     const root = await mkdtemp(join(tmpdir(), "plugin-startup-repair-"));
     const states = new Map<string, ProviderConfigState>();
     const thinkingOptions = ["low", "medium", "high"].map((id) => ({ id, label: id }));
+    const modelThinking = globalThinking || unknownThinking ? undefined : thinkingOptions;
+    let catalogThinking: typeof thinkingOptions | undefined = globalThinking
+      ? thinkingOptions
+      : [{ id: "off", label: "Old global option" }];
+    if (unknownThinking) catalogThinking = undefined;
     const harness = createProviderHarness({
       handleInput: async (input, emit) => {
+        if (input.type === "catalog") {
+          emit({
+            type: "catalog",
+            requestId: input.requestId,
+            catalog: {
+              models: [
+                { id: "plugin-model", label: "Plugin model", thinkingOptions: modelThinking },
+              ],
+              modes: [{ id: "build", label: "Build" }],
+              thinkingOptions: catalogThinking,
+              defaultModel: "plugin-model",
+              defaultMode: "build",
+              defaultThinkingOption: "medium",
+            },
+          });
+          return true;
+        }
         if (input.type === "session.open") {
           if (input.config.model && input.config.model !== "plugin-model") {
             emit({
               type: "request.failed",
               requestId: input.requestId,
               error: { message: `Model ${input.config.model} was removed` },
+            });
+            return true;
+          }
+          if (input.config.thinkingOption === "off") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Thinking option off was removed for this model" },
             });
             return true;
           }
@@ -2665,6 +2699,14 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
             });
             return true;
           }
+          if (input.changes.thinkingOption === "off") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Thinking option off was removed for this model" },
+            });
+            return true;
+          }
           const next = {
             ...state,
             model:
@@ -2699,7 +2741,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
       labels: {},
       archivedAt: null,
       lastStatus: "closed",
-      config: { model: "removed-model", thinkingOptionId: "high" },
+      config: { model: "removed-model", thinkingOptionId: savedThinking },
       ...(resume
         ? {
             persistence: {
@@ -2729,6 +2771,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
   test.each([
     {
       label: "supported high",
+      savedThinking: "high",
       change: { model: "plugin-model" },
       model: "plugin-model",
       thinking: "high",
@@ -2737,6 +2780,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     },
     {
       label: "explicit low",
+      savedThinking: "off",
       change: { model: "plugin-model", thinkingOptionId: "low" },
       model: "plugin-model",
       thinking: "low",
@@ -2745,6 +2789,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     },
     {
       label: "explicit null",
+      savedThinking: "off",
       change: { model: "plugin-model", thinkingOptionId: undefined },
       model: "plugin-model",
       thinking: "medium",
@@ -2753,6 +2798,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     },
     {
       label: "model default",
+      savedThinking: "high",
       change: { model: undefined },
       model: undefined,
       thinking: "high",
@@ -2761,8 +2807,8 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     },
   ])(
     "opens $label before a removed model blocks startup and reopens",
-    async ({ change, model, thinking, startupThinking, changes }) => {
-      const f = await fixture();
+    async ({ change, model, thinking, startupThinking, changes, savedThinking }) => {
+      const f = await fixture({ savedThinking });
       try {
         await ensureUnarchivedAgentLoaded(f.id, {
           agentManager: f.manager,
@@ -2798,6 +2844,93 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
       }
     },
   );
+
+  test.each([
+    { globalThinking: false, model: "plugin-model" },
+    { globalThinking: true, model: "plugin-model" },
+    { globalThinking: false, model: undefined },
+    { globalThinking: true, model: undefined },
+  ])(
+    "reconciles unsupported saved off using target catalog (global=$globalThinking, model=$model)",
+    async ({ globalThinking, model }) => {
+      const f = await fixture({ savedThinking: "off", globalThinking });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model },
+        });
+        await f.manager.flush();
+        const open = f.harness.inputs.find((input) => input.type === "session.open");
+        if (open?.type !== "session.open") throw new Error("Expected session.open");
+        expect(open.config.thinkingOption).toBeUndefined();
+        expect(
+          f.harness.inputs
+            .filter((input) => input.type === "session.configure")
+            .map((input) => input.changes),
+        ).toEqual([{ model: model ?? null }]);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("medium");
+        expect((await f.storage.get(f.id))?.config?.model).toBe(model);
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("medium");
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("medium");
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("medium");
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("preserves saved high when the catalog does not specify thinking choices", async () => {
+    const f = await fixture({ unknownThinking: true });
+    try {
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+        configOverrides: { model: "plugin-model" },
+      });
+      await f.manager.flush();
+      expect(f.harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+        config: { thinkingOption: "high" },
+      });
+      expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("high");
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("high");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("rejects explicit unsupported thinking instead of reconciling the requested value", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "plugin-model", modeId: "build", thinkingOptionId: "off" },
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs
+          .filter((input) => input.type === "session.configure")
+          .map((input) => input.changes),
+      ).toEqual([{ model: "plugin-model" }, { mode: "build" }, { thinkingOption: "off" }]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
 
   test("invalid replacement leaves stored preference and public runtime unchanged", async () => {
     const f = await fixture();
@@ -2844,7 +2977,7 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
   });
 
   test("mode rejection prevents requested thinking and publication", async () => {
-    const f = await fixture();
+    const f = await fixture({ savedThinking: "off" });
     try {
       const original = await f.storage.get(f.id);
       await expect(
@@ -2865,6 +2998,28 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
           .filter((input) => input.type === "session.configure")
           .map((input) => input.changes),
       ).toEqual([{ model: "plugin-model" }, { mode: "invalid-mode" }]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("ordinary startup rejects unsupported saved thinking without a model mutation", async () => {
+    const f = await fixture({ savedThinking: "off" });
+    try {
+      const record = await f.storage.get(f.id);
+      if (!record) throw new Error("Expected stored plugin agent");
+      await f.storage.upsert({ ...record, config: { ...record.config, model: "plugin-model" } });
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
       expect(await f.storage.get(f.id)).toEqual(original);
       expect(f.manager.getAgent(f.id)).toBeNull();
     } finally {
