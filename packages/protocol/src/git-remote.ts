@@ -89,7 +89,7 @@ export function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | n
   const protocol = parsed.protocol.toLowerCase();
   const port =
     parsed.port && parsed.port !== DEFAULT_PORT_BY_PROTOCOL[protocol] ? parsed.port : undefined;
-  return { transport, host, port, path: normalizedPath };
+  return { transport, host, ...(port ? { port } : {}), path: normalizedPath };
 }
 
 export function parseGitHubRemoteIdentity(path: string): GitHubRemoteIdentity | null {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createForgeShorthand } from "./shorthand";
+import { BUILTIN_CLIENT_FORGE_HOST } from "@/git/client-forge-registry";
+import { createForgeShorthand as createForgeShorthandForHost } from "./shorthand";
+
+const createForgeShorthand = (input: Parameters<typeof createForgeShorthandForHost>[0]) =>
+  createForgeShorthandForHost(input, BUILTIN_CLIENT_FORGE_HOST);
 
 function matches(shorthand: { pattern: string }, text: string): string[] {
   return [...text.matchAll(new RegExp(shorthand.pattern, "g"))].map((match) => match[0]);

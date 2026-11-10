@@ -1,13 +1,25 @@
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginPendingAgentMessage, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 import { isHttpUrl } from "@/utils/http-url";
 
 interface HostNavigationOwner {
   browserAvailable: boolean;
-  openAgent(input: { serverId: string; agentId: string }): void;
+  openAgent(input: {
+    serverId: string;
+    agentId: string;
+    pendingMessage?: PluginPendingAgentMessage;
+  }): void;
+  withdrawPendingAgentMessage(input: {
+    serverId: string;
+    agentId: string;
+    clientMessageId: string;
+  }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
+  /** Whether the navigating plugin currently registers this surface. */
+  hasSurface(surfaceId: string): boolean;
+  openSurface(surfaceId: string): void;
 }
 
 export function createPluginHostNavigation(
@@ -15,10 +27,25 @@ export function createPluginHostNavigation(
   owner: HostNavigationOwner,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return {
-    openAgent: ({ agentId, serverId: targetServerId }) =>
-      owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
+    openAgent: ({ agentId, serverId: targetServerId, pendingMessage }) =>
+      owner.openAgent({
+        serverId: targetServerId ?? serverId,
+        agentId,
+        ...(pendingMessage ? { pendingMessage } : {}),
+      }),
+    withdrawPendingAgentMessage: ({ agentId, clientMessageId, serverId: targetServerId }) =>
+      owner.withdrawPendingAgentMessage({
+        serverId: targetServerId ?? serverId,
+        agentId,
+        clientMessageId,
+      }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
       owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
+    openSurface: (id) => {
+      const surfaceId = id.trim();
+      if (!owner.hasSurface(surfaceId)) throw new Error(`Plugin surface is unavailable: ${id}`);
+      owner.openSurface(surfaceId);
+    },
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");

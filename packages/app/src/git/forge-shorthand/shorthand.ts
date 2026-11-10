@@ -1,6 +1,6 @@
 import type { ForgeReferenceSigil } from "@/git/client-forge-module";
 import { forgeFromRemoteUrl } from "@/git/forge";
-import { getClientForgeLogicModule } from "@/git/forges";
+import { getClientForgeLogic, type ClientForgeHostSnapshot } from "@/git/client-forge-registry";
 import { buildForgeReferenceUrl } from "@/git/forge-url";
 
 /**
@@ -23,15 +23,18 @@ const BEFORE = String.raw`(?<![A-Za-z0-9_./@#!&-])`;
 const AFTER = String.raw`(?![A-Za-z0-9_])`;
 const REFERENCE = new RegExp(String.raw`^(?:(${REPO}))?([#!])(${NUMBER})$`);
 
-export function createForgeShorthand(input: {
-  forge: string | null | undefined;
-  remoteUrl: string | null | undefined;
-}): ForgeShorthand | null {
+export function createForgeShorthand(
+  input: {
+    forge: string | null | undefined;
+    remoteUrl: string | null | undefined;
+  },
+  host: ClientForgeHostSnapshot,
+): ForgeShorthand | null {
   const remoteUrl = input.remoteUrl;
-  const forge = input.forge || forgeFromRemoteUrl(remoteUrl);
+  const forge = input.forge || forgeFromRemoteUrl(remoteUrl, host);
   if (!forge || !remoteUrl) return null;
-  const sigils = forgeSigils(forge).filter(
-    (sigil) => buildForgeReferenceUrl(forge, { remoteUrl, sigil, number: 1 }) !== null,
+  const sigils = forgeSigils(forge, host).filter(
+    (sigil) => buildForgeReferenceUrl(forge, { remoteUrl, sigil, number: 1 }, host) !== null,
   );
   if (sigils.length === 0) return null;
   return {
@@ -39,17 +42,21 @@ export function createForgeShorthand(input: {
     resolve(text) {
       const match = REFERENCE.exec(text);
       if (!match) return null;
-      return buildForgeReferenceUrl(forge, {
-        remoteUrl,
-        repo: match[1] ?? null,
-        sigil: match[2] as ForgeReferenceSigil,
-        number: Number(match[3]),
-      });
+      return buildForgeReferenceUrl(
+        forge,
+        {
+          remoteUrl,
+          repo: match[1] ?? null,
+          sigil: match[2] as ForgeReferenceSigil,
+          number: Number(match[3]),
+        },
+        host,
+      );
     },
   };
 }
 
-function forgeSigils(forge: string): ForgeReferenceSigil[] {
-  const paths = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths ?? [];
+function forgeSigils(forge: string, host: ClientForgeHostSnapshot): ForgeReferenceSigil[] {
+  const paths = getClientForgeLogic(host, forge)?.urlGrammar?.referencePaths ?? [];
   return paths.flatMap((path) => (path.sigil ? [path.sigil] : []));
 }

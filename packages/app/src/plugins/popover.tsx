@@ -39,15 +39,30 @@ export function PluginEnvironmentProvider({
 
 type PluginPopoverSurfaceProps = Pick<
   MenuSurfaceProps,
-  "children" | "pages" | "sheetTitle" | "sheetTrailing" | "side" | "align" | "offset" | "testID"
+  | "children"
+  | "pages"
+  | "sheetTitle"
+  | "sheetTrailing"
+  | "side"
+  | "align"
+  | "offset"
+  | "testID"
+  | "minWidth"
+  | "maxWidth"
 >;
 
 /**
  * The surface every plugin popover opens in: anchored to its trigger on wide layouts, a bottom
  * sheet on compact ones when the enclosing `MenuRoot` uses `compactMode="sheet"`.
  */
-export function PluginPopoverSurface(props: PluginPopoverSurfaceProps) {
-  return <MenuSurface {...props} minWidth={280} maxWidth={420} maxHeight={440} scrollable />;
+export function PluginPopoverSurface({
+  minWidth = 280,
+  maxWidth = 420,
+  ...props
+}: PluginPopoverSurfaceProps) {
+  return (
+    <MenuSurface {...props} minWidth={minWidth} maxWidth={maxWidth} maxHeight={440} scrollable />
+  );
 }
 
 export function PluginPopoverContent({ children }: { children: ReactNode }) {

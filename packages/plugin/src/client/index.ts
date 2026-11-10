@@ -8,6 +8,14 @@ export type {
   PluginAgentPanelContribution,
   PluginFilePanelContribution,
   PluginFilePanelProps,
+  PluginNavigableHostProps,
+  PluginSafeAreaInsets,
+  PluginOverlayProps,
+  PluginOverlayHandle,
+  PluginAgentLaunchRequest,
+  PluginAgentLaunchEvent,
+  PluginAgentLaunchOpenResult,
+  PluginPendingAgentMessage,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,
@@ -36,6 +44,7 @@ export type {
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
   PluginCommandCapabilities,
+  PluginNotifier,
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,
   PluginAgentCommandContext,
@@ -71,6 +80,7 @@ export {
   useFileText,
   useFileUrl,
 } from "./file.js";
+export type { PluginForgeClientProviderContribution } from "../forge.js";
 export { usePaseo } from "./paseo-context.js";
 export {
   useAgent,

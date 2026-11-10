@@ -3,6 +3,7 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import type { AgentManager } from "./agent/agent-manager.js";
+import type { ForgeDefinitionLookup } from "./agent/prompt-attachments.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
@@ -32,6 +33,7 @@ interface WorkspaceAutoNameOptions {
   emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
   emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   logger: pino.Logger;
+  forgeDefinitionLookup?: ForgeDefinitionLookup;
   generateWorkspaceName?: WorkspaceNameGenerator;
 }
 
@@ -50,6 +52,7 @@ export class WorkspaceAutoName {
   private readonly emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   private readonly logger: pino.Logger;
   private readonly generateWorkspaceName: WorkspaceNameGenerator;
+  private readonly forgeDefinitionLookup?: ForgeDefinitionLookup;
 
   constructor(options: WorkspaceAutoNameOptions) {
     this.agentManager = options.agentManager;
@@ -61,6 +64,7 @@ export class WorkspaceAutoName {
     this.emitWorkspaceUpdateForCwd = options.emitWorkspaceUpdateForCwd;
     this.emitWorkspaceUpdateForWorkspaceId = options.emitWorkspaceUpdateForWorkspaceId;
     this.logger = options.logger;
+    this.forgeDefinitionLookup = options.forgeDefinitionLookup;
     this.generateWorkspaceName =
       options.generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
   }
@@ -207,6 +211,7 @@ export class WorkspaceAutoName {
       daemonConfig: this.readDaemonConfig(),
       currentSelection: input.currentSelection ?? undefined,
       firstAgentContext: input.firstAgentContext,
+      forgeDefinitionLookup: this.forgeDefinitionLookup,
       logger: this.logger,
     });
   }

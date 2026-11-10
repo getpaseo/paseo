@@ -56,6 +56,7 @@ function installation(invoked: string[]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 

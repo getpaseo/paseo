@@ -7,10 +7,12 @@ import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
+import { removePluginAgentLaunchJournals } from "./agent-launch/journal";
 import { createPluginClientRuntime } from "./client-runtime";
 import { createPluginSubscribe } from "./subscriptions";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
+import { clientForgeRegistry } from "@/git/client-forge-registry";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
 export type PluginCatalogStatus = "loading" | "ready" | "error";
@@ -85,8 +87,20 @@ export class PluginRegistry {
     const removed = previous.filter((plugin) => !preserved.includes(plugin));
     if (removed.length > 0) {
       this.byHost.set(serverId, preserved);
+      this.syncForgeHost(serverId, preserved);
       this.publish();
       for (const plugin of removed) this.dispose(plugin);
+      const configuredIds = new Set(catalog.map((entry) => entry.id));
+      for (const plugin of removed) {
+        if (!configuredIds.has(plugin.id)) {
+          void removePluginAgentLaunchJournals(serverId, plugin.id).catch((error) => {
+            console.warn(
+              `[Plugins] Failed to clear launch journal for ${serverId}/${plugin.id}`,
+              error,
+            );
+          });
+        }
+      }
     }
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
@@ -135,6 +149,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          forgeClientProviders: [],
         };
         const unsubscribeTranslations = installation.i18n.subscribe(() => this.publish());
         installation.lifetime.signal.addEventListener("abort", unsubscribeTranslations, {
@@ -175,6 +190,7 @@ export class PluginRegistry {
       }
     }
     this.byHost.set(serverId, installed);
+    this.syncForgeHost(serverId, installed);
     // An unchanged catalog keeps the snapshot, so timeline projections cached against the
     // installed transformers stay valid across a reconnect.
     const unchanged =
@@ -206,6 +222,7 @@ export class PluginRegistry {
     }
     this.byHost.delete(serverId);
     this.clientByHost.delete(serverId);
+    clientForgeRegistry.removeHost(serverId);
     this.publish();
   }
 
@@ -214,6 +231,22 @@ export class PluginRegistry {
     return JSON.stringify(
       [...this.evaluationErrors].filter(([key]) => key.startsWith(prefix)).sort(),
     );
+  }
+
+  private syncForgeHost(serverId: string, installed: InstalledPlugin[]): void {
+    const conflicts = clientForgeRegistry.replaceHost(
+      serverId,
+      installed.flatMap((plugin) =>
+        plugin.forgeClientProviders.map((contribution) => ({
+          pluginId: plugin.id,
+          contribution,
+        })),
+      ),
+    );
+    for (const conflict of conflicts) {
+      this.evaluationErrors.set(`${serverId}/${conflict.pluginId}`, conflict.message);
+      console.warn(`[Plugins] ${serverId}/${conflict.pluginId}: ${conflict.message}`);
+    }
   }
 
   private dispose(plugin: InstalledPlugin): void {

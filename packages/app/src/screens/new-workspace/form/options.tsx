@@ -6,7 +6,7 @@ import { ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { getHostProjectSourceDirectory, type HostProjectListItem } from "@/projects/host-projects";
-import { pickerItemLabel, type PickerItem } from "../../new-workspace-picker-item";
+import type { PickerItem } from "../../new-workspace-picker-item";
 import { addProjectIcon, branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
 
 interface OptionRowState {
@@ -134,7 +134,7 @@ export function RefOption({
           ? `new-workspace-ref-picker-branch-${item.name}`
           : `new-workspace-ref-picker-pr-${item.item.number}`
       }
-      label={pickerItemLabel(item)}
+      label={option.label}
       description={
         !isBranch && item.item.baseRefName
           ? t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName })

@@ -3,19 +3,27 @@ import { createForgeShorthand, type ForgeShorthand } from "./shorthand";
 
 export { createForgeShorthand, type ForgeShorthand } from "./shorthand";
 
+import { useClientForgeHost } from "@/git/client-forge-registry";
+
 const ForgeShorthandContext = createContext<ForgeShorthand | null>(null);
 
 /** Makes `#12`-style references in descendant Markdown open on the workspace forge. */
 export function ForgeShorthandProvider({
   forge,
   remoteUrl,
+  serverId,
   children,
 }: {
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
   children: ReactNode;
+  serverId: string;
 }) {
-  const value = useMemo(() => createForgeShorthand({ forge, remoteUrl }), [forge, remoteUrl]);
+  const host = useClientForgeHost(serverId);
+  const value = useMemo(
+    () => createForgeShorthand({ forge, remoteUrl }, host),
+    [forge, remoteUrl, host],
+  );
   return <ForgeShorthandContext.Provider value={value}>{children}</ForgeShorthandContext.Provider>;
 }
 

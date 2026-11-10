@@ -19,6 +19,7 @@ import type {
   PluginSidebarItemContribution as SDKPluginSidebarItemContribution,
   PluginScreenContribution as SDKPluginScreenContribution,
   PluginSettingsScreenContribution as SDKPluginSettingsScreenContribution,
+  PluginForgeClientProviderContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
@@ -66,6 +67,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  forgeClientProviders: PluginForgeClientProviderContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -93,6 +95,7 @@ export type {
   PluginComposerItemContribution,
   PluginNewWorkspaceItemContribution,
   PluginComposerPillContribution,
+  PluginForgeClientProviderContribution,
   PluginSidebarContribution,
   PluginSidebarItemContribution,
   PluginScreenContribution,

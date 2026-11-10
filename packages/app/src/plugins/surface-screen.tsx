@@ -41,7 +41,7 @@ import {
   type PluginSurfaceContributionIdentity,
   type PluginSurfacePlaceholderStatus,
 } from "./surface-contribution";
-import { resolvePluginPlatform } from "./platform";
+import { usePluginLayout } from "./layout";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -97,7 +97,7 @@ function SurfaceRenderer({
   params: PluginScreenParams;
   theme: PluginTheme;
 }) {
-  const navigation = usePluginHostNavigation(host.id);
+  const navigation = usePluginHostNavigation(host.id, plugin.id);
   return (
     <PluginInstallationProvider plugin={plugin}>
       <Surface theme={theme} host={host} layout={layout} navigation={navigation} params={params} />
@@ -194,7 +194,7 @@ export function PluginSurfaceScreen() {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
   }, [serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const headerLeft = useMemo(
     () => (

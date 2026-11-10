@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
+import {
+  deriveMergeCapability as deriveMergeCapabilityForHost,
+  type ForgeSpecificStatusFacts,
+} from "./merge-capability";
+import { BUILTIN_CLIENT_FORGE_HOST } from "./client-forge-registry";
+
+function deriveMergeCapability(
+  forgeSpecific: unknown,
+  legacy?: Parameters<typeof deriveMergeCapabilityForHost>[2],
+) {
+  return deriveMergeCapabilityForHost(forgeSpecific, BUILTIN_CLIENT_FORGE_HOST, legacy);
+}
 
 type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
   forge: "github";

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Platform, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
 import { ArrowLeft, Settings } from "lucide-react-native";
@@ -19,6 +19,7 @@ import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buildPluginSettingsRoute } from "./routes";
+import { usePluginLayout } from "../layout";
 
 interface SettingsIdentity {
   serverId: string;
@@ -141,11 +142,7 @@ function SettingsContent({
     }),
     [hosts, serverId],
   );
-  const platform = Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "web";
-  const layout = useMemo<PluginHostProps["layout"]>(
-    () => ({ compact, platform }),
-    [compact, platform],
-  );
+  const layout = usePluginLayout(compact);
   if (!connected)
     return <Text style={styles.message}>{t("settings.plugins.screens.offline")}</Text>;
   // COMPAT(pluginSettings): added in v0.8, remove after 2027-03-05.

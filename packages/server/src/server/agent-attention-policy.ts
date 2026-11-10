@@ -39,6 +39,14 @@ function isFocusedOnTarget(
   return state.focusedTerminalId === target.id;
 }
 
+// Plugins read the same rule through `server.presence()`, so a plugin that pushes elsewhere
+// stays quiet exactly when Paseo's own push does.
+export function isClientPresent(lastActivityAtMs: number | null, nowMs: number): boolean {
+  return (
+    lastActivityAtMs !== null && nowMs - Math.min(lastActivityAtMs, nowMs) <= PRESENCE_THRESHOLD_MS
+  );
+}
+
 export function computeNotificationPlan({
   allStates,
   focusTarget,
@@ -49,14 +57,10 @@ export function computeNotificationPlan({
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
 
   for (const [clientIndex, state] of allStates.entries()) {
-    const clampedActivityAtMs =
-      state.lastActivityAtMs === null ? null : Math.min(state.lastActivityAtMs, nowMs);
-    const isPresent =
-      clampedActivityAtMs !== null && nowMs - clampedActivityAtMs <= PRESENCE_THRESHOLD_MS;
-
-    if (!isPresent) {
+    if (state.lastActivityAtMs === null || !isClientPresent(state.lastActivityAtMs, nowMs)) {
       continue;
     }
+    const clampedActivityAtMs = Math.min(state.lastActivityAtMs, nowMs);
 
     if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
       return { inAppRecipientIndex: null, shouldPush: false };

@@ -20,6 +20,7 @@ import {
   type GitActions,
 } from "@/git/policy";
 import { deriveMergeCapability } from "@/git/merge-capability";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
@@ -64,19 +65,23 @@ export function useGitActionRunner(): (action: GitAction) => void {
  * GitHub and unknown forges have no brand color and render in a neutral tone.
  * The merge variants all share this one icon, so we build it once.
  */
-function renderForgePrIcon(forge: Forge): ReactElement {
-  const icon = getForgePresentation(forge).icon;
+function renderForgePrIcon(forge: Forge, host: ClientForgeHostSnapshot): ReactElement {
+  const icon = getForgePresentation(forge, host).icon;
   return (
     <ForgeBrandIcon
       iconKind={icon}
       size={16}
-      uniProps={getForgeBrandColorMapping(icon) ?? forgeMutedColorMapping}
+      uniProps={getForgeBrandColorMapping(icon, host) ?? forgeMutedColorMapping}
+      host={host}
     />
   );
 }
 
-function forgeVocabulary(forge: Forge): { context: "mr" | undefined } {
-  return { context: getForgePresentation(forge).changeRequestContext };
+function forgeVocabulary(
+  forge: Forge,
+  host: ClientForgeHostSnapshot,
+): { context: "mr" | undefined } {
+  return { context: getForgePresentation(forge, host).changeRequestContext };
 }
 
 function openURLInNewTab(url: string): void {
@@ -322,6 +327,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
+  const clientForgeHost = useClientForgeHost(serverId);
 
   const { status, isLoading: isStatusLoading } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
@@ -340,7 +346,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     cwd,
     enabled: isGit,
   });
-  const prIcon = useMemo(() => renderForgePrIcon(forge), [forge]);
+  const prIcon = useMemo(() => renderForgePrIcon(forge, clientForgeHost), [clientForgeHost, forge]);
   const baseRefLabel = useMemo(
     () => formatBaseRefLabel(baseRef, t("workspace.git.diff.base")),
     [baseRef, t],
@@ -527,7 +533,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void persistShipDefault("pr");
     void runCreatePr({ serverId, cwd })
       .then(() => {
-        toastActionSuccess(t("workspace.git.actions.createPr.success", forgeVocabulary(forge)));
+        toastActionSuccess(
+          t("workspace.git.actions.createPr.success", forgeVocabulary(forge, clientForgeHost)),
+        );
         return;
       })
       .catch((err) => {
@@ -539,6 +547,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     persistShipDefault,
     runCreatePr,
     serverId,
+    clientForgeHost,
     t,
     toastActionError,
     toastActionSuccess,
@@ -550,14 +559,26 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       void runMergePr({ serverId, cwd, method })
         .then(() => {
           setPostShipArchiveSuggested(true);
-          toastActionSuccess(t("workspace.git.actions.mergePr.success", forgeVocabulary(forge)));
+          toastActionSuccess(
+            t("workspace.git.actions.mergePr.success", forgeVocabulary(forge, clientForgeHost)),
+          );
           return;
         })
         .catch((err) => {
           toastActionError(err, t("workspace.git.actions.toasts.failedMergePr"));
         });
     },
-    [cwd, forge, persistShipDefault, runMergePr, serverId, t, toastActionError, toastActionSuccess],
+    [
+      clientForgeHost,
+      cwd,
+      forge,
+      persistShipDefault,
+      runMergePr,
+      serverId,
+      t,
+      toastActionError,
+      toastActionSuccess,
+    ],
   );
 
   const handleEnablePrAutoMerge = useCallback(
@@ -683,7 +704,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   // Build actions
   const gitActionsInput = useMemo<BuildGitActionsInput>(() => {
-    const presentation = getForgePresentation(forge);
+    const presentation = getForgePresentation(forge, clientForgeHost);
     return {
       isGit,
       githubFeaturesEnabled,
@@ -696,7 +717,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       pullRequestIsDraft: prStatus?.isDraft ?? false,
       pullRequestIsMerged: prStatus?.isMerged ?? false,
       pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
-      mergeCapability: deriveMergeCapability(prStatus?.forgeSpecific, prStatus?.github),
+      mergeCapability: deriveMergeCapability(
+        prStatus?.forgeSpecific,
+        clientForgeHost,
+        prStatus?.github,
+      ),
       hasRemote,
       isPaseoOwnedWorktree,
       isOnBaseBranch,
@@ -822,6 +847,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     githubFeaturesEnabled,
     forge,
     githubAutoMergeActionsEnabled,
+    clientForgeHost,
     hasUncommittedChanges,
     aheadOfOrigin,
     behindOfOrigin,
@@ -867,9 +893,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         baseRefLabel,
         hasPullRequest,
         forge,
+        clientForgeHost,
         t,
       }),
-    [gitActionsInput, baseRefLabel, hasPullRequest, forge, t],
+    [gitActionsInput, baseRefLabel, hasPullRequest, forge, clientForgeHost, t],
   );
 
   return { gitActions, branchLabel, isGit };
@@ -881,6 +908,7 @@ function translateGitActions(
     baseRefLabel: string;
     hasPullRequest: boolean;
     forge: Forge;
+    clientForgeHost: ClientForgeHostSnapshot;
     t: (key: string, options?: Record<string, unknown>) => string;
   },
 ): GitActions {
@@ -897,15 +925,23 @@ function translateGitAction(
     baseRefLabel,
     hasPullRequest,
     forge,
+    clientForgeHost,
     t,
   }: {
     baseRefLabel: string;
     hasPullRequest: boolean;
     forge: Forge;
+    clientForgeHost: ClientForgeHostSnapshot;
     t: (key: string, options?: Record<string, unknown>) => string;
   },
 ): GitAction {
-  const labels = getTranslatedGitActionLabels(action, { baseRefLabel, hasPullRequest, forge, t });
+  const labels = getTranslatedGitActionLabels(action, {
+    baseRefLabel,
+    hasPullRequest,
+    forge,
+    clientForgeHost,
+    t,
+  });
   return {
     ...action,
     ...labels,
@@ -922,11 +958,13 @@ function getTranslatedGitActionLabels(
     baseRefLabel,
     hasPullRequest,
     forge,
+    clientForgeHost,
     t,
   }: {
     baseRefLabel: string;
     hasPullRequest: boolean;
     forge: Forge;
+    clientForgeHost: ClientForgeHostSnapshot;
     t: (key: string, options?: Record<string, unknown>) => string;
   },
 ): Pick<GitAction, "label" | "pendingLabel" | "successLabel"> {
@@ -958,32 +996,65 @@ function getTranslatedGitActionLabels(
     case "pr":
       return hasPullRequest
         ? {
-            label: t("workspace.git.actions.viewPr", forgeVocabulary(forge)),
-            pendingLabel: t("workspace.git.actions.viewPr", forgeVocabulary(forge)),
-            successLabel: t("workspace.git.actions.viewPr", forgeVocabulary(forge)),
+            label: t("workspace.git.actions.viewPr", forgeVocabulary(forge, clientForgeHost)),
+            pendingLabel: t(
+              "workspace.git.actions.viewPr",
+              forgeVocabulary(forge, clientForgeHost),
+            ),
+            successLabel: t(
+              "workspace.git.actions.viewPr",
+              forgeVocabulary(forge, clientForgeHost),
+            ),
           }
         : {
-            label: t("workspace.git.actions.createPr.label", forgeVocabulary(forge)),
-            pendingLabel: t("workspace.git.actions.createPr.pending", forgeVocabulary(forge)),
-            successLabel: t("workspace.git.actions.createPr.success", forgeVocabulary(forge)),
+            label: t(
+              "workspace.git.actions.createPr.label",
+              forgeVocabulary(forge, clientForgeHost),
+            ),
+            pendingLabel: t(
+              "workspace.git.actions.createPr.pending",
+              forgeVocabulary(forge, clientForgeHost),
+            ),
+            successLabel: t(
+              "workspace.git.actions.createPr.success",
+              forgeVocabulary(forge, clientForgeHost),
+            ),
           };
     case "merge-pr-squash":
       return {
-        label: t("workspace.git.actions.mergePr.squash", forgeVocabulary(forge)),
-        pendingLabel: t("workspace.git.actions.mergePr.pending", forgeVocabulary(forge)),
-        successLabel: t("workspace.git.actions.mergePr.success", forgeVocabulary(forge)),
+        label: t("workspace.git.actions.mergePr.squash", forgeVocabulary(forge, clientForgeHost)),
+        pendingLabel: t(
+          "workspace.git.actions.mergePr.pending",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
+        successLabel: t(
+          "workspace.git.actions.mergePr.success",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
       };
     case "merge-pr-merge":
       return {
-        label: t("workspace.git.actions.mergePr.merge", forgeVocabulary(forge)),
-        pendingLabel: t("workspace.git.actions.mergePr.pending", forgeVocabulary(forge)),
-        successLabel: t("workspace.git.actions.mergePr.success", forgeVocabulary(forge)),
+        label: t("workspace.git.actions.mergePr.merge", forgeVocabulary(forge, clientForgeHost)),
+        pendingLabel: t(
+          "workspace.git.actions.mergePr.pending",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
+        successLabel: t(
+          "workspace.git.actions.mergePr.success",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
       };
     case "merge-pr-rebase":
       return {
-        label: t("workspace.git.actions.mergePr.rebase", forgeVocabulary(forge)),
-        pendingLabel: t("workspace.git.actions.mergePr.pending", forgeVocabulary(forge)),
-        successLabel: t("workspace.git.actions.mergePr.success", forgeVocabulary(forge)),
+        label: t("workspace.git.actions.mergePr.rebase", forgeVocabulary(forge, clientForgeHost)),
+        pendingLabel: t(
+          "workspace.git.actions.mergePr.pending",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
+        successLabel: t(
+          "workspace.git.actions.mergePr.success",
+          forgeVocabulary(forge, clientForgeHost),
+        ),
       };
     case "enable-pr-auto-merge-squash":
       return {
