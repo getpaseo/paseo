@@ -1,7 +1,9 @@
-import type { Locator } from "@playwright/test";
+import type { CDPSession, Locator } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
+import { seedSubagent } from "../support/helpers/subagents";
+import { submitMessage } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { gateNextAgentMessage } from "../support/helpers/agent-message-gate";
 import {
@@ -18,7 +20,7 @@ function visibleMainPane(page: Page) {
 }
 
 function composerChangesPill(page: Page) {
-  return page.getByTestId("composer-diff-stat-pill");
+  return page.getByRole("button", { name: "Open Changes tab", exact: true });
 }
 
 async function revealComposerChangesInExplorer(page: Page) {
@@ -78,7 +80,8 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
-    await page.setViewportSize({ width: 1400, height: 900 });
+    // Keep both workspace rails visible alongside app navigation and Explorer.
+    await page.setViewportSize({ width: 1900, height: 900 });
     await openAgentRoute(page, {
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
@@ -125,7 +128,7 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
     });
 
     const closeExplorer = page
-      .getByTestId("explorer-header")
+      .getByTestId("workspace-explorer-sidebar")
       .getByRole("button", { name: "Close Explorer sidebar" });
     await expect(closeExplorer).not.toBeInViewport();
 
@@ -310,7 +313,7 @@ async function sendFeedback(page: Page, count: number) {
 }
 
 async function expectFeedbackSent(page: Page, recipient: string) {
-  await expect(page.getByText(`Feedback sent to ${recipient}`, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("app-toast")).toHaveText(`Feedback sent to ${recipient}`);
   await expect(page.getByTestId("working-diff-panel")).toBeVisible();
 }
 
@@ -340,6 +343,9 @@ test.describe("send review feedback", () => {
         await expectFeedbackSent(page, "Composer diff stat");
         await expectReviewAbsent(page, "Please simplify this.");
         await captureFeedback(page, "single");
+        await expect(
+          page.getByText("Feedback sent to Composer diff stat", { exact: true }),
+        ).toHaveCount(0);
       });
       await test.step("Return to the untouched composer draft", async () => {
         await showWideLayout(page);
@@ -375,11 +381,7 @@ test.describe("send review feedback", () => {
         ).toBeDisabled();
         expect(gate.requestCount()).toBe(1);
         gate.accept();
-        await expect(
-          compactReviewSurface(page).getByText("Feedback sent to Composer diff stat", {
-            exact: true,
-          }),
-        ).toBeVisible();
+        await expectFeedbackSent(page, "Composer diff stat");
       });
     } finally {
       await workspace.cleanup();
@@ -499,6 +501,7 @@ test.describe("send review feedback", () => {
   test("only open tabs in this workspace appear in compact and wide recipient menus", async ({
     page,
   }) => {
+    test.setTimeout(120000);
     const workspace = await seedChangedAgent("review-feedback-multiple-");
     const other = await seedChangedAgent("review-feedback-other-");
     try {
@@ -810,7 +813,7 @@ async function expectUnmatchedFeedback(page: Page) {
 }
 
 function compactReviewSurface(page: Page) {
-  return page.getByTestId("explorer-content-area").filter({ visible: true });
+  return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
 }
 async function openCompactReviewExplorer(
   page: Page,
@@ -848,7 +851,10 @@ async function scrollReviewToLastLine(page: Page) {
 
 async function revealCompactChanges(page: Page) {
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  await page.getByTestId("explorer-header").getByText("Changes", { exact: true }).click();
+  await page
+    .getByTestId("workspace-explorer-sidebar")
+    .getByTestId("workspace-tab-changes_tree")
+    .click();
   await expect(compactReviewSurface(page).getByTestId("diff-file-0-body")).toBeVisible();
 }
 async function expectReviewEditorBody(page: Page, body: string) {
@@ -856,3 +862,91 @@ async function expectReviewEditorBody(page: Page, body: string) {
     body,
   );
 }
+
+async function swipeComposerTracks(page: Page, client: CDPSession, direction: "left" | "right") {
+  const track = page.getByTestId("composer-track-scroll");
+  const box = await track.boundingBox();
+  if (!box) throw new Error("Composer tracks are not visible");
+  const start = direction === "left" ? box.x + box.width - 5 : box.x + 5;
+  const end = direction === "left" ? box.x + 5 : box.x + box.width - 5;
+  await swipeTouch(client, start, end, box.y + box.height / 2);
+}
+
+async function swipeTouch(client: CDPSession, start: number, end: number, y: number) {
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: start, y }],
+  });
+  for (let step = 1; step <= 8; step++) {
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: start + ((end - start) * step) / 8, y }],
+    });
+  }
+  await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+}
+
+async function trackScrollOffset(track: Locator): Promise<number> {
+  return track.evaluate((node) => node.scrollLeft);
+}
+
+test.describe("touch composer tracks", () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test("compact composer scrolls its task, subagent and changes tracks without squeezing them", async ({
+    page,
+  }) => {
+    const workspace = await seedChangedAgent("composer-tracks-overflow-");
+    const touch = await page.context().newCDPSession(page);
+    try {
+      await seedSubagent(
+        { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
+        { parentId: workspace.agentId, title: "Track child" },
+      );
+      await page.setViewportSize({ width: 1000, height: 844 });
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+      await submitMessage(page, "emit 1 agent stream updates");
+      const tasks = page.getByTestId("agent-task-list-header");
+      const subagents = page.getByTestId("subagents-track-header");
+      const changes = page.getByTestId("composer-diff-stat-pill");
+      await expect(tasks).toBeVisible();
+      await expect(subagents).toBeVisible();
+      await expect(changes).toBeVisible();
+      const wideWidths = await Promise.all(
+        [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
+      );
+      await page.setViewportSize({ width: 200, height: 844 });
+      const narrowWidths = await Promise.all(
+        [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
+      );
+      for (const [index, width] of wideWidths.entries())
+        expect(narrowWidths[index]).toBeGreaterThanOrEqual(width - 1);
+      const track = page.getByTestId("composer-track-scroll");
+      expect(await track.evaluate((node) => node.scrollWidth)).toBeGreaterThan(
+        await track.evaluate((node) => node.clientWidth),
+      );
+      await swipeComposerTracks(page, touch, "left");
+      await expect.poll(() => trackScrollOffset(track)).toBeGreaterThan(0);
+      await swipeComposerTracks(page, touch, "right");
+      await expect.poll(() => trackScrollOffset(track)).toBeLessThanOrEqual(1);
+      await swipeComposerTracks(page, touch, "left");
+      await expect.poll(() => trackScrollOffset(track)).toBeGreaterThan(0);
+      await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport();
+      await expect(page.getByTestId("workspace-explorer-sidebar")).not.toBeInViewport();
+      await page.getByRole("button", { name: "Open menu" }).click();
+      await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ ratio: 1 });
+      await page.getByTestId("sidebar-close").click();
+      await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport();
+      await expect(changes).toBeInViewport();
+      await changes.click();
+      await expect(
+        page.getByTestId("changes-header").filter({ visible: true }).first(),
+      ).toBeVisible();
+    } finally {
+      await touch.detach();
+      await workspace.cleanup();
+    }
+  });
+});

@@ -11,8 +11,11 @@ category: Plugins
 A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [screens and sidebar items](/docs/plugins/reference#screens-and-sidebar-items),
 [workspace panels](/docs/plugins/reference#workspace-panels),
+[file panels](/docs/plugins/reference#file-panels),
 [Command Center items](/docs/plugins/reference#command-center-items),
 [slash commands](/docs/plugins/reference#slash-commands),
+[composer items](/docs/plugins/reference#composer-items),
+[New workspace items](/docs/plugins/reference#new-workspace-items),
 [composer pills](/docs/plugins/reference#composer-pills),
 [timeline items](/docs/plugins/reference#timeline-items),
 [themes](/docs/plugins/reference#contribute-a-theme),
@@ -222,7 +225,8 @@ client.addCommandCenterItem({
 });
 ```
 
-`icon` is a [Lucide](https://lucide.dev/icons/) icon name.
+`icon` is a [Lucide](https://lucide.dev/icons/) icon name, inline SVG, or a component. See
+[Icons](/docs/plugins/reference#icons).
 
 ## Edit and reload
 

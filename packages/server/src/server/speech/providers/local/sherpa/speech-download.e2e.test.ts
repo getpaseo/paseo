@@ -7,6 +7,7 @@ import pino from "pino";
 import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloader.js";
 import { createDaemonTestContext } from "../../../../test-utils/index.js";
 import { parsePcm16MonoWav, wordSimilarity } from "../../../../test-utils/dictation-e2e.js";
+import { getLocalSttEngine, getLocalTtsEngine } from "./model-catalog.js";
 import { SherpaOnnxTTS } from "./sherpa-tts.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa-parakeet-stt.js";
@@ -192,7 +193,12 @@ downloadTest(
       const ttsText = "This is a voice note.";
       const ttsModelDir = getSherpaOnnxModelDir(modelsDir, "kokoro-en-v0_19");
       const tts = new SherpaOnnxTTS(
-        { preset: "kokoro-en-v0_19", modelDir: ttsModelDir, speakerId: 0 },
+        {
+          modelId: "kokoro-en-v0_19",
+          modelDir: ttsModelDir,
+          engine: getLocalTtsEngine("kokoro-en-v0_19"),
+          speakerId: 0,
+        },
         logger,
       );
       const { stream, format: ttsFormat } = await tts.synthesizeSpeech(ttsText);
@@ -206,13 +212,8 @@ downloadTest(
       const sttModelDir = getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v2-int8");
       const engine = new SherpaOfflineRecognizerEngine(
         {
-          model: {
-            kind: "nemo_transducer",
-            encoder: `${sttModelDir}/encoder.int8.onnx`,
-            decoder: `${sttModelDir}/decoder.int8.onnx`,
-            joiner: `${sttModelDir}/joiner.int8.onnx`,
-            tokens: `${sttModelDir}/tokens.txt`,
-          },
+          modelDir: sttModelDir,
+          engine: getLocalSttEngine("parakeet-tdt-0.6b-v2-int8"),
           numThreads: 2,
           debug: 0,
         },

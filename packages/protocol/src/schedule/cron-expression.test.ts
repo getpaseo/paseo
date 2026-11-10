@@ -13,6 +13,37 @@ describe("cron expression parser", () => {
     expect(cron.dayOfWeek.matches(0)).toBe(false);
   });
 
+  it("rejects a step after a standalone number", () => {
+    expect(validateCronExpression("0/15 * * * *")).toBe(
+      "Invalid cron minute step: use * or a range before /",
+    );
+  });
+
+  it.each([
+    ["5/1 * * * *", "minute"],
+    ["0,5/15 * * * *", "minute"],
+    ["* 1/2 * * *", "hour"],
+    ["* * 1/2 * *", "day-of-month"],
+    ["* * * 1/2 *", "month"],
+    ["* * * * 1/2", "day-of-week"],
+  ])("rejects ignored numeric steps in %s", (expression, field) => {
+    expect(validateCronExpression(expression)).toBe(
+      `Invalid cron ${field} step: use * or a range before /`,
+    );
+  });
+
+  it.each([
+    { expression: "*/15 * * * *", expected: [0, 15, 30, 45] },
+    { expression: "0-59/15 * * * *", expected: [0, 15, 30, 45] },
+    { expression: "5-59/15 * * * *", expected: [5, 20, 35, 50] },
+  ])("preserves supported steps in $expression", ({ expression, expected }) => {
+    const cron = parseCronExpression(expression);
+    const minutes = Array.from({ length: 60 }, (_, minute) => minute);
+    const matches = minutes.filter((minute) => cron.minute.matches(minute));
+
+    expect(matches).toEqual(expected);
+  });
+
   it("reports invalid expressions with server-facing copy", () => {
     expect(validateCronExpression("* * *")).toBe("Cron expressions must have 5 fields");
     expect(validateCronExpression("*/5/2 * * * *")).toBe("Invalid cron minute step");

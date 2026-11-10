@@ -77,3 +77,16 @@ describe("tool-call detail state", () => {
     assert.strictEqual(hasMeaningfulToolCallDetail(detail), true);
   });
 });
+
+it("keeps historical setup rows readable as history without a chat output view", () => {
+  assert.strictEqual(
+    hasMeaningfulToolCallDetail({
+      type: "worktree_setup",
+      branchName: "old",
+      worktreePath: "/workspace",
+      log: "historical output",
+      commands: [],
+    }),
+    false,
+  );
+});

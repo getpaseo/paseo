@@ -28,6 +28,10 @@ interface SeedProjectDescriptor {
  * prefer those wrappers over reaching for this client directly.
  */
 export interface SeedDaemonClient {
+  patchDaemonConfig(
+    config: import("@getpaseo/protocol/messages").MutableDaemonConfigPatch,
+  ): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
+  getDaemonConfig(): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -44,6 +48,7 @@ export interface SeedDaemonClient {
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
     entries: SeedWorkspaceDescriptor[];
   }>;
+  setWorkspaceTitle(workspaceId: string, title: string | null): Promise<{ title: string | null }>;
   setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
   clearWorkspaceAttention(workspaceId: string): Promise<void>;
   setWorkspaceLabel(input: {
@@ -113,6 +118,7 @@ export interface SeedDaemonClient {
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
     labels?: Record<string, string>;
+    background?: boolean;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
     entries: Array<{
@@ -147,7 +153,15 @@ export interface SeedDaemonClient {
     predicate: (snapshot: { status: string }) => boolean,
     timeout?: number,
   ): Promise<{ status: string }>;
-  sendAgentMessage(agentId: string, text: string): Promise<void>;
+  cancelAgent(agentId: string): Promise<void>;
+  sendAgentMessage(
+    agentId: string,
+    text: string,
+    options?: { sourceAgentId?: string; activeTurnBehavior?: "interrupt" | "steer" | "queue" },
+  ): Promise<void>;
+  listAgentBackgroundWork(
+    agentId: string,
+  ): Promise<import("@getpaseo/client").PaseoAgentBackgroundWorkItem[]>;
   waitForFinish(
     agentId: string,
     timeout?: number,

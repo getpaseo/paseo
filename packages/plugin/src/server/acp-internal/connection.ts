@@ -359,6 +359,8 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
+  // Running tool rows published by transformers; the turn's terminal closes any left open.
+  private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<
     string,
@@ -372,13 +374,19 @@ class AcpRuntime {
   /**
    * Fallback ids for streamed chunks that carry no `messageId`, one per
    * chunk kind. Consecutive chunks of a kind continue the same timeline
-   * item; a chunk of the other kind, a tool call, a plan, a user message,
-   * or a turn boundary ends it (#4699).
+   * item; a chunk of another kind, a tool call, a plan, or a turn boundary
+   * ends it (#4699).
    */
   private readonly fallbackChunkIds = new Map<
-    "agent_message_chunk" | "agent_thought_chunk",
+    "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
     string
   >();
+  /**
+   * Active while a persisted session loads. ACP agents replay the loaded
+   * session's updates before session/load resolves; the value follows the
+   * open request's history contract.
+   */
+  private replayWindow: "replay" | "skip" | null = null;
   private closing = false;
   private processFailed = false;
   private configTransaction = false;
@@ -497,15 +505,23 @@ class AcpRuntime {
     };
     let response: Pick<NewSessionResponse, "modes" | "configOptions">;
     if (nativeSessionId) {
-      response = await this.call(
-        this.connection.loadSession({
-          sessionId: nativeSessionId,
-          cwd: input.config.cwd,
-          mcpServers,
-          _meta: metadata,
-        }),
-      );
+      // ACP agents replay the loaded session's updates before session/load resolves,
+      // so the native id must be registered first for them to pass the session filter.
       this.nativeSessionId = nativeSessionId;
+      this.replayWindow = input.history === "replay" ? "replay" : "skip";
+      try {
+        response = await this.call(
+          this.connection.loadSession({
+            sessionId: nativeSessionId,
+            cwd: input.config.cwd,
+            mcpServers,
+            _meta: metadata,
+          }),
+        );
+        await this.drainNotifications();
+      } finally {
+        this.replayWindow = null;
+      }
     } else {
       const newSession = await this.call(
         this.connection.newSession({
@@ -545,8 +561,13 @@ class AcpRuntime {
     return sessionCapabilities;
   }
 
-  async discover(cwd = process.cwd()): Promise<ProviderCatalog> {
-    const response = await this.call(this.connection.newSession({ cwd, mcpServers: [] }));
+  async discover(cwd?: string): Promise<ProviderCatalog> {
+    if (cwd === undefined && this.options.options.acpOptions?.workspaceOnlyCatalog) {
+      return { models: [], modes: [] };
+    }
+    const response = await this.call(
+      this.connection.newSession({ cwd: cwd ?? process.cwd(), mcpServers: [] }),
+    );
     this.nativeSessionId = response.sessionId;
     this.modes = response.modes;
     this.configOptions = response.configOptions ?? [];
@@ -595,10 +616,13 @@ class AcpRuntime {
       turnId,
       state: "started",
     });
+    // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
+    // while earlier session updates are still queued. Apply them before the turn ends.
     const settled = this.call(
       this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
     ).then(
-      (response): void => {
+      async (response): Promise<void> => {
+        await this.drainNotifications();
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems(state);
@@ -610,7 +634,8 @@ class AcpRuntime {
         });
         return undefined;
       },
-      (error): void => {
+      async (error): Promise<void> => {
+        await this.drainNotifications();
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems("failed");
         this.emit({
@@ -670,15 +695,16 @@ class AcpRuntime {
   async configure(
     changes: Extract<ProviderInput, { type: "session.configure" }>["changes"],
   ): Promise<void> {
-    const ordered: AcpConfigChange[] = [];
-    if (changes.model !== undefined) ordered.push({ target: "model", value: changes.model });
-    if (changes.mode !== undefined) ordered.push({ target: "mode", value: changes.mode });
+    const requested: AcpConfigChange[] = [];
+    if (changes.model !== undefined) requested.push({ target: "model", value: changes.model });
+    if (changes.mode !== undefined) requested.push({ target: "mode", value: changes.mode });
     if (changes.thinkingOption !== undefined) {
-      ordered.push({ target: "thinking", value: changes.thinkingOption });
+      requested.push({ target: "thinking", value: changes.thinkingOption });
     }
     for (const [id, value] of Object.entries(changes.settings ?? {})) {
-      ordered.push({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    const ordered = this.inAgentOrder(requested);
     const previousModes = this.modes ? structuredClone(this.modes) : null;
     const previousOptions = structuredClone(this.configOptions);
     this.configTransaction = true;
@@ -744,14 +770,36 @@ class AcpRuntime {
   }
 
   private async applyInitialConfig(config: ProviderSessionConfig): Promise<void> {
-    if (config.model) await this.applyConfigChange({ target: "model", value: config.model });
-    if (config.mode) await this.applyConfigChange({ target: "mode", value: config.mode });
+    const requested: AcpConfigChange[] = [];
+    if (config.model) requested.push({ target: "model", value: config.model });
+    if (config.mode) requested.push({ target: "mode", value: config.mode });
     if (config.thinkingOption) {
-      await this.applyConfigChange({ target: "thinking", value: config.thinkingOption });
+      requested.push({ target: "thinking", value: config.thinkingOption });
     }
     for (const [id, value] of Object.entries(config.settings)) {
-      await this.applyConfigChange({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  // One option can reset another: choosing an fx provider also selects that provider's saved
+  // model, so a model applied first would be lost. Agents list the option that decides first.
+  private inAgentOrder(changes: readonly AcpConfigChange[]): AcpConfigChange[] {
+    const position = (change: AcpConfigChange): number => {
+      const configId = this.configIdFor(change);
+      const index = this.configOptions.findIndex((option) => option.id === configId);
+      return index === -1 ? this.configOptions.length : index;
+    };
+    return changes.toSorted((left, right) => position(left) - position(right));
+  }
+
+  private configIdFor(change: AcpConfigChange): string | undefined {
+    if (change.target === "setting") return change.id;
+    if (change.target === "model") return modelOption(this.configOptions)?.id;
+    if (change.target === "thinking") {
+      return this.configOptions.find((option) => option.category === "thought_level")?.id;
+    }
+    return this.configOptions.find((option) => option.category === "mode")?.id;
   }
 
   private async applyConfigChange(change: AcpConfigChange): Promise<void> {
@@ -779,13 +827,7 @@ class AcpRuntime {
       this.modes = { ...this.modes, currentModeId: change.value };
       return;
     }
-    let category: "model" | "thought_level" | null = null;
-    if (change.target === "model") category = "model";
-    if (change.target === "thinking") category = "thought_level";
-    const configId =
-      change.target === "setting"
-        ? change.id
-        : this.configOptions.find((option) => option.category === category)?.id;
+    const configId = this.configIdFor(change);
     if (!configId) {
       throw new Error(`ACP session does not expose ${change.target} configuration`);
     }
@@ -887,6 +929,14 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification): void {
     if (notification.sessionId !== this.nativeSessionId) return;
+    if (this.replayWindow === "skip") return;
+    if (
+      this.replayWindow === "replay" &&
+      notification.update.sessionUpdate === "user_message_chunk"
+    ) {
+      this.reduceUserMessageChunk(notification.update);
+      return;
+    }
     this.reduceUpdate(notification.update);
   }
 
@@ -900,13 +950,14 @@ class AcpRuntime {
         this.fallbackChunkIds.clear();
         return;
       }
-      // A chunk of one kind ends the other kind's item, whatever its content
-      // or id: reasoning, then text, then reasoning again are three items.
+      // A chunk of one kind ends every other kind's open item, whatever its
+      // content or id: reasoning, then text, then reasoning again are three items.
       this.fallbackChunkIds.delete(
         update.sessionUpdate === "agent_message_chunk"
           ? "agent_thought_chunk"
           : "agent_message_chunk",
       );
+      this.fallbackChunkIds.delete("user_message_chunk");
       if (update.content.type !== "text") return;
       const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
@@ -934,13 +985,38 @@ class AcpRuntime {
     this.reduceStateUpdate(update);
   }
 
+  // Historical user messages arrive only as replayed chunks; a live prompt
+  // already echoes its own user message when it is admitted.
+  private reduceUserMessageChunk(
+    update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
+  ): void {
+    this.fallbackChunkIds.delete("agent_message_chunk");
+    this.fallbackChunkIds.delete("agent_thought_chunk");
+    if (update.content.type !== "text") return;
+    const id = this.resolveChunkId("user_message_chunk", update.messageId);
+    const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
+    this.messages.set(id, text);
+    this.emit({
+      type: "timeline.item",
+      sessionId: this.options.boundarySessionId,
+      item: {
+        type: "user_message",
+        id,
+        text,
+        ...(update.messageId ? { messageId: update.messageId } : {}),
+      },
+    });
+  }
+
   private resolveChunkId(
-    kind: "agent_message_chunk" | "agent_thought_chunk",
+    kind: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
     messageId: string | null | undefined,
   ): string {
     if (messageId) {
       this.fallbackChunkIds.delete(kind);
-      return messageId;
+      // Native IDs identify a message within its chunk kind. Timeline IDs must
+      // also distinguish reasoning from replies and from generated fallback IDs.
+      return JSON.stringify([kind, messageId]);
     }
     let id = this.fallbackChunkIds.get(kind);
     if (!id) {
@@ -1027,9 +1103,17 @@ class AcpRuntime {
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
-        item: toolTimelineItem(completed),
+        item: terminalToolItem(toolTimelineItem(snapshot), state),
       });
     }
+    for (const item of this.vendorToolCalls.values()) {
+      this.emit({
+        type: "timeline.item",
+        sessionId: this.options.boundarySessionId,
+        item: terminalToolItem(item, state),
+      });
+    }
+    this.vendorToolCalls.clear();
     for (const id of this.pendingCompactions) {
       this.emit({
         type: "timeline.item",
@@ -1076,6 +1160,10 @@ class AcpRuntime {
       if (this.configTransaction) this.stagedTransformerConfig = update.config;
       else this.emitConfigSnapshot(update.config);
     } else if (update.type === "timeline") {
+      if (update.item.type === "tool_call") {
+        if (update.item.status === "running") this.vendorToolCalls.set(update.item.id, update.item);
+        else this.vendorToolCalls.delete(update.item.id);
+      }
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
@@ -1304,7 +1392,7 @@ function toProviderConfigState(
   modes: NewSessionResponse["modes"],
   options: readonly SessionConfigOption[],
 ): ProviderConfigState {
-  const model = options.find((option) => option.category === "model");
+  const model = modelOption(options);
   const thinking = options.find((option) => option.category === "thought_level");
   return {
     model: selectedValue(model),
@@ -1322,9 +1410,21 @@ function toProviderConfigState(
       label: option.label,
     })),
     settings: options
-      .filter((option) => option.category !== "model" && option.category !== "thought_level")
+      .filter(
+        (option) =>
+          option !== model &&
+          option.category !== "thought_level" &&
+          !(modes && option.category === "mode"),
+      )
       .map(toProviderSetting),
   };
+}
+
+// ACP's category is a grouping hint, so one category can hold several controls. fx files its
+// provider first, then the model, Fast, and Ultrafast under "model".
+function modelOption(options: readonly SessionConfigOption[]): SessionConfigOption | undefined {
+  const candidates = options.filter((option) => option.category === "model");
+  return candidates.find((option) => option.id === "model") ?? candidates[0];
 }
 
 function toProviderCatalog(
@@ -1383,7 +1483,9 @@ function configValues(
   return Object.fromEntries(options.map((option) => [option.id, option.currentValue]));
 }
 
-function toolTimelineItem(snapshot: AcpToolCallSnapshot): ProviderTimelineItem {
+type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
+
+function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
   const input = jsonRecord(snapshot.input);
   const isEdit = snapshot.kind === "edit" || snapshot.name?.toLowerCase().includes("edit") === true;
   const detail = isEdit
@@ -1409,6 +1511,18 @@ function toolTimelineItem(snapshot: AcpToolCallSnapshot): ProviderTimelineItem {
   };
   if (status === "failed") return { ...base, status, error: snapshot.output };
   return { ...base, status, error: null };
+}
+
+// A row the turn left open ends with the turn. The wire contract requires a non-null error on a
+// failed tool call, so a canceled turn cancels its rows instead of failing them.
+function terminalToolItem(
+  item: ToolCallTimelineItem,
+  state: "completed" | "failed" | "canceled",
+): ToolCallTimelineItem {
+  if (state === "failed") {
+    return { ...item, status: "failed", error: item.error ?? { message: "Turn failed" } };
+  }
+  return { ...item, status: state, error: null };
 }
 
 function jsonValue(value: unknown) {

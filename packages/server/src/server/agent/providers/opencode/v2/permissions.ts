@@ -7,6 +7,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
+import { splitMultiSelectAnswer } from "../../question-card-answer.js";
 
 export class SessionPermissions {
   private readonly pending = new Map<string, AgentPermissionRequest>();
@@ -67,6 +68,9 @@ export class SessionPermissions {
         sessionID: this.permissionOwners.get(requestId) ?? this.id,
         requestID: requestId,
         decision: permissionReply(response),
+        ...(response.behavior === "deny" && response.message !== undefined
+          ? { message: response.message }
+          : {}),
       });
     }
     this.resolvePending(requestId, response);
@@ -92,7 +96,7 @@ export class SessionPermissions {
       };
       this.pending.set(request.id, pending);
       this.permissionOwners.set(request.id, sessionID);
-      if (!this.config.toolPolicy && this.config.featureValues?.["auto_accept"] === true)
+      if (!this.config.toolPolicy && this.config.providerOptions?.["auto_accept"] === true)
         await this.respondToPermission(request.id, { behavior: "allow" });
       else this.emit({ type: "permission_requested", provider: "opencode", request: pending });
     }
@@ -109,7 +113,7 @@ export class SessionPermissions {
             header: field.title ?? field.key,
             question: field.description ?? field.title ?? field.key,
             options: "options" in field ? field.options : undefined,
-            multiple: field.type === "multiselect",
+            multiSelect: field.type === "multiselect",
             allowOther: "custom" in field && field.custom === true,
           })),
         },
@@ -143,8 +147,8 @@ function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValu
     );
   };
   if (field.type === "multiselect") {
-    if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
-      return value.map(labelValue);
+    const selected = multiSelectAnswer(field, value);
+    if (selected) return selected.map(labelValue);
   } else if (field.type === "string" && typeof value === "string") {
     return labelValue(value);
   } else if (field.type === "boolean") {
@@ -161,4 +165,18 @@ function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValu
       return numeric;
   }
   throw new Error(`Invalid answer for OpenCode question ${field.key}`);
+}
+
+type MultiSelectField = Extract<FormInfo["fields"][number], { type: "multiselect" }>;
+
+function multiSelectAnswer(field: MultiSelectField, value: unknown): string[] | undefined {
+  if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
+    return value;
+  if (typeof value !== "string") return undefined;
+  const { selected, custom } = splitMultiSelectAnswer(
+    value,
+    field.options.map((option) => option.label),
+  );
+  if (custom === null) return selected;
+  return field.custom === true ? [...selected, custom] : undefined;
 }

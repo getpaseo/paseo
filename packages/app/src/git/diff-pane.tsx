@@ -1,3 +1,4 @@
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { floatingActionsClearance } from "@/components/ui/floating-action-button";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
@@ -19,6 +20,7 @@ import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
+  ArrowRight,
   ChevronDown,
   Columns2,
   ExternalLink,
@@ -61,6 +63,7 @@ import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
+import { WorkspaceBaseBranchPicker } from "@/git/workspace-base-branch-picker";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -133,7 +136,7 @@ function useDiscardChangesAction({
 }: {
   serverId: string;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
 }): ((path: string, oldPath?: string) => void) | undefined {
   const { t } = useTranslation();
   const toast = useToast();
@@ -201,6 +204,7 @@ const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
+const ThemedArrowRight = withUnistyles(ArrowRight);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
@@ -281,11 +285,12 @@ export function DiffLayoutToggle({
 }
 
 interface DiffModeMenuProps {
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   committedDescription?: string;
   testIDPrefix?: string;
   onSelectUncommitted: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
 }
 
 export function DiffModeMenu({
@@ -294,10 +299,12 @@ export function DiffModeMenu({
   testIDPrefix = "changes-diff",
   onSelectUncommitted,
   onSelectBase,
+  onSelectAll,
 }: DiffModeMenuProps) {
   const { t } = useTranslation();
   const uncommittedLabel = t("workspace.git.diff.uncommitted");
   const committedLabel = t("workspace.git.diff.committed");
+  const allLabel = t("workspace.git.diff.all");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -311,7 +318,7 @@ export function DiffModeMenu({
           return (
             <>
               <Text style={toolbarLabelTriggerTextStyle(highlighted)} numberOfLines={1}>
-                {diffMode === "uncommitted" ? uncommittedLabel : committedLabel}
+                {{ all: allLabel, uncommitted: uncommittedLabel, base: committedLabel }[diffMode]}
               </Text>
               <ToolbarLabelTriggerIcon>
                 <ThemedChevronDown size={12} uniProps={extraMutedIconColorMapping} />
@@ -321,6 +328,14 @@ export function DiffModeMenu({
         }}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={260} testID={`${testIDPrefix}-status-menu`}>
+        <DropdownMenuItem
+          testID={`${testIDPrefix}-mode-all`}
+          selected={diffMode === "all"}
+          onSelect={onSelectAll}
+        >
+          {allLabel}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-uncommitted`}
           selected={diffMode === "uncommitted"}
@@ -459,6 +474,8 @@ interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | 
 }
 
 interface ChangesRepositoryToolbarModel {
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
@@ -469,10 +486,11 @@ interface ChangesRepositoryToolbarModel {
 
 interface ChangesComparisonToolbarModel {
   committedDescription?: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
   selectedDiffStat: { additions: number; deletions: number } | null;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
 }
 
@@ -484,15 +502,18 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   gitActions: GitActions;
   mode: ChangesToolbarMode;
   onOpenPullRequest: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
   pullRequest: PrHint | null;
   selectedDiffStat: { additions: number; deletions: number } | null;
@@ -506,6 +527,8 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 } {
   return {
     repository: {
+      baseRef: input.baseRef,
+      isWorktree: input.isWorktree,
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
@@ -521,6 +544,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       mode: input.mode,
       selectedDiffStat: input.selectedDiffStat,
       onSelectBase: input.onSelectBase,
+      onSelectAll: input.onSelectAll,
       onSelectUncommitted: input.onSelectUncommitted,
     },
   };
@@ -615,6 +639,10 @@ function ChangesToolbarTrailing({ children }: { children: ReactNode }) {
   return <ToolbarControls style={styles.changesToolbarControls}>{children}</ToolbarControls>;
 }
 
+function isManagedWorktree(status: { isPaseoOwnedWorktree?: boolean } | null | undefined): boolean {
+  return status?.isPaseoOwnedWorktree === true;
+}
+
 function ChangesRepositoryToolbar({
   compact,
   model,
@@ -640,6 +668,17 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
+        {model.baseRef && model.isWorktree ? (
+          <>
+            <ThemedArrowRight size={14} uniProps={extraMutedIconColorMapping} />
+            <WorkspaceBaseBranchPicker
+              serverId={model.serverId}
+              workspaceId={model.workspaceId}
+              cwd={model.cwd}
+              baseRef={model.baseRef}
+            />
+          </>
+        ) : null}
       </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         {model.pullRequest ? (
@@ -737,6 +776,7 @@ function ChangesComparisonToolbar({
           committedDescription={model.committedDescription}
           onSelectUncommitted={model.onSelectUncommitted}
           onSelectBase={model.onSelectBase}
+          onSelectAll={model.onSelectAll}
         />
         {model.selectedDiffStat ? (
           <DiffStat
@@ -1055,6 +1095,7 @@ interface DiffBodyContentProps {
   emptyMessage: string;
   emptyAction: ChangesEmptyAction | null;
   children: ReactElement;
+  loadingLabel: string;
   checkingRepositoryLabel: string;
   notRepositoryLabel: string;
 }
@@ -1071,11 +1112,16 @@ function DiffBodyContent({
   emptyAction,
   children,
   checkingRepositoryLabel,
+  loadingLabel,
   notRepositoryLabel,
 }: DiffBodyContentProps) {
   if (isStatusLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View
+        style={styles.loadingContainer}
+        accessibilityRole="progressbar"
+        accessibilityLabel={loadingLabel}
+      >
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
         <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
@@ -1097,12 +1143,16 @@ function DiffBodyContent({
   }
   if (isDiffLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View
+        style={styles.loadingContainer}
+        accessibilityRole="progressbar"
+        accessibilityLabel={loadingLabel}
+      >
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
   }
-  if (diffTooLarge) {
+  if (diffTooLarge && !hasChanges) {
     return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
@@ -1119,7 +1169,7 @@ function DiffBodyContent({
         {emptyAction ? (
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             testID="changes-empty-switch-mode"
             onPress={emptyAction.onPress}
           >
@@ -1155,7 +1205,7 @@ interface ChangesEmptyAction {
 
 function computeChangesEmptyAction(input: {
   hideWhitespace: boolean;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   status: CheckoutStatusPayload | null;
   seeUncommittedLabel: string;
   seeCommittedLabel: string;
@@ -1281,7 +1331,7 @@ function ChangesTreeRail({
 }: {
   shown: boolean;
   children: ReactElement;
-  files: ParsedDiffFile[];
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1321,7 +1371,7 @@ function ChangesBody({
   children: ReactElement;
   desktopTreeVisible: boolean;
   isMobile: boolean;
-  files: ParsedDiffFile[];
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1427,10 +1477,9 @@ function useDiffTabNavigation({
     openWorkspacePullRequest({
       isCompact: isMobile,
       workspaceKey: persistenceKey,
-      checkout: { serverId, cwd, isGit: true },
       destination: pullRequestOpenLocation,
     });
-  }, [cwd, isMobile, persistenceKey, pullRequestOpenLocation, serverId]);
+  }, [isMobile, persistenceKey, pullRequestOpenLocation]);
   return {
     openDiff,
     openCommit,
@@ -1545,7 +1594,9 @@ export function ChangesSurface({
     diffMode,
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
+    selectAll: handleSelectAll,
     files,
+    treeFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,
@@ -1795,6 +1846,7 @@ export function ChangesSurface({
         hasChanges={hasChanges}
         emptyMessage={emptyMessage}
         emptyAction={emptyAction}
+        loadingLabel={t("common.loading")}
         checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
         notRepositoryLabel={t("workspace.git.diff.notRepository")}
       >
@@ -1825,7 +1877,7 @@ export function ChangesSurface({
       presentation={presentation}
       desktopTreeVisible={desktopTreeVisible}
       isMobile={isMobile}
-      files={files}
+      files={treeFiles}
       mode={workingMode}
       onSelectFile={handleSelectTreeFile}
       treeWidth={instanceState.treeWidth}
@@ -1889,6 +1941,8 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
+        baseRef: baseRef ?? null,
+        isWorktree: isManagedWorktree(status),
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -1898,6 +1952,7 @@ export function ChangesSurface({
         mode: toolbarMode,
         onOpenPullRequest: handleOpenPullRequest,
         onSelectBase: handleSelectBase,
+        onSelectAll: handleSelectAll,
         onSelectUncommitted: handleSelectUncommitted,
         pullRequest: selectPrHintFromStatus(pullRequestStatus, forge),
         selectedDiffStat,
@@ -1905,6 +1960,8 @@ export function ChangesSurface({
         workspaceId,
       }),
     [
+      baseRef,
+      status,
       committedDiffDescription,
       currentBranchName,
       cwd,
@@ -1912,6 +1969,7 @@ export function ChangesSurface({
       gitActions,
       handleOpenPullRequest,
       handleSelectBase,
+      handleSelectAll,
       handleSelectUncommitted,
       isMobile,
       forge,

@@ -59,8 +59,11 @@ Create a new client after `close()`.
 
 Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `background`, and `labels`.
 
-`background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
-See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
+`parent` accepts a host-local agent ID, an `AgentAddress` (`{ serverId, agentId }`), or an agent handle. A handle’s `address` keeps its host identity after disconnect. When creating through `hosts.client(serverId)`, pass the parent handle or complete address; the SDK carries parent metadata to the destination.
+
+`background` creates a [background agent](./agents.md#run-a-helper-as-a-background-agent). A
+workspace the call creates is background too. With a `parent` and no value, the parent's own
+`background` applies. See [background workspaces](./workspaces.md) for inclusive discovery.
 
 `config` accepts:
 
@@ -77,31 +80,35 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 
 ### Agent handle
 
-| Member                         | Result                            | Behavior                                                                                                |
-| ------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `id`                           | `string`                          | Stable daemon agent ID.                                                                                 |
-| `workspaceId`                  | `string \| null`                  | Current workspace placement.                                                                            |
-| `cwd`                          | `string \| null`                  | Current working directory.                                                                              |
-| `status`                       | Agent status or `null`            | Current lifecycle status.                                                                               |
-| `capabilities`                 | Capability flags or `null`        | What the provider session supports.                                                                     |
-| `availableModes`               | Agent modes or `null`             | Modes the session can switch to.                                                                        |
-| `pendingPermissions`           | Permission requests or `null`     | Requests waiting on an answer.                                                                          |
-| `activeTurn`                   | Active turn or `null`             | The turn in flight, with `turnId` and `startedAt`.                                                      |
-| `lastUsage`                    | Usage or `null`                   | Token counts, cost, and context-window use from the last turn.                                          |
-| `lastError`                    | `string \| null`                  | Last error the daemon recorded for the agent.                                                           |
-| `features`                     | Agent features or `null`          | Provider feature toggles and selects with their current values.                                         |
-| `runtimeInfo`                  | Runtime info or `null`            | Live provider, session ID, model, thinking option, and mode.                                            |
-| `archivedAt`                   | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
-| `current()`                    | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
-| `refresh(requestId?)`          | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
-| `send(text, options?)`         | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
-| `respondToPermission(options)` | `Promise<void>`                   | Answers a pending permission by `requestId` with an allow or deny `response`.                           |
-| `run(text, options?)`          | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
-| `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
-| `commands(options?)`           | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
-| `subscribe(handler)`           | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
-| `archive()`                    | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
-| `detach()`                     | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
+| Member                                         | Result                                    | Behavior                                                                                                                                                                                                                       |
+| ---------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                                           | `string`                                  | Stable daemon agent ID.                                                                                                                                                                                                        |
+| `address`                                      | `AgentAddress`                            | Complete `{ serverId, agentId }` identity; requires a connected host to establish it.                                                                                                                                          |
+| `workspaceId`                                  | `string \| null`                          | Current workspace placement.                                                                                                                                                                                                   |
+| `cwd`                                          | `string \| null`                          | Current working directory.                                                                                                                                                                                                     |
+| `status`                                       | Agent status or `null`                    | Current lifecycle status.                                                                                                                                                                                                      |
+| `capabilities`                                 | Capability flags or `null`                | What the provider session supports.                                                                                                                                                                                            |
+| `availableModes`                               | Agent modes or `null`                     | Modes the session can switch to.                                                                                                                                                                                               |
+| `pendingPermissions`                           | Permission requests or `null`             | Requests waiting on an answer.                                                                                                                                                                                                 |
+| `activeTurn`                                   | Active turn or `null`                     | The turn in flight, with `turnId` and `startedAt`.                                                                                                                                                                             |
+| `lastUsage`                                    | Usage or `null`                           | Token counts, cost, and context-window use from the last turn.                                                                                                                                                                 |
+| `lastError`                                    | `string \| null`                          | Last error the daemon recorded for the agent.                                                                                                                                                                                  |
+| `features`                                     | Agent features or `null`                  | Provider feature toggles and selects with their current values.                                                                                                                                                                |
+| `runtimeInfo`                                  | Runtime info or `null`                    | Live provider, session ID, model, thinking option, and mode.                                                                                                                                                                   |
+| `archivedAt`                                   | `string \| null`                          | Archive timestamp; `null` while the agent is active.                                                                                                                                                                           |
+| `current()`                                    | `PaseoAgent \| null`                      | Current detailed value observed by this handle; never fetches.                                                                                                                                                                 |
+| `refresh(requestId?)`                          | `PaseoAgentRefetchResult \| null`         | Fetches the current agent and project placement.                                                                                                                                                                               |
+| `send(text, options?)`                         | `Promise<void>`                           | Resolves when the daemon accepts the prompt.                                                                                                                                                                                   |
+| `respondToPermission(options)`                 | `Promise<void>`                           | Answers a pending permission by `requestId` with an allow or deny `response`.                                                                                                                                                  |
+| `run(text, options?)`                          | `PaseoAgentRunResult`                     | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.                                                                                                                              |
+| `waitForFinish(timeoutMs?)`                    | `PaseoAgentRunResult`                     | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                                                                                                                                           |
+| `commands(options?)`                           | `PaseoAgentCommandsResult`                | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`.                                                                                                                        |
+| `subscribe(handler)`                           | Unsubscribe function                      | Filters agent-directory updates to this ID and refreshes the handle properties.                                                                                                                                                |
+| `archive()`                                    | `{ archivedAt }`                          | Soft-deletes the agent and closes its runtime.                                                                                                                                                                                 |
+| `detach()`                                     | `Promise<void>`                           | Removes the parent relationship without stopping the agent.                                                                                                                                                                    |
+| `backgroundWork.list(options?)`                | `Promise<PaseoAgentBackgroundWorkItem[]>` | Reads the agent's current background work once. Requires `features.agentBackgroundWork`. Options: `requestId`, `timeout`.                                                                                                      |
+| `backgroundWork.stop(item, options?)`          | `Promise<void>`                           | Stops a stoppable item and waits for provider confirmation. Pass the item returned by `list` or `subscribe`. Requires `features.agentBackgroundWorkStop`.                                                                      |
+| `backgroundWork.subscribe(listener, options?)` | `() => void`                              | Calls `listener` with the current list, again after each reconnect, then with the full list on every change. `onError` receives a failed list read. Requires `features.agentBackgroundWork`. Returns the unsubscribe function. |
 
 `workspaceId` through `archivedAt` mirror the last snapshot the handle observed. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Call `current()` when you need the whole snapshot or need to distinguish those states.
 
@@ -202,6 +209,63 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 `config.get(requestId?)` returns the daemon's mutable configuration.
 
 `config.patch(patch, requestId?)` validates, persists, and returns an updated configuration. Use this administrative surface for host configuration, not per-agent choices. A patch affects every client and future agent using that daemon.
+
+## `client.hosts`
+
+Manage hosts connected to the selected daemon. Both the managing daemon and destination must support connected hosts.
+
+```ts
+const directory = await client.hosts.list();
+const registration = await client.hosts.add({
+  connection: "ssh://deploy@build-box",
+  label: "Build box",
+  metadata: { team: "infra" },
+  sourceKey: "build-box",
+});
+await client.hosts.update(registration.registrationId, { enabled: false });
+await client.hosts.remove(registration.registrationId);
+```
+
+`list()` returns `{ self: { serverId, label }, hosts }`. Each host includes its registration and server
+IDs, label, authenticated source, string metadata, enabled state, connection status, safe target
+description, last-online/retry timestamps, and an actionable error. Credentials are never returned.
+A valid but unreachable connection is saved and retried. Invalid syntax fails without saving.
+
+`update(registrationId, patch)` accepts `label`, `metadata`, `enabled`, `connection`, and
+`replaceIdentity`. Metadata replaces the whole map. Replacing a connection preserves the expected
+server ID unless `replaceIdentity: true` explicitly accepts a new destination.
+
+`observe()` returns an owned subscription. Await `ready`, subscribe for snapshots and `hosts.changed`
+updates, then call `release()`. Observations restore a current snapshot after reconnect.
+
+```ts
+const remote = await client.hosts.client("srv_build_box");
+try {
+  const workspaces = await remote.workspaces.list();
+  const providers = await remote.providers.listAvailable();
+  await remote.agents.ref("agent_on_build_box").send("Continue the investigation");
+} finally {
+  await remote.dispose();
+}
+```
+
+`client(serverId)` returns a caller-owned `PaseoApi` bound to that destination through the selected
+daemon. The ordinary APIs keep their signatures. Paths and IDs belong to the destination. Selecting
+the local server ID returns a local scope. Routing supports one hop.
+
+Disposing one scope releases its observations without closing siblings or deleting the saved host.
+Origin disposal cascades. Observations recover through the ordinary client lifecycle. While connecting,
+new requests use the existing bounded send queue; disconnected requests fail. Connection loss clears
+old waiters and queued sends. Ordinary non-recoverable requests are not replayed; existing
+acknowledged/idempotent creation recovery retains its request identity. A submitted request whose response
+is lost rejects with `DaemonConnectionError` (`code: "DAEMON_CONNECTION_LOST"`), optional
+`outcome: "unknown"` and known `serverId`. Inspect before retrying a mutation.
+
+Registration and host acquisition failures expose a stable `code`: `host_unknown`, `host_disabled`, `host_offline`,
+`permission_denied`, `unsupported_capability`, `authentication_failed`, `server_id_mismatch`,
+`self_host`, or `duplicate_host`. Ordinary RPC permission codes, including `access_denied`, pass through
+unchanged. Multiplexing is a transport; consumers use the same client/API operations and lifecycle.
+Discovery does not grant execution authority.
 
 ## Errors and cleanup
 

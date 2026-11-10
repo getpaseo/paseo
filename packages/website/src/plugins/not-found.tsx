@@ -1,20 +1,31 @@
 import { Link } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Breadcrumbs } from "~/components/breadcrumbs";
 import { SiteShell } from "~/components/site-shell";
+import { useLocalizePath } from "~/i18n";
 
-const NOT_FOUND_CRUMBS = [{ label: "Plugins", href: "/plugins" }, { label: "Not found" }];
+/** What was not found; each has a title and an explanation under `plugins.notFound`. */
+export type PluginsNotFoundKind = "author" | "plugin" | "category";
 
-export function PluginsNotFound({ title, children }: { title: string; children: string }) {
+export function PluginsNotFound({ kind }: { kind: PluginsNotFoundKind }) {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  const crumbs = useMemo(
+    () => [{ label: t("plugins.title"), href: "/plugins" }, { label: t("plugins.notFound.crumb") }],
+    [t],
+  );
   return (
     <SiteShell width="default">
-      <Breadcrumbs items={NOT_FOUND_CRUMBS} />
-      <h1 className="text-3xl font-medium tracking-tight mb-4">{title}</h1>
+      <Breadcrumbs items={crumbs} />
+      <h1 className="text-3xl font-medium tracking-tight mb-4">
+        {t(`plugins.notFound.${kind}Title`)}
+      </h1>
       <p className="text-lg text-white/70 leading-relaxed max-w-2xl">
-        {children}{" "}
-        <Link to="/plugins" className="underline hover:text-white">
-          Browse all plugins
+        {t(`plugins.notFound.${kind}Body`)}{" "}
+        <Link to={localize("/plugins")} className="underline hover:text-white">
+          {t("plugins.notFound.browseAll")}
         </Link>
-        .
       </p>
     </SiteShell>
   );

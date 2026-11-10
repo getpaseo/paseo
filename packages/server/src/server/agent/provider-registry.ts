@@ -48,6 +48,7 @@ import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
+import { convertLegacyOptions } from "./option-controls.js";
 import { ToolPolicyUnsupportedError, mergeProviderOptions } from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -97,6 +98,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 
 /** Provider metadata and an unconfigured factory; the registry owns override application. */
 export interface RegisteredProviderDefinition extends AgentProviderDefinition {
+  requiresConfiguration?: boolean;
   iconSvg?: string;
   supportsExactMcpPreapproval: boolean;
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
@@ -446,8 +448,11 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get initialTimeline() {
       return inner.initialTimeline;
     },
-    get features() {
-      return inner.features;
+    get controls() {
+      return inner.controls;
+    },
+    get openOptionsPatch() {
+      return inner.openOptionsPatch;
     },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
@@ -467,11 +472,13 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
+    stopBackgroundWork: inner.stopBackgroundWork?.bind(inner),
     close: () => inner.close(),
+    canStopRuntime: inner.canStopRuntime?.bind(inner),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
-    setFeature: inner.setFeature?.bind(inner),
+    applyOptions: inner.applyOptions?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
@@ -485,14 +492,20 @@ function wrapClientProvider(
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
-  providerOptions: ProviderOptions | undefined,
+  configuredOptions: ProviderOptions | undefined,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
-  const listFeatures = inner.listFeatures?.bind(inner);
+  const listControls = inner.listControls?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
+  // Converted where it is used, so a malformed configured default fails the call that reads it
+  // rather than the registry that holds every provider.
+  const configuredDefaults = () =>
+    convertLegacyOptions({ provider: inner.provider, options: configuredOptions });
+  const withDefaults = (own: ProviderOptions | undefined) =>
+    mergeProviderOptions(configuredDefaults(), own);
 
   return {
     provider,
@@ -507,7 +520,7 @@ function wrapClientProvider(
           {
             ...config,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+            providerOptions: withDefaults(config.providerOptions),
           },
           launchContext,
           { ...options, configuredModelIds },
@@ -524,14 +537,17 @@ function wrapClientProvider(
           {
             ...overrides,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
+            providerOptions: withDefaults(overrides?.providerOptions),
           },
           launchContext,
           { ...options, configuredModelIds },
         ),
       ),
     fetchCatalog: async (options, context) => {
-      const catalog = await inner.fetchCatalog({ ...options, providerOptions }, context);
+      const catalog = await inner.fetchCatalog(
+        { ...options, providerOptions: configuredDefaults() },
+        context,
+      );
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -546,7 +562,7 @@ function wrapClientProvider(
             config: {
               ...config,
               provider: inner.provider,
-              providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+              providerOptions: withDefaults(config.providerOptions),
             },
             env,
             signal,
@@ -555,16 +571,18 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
-    listFeatures: listFeatures
+    effectiveOptions: (own) => withDefaults(own) ?? {},
+    listControls: listControls
       ? async (config) =>
-          await listFeatures({
+          await listControls({
             ...config,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+            providerOptions: withDefaults(config.providerOptions),
           })
       : undefined,
     listImportableSessions: listImportableSessions
-      ? async (options) => await listImportableSessions({ ...options, providerOptions })
+      ? async (options) =>
+          await listImportableSessions({ ...options, providerOptions: configuredDefaults() })
       : undefined,
     importSession: importSession
       ? async (input, context) => {
@@ -573,10 +591,7 @@ function wrapClientProvider(
             config: {
               ...context.config,
               provider: inner.provider,
-              providerOptions: mergeProviderOptions(
-                providerOptions,
-                context.config.providerOptions,
-              ),
+              providerOptions: withDefaults(context.config.providerOptions),
             },
             storedConfig: {
               ...context.storedConfig,
@@ -925,6 +940,8 @@ export function buildProviderRegistry(
       throw new Error(`Plugin provider '${provider}' conflicts with a built-in provider`);
     }
     const override = providerOverrides[provider];
+    if (definition.requiresConfiguration && !override) continue;
+
     if (override?.extends) {
       logger.warn({ provider }, "Plugin provider shadowed by configured provider");
       continue;

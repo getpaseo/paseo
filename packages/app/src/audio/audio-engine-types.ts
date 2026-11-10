@@ -2,6 +2,7 @@ export interface AudioEngineCallbacks {
   onCaptureData(pcm: Uint8Array): void;
   onVolumeLevel(level: number): void;
   onInterruption?(): void;
+  onCaptureAvailabilityChange?(available: boolean): void;
   onError?(error: Error): void;
 }
 
@@ -24,4 +25,9 @@ export interface AudioEngine {
   stop(): void;
   clearQueue(): void;
   isPlaying(): boolean;
+}
+
+export interface AudioEngineOptions {
+  traceLabel?: string;
+  captureMode?: "conversation" | "dictation";
 }

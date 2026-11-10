@@ -42,6 +42,8 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "packages/relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(appDir, "src") },
+      // The website's `~/` path alias, as in packages/website/tsconfig.json.
+      { find: /^~\/(.*)$/, replacement: path.resolve(__dirname, "packages/website/src/$1") },
       { find: "@server", replacement: path.resolve(__dirname, "packages/server/src") },
       {
         find: "react-native",
@@ -65,5 +67,8 @@ export default defineConfig({
       PASEO_GIT_MAX_PROCESSES_PER_SECOND: "10000",
     },
     exclude: [...configDefaults.exclude, "**/.claude/**", "**/.dev/**"],
+    // The website installs its own React; bundling its router lets tests render website components
+    // that use router hooks against the one React the tests use.
+    server: { deps: { inline: [/packages\/website\/node_modules\/@tanstack\/(react-)?router/] } },
   },
 });

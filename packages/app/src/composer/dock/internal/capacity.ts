@@ -4,12 +4,16 @@ interface ComposerGeometry {
   /** The keyboard also covers this space below its shift. */
   safeAreaBottom: number;
   keyboardShift: number;
+  /** A docked composer rises this much beyond the keyboard shift; see the placement. */
+  keyboardGap: number;
   centered: boolean;
 }
 
 export interface ComposerCapacity {
   keyboardReserve: number;
   capacity: number;
+  /** The stationary viewport; a fullscreen composer fills it and lays out the keyboard itself. */
+  viewportHeight: number;
 }
 
 export function resolveComposerCapacity(input: ComposerGeometry): number {
@@ -22,8 +26,34 @@ export function resolveComposerCapacity(input: ComposerGeometry): number {
         input.height - input.bottomInset,
         input.height - input.safeAreaBottom - input.keyboardShift,
       )
-    : input.height - input.bottomInset - input.keyboardShift;
+    : input.height -
+      input.bottomInset -
+      input.keyboardShift -
+      Math.min(input.keyboardGap, input.keyboardShift);
   return Math.max(0, available - 5);
+}
+
+export interface ComposerBottomPlacement {
+  /** The composer's distance from the window bottom with the keyboard closed. */
+  restingPadding: number;
+  /** How much further than the keyboard's safe-area overlap the composer rises. */
+  keyboardGap: number;
+}
+
+/**
+ * One bottom distance for the docked composer: the safe-area bottom, never closer to
+ * the edge than the content spacing. With the keyboard open it keeps the content
+ * spacing above the keyboard.
+ */
+export function resolveComposerBottomPlacement(input: {
+  safeAreaBottom: number;
+  contentSpacing: number;
+}): ComposerBottomPlacement {
+  const restingPadding = Math.max(input.safeAreaBottom, input.contentSpacing);
+  return {
+    restingPadding,
+    keyboardGap: input.safeAreaBottom + input.contentSpacing - restingPadding,
+  };
 }
 
 /** Space below a centered form that the keyboard fills before the form moves. */
@@ -48,6 +78,7 @@ export function updateComposerCapacity(
   return {
     keyboardReserve,
     capacity: resolveComposerCapacity({ ...input, keyboardShift: keyboardReserve }),
+    viewportHeight: input.height,
   };
 }
 
@@ -59,4 +90,20 @@ export function resolveInlineComposerCapacity(
   "worklet";
   if (capacity === undefined) return undefined;
   return compact ? capacity * 0.6 : capacity;
+}
+
+export interface ComposerSlotLayout {
+  compact: boolean;
+  fullscreen: boolean;
+}
+
+/** The bound on the composer slot: inline capacity, or the whole viewport in fullscreen. */
+export function resolveComposerSlotCapacity(
+  sizing: ComposerCapacity | undefined,
+  layout: ComposerSlotLayout,
+): number | undefined {
+  "worklet";
+  if (sizing === undefined) return undefined;
+  if (layout.fullscreen) return sizing.viewportHeight;
+  return resolveInlineComposerCapacity(sizing.capacity, layout.compact);
 }

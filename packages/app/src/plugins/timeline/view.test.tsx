@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hostClient = vi.hoisted(() => ({ invokePluginRpc: async () => null }));
 const selectedHost = vi.hoisted(() => ({ client: null as DaemonClient | null }));
-vi.mock("@/runtime/host-runtime", () => ({
+vi.mock("@/runtime/host-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/runtime/host-runtime")>()),
   useHostRuntimeClient: () => selectedHost.client ?? (hostClient as unknown as DaemonClient),
   useHosts: () => [{ serverId: "host-1", label: "Local" }],
 }));
@@ -33,7 +34,7 @@ vi.mock("../client-runtime", () => ({
 }));
 vi.mock("../icons", () => ({
   Icon: () => null,
-  resolvePluginIcon: () => () => null,
+  pluginIconComponent: () => () => null,
 }));
 
 import { pluginRegistry } from "../registry";
