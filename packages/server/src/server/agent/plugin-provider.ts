@@ -32,6 +32,8 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
+  AgentSessionConfigChange,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -980,7 +982,7 @@ class PluginAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     return await this.openSession({
-      config,
+      config: preparePluginStartupConfig(config, options?.configChange),
       launchContext,
       history: "skip",
       persist: options?.persistSession !== false,
@@ -991,12 +993,16 @@ class PluginAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     if (!overrides?.cwd) {
       throw new Error(`Plugin provider '${this.provider}' requires cwd to resume a session`);
     }
     return await this.openSession({
-      config: { ...overrides, provider: this.provider, cwd: overrides.cwd },
+      config: preparePluginStartupConfig(
+        { ...overrides, provider: this.provider, cwd: overrides.cwd },
+        options?.purpose === "history" ? undefined : options?.configChange,
+      ),
       launchContext,
       persistence: decodePersistence(handle),
       history: "replay",
@@ -1927,6 +1933,20 @@ function mapModel(
     metadata: model.metadata ? { ...model.metadata } : undefined,
     thinkingOptions: thinkingOptions?.map((option) => Object.assign({}, option)),
     defaultThinkingOptionId: model.defaultThinkingOptionId ?? catalogDefaultThinkingOption,
+  };
+}
+
+// Plugins can validate or launch the model during session.open. Prepare the repair
+// there, while leaving requested thinking for the manager's ordered setter calls.
+function preparePluginStartupConfig(
+  config: AgentSessionConfig,
+  change?: AgentSessionConfigChange,
+): AgentSessionConfig {
+  if (!change) return config;
+  return {
+    ...config,
+    model: "model" in change ? change.model : config.model,
+    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
   };
 }
 

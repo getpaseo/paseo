@@ -10,6 +10,8 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentSessionConfigChange,
   type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
@@ -422,22 +424,33 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
   };
 }
 
+// A repair must reach startup before a removed saved model can prevent opening.
+// The manager still validates requested thinking after the model and mode steps.
+function prepareOmpStartupConfig(
+  config: AgentSessionConfig,
+  change?: AgentSessionConfigChange,
+): AgentSessionConfig {
+  if (!change) return config;
+  return {
+    ...config,
+    model: "model" in change ? change.model : config.model,
+    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+  };
+}
+
 function buildResumeConfig(
   metadata: OmpPersistenceMetadata,
   overrides: Partial<AgentSessionConfig> | undefined,
   provider: AgentProvider,
+  options?: AgentResumeSessionOptions,
 ): OmpResumeConfig {
   const overrideConfig = overrides ?? {};
   const cwd = overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
   const modeId = overrideConfig.modeId ?? metadata.modeId;
-  return {
-    cwd,
-    model,
-    thinkingOptionId,
-    modeId,
-    config: {
+  const config = prepareOmpStartupConfig(
+    {
       ...overrideConfig,
       provider,
       cwd,
@@ -446,6 +459,14 @@ function buildResumeConfig(
       modeId,
       systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
+    options?.purpose === "history" ? undefined : options?.configChange,
+  );
+  return {
+    cwd,
+    model: config.model,
+    thinkingOptionId: config.thinkingOptionId,
+    modeId,
+    config,
   };
 }
 
@@ -2360,7 +2381,9 @@ export class OmpAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    config = prepareOmpStartupConfig(config, options?.configChange);
     const launchMode = this.resolveLaunchMode(config.modeId, config.providerOptions);
     const startInput: OmpStartSessionInput = {
       cwd: config.cwd,
@@ -2421,7 +2444,7 @@ export class OmpAgentClient implements AgentClient {
     }
 
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
-    const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
+    const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider, options);
 
     if (options?.purpose === "history") {
       return new OmpHistorySession(
@@ -2454,7 +2477,7 @@ export class OmpAgentClient implements AgentClient {
         resumeConfig.config,
         startInput.env,
       );
-      const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
+      const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model, options);
       const config = {
         ...resumeConfig.config,
         model: modelToId(resumedState.model) ?? resumeConfig.config.model,
@@ -2486,8 +2509,12 @@ export class OmpAgentClient implements AgentClient {
   private async applyResumeModel(
     runtimeSession: OmpRuntimeSession,
     requestedModel: string | undefined,
+    options?: AgentResumeSessionOptions,
   ): Promise<OmpSessionState> {
     const state = await runtimeSession.getState();
+    // Explicit changes are validated once by the manager after startup.
+    if (options?.purpose !== "history" && options?.configChange && "model" in options.configChange)
+      return state;
     const reference = parseModelReference(requestedModel ?? null);
     if (!reference?.provider) {
       return state;

@@ -1,3 +1,6 @@
+import type { SessionOutboundMessage } from "../../../messages.js";
+import type { AgentConfigInitialization } from "../../agent-sdk-types.js";
+import type { ModelInfo } from "@opencode/client";
 import { expect, test } from "vitest";
 import { openCodeMajorVersion } from "./runtime-client.js";
 
@@ -247,3 +250,146 @@ test("keeps native Paseo tools available when an external server is configured",
     await local.shutdown();
   }
 });
+
+test.each(["resume", "create"] as const)(
+  "runtime wrapper repairs a removed saved OpenCode model before registration: %s",
+  async (entry) => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { default: path } = await import("node:path");
+    const { AgentManager } = await import("../../agent-manager.js");
+    const { AgentStorage } = await import("../../agent-storage.js");
+    const { ensureUnarchivedAgentLoaded } = await import("../../agent-loading.js");
+    const { AgentConfigSession } =
+      await import("../../../session/agent-config/agent-config-session.js");
+    const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+    const { asInternals } = await import("../../../test-utils/class-mocks.js");
+    const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+    const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+    const { V2Harness } = await import("./test-utils/v2-harness.js");
+    const root = await mkdtemp(path.join(tmpdir(), "opencode-model-repair-"));
+    const logger = createTestLogger();
+    const harness = new V2Harness();
+    harness.info.location.directory = root;
+    harness.info.model = { providerID: "test", id: "removed" };
+    const create = harness.api.session.create;
+    harness.api.session.create = async (input) => {
+      if (input?.model?.id === "removed") throw new Error("Saved model was removed");
+      return create(input);
+    };
+    const target: ModelInfo = {
+      id: "target",
+      modelID: "target",
+      providerID: "test",
+      name: "Target",
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: [],
+      time: { released: 1 },
+      cost: [],
+      status: "active",
+      enabled: true,
+      limit: { context: 200000, output: 10000 },
+    };
+    harness.api.model.list = async () => ({ location: harness.info.location, data: [target] });
+    const switches: string[] = [];
+    harness.api.session.switchModel = async ({ model }) => {
+      switches.push(model.id);
+      if (model.id !== "target") throw new Error("Saved model was removed");
+      harness.info.model = model;
+    };
+    harness.api.session.switchAgent = async () => undefined;
+    const v2 = new OpenCodeV2AgentClient({ logger, runtime: harness.runtime });
+    const client = new OpenCodeRuntimeClient(logger);
+    asInternals<{ selected: Promise<OpenCodeV2AgentClient> }>(client).selected =
+      Promise.resolve(v2);
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { opencode: client },
+      registry: storage,
+      logger,
+    });
+    const id = "00000000-0000-4000-8000-000000000901";
+    const now = new Date().toISOString();
+    const messages: SessionOutboundMessage[] = [];
+    const configSession = new AgentConfigSession({
+      host: { emit: (message) => messages.push(message) },
+      logger,
+      operations: {
+        ensureLoaded: async (agentId, configOverrides) => {
+          let initialization: AgentConfigInitialization | undefined;
+          await ensureUnarchivedAgentLoaded(agentId, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+            configOverrides,
+            onConfigApplied: (result) => {
+              initialization = result;
+            },
+          });
+          return initialization;
+        },
+        setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+        setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
+        setMode: (agentId, value) => manager.setAgentMode(agentId, value),
+        setOptions: (agentId, value) => manager.setAgentOptions(agentId, value),
+      },
+    });
+    try {
+      await storage.upsert({
+        id,
+        provider: "opencode",
+        cwd: root,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        archivedAt: null,
+        lastStatus: "closed",
+        config: { model: "test/removed" },
+        persistence:
+          entry === "resume"
+            ? { provider: "opencode", sessionId: harness.info.id, metadata: { cwd: root } }
+            : undefined,
+      });
+      const original = await storage.get(id);
+      await expect(
+        ensureUnarchivedAgentLoaded(id, { agentManager: manager, agentStorage: storage, logger }),
+      ).rejects.toThrow("Saved model was removed");
+      switches.length = 0;
+      await configSession.handleSetAgentModelRequest({
+        type: "set_agent_model_request",
+        agentId: id,
+        requestId: "invalid-model",
+        modelId: "test/invalid",
+      });
+      expect(messages.at(-1)).toMatchObject({
+        payload: { accepted: false, error: expect.stringContaining("unavailable") },
+      });
+      await manager.flush();
+      expect(await storage.get(id)).toEqual(original);
+      expect(manager.getAgent(id)).toBeNull();
+      await configSession.handleSetAgentModelRequest({
+        type: "set_agent_model_request",
+        agentId: id,
+        requestId: "repair-model",
+        modelId: "test/target",
+      });
+      expect(messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+      expect(switches).toEqual(["target"]);
+      await manager.flush();
+      expect((await storage.get(id))?.config?.model).toBe("test/target");
+      await manager.closeAgent(id);
+      await ensureUnarchivedAgentLoaded(id, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      });
+      expect(manager.getAgent(id)?.runtimeInfo?.model).toBe("test/target");
+    } finally {
+      await manager.closeAgent(id);
+      await manager.flush();
+      await storage.flush();
+      await client.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

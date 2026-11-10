@@ -1,3 +1,4 @@
+import { ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
+  ProviderConfigState,
 } from "@getpaseo/plugin/server/provider";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
@@ -2611,4 +2613,280 @@ test("plugin provider import launches with runtime MCP servers and returns only 
   } finally {
     await registry.shutdown();
   }
+});
+
+describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume) => {
+  async function fixture() {
+    const root = await mkdtemp(join(tmpdir(), "plugin-startup-repair-"));
+    const states = new Map<string, ProviderConfigState>();
+    const thinkingOptions = ["low", "medium", "high"].map((id) => ({ id, label: id }));
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type === "session.open") {
+          if (input.config.model && input.config.model !== "plugin-model") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: `Model ${input.config.model} was removed` },
+            });
+            return true;
+          }
+          const state: ProviderConfigState = {
+            model: input.config.model ?? "plugin-model",
+            mode: input.config.mode ?? "build",
+            thinkingOption: input.config.thinkingOption ?? "medium",
+            models: [{ id: "plugin-model", label: "Plugin model", thinkingOptions }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions,
+            settings: [],
+          };
+          states.set(input.sessionId, state);
+          emit({
+            type: "session.opened",
+            requestId: input.requestId,
+            sessionId: input.sessionId,
+            capabilities: CAPABILITIES,
+            restoration: "core",
+            persistence: { version: 1, data: { token: "root" } },
+            cwd: input.config.cwd,
+          });
+          emit({ type: "session.config", sessionId: input.sessionId, config: state });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+          return true;
+        }
+        if (input.type === "session.configure") {
+          const state = states.get(input.sessionId);
+          if (!state) throw new Error("Expected open plugin session");
+          if (input.changes.mode === "invalid-mode" || input.changes.model === "invalid-model") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Invalid model or mode" },
+            });
+            return true;
+          }
+          const next = {
+            ...state,
+            model:
+              input.changes.model === null ? "plugin-model" : (input.changes.model ?? state.model),
+            mode: input.changes.mode ?? state.mode,
+            thinkingOption:
+              input.changes.thinkingOption === null
+                ? "medium"
+                : (input.changes.thinkingOption ?? state.thinkingOption),
+          };
+          states.set(input.sessionId, next);
+          emit({ type: "session.config", sessionId: input.sessionId, config: next });
+          emit({ type: "request.completed", requestId: input.requestId });
+          return true;
+        }
+        return false;
+      },
+    });
+    const logger = createTestLogger();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const storage = new AgentStorage(join(root, "agents"), logger);
+    const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+    const id = "00000000-0000-4000-8000-0000000000f5";
+    const now = new Date().toISOString();
+    await storage.upsert({
+      id,
+      provider: harness.registration.id,
+      cwd: root,
+      createdAt: now,
+      updatedAt: now,
+      labels: {},
+      archivedAt: null,
+      lastStatus: "closed",
+      config: { model: "removed-model", thinkingOptionId: "high" },
+      ...(resume
+        ? {
+            persistence: {
+              provider: harness.registration.id,
+              sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+            },
+          }
+        : {}),
+    });
+    return {
+      root,
+      harness,
+      manager,
+      storage,
+      id,
+      logger,
+      cleanup: async () => {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        await plugins.shutdown();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test.each([
+    {
+      label: "supported high",
+      change: { model: "plugin-model" },
+      model: "plugin-model",
+      thinking: "high",
+      startupThinking: "high",
+      changes: [{ model: "plugin-model" }],
+    },
+    {
+      label: "explicit low",
+      change: { model: "plugin-model", thinkingOptionId: "low" },
+      model: "plugin-model",
+      thinking: "low",
+      startupThinking: undefined,
+      changes: [{ model: "plugin-model" }, { thinkingOption: "low" }],
+    },
+    {
+      label: "explicit null",
+      change: { model: "plugin-model", thinkingOptionId: undefined },
+      model: "plugin-model",
+      thinking: "medium",
+      startupThinking: undefined,
+      changes: [{ model: "plugin-model" }, { thinkingOption: null }],
+    },
+    {
+      label: "model default",
+      change: { model: undefined },
+      model: undefined,
+      thinking: "high",
+      startupThinking: "high",
+      changes: [{ model: null }],
+    },
+  ])(
+    "opens $label before a removed model blocks startup and reopens",
+    async ({ change, model, thinking, startupThinking, changes }) => {
+      const f = await fixture();
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: change,
+        });
+        await f.manager.flush();
+        expect((await f.storage.get(f.id))?.config?.model).toBe(model);
+        const open = f.harness.inputs.find((input) => input.type === "session.open");
+        if (open?.type !== "session.open") throw new Error("Expected session.open");
+        expect(open.config.model).toBe(model);
+        expect(open.config.thinkingOption).toBe(startupThinking);
+        expect(
+          f.harness.inputs
+            .filter((input) => input.type === "session.configure")
+            .map((input) => input.changes),
+        ).toEqual(changes);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe(thinking);
+        const beforeReopen = (await f.storage.get(f.id))?.config;
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe("plugin-model");
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe(
+          beforeReopen?.thinkingOptionId,
+        );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("invalid replacement leaves stored preference and public runtime unchanged", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "invalid-model" },
+        }),
+      ).rejects.toThrow("invalid-model");
+      await f.manager.flush();
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a rejected native model setter leaves the repaired runtime and storage unchanged", async () => {
+    const f = await fixture();
+    try {
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+        configOverrides: { model: "plugin-model" },
+      });
+      await f.manager.flush();
+      const original = await f.storage.get(f.id);
+      const runtime = f.manager.getAgent(f.id)?.runtimeInfo;
+      await expect(f.manager.setAgentModel(f.id, "invalid-model")).rejects.toThrow(
+        "Invalid model or mode",
+      );
+      await f.manager.flush();
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+      expect(f.manager.getAgent(f.id)?.config.model).toBe("plugin-model");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("mode rejection prevents requested thinking and publication", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: {
+            model: "plugin-model",
+            modeId: "invalid-mode",
+            thinkingOptionId: "low",
+          },
+        }),
+      ).rejects.toThrow("Invalid model or mode");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs
+          .filter((input) => input.type === "session.configure")
+          .map((input) => input.changes),
+      ).toEqual([{ model: "plugin-model" }, { mode: "invalid-mode" }]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("ordinary startup still rejects the removed preference", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        }),
+      ).rejects.toThrow("removed-model");
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
 });

@@ -10,6 +10,8 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCreateSessionOptions,
+  type AgentSessionConfigChange,
   type AgentDraftControls,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -471,22 +473,33 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
   };
 }
 
+// A repair must reach startup before a removed saved model can prevent opening.
+// The manager still validates requested thinking after the model and mode steps.
+function preparePiStartupConfig(
+  config: AgentSessionConfig,
+  change?: AgentSessionConfigChange,
+): AgentSessionConfig {
+  if (!change) return config;
+  return {
+    ...config,
+    model: "model" in change ? change.model : config.model,
+    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+  };
+}
+
 function buildResumeConfig(
   metadata: PiPersistenceMetadata,
   overrides: Partial<AgentSessionConfig> | undefined,
   provider: AgentProvider,
+  options?: AgentResumeSessionOptions,
 ): PiResumeConfig {
   const overrideConfig = overrides ?? {};
   const cwd = overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
   const modeId = overrideConfig.modeId ?? metadata.modeId;
-  return {
-    cwd,
-    model,
-    thinkingOptionId,
-    modeId,
-    config: {
+  const config = preparePiStartupConfig(
+    {
       ...overrideConfig,
       provider,
       cwd,
@@ -495,6 +508,14 @@ function buildResumeConfig(
       modeId,
       systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
+    options?.purpose === "history" ? undefined : options?.configChange,
+  );
+  return {
+    cwd,
+    model: config.model,
+    thinkingOptionId: config.thinkingOptionId,
+    modeId,
+    config,
   };
 }
 
@@ -2620,7 +2641,9 @@ export class PiRpcAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    config = preparePiStartupConfig(config, options?.configChange);
     const providerOptions = PiProviderOptionsSchema.parse(config.providerOptions ?? {});
     const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {
@@ -2642,11 +2665,11 @@ export class PiRpcAgentClient implements AgentClient {
         noSession: config.internal === true,
         env: launchContext?.env,
         mcpConfigPath: mcpConfigFile?.path,
-        extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
+        extensionPaths: [paseoExtension.path],
       });
     } catch (error) {
       mcpConfigFile?.cleanup();
-      paseoExtension?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
     try {
@@ -2655,7 +2678,7 @@ export class PiRpcAgentClient implements AgentClient {
         config,
         initialState: await runtimeSession.getState(),
         capabilities: capabilitiesForSession(mcp !== null),
-        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
+        cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension.cleanup]),
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
@@ -2663,7 +2686,7 @@ export class PiRpcAgentClient implements AgentClient {
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
       mcpConfigFile?.cleanup();
-      paseoExtension?.cleanup();
+      paseoExtension.cleanup();
       throw error;
     }
   }
@@ -2680,7 +2703,7 @@ export class PiRpcAgentClient implements AgentClient {
     }
 
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
-    const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
+    const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider, options);
     const processCwd = await resolveResumeProcessCwd(resumeConfig.cwd, options?.purpose);
 
     const providerOptions = PiProviderOptionsSchema.parse(
@@ -2731,7 +2754,7 @@ export class PiRpcAgentClient implements AgentClient {
       throw error;
     }
     try {
-      const initialState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
+      const initialState = await this.applyResumeModel(runtimeSession, resumeConfig.model, options);
       return new PiRpcAgentSession({
         runtimeSession,
         config: {
@@ -2759,8 +2782,12 @@ export class PiRpcAgentClient implements AgentClient {
   private async applyResumeModel(
     runtimeSession: PiRuntimeSession,
     requestedModel: string | undefined,
+    options?: AgentResumeSessionOptions,
   ): Promise<PiSessionState> {
     const state = await runtimeSession.getState();
+    // Explicit changes are validated once by the manager after startup.
+    if (options?.purpose !== "history" && options?.configChange && "model" in options.configChange)
+      return state;
     const reference = parseModelReference(requestedModel ?? null);
     if (!reference?.provider) {
       return state;
