@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import {
   mapClaudeCanceledToolCall,
   mapClaudeCompletedToolCall,
@@ -16,6 +17,55 @@ function expectMapped<T>(item: T | null): T {
 }
 
 describe("claude tool-call mapper", () => {
+  // Claude streams a tool_use block with `input: {}` first, then the arguments as partial JSON.
+  it.each([
+    { name: "Bash", partial: { command: "ec" }, input: { command: "echo hi" }, title: "Shell" },
+    {
+      name: "Read",
+      partial: { file_path: "/tmp/a" },
+      input: { file_path: "/tmp/a.ts" },
+      title: "Read",
+    },
+    {
+      name: "Write",
+      partial: { file_path: "/tmp/a.ts" },
+      input: { file_path: "/tmp/a.ts", content: "x" },
+      title: "Write",
+    },
+    {
+      name: "MultiEdit",
+      partial: { file_path: "/tmp/a.ts" },
+      input: { file_path: "/tmp/a.ts", old_string: "a", new_string: "b" },
+      title: "Edit",
+    },
+    { name: "Grep", partial: { pattern: "fo" }, input: { pattern: "foo" }, title: "Search" },
+    { name: "Glob", partial: { pattern: "*." }, input: { pattern: "*.ts" }, title: "Search" },
+    {
+      name: "WebFetch",
+      partial: { url: "https://example.com" },
+      input: { url: "https://example.com", prompt: "Summarize" },
+      title: "Fetch",
+    },
+  ])("keeps the $name title and detail kind while its arguments stream in", (tool) => {
+    const stages = [{}, tool.partial, tool.input].map((input) =>
+      expectMapped(
+        mapClaudeRunningToolCall({
+          callId: "claude-stream-1",
+          name: tool.name,
+          input,
+          output: null,
+        }),
+      ),
+    );
+
+    expect(stages.map((item) => buildToolCallDisplayModel(item).displayName)).toEqual([
+      tool.title,
+      tool.title,
+      tool.title,
+    ]);
+    expect(new Set(stages.map((item) => item.detail.type)).size).toBe(1);
+  });
+
   it("preserves a plan's original tool identity and outcome for live and replayed results", () => {
     const proposal = { name: "ExitPlanMode", callId: "plan-tool-1", input: { plan: "Ship it" } };
     const pending = expectMapped(mapClaudeRunningToolCall(proposal));

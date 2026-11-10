@@ -12,6 +12,30 @@ import {
 export const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 type ToolDetailSchema = z.ZodType;
+
+// A tool call starts streaming before its arguments do: Claude's tool_use block opens with
+// `input: {}` and OpenCode's pending part carries `input: {}`. The branch still matches by name,
+// so the call gets its canonical detail kind (and title and icon) from its first state.
+const NoArgumentsSchema = z
+  .object({})
+  .strict()
+  .transform(() => null);
+type ToolDetailInputSchema<InputSchema extends ToolDetailSchema> = z.ZodNullable<
+  z.ZodUnion<[InputSchema, typeof NoArgumentsSchema]>
+>;
+
+function toolDetailInputSchema<InputSchema extends ToolDetailSchema>(
+  inputSchema: InputSchema,
+): ToolDetailInputSchema<InputSchema> {
+  return z.nullable(z.union([inputSchema, NoArgumentsSchema]));
+}
+
+// Neither arguments nor output have arrived: the detail keeps its kind with empty fields,
+// which clients render as loading until the arguments fill it in.
+function isAwaitingArguments(input: unknown, output: unknown): boolean {
+  return input === null && (output === null || output === undefined);
+}
+
 // Zod 4 loses the generic output type when these branch helpers constrain
 // schemas through z.ZodType, so the paired shape/value interfaces preserve the
 // transform callback types without changing runtime parsing.
@@ -21,7 +45,7 @@ interface ToolDetailNameShape<
   OutputSchema extends ToolDetailSchema,
 > {
   name: z.ZodLiteral<Name>;
-  input: z.ZodNullable<InputSchema>;
+  input: ToolDetailInputSchema<InputSchema>;
   output: z.ZodNullable<OutputSchema>;
 }
 interface ToolDetailToolNameShape<
@@ -30,7 +54,7 @@ interface ToolDetailToolNameShape<
   OutputSchema extends ToolDetailSchema,
 > {
   toolName: z.ZodLiteral<Name>;
-  input: z.ZodNullable<InputSchema>;
+  input: ToolDetailInputSchema<InputSchema>;
   output: z.ZodNullable<OutputSchema>;
 }
 interface ToolDetailNameWithCwdShape<
@@ -701,7 +725,7 @@ export const ToolGrepOutputSchema = z
 export const ToolWebFetchInputSchema = z
   .object({
     url: z.string(),
-    prompt: z.string(),
+    prompt: z.string().optional(),
   })
   .passthrough();
 
@@ -812,7 +836,7 @@ export function toShellToolDetail(
 ): ToolCallDetail | undefined {
   const command = input?.command ?? output?.command;
   if (!command) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "shell", command: "" } : undefined;
   }
 
   return {
@@ -831,7 +855,7 @@ export function toReadToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "read", filePath: "" } : undefined;
   }
 
   const stripped = output?.content ? stripReadLineNumberGutter(output.content) : undefined;
@@ -854,7 +878,7 @@ export function toWriteToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "write", filePath: "" } : undefined;
   }
 
   const content = input?.content ?? output?.content;
@@ -872,7 +896,7 @@ export function toEditToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "edit", filePath: "" } : undefined;
   }
 
   const newString = input?.newString ?? output?.newString;
@@ -941,7 +965,9 @@ export function toSearchToolDetail(params: {
 }): ToolCallDetail | undefined {
   const { input, output, toolName } = params;
   if (!input?.query) {
-    return undefined;
+    return isAwaitingArguments(input, output)
+      ? { type: "search", query: "", ...(toolName ? { toolName } : {}) }
+      : undefined;
   }
 
   return {
@@ -958,7 +984,7 @@ export function toFetchToolDetail(
 ): ToolCallDetail | undefined {
   const url = input?.url ?? output?.url;
   if (!url) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "fetch", url: "" } : undefined;
   }
 
   return {
@@ -988,7 +1014,7 @@ export function toolDetailBranchByName<
 ) {
   const shape: ToolDetailNameShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: z.nullable(inputSchema),
+    input: toolDetailInputSchema(inputSchema),
     output: z.nullable(outputSchema),
   };
   const schema = z.object(shape);
@@ -1014,7 +1040,7 @@ export function toolDetailBranchByToolName<
 ) {
   const shape: ToolDetailToolNameShape<Name, InputSchema, OutputSchema> = {
     toolName: z.literal(toolName),
-    input: z.nullable(inputSchema),
+    input: toolDetailInputSchema(inputSchema),
     output: z.nullable(outputSchema),
   };
   const schema = z.object(shape);
@@ -1040,7 +1066,7 @@ export function toolDetailBranchByNameWithCwd<
 ) {
   const shape: ToolDetailNameWithCwdShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: z.nullable(inputSchema),
+    input: toolDetailInputSchema(inputSchema),
     output: z.nullable(outputSchema),
     cwd: z.string().optional().nullable(),
   };
