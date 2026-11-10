@@ -1,4 +1,5 @@
 import os, { type NetworkInterfaceInfo } from "node:os";
+import type { AddressInfo } from "node:net";
 
 type Interfaces = NodeJS.Dict<NetworkInterfaceInfo[]>;
 
@@ -20,18 +21,21 @@ function isPrivateIpv4(address: string): boolean {
 }
 
 /** Report only private IPv4 interfaces on which this daemon's TCP listener can accept traffic. */
-export function reachableDirectEndpoints(
-  listenHost: string | null,
-  port: number | null,
-  interfaces: Interfaces = os.networkInterfaces(),
-): string[] {
-  if (!listenHost || !port || port < 1 || port > 65535) return [];
-  const wildcard = listenHost === "0.0.0.0" || listenHost === "::";
+export function reachableDirectEndpoints(params: {
+  boundAddress: AddressInfo | string | null;
+  interfaces?: Interfaces;
+}): string[] {
+  const { boundAddress } = params;
+  if (!boundAddress || typeof boundAddress === "string") return [];
+  const { address, port } = boundAddress;
+  if (!port || port < 1 || port > 65535) return [];
+  const interfaces = params.interfaces ?? os.networkInterfaces();
+  const wildcard = address === "0.0.0.0" || address === "::";
   const addresses = new Set<string>();
   for (const entries of Object.values(interfaces)) {
     for (const entry of entries ?? []) {
       if (entry.family !== "IPv4" || entry.internal || !isPrivateIpv4(entry.address)) continue;
-      if (!wildcard && entry.address !== listenHost) continue;
+      if (!wildcard && entry.address !== address) continue;
       addresses.add(`${entry.address}:${port}`);
     }
   }
