@@ -252,6 +252,27 @@ describe("agent composer focus", () => {
     expect(focused).toEqual([{ selection: { start: 2, end: 2 } }]);
   });
 
+  it("settles a replaced focus request with the request that replaced it", async () => {
+    vi.useFakeTimers();
+    try {
+      openSession(agent());
+      const model = composer();
+      const settled: string[] = [];
+      const record = (name: string, request: Promise<void>) =>
+        request.then(
+          () => settled.push(`${name} focused`),
+          () => settled.push(`${name} failed`),
+        );
+      const first = record("first", model.focus());
+      const second = record("second", model.focus());
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.all([first, second]);
+      expect(settled).toEqual(["second failed", "first failed"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects when the composer never comes on screen, and a later mount does not take focus", async () => {
     vi.useFakeTimers();
     try {

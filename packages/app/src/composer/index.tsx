@@ -1217,6 +1217,17 @@ function ComposerVoiceModeButton({
   );
 }
 
+// A plugin modal can refuse to close; the request then tries the cursor anyway and settles.
+const OVERLAY_CLOSE_TIMEOUT_MS = 1_000;
+
+function closedWithin(closed: Promise<void>, timeoutMs: number): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, timeoutMs);
+  });
+  return Promise.race([closed, expired]).finally(() => clearTimeout(timeout));
+}
+
 /** Only the agent list can cover a screen outside a workspace: the Explorer lives in the workspace. */
 function isMobilePanelCoveringHost(target: MobilePanelView, host: PaneHost | null): boolean {
   if (target === "agent-list") return true;
@@ -1460,25 +1471,27 @@ function ComposerContentImpl({
   const dismissOverlays = useDismissOverlays();
   const takeInputFocus = useCallback(
     (options?: ComposerFocusOptions) => {
-      // The sheets and menus this composer opened would otherwise cover the cursor.
-      dismissOverlays();
       const place = () => {
         messageInputRef.current?.focus();
         if (options?.selection) messageInputRef.current?.setSelection(options.selection);
       };
-      if (isNative) {
-        place();
-        return Promise.resolve();
-      }
-      return new Promise<void>((resolve, reject) => {
-        focusWithRetries({
-          focus: place,
-          isFocused: () => {
-            const element = messageInputRef.current?.getNativeElement?.() ?? null;
-            return element !== null && document.activeElement === element;
-          },
-          onSuccess: resolve,
-          onTimeout: () => reject(new Error("The composer input could not take focus.")),
+      // The sheets, menus and modals this composer opened would otherwise cover the cursor, or take
+      // focus back as they close.
+      return closedWithin(dismissOverlays(), OVERLAY_CLOSE_TIMEOUT_MS).then(() => {
+        if (isNative) {
+          place();
+          return;
+        }
+        return new Promise<void>((resolve, reject) => {
+          focusWithRetries({
+            focus: place,
+            isFocused: () => {
+              const element = messageInputRef.current?.getNativeElement?.() ?? null;
+              return element !== null && document.activeElement === element;
+            },
+            onSuccess: resolve,
+            onTimeout: () => reject(new Error("The composer input could not take focus.")),
+          });
         });
       });
     },

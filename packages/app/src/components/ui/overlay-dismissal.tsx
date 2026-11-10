@@ -11,20 +11,38 @@ import {
 
 interface OverlayDismissal {
   register(close: () => void): () => void;
-  dismissAll(): void;
+  dismissAll(): Promise<void>;
+}
+
+interface OpenOverlay {
+  close: () => void;
 }
 
 function createOverlayDismissal(): OverlayDismissal {
-  const closers = new Set<() => void>();
+  const open = new Set<OpenOverlay>();
+  const closing = new Map<OpenOverlay, () => void>();
   return {
     register(close) {
-      closers.add(close);
+      const overlay = { close };
+      open.add(overlay);
       return () => {
-        closers.delete(close);
+        open.delete(overlay);
+        closing.get(overlay)?.();
+        closing.delete(overlay);
       };
     },
     dismissAll() {
-      for (const close of closers) close();
+      // An overlay is gone in the commit that unregisters it. That commit can also move focus, such
+      // as a web modal handing it back to the button that opened it.
+      return Promise.all(
+        [...open].map(
+          (overlay) =>
+            new Promise<void>((gone) => {
+              closing.set(overlay, gone);
+              overlay.close();
+            }),
+        ),
+      ).then(() => undefined);
     },
   };
 }
@@ -57,8 +75,11 @@ export function useDismissibleOverlay(open: boolean, close: () => void): void {
   }, [scope, open]);
 }
 
-/** Closes every overlay open in the enclosing scope; nothing outside one. */
-export function useDismissOverlays(): () => void {
+/**
+ * Closes every overlay open in the enclosing scope, and resolves once they are gone. Outside a
+ * scope there is nothing to close. A registered `close` must close the overlay.
+ */
+export function useDismissOverlays(): () => Promise<void> {
   const scope = useContext(OverlayDismissalContext);
-  return useCallback(() => scope?.dismissAll(), [scope]);
+  return useCallback(() => scope?.dismissAll() ?? Promise.resolve(), [scope]);
 }

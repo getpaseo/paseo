@@ -294,9 +294,8 @@ export function createAgentComposer(
         return Promise.reject(new Error("The agent is gone or archived."));
       }
       if (mounted?.isRevealed()) return mounted.focus(options);
-      // A newer request replaces this one: the user asked to be there, and is about to be.
-      takePendingFocus()?.settle.resolve();
-      return new Promise<void>((resolve, reject) => {
+      const replaced = takePendingFocus();
+      const request = new Promise<void>((resolve, reject) => {
         pendingFocus = {
           options,
           settle: { resolve, reject },
@@ -307,6 +306,9 @@ export function createAgentComposer(
         };
         deps.reveal();
       });
+      // The latest request decides where the cursor goes, and the one it replaced ends with it.
+      if (replaced) request.then(replaced.settle.resolve, replaced.settle.reject);
+      return request;
     },
     changeAttachments(updater) {
       useDraftStore.getState().updateDraftInput({

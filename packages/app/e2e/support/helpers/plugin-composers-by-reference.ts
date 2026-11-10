@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
+import { attachComposerTestImage, openImageLightbox } from "./composer";
 import { gotoWorkspace } from "./launcher";
 import { openCommandCenter } from "./command-center";
 import { openAgentRoute, seedMockAgentWorkspace } from "./mock-agent";
@@ -437,6 +438,7 @@ export async function withPluginHoldingNewWorkspaceComposer(
     leaveCompactExplorerForNewWorkspace(): Promise<void>;
     openSettings(): Promise<void>;
     openThinkingPicker(): Promise<void>;
+    previewAttachedImage(): Promise<void>;
     expectHeldComposerFocusResult(result: string): Promise<void>;
     expectHeldComposerReadyToType(): Promise<void>;
   }) => Promise<void>,
@@ -503,9 +505,15 @@ export default function contribute(client) {
             .click();
           await expect(page.getByText("High", { exact: true })).toBeVisible();
         }),
+      previewAttachedImage: () =>
+        test.step("attach an image to the New workspace composer and preview it", async () => {
+          await attachComposerTestImage(page);
+          await openImageLightbox(page);
+        }),
       expectHeldComposerReadyToType: () =>
-        test.step("the picker is closed and the cursor is in the composer", async () => {
+        test.step("nothing covers the composer and the cursor is in it", async () => {
           await expect(page.getByText("High", { exact: true })).toHaveCount(0);
+          await expect(page.getByTestId("attachment-lightbox-close")).toHaveCount(0);
           await expect(prompt(page).filter({ visible: true })).toBeFocused();
         }),
       expectHeldComposerFocusResult: (result) =>
