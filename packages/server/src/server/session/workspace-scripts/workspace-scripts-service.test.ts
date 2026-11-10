@@ -1,6 +1,6 @@
 import { DaemonConfigStore } from "../../daemon-config-store.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pino } from "pino";
@@ -27,6 +27,10 @@ import type {
 import type { WorkspaceRuntimeStore } from "../../workspace-runtime-store/index.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "../../workspace-registry.js";
 
 // The production module reads only WorkspaceRuntimeStore.get,
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
@@ -435,6 +439,71 @@ describe("stop", () => {
 });
 
 describe("start", () => {
+  test.each([
+    {
+      name: "malformed JSON",
+      breakConfig(path: string) {
+        writeFileSync(path, "{");
+      },
+    },
+    {
+      name: "a non-file config",
+      breakConfig(path: string) {
+        rmSync(path);
+        mkdirSync(path);
+      },
+    },
+  ])("rejects script execution after the project config becomes $name", async ({ breakConfig }) => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    const configPath = join(projectDirectory, "paseo.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { type: "service", command: "./bin/legacy-dev" } } }),
+    );
+    const project = createPersistedProjectRecord({
+      projectId: "prj-config-failure",
+      rootPath: projectDirectory,
+      kind: "git",
+      displayName: "app",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-config-failure",
+      projectId: project.projectId,
+      cwd: workspaceDirectory,
+      kind: "worktree",
+      displayName: "feature",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const { service, spawnCalls, emitted } = buildService({ workspace, project });
+    expect(await service.buildSnapshot(workspace, project)).toEqual([]);
+    breakConfig(configPath);
+
+    const input = { workspaceId: workspace.workspaceId, scriptName: "dev" };
+    await expect(service.launch(input)).rejects.toThrow(
+      `Failed to parse paseo.json at ${configPath}`,
+    );
+    await service.start({ ...request, ...input });
+    expect(spawnCalls).toEqual([]);
+    expect(emitted).toContainEqual({
+      type: "start_workspace_script_response",
+      payload: {
+        requestId: request.requestId,
+        ...input,
+        terminalId: null,
+        error: expect.stringContaining(`Failed to parse paseo.json at ${configPath}`),
+      },
+    });
+  });
+
   test("runs the complete script launch inside the workspace operation lock", async () => {
     const order: string[] = [];
     const { service } = buildService({

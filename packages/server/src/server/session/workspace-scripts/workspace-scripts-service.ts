@@ -26,7 +26,11 @@ import {
   readPaseoConfigForProjection,
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
-import { getWorkspaceLaunchConfigs } from "../../../utils/worktree.js";
+import {
+  getWorkspaceLaunchConfigs,
+  paseoConfigParseError,
+  readPaseoConfig,
+} from "../../../utils/worktree.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
 import type { WorkspaceRuntimeEnvironmentService } from "../../workspace-runtime-environment.js";
 
@@ -184,7 +188,9 @@ export function createWorkspaceScriptsService(deps: {
       const workspace = await getWorkspace(input.workspaceId);
       await assertAutomationAllowed(workspace.workspaceId);
       const project = await projectRegistry.get(workspace.projectId);
-      const suppressedScriptNames = await getProjectLaunchNames(workspace, project);
+      const projectConfig = await readPaseoConfig(project?.rootPath ?? workspace.cwd);
+      if (!projectConfig.ok) throw paseoConfigParseError(projectConfig);
+      const suppressedScriptNames = new Set(getWorkspaceLaunchConfigs(projectConfig.config).keys());
       if (suppressedScriptNames.has(input.scriptName)) {
         throw new Error(
           `Script '${input.scriptName}' is configured as a project launch; use 'paseo launch start ${input.scriptName}' instead`,
