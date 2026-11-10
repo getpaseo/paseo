@@ -3,12 +3,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
+import { gotoWorkspace } from "./launcher";
 import { openCommandCenter } from "./command-center";
 import { openAgentRoute, seedMockAgentWorkspace } from "./mock-agent";
 import { connectNewWorkspaceDaemonClient, openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
-import { expectNoSheetOpen, expectOpenTabCount } from "./sheet";
+import {
+  expectNoSheetOpen,
+  expectOpenTabCount,
+  promptMentioning,
+  sheet,
+  tapSheetBackdrop,
+} from "./sheet";
 import { seedSubagent } from "./subagents";
 import { getServerId } from "./server-id";
 import {
@@ -20,6 +27,7 @@ import {
 const WIDE = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
 const CHECKLIST = "- [ ] Tests\n- [ ] Docs\n";
+const FILE_LINK = "linked.ts:3";
 
 type Workspace = Awaited<ReturnType<typeof seedWorkspace>>;
 
@@ -406,6 +414,7 @@ export async function withPluginHoldingNewWorkspaceComposer(
   page: Page,
   run: (author: {
     openNewWorkspace(): Promise<void>;
+    leaveCompactExplorerForNewWorkspace(): Promise<void>;
     openSettings(): Promise<void>;
     expectHeldComposerFocusResult(result: string): Promise<void>;
   }) => Promise<void>,
@@ -442,6 +451,22 @@ export default function contribute(client) {
         test.step("open the New workspace composer", async () => {
           await openGlobalNewWorkspaceComposer(page);
           await page.waitForFunction(() => (globalThis as HeldComposerGlobal).heldComposer);
+        }),
+      leaveCompactExplorerForNewWorkspace: () =>
+        test.step("leave a compact Explorer for New workspace with the shortcut", async () => {
+          await gotoWorkspace(page, workspace.workspaceId);
+          await page.setViewportSize(COMPACT);
+          await expect(await ensureExplorerSidebar(page)).toBeVisible();
+          await page.evaluate(() => {
+            (globalThis as HeldComposerGlobal).heldComposer = undefined;
+          });
+          await page.keyboard.press("ControlOrMeta+n");
+          await expect(page).toHaveURL(/\/new(?:\?.*)?$/);
+          // A compact composer mounts plugin items inside its controls sheet.
+          await page.getByRole("button", { name: /^Select model/ }).click();
+          await page.waitForFunction(() => (globalThis as HeldComposerGlobal).heldComposer);
+          await tapSheetBackdrop(page);
+          await expectNoSheetOpen(page);
         }),
       openSettings: () =>
         test.step("push Settings over the New workspace screen", async () => {
@@ -482,12 +507,15 @@ export async function withPluginFocusingASubagent(
     keepParentInExplorerOnCompactScreen(): Promise<void>;
     focusParent(): Promise<void>;
     expectParentReadyToTypeInExplorer(): Promise<void>;
+    coverExplorerComposerWithFileSheet(): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedMockAgentWorkspace({
     repoPrefix: "focus-subagent-",
     title: "Focus parent",
+    initialPrompt: promptMentioning(FILE_LINK),
   });
+  await writeFile(path.join(workspace.cwd, "linked.ts"), "one\ntwo\nthree\n", "utf8");
   const child = await seedSubagent(
     { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
     { parentId: workspace.agentId, title: "Focus child" },
@@ -531,6 +559,8 @@ export async function withPluginFocusingASubagent(
             agentId: workspace.agentId,
           });
           await page.waitForFunction(() => (globalThis as FocusAgentGlobal).focusAgent);
+          // The seeded turn must finish first, so the drag isn't racing its updates to the tab.
+          await expect(page.getByText(FILE_LINK, { exact: true })).toBeVisible({ timeout: 15_000 });
           const explorer = await ensureExplorerSidebar(page);
           await dragTabIntoExplorer(page, `agent_${workspace.agentId}`);
           await expect(
@@ -541,8 +571,15 @@ export async function withPluginFocusingASubagent(
       focusParent: () =>
         test.step("focus the agent kept in the Explorer", () => focusAgent(workspace.agentId)),
       expectParentReadyToTypeInExplorer: () =>
-        test.step("the cursor is in the Explorer's composer", () =>
-          expect(prompt(page).filter({ visible: true })).toBeFocused()),
+        test.step("the cursor is in the Explorer's composer", async () => {
+          await expectNoSheetOpen(page);
+          await expect(prompt(page).filter({ visible: true })).toBeFocused();
+        }),
+      coverExplorerComposerWithFileSheet: () =>
+        test.step("open a file's sheet over the Explorer's composer", async () => {
+          await page.getByText(FILE_LINK, { exact: true }).filter({ visible: true }).click();
+          await expect(sheet(page, "linked.ts")).toBeVisible();
+        }),
       openParentAgent: () =>
         test.step("open the parent agent on a phone", async () => {
           await openAgentRoute(page, {

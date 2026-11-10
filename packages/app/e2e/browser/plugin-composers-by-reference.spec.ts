@@ -118,6 +118,14 @@ test("focus rejects on a New workspace composer the user has left", async ({ pag
   });
 });
 
+test("focus reaches a New workspace composer opened from a compact Explorer", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginHoldingNewWorkspaceComposer(page, async (author) => {
+    await author.leaveCompactExplorerForNewWorkspace();
+    await author.expectHeldComposerFocusResult("focused");
+  });
+});
+
 test("focus opens a compact subagent as a tab with its composer", async ({ page }) => {
   test.setTimeout(120_000);
   await withPluginFocusingASubagent(page, async (author) => {
@@ -132,6 +140,9 @@ test("focus reaches an agent kept in the Explorer on a compact screen", async ({
   test.setTimeout(120_000);
   await withPluginFocusingASubagent(page, async (author) => {
     await author.keepParentInExplorerOnCompactScreen();
+    await author.focusParent();
+    await author.expectParentReadyToTypeInExplorer();
+    await author.coverExplorerComposerWithFileSheet();
     await author.focusParent();
     await author.expectParentReadyToTypeInExplorer();
   });
