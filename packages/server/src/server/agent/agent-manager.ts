@@ -980,7 +980,7 @@ export class AgentManager {
   prepareForShutdown(): void {
     this.shuttingDown = true;
     this.acceptingAgentRegistrations = false;
-    for (const [id, agent] of this.agents) {
+    for (const agent of this.agents.values()) {
       this.captureRunningAgentAtShutdown(agent);
     }
   }

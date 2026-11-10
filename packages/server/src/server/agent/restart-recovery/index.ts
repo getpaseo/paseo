@@ -49,8 +49,7 @@ export function createRestartRecovery(deps: Dependencies) {
       const runningIds = runningAgentIds ? new Set(runningAgentIds) : null;
       // Shutdown recovery captures running state once before the daemon exits.
       for (const record of await deps.storage.listAll()) {
-        const isRunning =
-          record.lastStatus === "running" || (runningIds?.has(record.id) ?? false);
+        const isRunning = record.lastStatus === "running" || (runningIds?.has(record.id) ?? false);
         if (isRunning && (await eligible(record)))
           await deps.storage.upsert({ ...record, resumeOnStartup: deps.settings().enabled });
       }
