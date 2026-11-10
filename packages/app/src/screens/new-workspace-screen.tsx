@@ -1176,6 +1176,7 @@ export function NewWorkspaceScreen({
     supportsMultiplicity: supportsWorkspaceMultiplicity,
     pendingAction,
     isDraftHandoffActive,
+    launchReadOnly: launchOutcome.readOnly,
     updatePreferences: updateFormPreferences,
     setAttachments: chatDraft.setAttachments,
   });
@@ -1892,6 +1893,7 @@ function usePluginSetup(input: {
   supportsMultiplicity: boolean;
   pendingAction: Parameters<typeof isNewWorkspacePending>[0]["pendingAction"];
   isDraftHandoffActive: boolean;
+  launchReadOnly: boolean;
   updatePreferences: ReturnType<typeof useFormPreferences>["updatePreferences"];
   setAttachments: ReturnType<typeof useAgentInputDraft>["setAttachments"];
 }) {
@@ -1902,6 +1904,7 @@ function usePluginSetup(input: {
     supportsMultiplicity,
     pendingAction,
     isDraftHandoffActive,
+    launchReadOnly,
     updatePreferences,
     setAttachments,
   } = input;
@@ -1909,7 +1912,7 @@ function usePluginSetup(input: {
     ? getWorktreeSupportForHostProject({ project, serverId })
     : "unsupported";
   const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
-  const locked = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
+  const locked = isNewWorkspacePending({ pendingAction, isDraftHandoffActive, launchReadOnly });
   const supportsMetadata = useHostFeature(serverId, "entityMetadata");
   const projectId = project ? getHostProjectId(project, serverId) : null;
   const projectName = project?.projectName ?? null;

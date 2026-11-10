@@ -105,7 +105,12 @@ function GlobalDialog({ open, onClose }: { open: boolean; onClose: () => void })
     },
     [onClose],
   );
-  const setScope = useOverlayRegistration({ active: open, layer, onKeyDown: handleKeyDown });
+  const setScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: open,
+    layer,
+    onKeyDown: handleKeyDown,
+  });
   const style = useMemo(() => ({ zIndex: layer }), [layer]);
   if (!open) return null;
   return createPortal(

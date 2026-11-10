@@ -361,13 +361,10 @@ export const useDraftStore = create<DraftStore>()(
 
       updateDraftInput: ({ draftKey, update }) => {
         const next = update(get().getDraftInput(draftKey) ?? { text: "", attachments: [] });
-        if (hasDraftContent(next)) get().saveDraftInput({ draftKey, draft: next });
-        else {
-          const record = get().drafts[draftKey];
-          get().clearDraftInput({
-            draftKey,
-            lifecycle: keepsEmptiedDraftBound(record) ? record.lifecycle : "abandoned",
-          });
+        if (hasDraftContent(next) || keepsEmptiedDraftBound(get().drafts[draftKey])) {
+          get().saveDraftInput({ draftKey, draft: next });
+        } else {
+          get().clearDraftInput({ draftKey, lifecycle: "abandoned" });
         }
       },
 

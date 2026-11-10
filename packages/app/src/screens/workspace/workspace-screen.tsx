@@ -3926,7 +3926,7 @@ function WorkspaceMarkdownLinks({
   return (
     <AssistantFileLinkResolverProvider {...fileLinks}>
       <ForgeShorthandProvider
-        serverId={serverId}
+        serverId={fileLinks.serverId}
         forge={workspace?.forge}
         remoteUrl={workspace?.gitRuntime?.remoteUrl}
         forgeWeb={workspace?.forgeWeb}

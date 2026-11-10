@@ -20,9 +20,9 @@ export function ForgeShorthandProvider({
   remoteUrl: string | null | undefined;
   forgeWeb: ForgeWeb | null | undefined;
   children: ReactNode;
-  serverId: string;
+  serverId: string | undefined;
 }) {
-  const host = useClientForgeHost(serverId);
+  const host = useClientForgeHost(serverId ?? "");
   // Keyed on the strings: the descriptor hands over a new `forgeWeb` object whenever any
   // other workspace field changes, and a new context value re-renders every Markdown message.
   const webHost = forgeWeb?.host;
