@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.4 - 2026-11-10
+
+### 新增
+
+- 新增 Claude Fable 5.2 和 Mythos 5.2，默认推理强度为 medium ([#9233](https://github.com/getpaseo/paseo/pull/9233)，贡献者：[@gengjiawen](https://github.com/gengjiawen)、[@gudcks](https://github.com/gudcks))
+
+### 说明
+
+- 两个模型均需 Claude Code 2.1.321 或更高版本；仅在 Claude Code 提供访问权限时显示 Mythos 5.2
+
 ## 0.15.3 - 2026-11-06
 
 ### 修复
