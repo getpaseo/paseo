@@ -22,7 +22,7 @@ import {
   restoreUnchangedViewedTimeline,
   restoreViewedTimelineHoldingCatchUp,
   restoreViewedTimelineWithHeldResponse,
-  returnWithFreshnessCheckUnanswered,
+  reopenWithFreshnessCheckUnanswered,
   waitForResumeAnswer,
   reopenAppWatchingForUpdatingToast,
   watchForUpdatingToast,
@@ -103,7 +103,9 @@ test.describe("Agent timeline resume", () => {
     }
   });
 
-  test("a check the daemon has not answered reports the update until it does", async ({ page }) => {
+  test("opening cached history reports an unanswered check until the daemon answers", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const gate = await installDaemonWebSocketGate(page);
     const agent = await seedLongMockAgentTimeline({ turns: 3 });
@@ -112,7 +114,7 @@ test.describe("Agent timeline resume", () => {
       await expectTimelinePromptVisible(page, agent.newestPrompt);
       const requests = rememberTimelineRequestCounts(gate);
 
-      await returnWithFreshnessCheckUnanswered(page, gate);
+      await reopenWithFreshnessCheckUnanswered(page, gate, agent);
       await answerFreshnessCheck(page, gate);
 
       expectResumeAnsweredWithoutFetch(gate, requests);

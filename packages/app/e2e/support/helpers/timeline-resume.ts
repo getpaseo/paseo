@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { readReplicaCache } from "./replica-cache-storage";
 import type { LongTimelineAgent } from "./timeline-pagination";
 import {
   expectReconnectingToastGone,
@@ -14,7 +15,7 @@ const SUBSCRIPTION_RESPONSE = "agent.timeline.set_subscription.response";
 const TIMELINE_REQUEST = "fetch_agent_timeline_request";
 const TIMELINE_RESPONSE = "fetch_agent_timeline_response";
 /**
- * `FRESHNESS_CHECK_QUIET_MS` is 500: a check unanswered that long reports Updating messages by
+ * `FRESHNESS_CHECK_QUIET_MS` is 500: an opening check unanswered that long reports Updating messages by
  * design, however long the daemon takes. The app starts that wait just before it sends the question
  * this helper times, so the bound stops short of 500.
  */
@@ -151,13 +152,24 @@ export async function reopenAppWatchingForUpdatingToast(page: Page): Promise<() 
   return () => expectToastWaitedForTheDaemon(page);
 }
 
-/** Returns to the chat with the daemon's answer held, past the point the toast reports it. */
-export async function returnWithFreshnessCheckUnanswered(
+/** Opens persisted history with the daemon's freshness answer held. */
+export async function reopenWithFreshnessCheckUnanswered(
   page: Page,
   gate: DaemonWebSocketGate,
+  agent: LongTimelineAgent,
 ): Promise<void> {
+  // A cold open needs a persisted authoritative cursor to ask a freshness question.
+  await expect
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      return cache?.hosts
+        ?.flatMap((host) => host.timelines)
+        .find((timeline) => timeline.agentId === agent.agentId)?.range?.endSeq;
+    })
+    .toBeGreaterThan(0);
   gate.holdNextClientRequest(SUBSCRIPTION_REQUEST);
-  await hideTabAndReturn(page);
+  await page.reload();
+  await expect(page.getByText(agent.newestPrompt, { exact: true })).toBeVisible();
   await gate.waitForHeldClientRequest();
   await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toBeVisible();
 }
