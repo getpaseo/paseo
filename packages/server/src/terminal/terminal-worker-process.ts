@@ -48,6 +48,54 @@ const FIRST_CONTROLLER_TIMEOUT_MS = 30_000;
 // (a removed $PASEO_HOME) means no daemon can ever find these terminals again.
 const ORPHAN_CHECK_INTERVAL_MS = 10_000;
 const READY_FD = 3;
+// Bounded worker diagnostics: the launcher points the worker's stderr at
+// $PASEO_HOME/terminal-worker.log, and each event kind writes at most this many lines a minute,
+// so a controller that keeps dropping cannot flood the log.
+const DIAGNOSTIC_WINDOW_MS = 60_000;
+const DIAGNOSTIC_MAX_PER_WINDOW = 20;
+
+interface DiagnosticWindow {
+  startedAt: number;
+  written: number;
+  suppressed: number;
+}
+
+const diagnosticWindows = new Map<string, DiagnosticWindow>();
+
+function writeWorkerDiagnosticLine(event: string, fields: Record<string, unknown>): void {
+  try {
+    process.stderr.write(
+      `${JSON.stringify({
+        time: new Date().toISOString(),
+        level: "warn",
+        pid: process.pid,
+        name: "TerminalWorker",
+        event,
+        ...fields,
+      })}\n`,
+    );
+  } catch {
+    // Diagnostics must never interrupt terminal delivery or shutdown.
+  }
+}
+
+/** Records why this worker closed or refused a controller socket. */
+function logWorkerDiagnostic(event: string, fields: Record<string, unknown> = {}): void {
+  const now = Date.now();
+  let window = diagnosticWindows.get(event);
+  if (!window || now - window.startedAt >= DIAGNOSTIC_WINDOW_MS) {
+    const suppressed = window?.suppressed ?? 0;
+    window = { startedAt: now, written: 0, suppressed: 0 };
+    diagnosticWindows.set(event, window);
+    if (suppressed > 0) writeWorkerDiagnosticLine(event, { suppressed });
+  }
+  if (window.written >= DIAGNOSTIC_MAX_PER_WINDOW) {
+    window.suppressed += 1;
+    return;
+  }
+  window.written += 1;
+  writeWorkerDiagnosticLine(event, fields);
+}
 
 interface WorkerArgs {
   recordId: string;
@@ -210,6 +258,7 @@ function runWorker(argv: string[]): void {
   const replayController = createTerminalReplayController({
     getSession: (id) => sessionsById.get(id),
     flushOutput: (id) => outputCoalescerByTerminalId.get(id)?.flush(),
+    log: logWorkerDiagnostic,
   });
   function sendToController(message: TerminalWorkerToParentMessage): void {
     replayController.send(message);
@@ -646,17 +695,35 @@ function runWorker(argv: string[]): void {
     socket.on("error", () => {
       // `close` follows; a broken controller socket only means no controller.
     });
-    const helloTimer = setTimeout(() => socket.destroy(), HELLO_TIMEOUT_MS);
+    const helloTimer = setTimeout(() => {
+      logWorkerDiagnostic("controller-hello-timeout", {
+        remoteAddress: socket.remoteAddress ?? null,
+        timeoutMs: HELLO_TIMEOUT_MS,
+      });
+      socket.destroy();
+    }, HELLO_TIMEOUT_MS);
     const framed = attachFramedSocket(socket, (message) => {
       if (!authenticated) {
         clearTimeout(helloTimer);
         if (!isHello(message) || !secretMatches(message.secret)) {
+          logWorkerDiagnostic("controller-hello-rejected", {
+            reason: isHello(message) ? "secret-mismatch" : "invalid-hello",
+            remoteAddress: socket.remoteAddress ?? null,
+          });
           socket.destroy();
           return;
         }
         authenticated = true;
         // One controller at a time: a new authenticated connection replaces the old one.
+        const previous = controller;
         controller = framed;
+        if (previous) {
+          logWorkerDiagnostic("controller-replaced", {
+            reason: "new-authenticated-controller",
+            previousWritableLength: previous.socket.writableLength,
+            previousDestroyed: previous.socket.destroyed,
+          });
+        }
         replayController.setConnection(framed);
         everControlled = true;
         const ack: TerminalWorkerHelloAck = {
