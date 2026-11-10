@@ -38,6 +38,9 @@ import {
   fillDirectHostUri,
   expectDirectHostFormValues,
   expectDirectHostSslEnabled,
+  expectDirectHostSslDisabled,
+  fillDirectHostAddress,
+  toggleDirectHostSsl,
   expectDirectHostUriValue,
   expectDirectHostUriHidden,
   expectDiagnosticsContent,
@@ -92,66 +95,63 @@ test.describe("Settings sidebar scroll position", () => {
     await expectSettingsSidebarScrollOffset(page, offset);
   });
 
-  test("scrolls the sidebar and detail pane independently", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    const sidebarOffset = await scrollSettingsSidebarToEnd(page);
-    await openSettingsHostSection(page, getServerId(), "providers");
-    await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
-    const detailOffset = await scrollSettingsDetailDown(page);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset);
-
-    await scrollSettingsSidebarUp(page, 60);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
-    await expectSettingsDetailScrollOffset(page, detailOffset);
-  });
-
-  test("keeps the sidebar position after rapid consecutive selections", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-
-    const scrollTop = await scrollSettingsSidebarToEnd(page);
-
-    await selectSettingsHostSectionsRapidly(page);
-    await expectSettingsSidebarScrollOffset(page, scrollTop);
-
-    await expectSettingsSidebarScrollSettled(page, scrollTop);
-  });
-
-  test("keeps the sidebar position when switching between app and host sections", async ({
+  test("keeps sidebar and detail scrolling independent through section changes", async ({
     page,
   }) => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    const hostScrollTop = await scrollSettingsSidebarToEnd(page);
-    await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+    await test.step("scrolls the sidebar and detail pane independently", async () => {
+      const sidebarOffset = await scrollSettingsSidebarToEnd(page);
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
+      const detailOffset = await scrollSettingsDetailDown(page);
+      await expectSettingsSidebarScrollOffset(page, sidebarOffset);
 
-    for (const section of [
-      "providers",
-      "terminals",
-      "providers",
-      "terminals",
-      "providers",
-    ] as const) {
-      await openSettingsHostSection(page, getServerId(), section);
-      await expect(page.getByTestId("page-title")).toHaveText(
-        section === "providers" ? "Providers" : "Terminals",
-      );
-      await expectSettingsSidebarScrollOffset(page, hostScrollTop);
-    }
+      await scrollSettingsSidebarUp(page, 60);
+      await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
+      await expectSettingsDetailScrollOffset(page, detailOffset);
+    });
 
-    const sidebar = page.getByTestId("settings-sidebar");
-    const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
-    await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+    await test.step("keeps the sidebar position after rapid consecutive selections", async () => {
+      const scrollTop = await scrollSettingsSidebarToEnd(page);
 
-    await openSettingsSection(page, "about");
-    await expectAboutContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+      await selectSettingsHostSectionsRapidly(page);
+      await expectSettingsSidebarScrollOffset(page, scrollTop);
 
-    await openSettingsSection(page, "diagnostics");
-    await expectDiagnosticsContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+      await expectSettingsSidebarScrollSettled(page, scrollTop);
+    });
+
+    await test.step("keeps the sidebar position when switching between app and host sections", async () => {
+      const hostScrollTop = await scrollSettingsSidebarToEnd(page);
+      await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+
+      for (const section of [
+        "providers",
+        "terminals",
+        "providers",
+        "terminals",
+        "providers",
+      ] as const) {
+        await openSettingsHostSection(page, getServerId(), section);
+        await expect(page.getByTestId("page-title")).toHaveText(
+          section === "providers" ? "Providers" : "Terminals",
+        );
+        await expectSettingsSidebarScrollOffset(page, hostScrollTop);
+      }
+
+      const sidebar = page.getByTestId("settings-sidebar");
+      const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
+      await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+
+      await openSettingsSection(page, "about");
+      await expectAboutContent(page);
+      await expectSettingsSidebarScrollOffset(page, appScrollTop);
+
+      await openSettingsSection(page, "diagnostics");
+      await expectDiagnosticsContent(page);
+      await expectSettingsSidebarScrollOffset(page, appScrollTop);
+    });
   });
 });
 
@@ -284,6 +284,16 @@ test.describe("Settings sidebar navigation", () => {
     await expectAddHostMethodOptions(page);
     await selectHostConnectionType(page, "direct");
 
+    await fillDirectHostAddress(page, "example.paseo.test", "7443");
+    await expectDirectHostSslDisabled(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslEnabled(page);
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriValue(page, "tcp://example.paseo.test:7443?ssl=true");
+    await toggleHostAdvanced(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslDisabled(page);
+
     await toggleHostAdvanced(page);
     await fillDirectHostUri(page, "tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
     await toggleHostAdvanced(page);
@@ -313,12 +323,12 @@ test.describe("Settings sidebar navigation", () => {
 
     await test.step("a dropdown owns Escape", async () => {
       await openSettingsSection(page, "appearance");
-      await page.getByLabel(/Theme:/).click();
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+      await page.getByLabel(/Highlight theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toBeVisible();
 
       await page.keyboard.press("Escape");
 
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toHaveCount(0);
       await expect(page).toHaveURL(/\/settings(\/|$)/);
     });
 

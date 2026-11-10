@@ -8,6 +8,8 @@ import {
 } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
+import { useDraftStore } from "@/stores/draft-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { AgentDirectoryReplica } from "./agent-replica";
 
 function payload(title: string): AgentSnapshotPayload {
@@ -58,7 +60,7 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 
 describe("AgentDirectoryReplica", () => {
   it.each(["delta", "snapshot"] as const)(
-    "does not erase freshly fetched history when the active directory removes it by %s",
+    "preserves history and unsent drafts when the active directory removes an agent by %s",
     (removal) => {
       const serverId = `agent-replica-history-${removal}`;
       const store = useSessionStore.getState();
@@ -68,6 +70,18 @@ describe("AgentDirectoryReplica", () => {
         () => undefined,
         () => undefined,
       );
+      const draftKey = buildDraftStoreKey({ serverId, agentId: "agent" });
+      const draft = {
+        text: "Keep this unsent draft",
+        attachments: [
+          {
+            kind: "workspace_file" as const,
+            path: "README.md",
+            selection: { kind: "whole_file" as const },
+          },
+        ],
+      };
+      useDraftStore.getState().saveDraftInput({ draftKey, draft });
       const archived = { ...payload("archived"), archivedAt: "2026-09-11T00:00:00.000Z" };
       replica.submitTimelineAgent(replica.captureTimeline("agent"), archived);
       store.applyAgentTimelineResponseState(serverId, "agent", {
@@ -93,7 +107,9 @@ describe("AgentDirectoryReplica", () => {
         status: "synced",
         items: [{ text: "server history" }],
       });
+      expect(useDraftStore.getState().getDraftInput(draftKey)).toEqual(draft);
       replica.remove("agent");
+      expect(useDraftStore.getState().getDraftInput(draftKey)).toBeUndefined();
       expect(selectAgentTimelineState(store.getSession(serverId), "agent")).toMatchObject({
         status: "cold",
       });
@@ -388,6 +404,41 @@ describe("AgentDirectoryReplica", () => {
     replica.commitChanges([], [], []);
 
     expect(useSessionStore.getState().sessions[serverId]?.agents.has("agent")).toBe(true);
+    store.clearSession(serverId);
+  });
+  it("keeps unchanged agent fields when an update changes only the status", () => {
+    const serverId = "agent-replica-unchanged-fields";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    const agentInStore = () => useSessionStore.getState().sessions[serverId]?.agents.get("agent");
+    replica.commitSnapshot([entry(payload("agent"))], []);
+    const before = agentInStore();
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("agent"), status: "running", updatedAt: "2026-07-17T00:02:00.000Z" },
+      project: entry(payload("agent")).project,
+    });
+    const afterDelta = agentInStore();
+    replica.commitSnapshot(
+      [entry({ ...payload("agent"), status: "idle", updatedAt: "2026-07-17T00:03:00.000Z" })],
+      [],
+    );
+    const afterSnapshot = agentInStore();
+
+    expect(afterDelta?.status).toBe("running");
+    expect(afterSnapshot?.status).toBe("idle");
+    for (const agent of [afterDelta, afterSnapshot]) {
+      expect(agent?.capabilities).toBe(before?.capabilities);
+      expect(agent?.availableModes).toBe(before?.availableModes);
+      expect(agent?.labels).toBe(before?.labels);
+      expect(agent?.projectPlacement).toBe(before?.projectPlacement);
+    }
     store.clearSession(serverId);
   });
 });

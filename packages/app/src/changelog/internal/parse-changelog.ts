@@ -3,7 +3,10 @@
  *
  * The document is authored in the repository, fetched at runtime, and rewritten
  * on every release, so this parser commits to exactly two facts: a `##` heading
- * starts a release and a `###` heading starts a section inside it. Everything
+ * starts a release and a `###` heading starts a section inside it. Whatever sits
+ * between the release heading and its first section is the release's
+ * highlights: the list a release now leads with, or the summary paragraphs and
+ * notices older entries opened with. Everything
  * else — prose, callouts, block quotes, fenced code, images, video and embed
  * HTML, tables, nested lists — is carried through verbatim and handed to the
  * Markdown renderer. A new block kind in the changelog therefore needs no
@@ -17,8 +20,8 @@
  */
 
 export interface ChangelogSection {
-  /** The `###` heading text, or null for content that precedes the first one. */
-  title: string | null;
+  /** The `###` heading text. Empty for a bare `###`. */
+  title: string;
   /** Verbatim markdown under the heading. */
   body: string;
 }
@@ -28,7 +31,9 @@ export interface ChangelogRelease {
   version: string;
   /** The heading tail after the version. Empty when the heading carried none. */
   date: string;
-  /** Sections in document order; the untitled lead section comes first. */
+  /** Verbatim markdown before the first section. Empty when the release opens with one. */
+  highlights: string;
+  /** The `###` sections in document order. */
   sections: ChangelogSection[];
 }
 
@@ -46,13 +51,14 @@ const LEADING_V = /^v(?=\d)/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 interface SectionDraft {
-  title: string | null;
+  title: string;
   lines: string[];
 }
 
 interface ReleaseDraft {
   version: string;
   date: string;
+  highlights: string[];
   sections: SectionDraft[];
 }
 
@@ -75,7 +81,8 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
       if (releaseHeading) {
         releases.push({
           ...splitReleaseHeading(releaseHeading[1] ?? ""),
-          sections: [{ title: null, lines: [] }],
+          highlights: [],
+          sections: [],
         });
         continue;
       }
@@ -83,7 +90,7 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
       const sectionHeading = line.match(SECTION_HEADING);
       if (sectionHeading && releases.length > 0) {
         releases[releases.length - 1].sections.push({
-          title: (sectionHeading[1] ?? "").replace(ATX_CLOSING, "").trim() || null,
+          title: (sectionHeading[1] ?? "").replace(ATX_CLOSING, "").trim(),
           lines: [],
         });
         continue;
@@ -91,19 +98,22 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
     }
 
     const release = releases.at(-1);
-    if (release) release.sections[release.sections.length - 1].lines.push(line);
+    if (release) (release.sections.at(-1)?.lines ?? release.highlights).push(line);
   }
 
   return releases.map(materializeRelease);
 }
 
 function materializeRelease(draft: ReleaseDraft): ChangelogRelease {
-  const sections = draft.sections
-    .map((section) => ({ title: section.title, body: trimBlankLines(section.lines) }))
-    // A heading with an empty body still names something; an empty lead section
-    // is just the gap between the release heading and the first section.
-    .filter((section) => section.title !== null || section.body.length > 0);
-  return { version: draft.version, date: draft.date, sections };
+  return {
+    version: draft.version,
+    date: draft.date,
+    highlights: trimBlankLines(draft.highlights),
+    sections: draft.sections.map((section) => ({
+      title: section.title,
+      body: trimBlankLines(section.lines),
+    })),
+  };
 }
 
 function trimBlankLines(lines: string[]): string {

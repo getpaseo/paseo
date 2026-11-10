@@ -720,7 +720,7 @@ describe("AgentManager rewind run ownership", () => {
     });
   });
 
-  test("blocks new prompts until the rewind settles", async () => {
+  test("blocks new prompts immediately and until the rewind settles", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;

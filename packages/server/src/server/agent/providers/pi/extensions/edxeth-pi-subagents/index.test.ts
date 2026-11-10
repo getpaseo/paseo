@@ -279,7 +279,7 @@ describe("edxeth/pi-subagents adapter", () => {
       for await (const event of streamPiHistory("pi", fixture.messages)) {
         if (event.type === "provider_subagent") await store.apply("parent", "pi", event.event);
       }
-      const children = store.list("parent");
+      const children = await store.list("parent");
       expect(children).toEqual([expect.objectContaining({ status: "completed", title: "marker" })]);
       const transcript = await store.fetchTimeline("parent", children[0]!.id);
       expect(transcript.rows).toContainEqual(

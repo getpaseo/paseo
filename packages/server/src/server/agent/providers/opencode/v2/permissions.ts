@@ -68,6 +68,9 @@ export class SessionPermissions {
         sessionID: this.permissionOwners.get(requestId) ?? this.id,
         requestID: requestId,
         decision: permissionReply(response),
+        ...(response.behavior === "deny" && response.message !== undefined
+          ? { message: response.message }
+          : {}),
       });
     }
     this.resolvePending(requestId, response);
@@ -93,7 +96,7 @@ export class SessionPermissions {
       };
       this.pending.set(request.id, pending);
       this.permissionOwners.set(request.id, sessionID);
-      if (!this.config.toolPolicy && this.config.featureValues?.["auto_accept"] === true)
+      if (!this.config.toolPolicy && this.config.providerOptions?.["auto_accept"] === true)
         await this.respondToPermission(request.id, { behavior: "allow" });
       else this.emit({ type: "permission_requested", provider: "opencode", request: pending });
     }

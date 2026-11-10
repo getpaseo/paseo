@@ -2,7 +2,7 @@ import { execFileSync as nodeExecFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseChangelogEntries } from "./changelog-utils.mjs";
+import { parseChangelogEntries, splitChangelogHighlights } from "./changelog-utils.mjs";
 import { getGitHubRelease } from "./github-release.mjs";
 import {
   getReleaseInfoFromSourceTag,
@@ -69,17 +69,38 @@ function parseArgs(argv) {
 }
 
 function parseChangelog(changelogText) {
-  return parseChangelogEntries(changelogText).map((entry) => {
-    const notesParts = [`## ${entry.version} - ${entry.date}`];
-    if (entry.bodyLines.length > 0) {
-      notesParts.push("", ...entry.bodyLines);
-    }
-
-    return Object.assign({}, entry, {
+  return parseChangelogEntries(changelogText).map((entry) =>
+    Object.assign({}, entry, {
       tag: `v${entry.version}`,
-      notes: `${notesParts.join("\n").trim()}\n`,
-    });
-  });
+      notes: formatReleaseNotes(entry),
+    }),
+  );
+}
+
+// A release body leads with the entry's highlights and folds its sections, the
+// full record, into one collapsed block. GitHub renders `<details>` in release
+// bodies; CHANGELOG.md itself stays plain Markdown because the app and the
+// website render it without HTML. An entry without highlights keeps its sections
+// in view, since nothing stands in for them.
+function formatReleaseNotes(entry) {
+  const { highlightLines, sectionLines } = splitChangelogHighlights(entry.bodyLines);
+  const notesParts = [`## ${entry.version} - ${entry.date}`];
+  if (highlightLines.length > 0 && sectionLines.length > 0) {
+    notesParts.push(
+      "",
+      ...highlightLines,
+      "",
+      "<details>",
+      "<summary>All changes</summary>",
+      "",
+      ...sectionLines,
+      "",
+      "</details>",
+    );
+  } else if (entry.bodyLines.length > 0) {
+    notesParts.push("", ...entry.bodyLines);
+  }
+  return `${notesParts.join("\n").trim()}\n`;
 }
 
 function runGh(args, execFileSync = nodeExecFileSync) {

@@ -220,7 +220,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
     listImportableSessions,
   } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">;
   const agentStorage = {
-    list: async () => [
+    listAll: async () => [
       {
         provider: "codex",
         persistence: {
@@ -230,7 +230,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
         },
       } as StoredAgentRecord,
     ],
-  } satisfies Pick<AgentStorage, "list">;
+  } satisfies Pick<AgentStorage, "listAll">;
 
   const result = await listImportableProviderSessions({
     request: makeRequest({
@@ -302,7 +302,7 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
       listImportableSessions,
     },
     agentStorage: {
-      list: async () => [
+      listAll: async () => [
         {
           provider: "claude",
           persistence: { provider: "claude", sessionId: "already-imported" },
@@ -359,7 +359,7 @@ test("listImportableProviderSessions requests a bounded deep scan for search res
   const result = await listImportableProviderSessions({
     request: makeRequest({ query: "INVOICE", limit: 10 }),
     agentManager: { listAgents: () => [], listImportableSessions },
-    agentStorage: { list: async () => [] },
+    agentStorage: { listAll: async () => [] },
     providerSnapshotManager: { getProviderLabel: (provider) => provider },
   });
 
@@ -396,7 +396,7 @@ test("listImportableProviderSessions includes a provider session after its Paseo
       listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
-      list: async () => [
+      listAll: async () => [
         {
           provider: "claude",
           archivedAt: "2026-04-30T12:01:00.000Z",
@@ -440,7 +440,7 @@ test("listImportableProviderSessions includes an archived provider session still
       listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
-      list: async () => [
+      listAll: async () => [
         {
           id: agentId,
           provider: "claude",
@@ -488,8 +488,8 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
       listImportableSessions: async () => makeImportableSessionsResult(sessions),
     } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
-      list: async () => [],
-    } satisfies Pick<AgentStorage, "list">,
+      listAll: async () => [],
+    } satisfies Pick<AgentStorage, "listAll">,
     providerSnapshotManager: { getProviderLabel: () => "Codex" },
   });
 
@@ -524,8 +524,8 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
         ]),
     } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
-      list: async () => [],
-    } satisfies Pick<AgentStorage, "list">,
+      listAll: async () => [],
+    } satisfies Pick<AgentStorage, "listAll">,
     providerSnapshotManager: { getProviderLabel: () => "Pi" },
   });
 
@@ -541,8 +541,8 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
         listImportableSessions: async () => makeImportableSessionsResult([]),
       } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
       agentStorage: {
-        list: async () => [],
-      } satisfies Pick<AgentStorage, "list">,
+        listAll: async () => [],
+      } satisfies Pick<AgentStorage, "listAll">,
       providerSnapshotManager: { getProviderLabel: () => "" },
     }),
   ).rejects.toMatchObject(
@@ -660,7 +660,7 @@ class ProviderImportHarness {
       notifyAgentState: () => {},
       getAgent: () => this.activeAgent,
       getRegisteredProviderIds: () => ["codex"],
-      createAgent: async () => {
+      createAgentFromRecord: async () => {
         throw new Error("Stored provider imports must resume their persisted session");
       },
       resumeAgentFromPersistence: async (

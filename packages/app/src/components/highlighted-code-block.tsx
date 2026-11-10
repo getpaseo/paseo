@@ -46,6 +46,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   "objective-c": "m",
   markdown: "md",
   elixir: "ex",
+  terraform: "tf",
 };
 
 function fenceLanguageToExtension(info: string | null | undefined): string | null {

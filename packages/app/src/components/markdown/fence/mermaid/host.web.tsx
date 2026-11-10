@@ -72,7 +72,7 @@ function MermaidFenceHostImpl({
     () => [
       getDiagramBoxStyle(textStyle),
       containerStyle,
-      { height: runtimeHeight, minHeight: MIN_DIAGRAM_BOX_HEIGHT },
+      { height: Math.min(runtimeHeight, MAX_PREVIEW_HEIGHT), minHeight: MIN_DIAGRAM_BOX_HEIGHT },
     ],
     [runtimeHeight, textStyle],
   );
@@ -111,20 +111,22 @@ function MermaidFenceHostImpl({
           ) : null}
         </View>
       ) : null}
-      <ZoomableViewport
-        accessibilityLabel={t("message.diagram.diagram")}
-        actions={actions}
-        contentSize={diagramSize}
-        style={viewportStyle}
-        testID="mermaid-viewport"
-        wheelActivation="modifier"
-      >
-        <MermaidIframeRuntime
-          request={request}
-          onRendered={handleRendered}
-          onRenderFailed={renderFailed}
-        />
-      </ZoomableViewport>
+      <div inert={!diagramVisible} style={boundaryStyle}>
+        <ZoomableViewport
+          accessibilityLabel={t("message.diagram.diagram")}
+          actions={actions}
+          contentSize={diagramSize}
+          style={viewportStyle}
+          testID="mermaid-viewport"
+          wheelActivation="modifier"
+        >
+          <MermaidIframeRuntime
+            request={request}
+            onRendered={handleRendered}
+            onRenderFailed={renderFailed}
+          />
+        </ZoomableViewport>
+      </div>
       {isFullscreen && visible ? (
         <MermaidFullscreenViewer
           source={visible.source}
@@ -142,6 +144,8 @@ const MEASURING_SIZE = { width: 240, height: 240 };
  * with `overflow: hidden`, so a shorter box leaves the buttons half-clipped and unclickable.
  */
 const MIN_DIAGRAM_BOX_HEIGHT = 56;
+const MAX_PREVIEW_HEIGHT = 480;
+const boundaryStyle: React.CSSProperties = { display: "contents" };
 const sourceContainerStyle: ViewStyle = { position: "relative" };
 /**
  * The viewport's own root is `flex: 1`, so as a flex item it has `flex-basis: 0%` and that basis

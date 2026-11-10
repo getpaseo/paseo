@@ -28,6 +28,9 @@ const patchedPackages = [
   // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
   // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
   // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
+  // Layout constraints: backport of https://github.com/jpudysz/react-native-unistyles/pull/1357
+  // (commit from the root the commit hands us, so a concurrent window-size commit is kept).
+  // Remove the ShadowTreeManager hunk when the installed release includes that PR.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
@@ -40,10 +43,18 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // The native chat timeline. The patch's header lists its hunks and the upstream issue.
+  {
+    nodeModulesPath: "node_modules/@legendapp/list",
+    patchPrefix: "@legendapp+list+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
+  // Web pointer capture: capture only pointers the handler still tracks after pointer-down, so a
+  // touch-only pan that fails the mouse leaves browser text selection alone. Keep until upstream
+  // stops capturing pointers a handler has rejected.
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
@@ -51,7 +62,8 @@ const patchedPackages = [
   // Exports BottomSheetModalInternalProvider so a subtree can host its own sheets on the shared
   // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
   // keeps a dismissing modal's status through its final onChange(-1), so a modal with
-  // enableDismissOnClose=false that unmounts while presented still leaves the portal.
+  // enableDismissOnClose=false that unmounts while presented still leaves the portal, and removes
+  // the portal of a modal that unmounts before its opening animation starts.
   // Dimensions subscription cleanup: https://github.com/gorhom/react-native-bottom-sheet/issues/2734
   // and https://github.com/gorhom/react-native-bottom-sheet/pull/2751. Remove the useAnimatedLayout
   // hunks once an installed release includes the cleanup; retain the other local hunks.
@@ -59,6 +71,8 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
     patchPrefix: "@gorhom+bottom-sheet+",
   },
+  // Android resize: retain until upstream clears descendant geometry when the SVG canvas resizes.
+  // The native pixel regression is included in the patch; preserve the separate transform hunks.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",

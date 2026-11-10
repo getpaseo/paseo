@@ -281,23 +281,26 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
-### Instant-admit release (rollout_hours=0 from publish)
+### Instant-admit release (rollout_hours=0)
 
-For a fresh release that should admit everyone immediately (low-risk change, doc-only, hotfix, or just a release you want out fast), cut the release normally and queue the rollout flip immediately after:
+`npm run release:patch` and `npm run release:minor` tag-push, and tag-push runs always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), cut the release normally, wait for it to publish, then flip the manifests:
 
 ```bash
-# 1. Cut and publish (default 36h ramp from tag push).
+# 1. Cut and publish (36h ramp from tag push).
 npm run release:patch
 
-# 2. Immediately queue the flip — runs as soon as finalize-rollout completes.
+# 2. Wait for Desktop Release to publish the GitHub Release.
+gh run watch <desktop-release-run-id> --exit-status
+
+# 3. Flip the published manifests to instant admit.
 gh workflow run desktop-rollout.yml \
   -f tag=v0.1.64 \
   -f rollout_hours=0
 ```
 
-**Why this is gap-free:** `desktop-release.yml`'s `finalize-rollout` job and `desktop-rollout.yml` share the concurrency group `desktop-rollout-<tag>`. Dispatching `desktop-rollout.yml` while the tag-push pipeline is still running queues it safely behind `finalize-rollout`. The first public manifests already carry `rolloutHours=36`, then `desktop-rollout.yml` flips them to `rolloutHours=0` shortly afterward. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
+Dispatch only after `finalize-rollout` has published the release. Until then the release is a draft, and a draft has no tag: `desktop-rollout.yml` looks the release up by tag and fails with `release not found`. The concurrency group `desktop-rollout-<tag>` that the two workflows share orders them only once both are queued; it does not hold an early dispatch until the draft is published.
 
-Run the dispatch right after `release:patch` or `release:minor` returns. Don't wait for the tag-push CI to finish.
+The first public manifests carry `rolloutHours=36` for the minutes between publish and the flip. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
 
 ### Adjusting an already-published release
 
@@ -591,7 +594,7 @@ Release notes depend on the changelog heading format. The heading **must** be st
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
 
-`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
+`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
 
 ## Changelog policy
 
@@ -610,7 +613,7 @@ Older prerelease bodies on GitHub keep the notes they were synced with; `Release
 
 - The release agent writes the Chinese entry in the changelog commit, after the English entry is approved. Every beta that rewrites the English entry rewrites the Chinese one too, and promotion renames both. `packages/website/e2e/i18n.spec.ts` fails CI on the release commit when any entry has no current translation.
 - A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice. Delete Chinese entries whose English entry was renamed.
-- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
+- Keep the English highlights, sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
 
 ## Changelog ownership
 
@@ -653,7 +656,7 @@ claims a general improvement, rewrite it with the concrete change.
 
 ## Changelog conciseness
 
-Every bullet must be scannable at a glance. The changelog is not release documentation — it's a list.
+Every section bullet must be scannable at a glance. The changelog is not release documentation — it's a list. [Highlights](#changelog-highlights) get more room; every other bullet follows these limits.
 
 - **One sentence per bullet, max.** If a bullet contains two sentences, the second one is doing work that belongs in product docs, not the changelog. Cut it.
 - **No trailing periods.** Bullets are list items, not prose. Drop the period at the end of every bullet, including the period inside any bolded lead-in. `**Configurable terminal scrollback**` not `**Configurable terminal scrollback.**`.
@@ -662,6 +665,57 @@ Every bullet must be scannable at a glance. The changelog is not release documen
 - **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
 - **Stop after identifying the change.** Do not explain LAN/WAN topology, TLS handshakes, IPC, or other architecture in a changelog bullet. Put necessary background in product docs.
 - **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
+
+## Changelog highlights
+
+Every release entry leads with highlights: the changes a user would name first when asked what is
+new. They are a list above the first `###` section, biggest first. The sections below are the
+full record; a reader who stops after the highlights should have missed nothing they would ask
+about.
+
+```markdown
+## 0.16.0 - 2026-11-20
+
+- **Undo workspace archive:** Archiving a workspace in the app now shows a "Workspace archived" toast for six seconds. Undo, or Cmd/Ctrl+Z, restores the workspace with its tabs and agents. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
+
+### Added
+```
+
+- **The lead-in names what is new in four words at most.** Bold it, colon inside the bold. A reader
+  who sees only the bold words should know what this release added or changed. A category lead-in
+  such as `**Polish:**` gathers several related changes.
+- **The lead-in is not a place or something Paseo already had.** A device, screen or area names
+  where the change landed. A feature name that was true of the last release hides the news: Paseo
+  already had keyboard shortcuts, so the lead-in says they now work on mobile.
+- **The first sentence says the plain thing.** Write what a user would tell a friend: Paseo now
+  shows the background tasks an agent is running. Leave out the conditions and mechanics that make
+  it true.
+- **Describe the new behavior, not the old one.** Say what is faster or better now, and do not
+  dwell on how slow or broken it was before. A number is welcome as a short aside after the new
+  behavior is stated: seconds, a percentage, a multiple.
+- **Do not list what a sentence already covers.** After "the same shortcuts as desktop", naming
+  five of them adds nothing. Keep a list only when it sets the scope, such as the providers a
+  feature works with.
+- **The description runs one to three sentences.** Sentences end with periods, and the attribution
+  follows the last one. [Changelog wording](#changelog-wording) applies in full.
+- **A highlight replaces the section bullets it covers.** A PR appears once in an entry, so its
+  attribution moves to the highlight.
+- **A highlight is something a user would name.** Everything else stays a section bullet. A patch
+  release still has one: the change it ships for.
+- **Fixes are routine and stay in `### Fixed`.** Do not add a summary of fixes. A fix, or a group
+  of related fixes, becomes a highlight only when it passes the same test as a feature, and then
+  it is written as what works now: `**Fewer reconnects on return:**`.
+
+| Avoid                                                                                      | Write                                                                                                            |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                                               |
+| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                                              |
+| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                                                         |
+| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner on hosts with many worktrees |
+| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                                                    |
+
+Before showing a draft, read only the bold lead-ins top to bottom. Each one must answer "what is
+new?" without its description.
 
 ## Changelog attribution
 
@@ -694,7 +748,7 @@ Rules:
 
 ## Changelog ordering
 
-Entries within each section (Added, Improved, Fixed) are ordered by user impact:
+Highlights come first, ordered by user impact. Entries within each section (Added, Improved, Fixed) follow the same order:
 
 1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.
