@@ -4,6 +4,8 @@ import { within } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
+import { ExpandableBadge } from "@/components/message";
+import { page, userEvent } from "vitest/browser";
 import { PlanCard } from "@/components/plan-card";
 import { MessagePreview } from "@/components/user-message";
 import { DisclosureRow } from "./disclosure";
@@ -143,5 +145,51 @@ describe("timeline disclosures hold their row", () => {
 
     act(() => header().click());
     expect(isExpanded()).toBe(true);
+  });
+});
+
+function renderFileDetails() {
+  return <div>File contents</div>;
+}
+
+describe("tool badge file action", () => {
+  it("keeps file opening separate from the accessible disclosure button", async () => {
+    let opened = 0;
+    function Badge() {
+      const [expanded, setExpanded] = React.useState(false);
+      const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
+      const openFile = React.useCallback(() => {
+        opened += 1;
+      }, []);
+      return (
+        <ExpandableBadge
+          label="Read"
+          secondaryLabel="src/index.ts"
+          isExpanded={expanded}
+          onToggle={toggle}
+          onOpenFile={openFile}
+          renderDetails={renderFileDetails}
+        />
+      );
+    }
+    act(() => root.render(<Badge />));
+    await page.getByRole("button", { name: "Read src/index.ts", exact: true }).hover();
+    const file = view().getByRole("button", { name: /^Open file$/ });
+    expect(file.parentElement?.closest("button")).toBeNull();
+    await page.getByRole("button", { name: "Open file", exact: true }).click();
+    expect(opened).toBe(1);
+    const disclosure = view().getByRole("button", { name: /^Read src\/index\.ts$/ });
+    expect(view().queryByText("File contents")).toBeNull();
+    await page.getByRole("button", { name: "Read src/index.ts", exact: true }).click();
+
+    expect(view().getByText("File contents")).toBeTruthy();
+    expect(opened).toBe(1);
+    act(() => file.focus());
+    await userEvent.keyboard("{Enter}");
+    expect(opened).toBe(2);
+    expect(view().getByText("File contents")).toBeTruthy();
+    act(() => disclosure.focus());
+    await userEvent.keyboard("{Enter}");
+    expect(view().queryByText("File contents")).toBeNull();
   });
 });
