@@ -40,7 +40,7 @@ interface ReserveTest {
   appServer: FakeCodexAppServer;
   session: CodexAppServerAgentSession;
   events: AgentStreamEvent[];
-  setRateLimits(response: unknown): void;
+  setRateLimits(response: unknown | (() => unknown)): void;
   turnStarts(): Array<Record<string, unknown>>;
   rateLimitReads(): Array<Record<string, unknown>>;
   waitForTurnStarts(count: number): Promise<void>;
@@ -50,7 +50,8 @@ interface ReserveTest {
 function startReserveTest(model: string): ReserveTest {
   let rateLimits: unknown = reserveOffered;
   const appServer = createFakeCodexAppServer({
-    "account/rateLimits/read": () => rateLimits,
+    "account/rateLimits/read": () => (typeof rateLimits === "function" ? rateLimits() : rateLimits),
+    "turn/interrupt": () => ({}),
   });
   const session = new CodexAppServerAgentSession(
     { provider: "codex", cwd: "/workspace/project", modeId: "auto", model },
@@ -81,12 +82,44 @@ function startReserveTest(model: string): ReserveTest {
       return vi.waitFor(() => {
         const terminal = events
           .slice(seen)
-          .find((event) => event.type === "turn_completed" || event.type === "turn_failed");
+          .find(
+            (event) =>
+              event.type === "turn_completed" ||
+              event.type === "turn_failed" ||
+              event.type === "turn_canceled",
+          );
         if (!terminal) throw new Error("no terminal event yet");
         return terminal;
       });
     },
   };
+}
+
+function echoUserMessage(
+  appServer: FakeCodexAppServer,
+  input: { id: string; text: string; turnId: string; clientId?: unknown },
+): void {
+  appServer.child.stdout.write(
+    `${JSON.stringify({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: input.turnId,
+        item: {
+          type: "userMessage",
+          id: input.id,
+          clientId: input.clientId ?? null,
+          content: [{ type: "text", text: input.text }],
+        },
+      },
+    })}\n`,
+  );
+}
+
+function userMessages(events: AgentStreamEvent[]): string[] {
+  return events.flatMap((event) =>
+    event.type === "timeline" && event.item.type === "user_message" ? [event.item.text] : [],
+  );
 }
 
 function inputText(turnStart: Record<string, unknown>): string {
@@ -258,4 +291,122 @@ describe("Luna Reserve fallback", () => {
       await t.session.close();
     }
   });
+
+  test("a Stop while the reserve offer is read cancels the turn without starting another", async () => {
+    const t = startReserveTest(LUNA);
+    let answer!: (response: unknown) => void;
+    t.setRateLimits(() => new Promise((resolve) => (answer = resolve)));
+    try {
+      const terminal = t.nextTerminal();
+      await t.session.startTurn("refactor the parser");
+      t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-1" });
+      t.appServer.completeTurn({ status: "failed", error: USAGE_LIMIT });
+      await vi.waitFor(() => expect(t.rateLimitReads()).toHaveLength(1));
+
+      const stop = t.session.interrupt();
+      answer(reserveOffered);
+      await stop;
+
+      expect(await terminal).toMatchObject({ type: "turn_canceled" });
+      expect(t.turnStarts()).toHaveLength(1);
+      expect(t.appServer.requests().some((r) => r.method === "turn/interrupt")).toBe(false);
+      expect(notices(t.events)).toEqual([]);
+    } finally {
+      await t.session.close();
+    }
+  });
+
+  test("a Stop after the reserve turn was sent interrupts that turn", async () => {
+    const t = startReserveTest(LUNA);
+    try {
+      await t.session.startTurn("refactor the parser");
+      t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-1" });
+      t.appServer.completeTurn({ status: "failed", error: USAGE_LIMIT });
+      await t.waitForTurnStarts(2);
+
+      const stop = t.session.interrupt();
+      t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-2" });
+      await stop;
+
+      const interrupts = t.appServer
+        .requests()
+        .filter((request) => request.method === "turn/interrupt")
+        .map((request) => request.params);
+      expect(interrupts).toEqual([{ threadId: "thread-1", turnId: "native-2" }]);
+    } finally {
+      await t.session.close();
+    }
+  });
+
+  test("the continuation prompt is not shown as the user's message", async () => {
+    const t = startReserveTest(LUNA);
+    try {
+      await t.session.startTurn("refactor the parser");
+      t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-1" });
+      echoUserMessage(t.appServer, { id: "m1", text: "refactor the parser", turnId: "native-1" });
+      t.appServer.completeTurn({ status: "failed", error: USAGE_LIMIT });
+      await t.waitForTurnStarts(2);
+      const clientId = t.turnStarts()[1].clientUserMessageId;
+      expect(clientId).toEqual(expect.stringMatching(/^paseo-luna-reserve-/));
+
+      const terminal = t.nextTerminal();
+      t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-2" });
+      echoUserMessage(t.appServer, { id: "m2", text: "Continue.", turnId: "native-2", clientId });
+      t.appServer.completeTurn({ status: "completed" });
+      await terminal;
+
+      expect(userMessages(t.events)).toEqual(["refactor the parser"]);
+    } finally {
+      await t.session.close();
+    }
+  });
+});
+
+test("history leaves out a Luna Reserve continuation", async () => {
+  const userMessage = (id: string, text: string, clientId: string | null) => ({
+    type: "userMessage",
+    id,
+    clientId,
+    content: [{ type: "text", text }],
+  });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: "/workspace/project", modeId: "auto", model: LUNA },
+    null,
+    createTestLogger(),
+    async () => {
+      throw new Error("no app-server in this test");
+    },
+  );
+  const internals = session as unknown as {
+    connectionState: string;
+    currentThreadId: string;
+    client: { request: (method: string, params: unknown) => Promise<unknown> };
+  };
+  internals.connectionState = "connected";
+  internals.currentThreadId = "thread-1";
+  internals.client = {
+    request: async (method, params) => {
+      if (method !== "thread/read") {
+        return {};
+      }
+      if (!(params as { includeTurns?: boolean }).includeTurns) {
+        return { thread: { id: "thread-1" } };
+      }
+      return {
+        thread: {
+          turns: [
+            { id: "native-1", items: [userMessage("m1", "refactor the parser", null)] },
+            {
+              id: "native-2",
+              items: [userMessage("m2", "Continue.", "paseo-luna-reserve-1")],
+            },
+          ],
+        },
+      };
+    },
+  };
+
+  const history = await Array.fromAsync(session.streamHistory());
+
+  expect(userMessages(history)).toEqual(["refactor the parser"]);
 });

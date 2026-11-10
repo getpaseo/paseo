@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 // Luna Reserve is a separate allowance some ChatGPT accounts get once their ordinary
@@ -17,6 +18,18 @@ export const LUNA_RESERVE_RATE_LIMITS_PARAMS = {
 // The turn that hit the limit already recorded its input in the thread, so the reserve
 // turn only asks the model to go on.
 export const LUNA_RESERVE_CONTINUE_PROMPT = "Continue.";
+
+// Codex echoes a turn's input as a user message carrying the client id it was sent
+// with. This prefix marks the continuation as Paseo's, so it never shows as the user's.
+const CONTINUATION_CLIENT_ID_PREFIX = "paseo-luna-reserve-";
+
+export function lunaReserveContinuationClientId(): string {
+  return `${CONTINUATION_CLIENT_ID_PREFIX}${randomUUID()}`;
+}
+
+export function isLunaReserveContinuation(clientMessageId: string | null | undefined): boolean {
+  return clientMessageId?.startsWith(CONTINUATION_CLIENT_ID_PREFIX) === true;
+}
 
 const RateLimitSnapshotSchema = z
   .object({

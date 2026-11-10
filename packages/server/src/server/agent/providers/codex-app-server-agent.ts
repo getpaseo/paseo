@@ -104,6 +104,8 @@ import {
   LUNA_RESERVE_RATE_LIMITS_PARAMS,
   type CodexAccountRateLimits,
   isCodexUsageLimitError,
+  isLunaReserveContinuation,
+  lunaReserveContinuationClientId,
   lunaReserveCovers,
   ordinaryUsageRecovered,
   parseCodexAccountRateLimits,
@@ -3553,6 +3555,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private activeForegroundRunOptions: AgentRunOptions | undefined;
   /** The model Luna Reserve stands in for, while the account's ordinary usage is used up. */
   private lunaReserveFor: string | null = null;
+  /** Counts Stop requests, so a Luna Reserve continuation can tell one arrived meanwhile. */
+  private interruptRequests = 0;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   /** The tier the options ask for; `serviceTier` is what the current model can honor. */
   private requestedServiceTier: string | null = null;
@@ -4148,7 +4152,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
     }
     this.historyIndexed = true;
-    return { timeline, providerSubagentEvents };
+    return {
+      timeline: timeline.filter(
+        (entry) =>
+          entry.item.type !== "user_message" ||
+          !isLunaReserveContinuation(entry.item.clientMessageId),
+      ),
+      providerSubagentEvents,
+    };
   }
 
   // Turns and rewind route by the thread's earlier turns and sub-agents. A resumed
@@ -5190,6 +5201,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.interruptRequests += 1;
     const pendingStart = this.pendingForegroundStart;
     if (pendingStart) {
       pendingStart.cancelRequested = true;
@@ -6562,10 +6574,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (parsed.status !== "interrupted" && this.currentTurnId) {
       this.terminalProcessIdsByTurnId.delete(this.currentTurnId);
     }
-    if (parsed.status === "failed") {
-      if (await this.continueOnLunaReserve(parsed)) {
-        return;
-      }
+    const reserve = parsed.status === "failed" ? await this.continueOnLunaReserve(parsed) : null;
+    if (reserve === "continued") {
+      return;
+    }
+    if (reserve === "stopped") {
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } else if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
@@ -6619,36 +6634,29 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   /**
    * When a turn on the reserve's own model fails because ordinary usage is used up, and the
-   * account offers Luna Reserve, run the rest of the same turn on the reserve. Returns
-   * whether the turn goes on; otherwise the caller reports the failure.
+   * account offers Luna Reserve, run the rest of the same turn on the reserve. "reported"
+   * leaves the failure to the caller; "stopped" means the user stopped the turn meanwhile.
    */
   private async continueOnLunaReserve(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
-  ): Promise<boolean> {
+  ): Promise<"continued" | "stopped" | "reported"> {
     const model = this.config.model;
     const foregroundTurnId = this.activeForegroundTurnId;
+    const client = this.client;
     if (
       !isCodexUsageLimitError(parsed.codexErrorInfo) ||
       !model ||
       this.onLunaReserve() ||
-      !foregroundTurnId
+      !foregroundTurnId ||
+      !client
     ) {
-      return false;
+      return "reported";
     }
-    const limits = await this.readAccountRateLimits();
-    if (!limits || !lunaReserveCovers(model, limits)) {
-      return false;
-    }
-    const client = this.client;
-    if (this.closed || !client || this.activeForegroundTurnId !== foregroundTurnId) {
-      return false;
-    }
-    this.lunaReserveFor = model;
-    this.emitLunaReserveNotice(
-      `Ordinary Codex usage is used up. Continuing on Luna Reserve until it is available again.`,
-    );
+    // From here a Stop belongs to the turn that may follow, not to the one that failed:
+    // it waits until that turn is identified, and no turn starts once Stop has arrived.
+    const interruptRequests = this.interruptRequests;
+    const stopped = () => this.interruptRequests !== interruptRequests;
     this.currentTurnId = null;
-    this.resetTurnTrackingState();
     let resolveIdentification!: (turnId: string | null) => void;
     this.pendingForegroundTurnIdentification = {
       foregroundTurnId,
@@ -6657,17 +6665,34 @@ export class CodexAppServerAgentSession implements AgentSession {
       }),
       resolve: (turnId) => resolveIdentification(turnId),
     };
+    const limits = await this.readAccountRateLimits();
+    if (stopped()) return "stopped";
+    if (
+      !limits ||
+      !lunaReserveCovers(model, limits) ||
+      this.closed ||
+      this.activeForegroundTurnId !== foregroundTurnId
+    ) {
+      return "reported";
+    }
+    this.lunaReserveFor = model;
     try {
       const turnStart = await this.buildTurnStartParams(
         LUNA_RESERVE_CONTINUE_PROMPT,
         this.activeForegroundRunOptions,
       );
+      if (stopped()) return "stopped";
+      turnStart.params.clientUserMessageId = lunaReserveContinuationClientId();
+      this.emitLunaReserveNotice(
+        "Ordinary Codex usage is used up. Continuing on Luna Reserve until it is available again.",
+      );
+      this.resetTurnTrackingState();
       await client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
-      return true;
+      return "continued";
     } catch (error) {
       this.logger.warn({ err: error }, "Could not continue the Codex turn on Luna Reserve");
       this.lunaReserveFor = null;
-      return false;
+      return "reported";
     }
   }
 
@@ -7333,6 +7358,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     if (!this.rememberCodexUserMessageTurn(timelineItem.messageId, parsed.turnId)) {
+      return;
+    }
+    // Still a turn of the thread, but Paseo's input rather than the user's.
+    if (isLunaReserveContinuation(timelineItem.clientMessageId)) {
       return;
     }
     const clientMessageId = timelineItem.clientMessageId ?? this.activeClientMessageId;
