@@ -91,7 +91,13 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  claudeConfigDir,
+  claudeProjectDirSync,
+  claudeTranscriptPath,
+  claudeTranscriptPathSync,
+  resolveClaudeConfigDir,
+} from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -108,6 +114,8 @@ import {
   type AgentCreateSessionOptions,
   type AgentDraftControls,
   type AgentOptionControl,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -473,6 +481,7 @@ interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  configDir?: string;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
@@ -486,6 +495,7 @@ type ClaudeImportDescriptorResult =
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
+  configDir?: string;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1612,6 +1622,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly configDir?: string;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
@@ -1631,6 +1642,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
     this.runtimeSettings = options.runtimeSettings;
+    this.configDir = options.configDir;
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.resolveVersion =
@@ -1652,6 +1664,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       persistSession: options?.persistSession,
@@ -1667,6 +1680,45 @@ export class ClaudeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    return this.createPersistedSession(handle, overrides, launchContext);
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const metadata = coerceSessionMetadata(handle.metadata);
+    const cwd = context?.cwd ?? metadata.cwd;
+    if (!cwd) {
+      throw new Error("Claude history read requires the original working directory in metadata");
+    }
+    const session = new ClaudeAgentSession(this.assertConfig({ provider: "claude", cwd }), {
+      defaults: this.defaults,
+      runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
+      handle,
+      agentId: context?.agentId,
+      launchEnv: context?.env,
+      logger: this.logger,
+      queryFactory: this.queryFactory,
+      resolveBinary: this.resolveBinary,
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  private async createPersistedSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<ClaudeAgentSession> {
     const metadata = coerceSessionMetadata(handle.metadata);
     const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
     if (!merged.cwd) {
@@ -1681,6 +1733,7 @@ export class ClaudeAgentClient implements AgentClient {
     const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -2408,6 +2461,7 @@ class ClaudeAgentSession implements AgentSession {
    */
   private withheldErrorReply: AgentTimelineItem[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
+  private readonly configDir?: string;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
@@ -2424,6 +2478,7 @@ class ClaudeAgentSession implements AgentSession {
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
+    this.configDir = options.configDir;
     this.harnessEnvironment = this.buildSdkEnv();
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
@@ -5696,7 +5751,11 @@ class ClaudeAgentSession implements AgentSession {
     return claudeTranscriptPath({
       cwd,
       sessionId,
-      configDir: claudeConfigDir(this.harnessEnvironment),
+      configDir: resolveClaudeConfigDir({
+        configDir: this.configDir,
+        runtimeSettings: this.runtimeSettings,
+        launchEnv: this.launchEnv,
+      }),
     });
   }
 

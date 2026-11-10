@@ -17,11 +17,14 @@ import { createHash, randomUUID } from "node:crypto";
 import type pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
+  ProviderHistoryReadResultSchema,
   requireProviderCapabilities,
   type ProviderConnectRequest,
   type ProviderCatalogOptions,
   type ProviderConnection,
   type ProviderEvent,
+  type ProviderHistoryReadRequest,
+  type ProviderHistoryReadResult,
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
@@ -430,6 +433,26 @@ export class PluginRuntime {
     return ProviderStatusSchema.parse(
       await this.request(loaded, {
         type: "provider.status",
+        requestId: randomUUID(),
+        providerId,
+        request,
+      }),
+    );
+  }
+
+  async getProviderHistory(
+    pluginId: string,
+    providerId: string,
+    request: ProviderHistoryReadRequest,
+  ): Promise<ProviderHistoryReadResult> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded.providers.some((provider) => provider.id === providerId)) {
+      throw new Error(`Plugin ${pluginId} does not contribute provider ${providerId}`);
+    }
+    return ProviderHistoryReadResultSchema.parse(
+      await this.request(loaded, {
+        type: "provider.history",
         requestId: randomUUID(),
         providerId,
         request,

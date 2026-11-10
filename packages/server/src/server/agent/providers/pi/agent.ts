@@ -1,6 +1,8 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { readPiTranscript } from "./transcript.js";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -11,6 +13,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentDraftControls,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2781,6 +2785,23 @@ export class PiRpcAgentClient implements AgentClient {
     }
     await runtimeSession.setModel(provider, id);
     return runtimeSession.getState();
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    _context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const sessionFile = handle.nativeHandle;
+    if (!sessionFile) {
+      throw new Error("Pi history read requires a native session file handle");
+    }
+
+    const { messages, userEntries } = readPiTranscript(await readFile(sessionFile, "utf8"));
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamPiHistory(this.provider, messages, userEntries)) {
+      events.push(event);
+    }
+    return { events, coverage: { kind: "complete" } };
   }
 
   async fetchCatalog(
