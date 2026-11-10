@@ -235,7 +235,7 @@ async function readLinuxProcessTable(
 
 // /proc/<pid>/stat is "pid (comm) state ppid pgrp session ...". comm may itself
 // contain spaces and parentheses, so fields are read after the last ")".
-export function parseProcStat(stat: string): ProcessTableEntry | null {
+function parseProcStat(stat: string): ProcessTableEntry | null {
   const commEnd = stat.lastIndexOf(")");
   if (commEnd === -1) return null;
   const pid = Number.parseInt(stat, 10);

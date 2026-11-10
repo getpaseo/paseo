@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   createTreeKillTerminator,
-  parseProcStat,
   parsePsProcessTable,
   readProcessTable,
   terminateWithTreeKill,
@@ -457,19 +456,30 @@ describe.runIf(process.platform === "linux")("Linux process table failures", () 
 });
 
 describe("process table parsing", () => {
-  test("parses /proc stat lines with spaces and parentheses in comm", () => {
-    expect(parseProcStat("4321 (jcode (acp) x) S 4000 4321 4321 0 -1 4194560")).toEqual({
-      pid: 4321,
-      ppid: 4000,
-      sessionLeader: true,
-    });
-    expect(parseProcStat("4322 (bash) S 4321 4322 4000 0 -1")).toEqual({
-      pid: 4322,
-      ppid: 4321,
-      sessionLeader: false,
-    });
-    expect(parseProcStat("garbage")).toBeNull();
-  });
+  test.runIf(process.platform === "linux")(
+    "reads proc stat lines with spaces and parentheses in comm",
+    async () => {
+      const stats: Record<string, string> = {
+        "/proc/4321/stat": "4321 (jcode (acp) x) S 4000 4321 4321 0 -1 4194560",
+        "/proc/4322/stat": "4322 (bash) S 4321 4322 4000 0 -1",
+      };
+      expect(
+        await readProcessTable({
+          readdir: async () => ["4321", "4322"],
+          readFile: async (path) => stats[path] ?? "garbage",
+        }),
+      ).toEqual([
+        { pid: 4321, ppid: 4000, sessionLeader: true },
+        { pid: 4322, ppid: 4321, sessionLeader: false },
+      ]);
+      expect(
+        await readProcessTable({
+          readdir: async () => ["4321"],
+          readFile: async () => "garbage",
+        }),
+      ).toBeNull();
+    },
+  );
 
   test("parses ps output and reads session leadership from STAT", () => {
     expect(parsePsProcessTable("    1     0 Ss  \n  500     1 Ssl\n  501   500 S+\n\n")).toEqual([
