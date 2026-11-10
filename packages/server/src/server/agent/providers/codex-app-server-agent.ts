@@ -2600,6 +2600,14 @@ type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
+      kind: "hook_completed";
+      threadId: string;
+      turnId: string | null;
+      eventName: string;
+      status: string;
+      entries: Array<{ kind: string; text: string }>;
+    }
+  | {
       kind: "turn_completed";
       status: string;
       errorMessage: string | null;
@@ -2719,6 +2727,36 @@ function isCodexDeltaNotification(
 }
 
 const CodexNotificationSchema = z.union([
+  z
+    .object({
+      method: z.literal("hook/completed"),
+      params: z.object({
+        threadId: z.string(),
+        turnId: z.string().nullish(),
+        run: z.object({
+          eventName: z.string(),
+          status: z.string(),
+          entries: z.array(z.object({ kind: z.string(), text: z.string() })),
+        }),
+      }),
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "hook_completed",
+        threadId: params.threadId,
+        turnId: params.turnId ?? null,
+        eventName: params.run.eventName,
+        status: params.run.status,
+        entries: params.run.entries,
+      }),
+    ),
+  z.object({ method: z.literal("hook/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
   z
     .object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema })
     .transform(
@@ -5895,6 +5933,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "turn_completed":
         this.handleTurnCompletedNotification(parsed);
         return;
+      case "hook_completed":
+        this.handleHookCompletedNotification(parsed);
+        return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
         return;
@@ -6509,6 +6550,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.savedThreadId = current;
     this.cachedRuntimeInfo = null;
     this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: current });
+  }
+
+  private handleHookCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "hook_completed" }>,
+  ): void {
+    const rejectsCurrentPrompt =
+      parsed.eventName === "userPromptSubmit" &&
+      parsed.status === "blocked" &&
+      this.currentTurnId !== null &&
+      parsed.turnId === this.currentTurnId;
+    if (!rejectsCurrentPrompt) return;
+
+    const feedback = parsed.entries
+      .filter(
+        (entry) => entry.kind === "feedback" || entry.kind === "stop" || entry.kind === "error",
+      )
+      .map((entry) => entry.text.trim())
+      .filter((text) => text.length > 0)
+      .join("\n\n");
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: {
+        type: "notification",
+        level: "error",
+        message: feedback || "Prompt rejected by a UserPromptSubmit hook.",
+      },
+    });
   }
 
   private handleTurnCompletedNotification(

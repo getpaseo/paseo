@@ -32,6 +32,261 @@ import {
   toAgentUsage,
 } from "./codex-app-server-agent.js";
 
+describe("Codex prompt hook rejection", () => {
+  test("shows a rejected queued follow-up without failing accepted work in the same turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.steerActiveTurn!("Allowed follow-up", { expectedTurnId: paseoTurnId });
+      await session.steerActiveTurn!("Rejected follow-up", { expectedTurnId: paseoTurnId });
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "completed",
+        entries: [],
+      });
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "blocked",
+        entries: [{ kind: "feedback", text: "Follow-up rejected" }],
+      });
+      appServer.says({ threadId: "thread-1", text: "Accepted work completed" });
+      const completion = waitForNextTurnCompletion(session);
+      appServer.completeTurn();
+      await expect(completion).resolves.toMatchObject({ type: "turn_completed" });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "Accepted work completed",
+          }),
+        }),
+      );
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "notification", level: "error", message: "Follow-up rejected" },
+        turnId: paseoTurnId,
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps the rejection visible in the manager timeline and permits a corrected submission", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const client: AgentClient = {
+      provider: "codex",
+      capabilities: provider.capabilities,
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({ models: [], modes: [] }),
+      createSession: (...args) => provider.createSession(...args),
+      resumeSession: (...args) => provider.resumeSession(...args),
+    };
+    const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+    const agent = await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "thread-1" },
+      createConfig({ cwd: process.cwd() }),
+    );
+    try {
+      const run = manager.runAgent(agent.id, "Disallowed prompt", {
+        clientMessageId: "blocked-prompt",
+      });
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "blocked",
+        entries: [{ kind: "feedback", text: "Remove the disallowed text and retry." }],
+      });
+      appServer.completeTurn();
+      await expect(run).resolves.toMatchObject({ finalText: "", canceled: false });
+
+      expect(manager.getTimeline(agent.id)).toEqual([
+        {
+          type: "user_message",
+          text: "Disallowed prompt",
+          messageId: "blocked-prompt",
+          clientMessageId: "blocked-prompt",
+        },
+        { type: "notification", level: "error", message: "Remove the disallowed text and retry." },
+      ]);
+      expect(manager.hasInFlightRun(agent.id)).toBe(false);
+      expect(manager.getAgent(agent.id)?.lastError).toBeUndefined();
+
+      const retry = manager.runAgent(agent.id, "Corrected prompt", {
+        clientMessageId: "corrected-prompt",
+      });
+      await appServer.waitForTurnStart(2);
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-B" });
+      appServer.says({ threadId: "thread-1", text: "Accepted" });
+      appServer.completeTurn();
+      await expect(retry).resolves.toMatchObject({ finalText: "Accepted", canceled: false });
+      expect(manager.hasInFlightRun(agent.id)).toBe(false);
+      appServer.assertNoErrors();
+    } finally {
+      await manager.closeAgent(agent.id);
+    }
+  });
+
+  test("shows blocking feedback and accepts the next turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "blocked",
+        entries: [{ kind: "feedback", text: "Remove the disallowed text and retry." }],
+      });
+      const completion = waitForNextTurnCompletion(session);
+      appServer.completeTurn();
+      await completion;
+
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "notification",
+            level: "error",
+            message: "Remove the disallowed text and retry.",
+          },
+          turnId: paseoTurnId,
+        },
+        {
+          type: "turn_completed",
+          provider: "codex",
+          usage: undefined,
+          turnId: paseoTurnId,
+        },
+      ]);
+
+      events.length = 0;
+      const replacement = await session.startTurn("Allowed replacement prompt");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-B" });
+      appServer.says({ threadId: "thread-1", text: "Accepted" });
+      const replacementCompletion = waitForNextTurnCompletion(session);
+      appServer.completeTurn();
+      await replacementCompletion;
+
+      expect(events.filter((event) => event.type.startsWith("turn_"))).toEqual([
+        { type: "turn_started", provider: "codex", turnId: replacement.turnId },
+        { type: "turn_completed", provider: "codex", usage: undefined, turnId: replacement.turnId },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    { eventName: "preToolUse", status: "blocked", turnId: "native-A", threadId: "thread-1" },
+    {
+      eventName: "userPromptSubmit",
+      status: "completed",
+      turnId: "native-A",
+      threadId: "thread-1",
+    },
+    { eventName: "userPromptSubmit", status: "failed", turnId: "native-A", threadId: "thread-1" },
+    {
+      eventName: "userPromptSubmit",
+      status: "blocked",
+      turnId: "older-turn",
+      threadId: "thread-1",
+    },
+    { eventName: "userPromptSubmit", status: "blocked", turnId: null, threadId: "thread-1" },
+    {
+      eventName: "userPromptSubmit",
+      status: "blocked",
+      turnId: "native-A",
+      threadId: "child-thread",
+    },
+  ])(
+    "does not fail the foreground turn for an unrelated hook: $eventName $status $turnId $threadId",
+    async ({ eventName, status, turnId, threadId }) => {
+      const appServer = createFakeCodexAppServer();
+      const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        appServer.completesHook({
+          threadId,
+          turnId,
+          eventName,
+          status,
+          entries: [{ kind: "feedback", text: "Unrelated feedback" }],
+        });
+        const completion = waitForNextTurnCompletion(session);
+        appServer.completeTurn();
+        await completion;
+        expect(events).toEqual([
+          { type: "turn_completed", provider: "codex", turnId: paseoTurnId, usage: undefined },
+        ]);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test("provides an actionable failure when the blocking hook has no feedback", async () => {
+    const appServer = createFakeCodexAppServer();
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      appServer.completesHook({
+        threadId: "thread-1",
+        turnId: "native-A",
+        eventName: "userPromptSubmit",
+        status: "blocked",
+        entries: [],
+      });
+      const completion = waitForNextTurnCompletion(session);
+      appServer.completeTurn();
+      await completion;
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "notification",
+            level: "error",
+            message: "Prompt rejected by a UserPromptSubmit hook.",
+          },
+          turnId: paseoTurnId,
+        },
+        {
+          type: "turn_completed",
+          provider: "codex",
+          usage: undefined,
+          turnId: paseoTurnId,
+        },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe("mapCodexPlanUpdateToTodo", () => {
   test("preserves checklist progress without creating a plan card", () => {
     expect(
@@ -92,6 +347,7 @@ import {
   fakeCodexThreadHistory,
   type FakeCodexAppServer,
   waitForNextEvent,
+  waitForNextTurnCompletion,
   waitForNextPermission,
   waitForNextTimelineItem,
   waitForProviderSubagent,
