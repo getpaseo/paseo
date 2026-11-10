@@ -743,6 +743,8 @@ export const ja: TranslationResources = {
         archive: "アーカイブ",
         closeTerminalTitle: "ターミナルを閉じますか？",
         closeTerminalMessage: "このターミナルで実行中のプロセスはすぐに停止されます。",
+        archiveAgentTitle: "エージェントをアーカイブしますか？",
+        archiveAgentMessage: "このタブを閉じるとエージェントがアーカイブされます。",
         archiveRunningAgentTitle: "実行中のエージェントをアーカイブしますか？",
         archiveRunningAgentMessage:
           "このエージェントはまだ実行中です。アーカイブするとエージェントが停止してタブが閉じられます。",
@@ -2446,6 +2448,11 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      alwaysConfirmAgentArchive: {
+        label: "エージェントをアーカイブする前に常に確認",
+        description:
+          "タブを閉じてエージェントをアーカイブする前に確認します。実行中のエージェントは常に確認します。",
+      },
       setup: {
         label: "初回セットアップ",
         description:

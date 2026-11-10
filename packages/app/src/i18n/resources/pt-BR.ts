@@ -743,6 +743,8 @@ export const ptBR: TranslationResources = {
         closeTerminalTitle: "Fechar terminal?",
         closeTerminalMessage:
           "Qualquer processo em execução neste terminal será interrompido imediatamente.",
+        archiveAgentTitle: "Arquivar agente?",
+        archiveAgentMessage: "Fechar esta aba arquivará o agente.",
         archiveRunningAgentTitle: "Arquivar agente em execução?",
         archiveRunningAgentMessage:
           "Este agente ainda está em execução. Arquivá-lo interromperá o agente e fechará a aba.",
@@ -2457,6 +2459,11 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      alwaysConfirmAgentArchive: {
+        label: "Sempre confirmar antes de arquivar agentes",
+        description:
+          "Perguntar antes que fechar uma aba arquive o agente. Agentes em execução sempre perguntam.",
+      },
       setup: {
         label: "Configuração inicial",
         description: "Rever aparência, provedores, projetos e pareamento do celular",

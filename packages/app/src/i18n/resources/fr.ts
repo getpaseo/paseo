@@ -745,6 +745,8 @@ export const fr: TranslationResources = {
         archive: "Archiver",
         closeTerminalTitle: "Fermer le terminal ?",
         closeTerminalMessage: "Tout processus en cours dans ce terminal sera arrêté immédiatement.",
+        archiveAgentTitle: "Archiver l’agent ?",
+        archiveAgentMessage: "Fermer cet onglet archivera l’agent.",
         archiveRunningAgentTitle: "Archiver l’agent en cours ?",
         archiveRunningAgentMessage:
           "Cet agent est toujours en cours d’exécution. L’archiver arrêtera l’agent et fermera l’onglet.",
@@ -2473,6 +2475,11 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      alwaysConfirmAgentArchive: {
+        label: "Toujours confirmer avant d’archiver les agents",
+        description:
+          "Demander avant que la fermeture d’un onglet archive son agent. Les agents en cours demandent toujours.",
+      },
       setup: {
         label: "Configuration initiale",
         description:

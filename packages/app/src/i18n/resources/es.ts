@@ -746,6 +746,8 @@ export const es: TranslationResources = {
         closeTerminalTitle: "¿Cerrar terminal?",
         closeTerminalMessage:
           "Cualquier proceso en ejecución en esta terminal se detendrá inmediatamente.",
+        archiveAgentTitle: "¿Archivar agente?",
+        archiveAgentMessage: "Al cerrar esta pestaña se archivará el agente.",
         archiveRunningAgentTitle: "¿Agente de ejecución de archivos?",
         archiveRunningAgentMessage:
           "Este agente todavía está ejecutándose. Archivarlo detendrá al agente y cerrará la pestaña.",
@@ -2472,6 +2474,11 @@ export const es: TranslationResources = {
     general: {
       title: "General",
       sending: "Envío",
+      alwaysConfirmAgentArchive: {
+        label: "Confirmar siempre antes de archivar agentes",
+        description:
+          "Pregunta antes de que cerrar una pestaña archive su agente. Los agentes en ejecución siempre preguntan.",
+      },
       setup: {
         label: "Configuración inicial",
         description:

@@ -111,6 +111,8 @@ export interface AppSettings {
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
+  /** Ask before closing an idle agent's tab archives it. Running agents always ask. */
+  alwaysConfirmAgentArchive: boolean;
 }
 
 export type AppSettingsUpdate =
@@ -167,6 +169,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
+  alwaysConfirmAgentArchive: false,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -293,6 +296,7 @@ const StoredAppSettingsSchema = z
         legacyPullRequestsInSidePane: undefined,
       }),
     pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
+    alwaysConfirmAgentArchive: z.boolean().catch(false),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.

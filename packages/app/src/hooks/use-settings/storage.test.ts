@@ -71,6 +71,31 @@ describe("loadAppSettingsFromStorage", () => {
     },
   );
 
+  it("persists always confirm agent archive and defaults it off", async () => {
+    const deps = makeDeps();
+    expect((await loadAppSettingsFromStorage(deps)).alwaysConfirmAgentArchive).toBe(false);
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      deps,
+      updates: { alwaysConfirmAgentArchive: true },
+    });
+    expect((await loadAppSettingsFromStorage(deps)).alwaysConfirmAgentArchive).toBe(true);
+  });
+
+  it("defaults a malformed always confirm agent archive without discarding other settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          alwaysConfirmAgentArchive: "yes",
+          vimKeybindings: true,
+        }),
+      }),
+    });
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.alwaysConfirmAgentArchive).toBe(false);
+    expect(settings.vimKeybindings).toBe(true);
+  });
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

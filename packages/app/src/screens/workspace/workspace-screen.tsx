@@ -211,7 +211,7 @@ import {
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
-import { resolveCloseAgentTabPolicy } from "@/subagents";
+import { resolveCloseAgentTabConfirmation, resolveCloseAgentTabPolicy } from "@/subagents";
 import {
   getPanelInstanceAttributes,
   useModifiedPanelTabIds,
@@ -1383,6 +1383,7 @@ function WorkspaceScreenContent({
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
+  const alwaysConfirmAgentArchive = useSettings((settings) => settings.alwaysConfirmAgentArchive);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const sheets = useWorkspaceLayoutStore((state) =>
@@ -2003,12 +2004,23 @@ function WorkspaceScreenContent({
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         let closePolicy = resolveCloseAgentTabPolicy(agent);
-        const isRunning = agent?.status === "running";
+        const confirmation = resolveCloseAgentTabConfirmation(agent, {
+          alwaysConfirmArchive: alwaysConfirmAgentArchive,
+        });
 
-        if (isRunning && closePolicy.kind === "archive-on-close") {
+        if (confirmation) {
+          const isRunning = confirmation === "archive-running-agent";
           const confirmed = await confirmDialog({
-            title: t("workspace.tabs.confirmations.archiveRunningAgentTitle"),
-            message: t("workspace.tabs.confirmations.archiveRunningAgentMessage"),
+            title: t(
+              isRunning
+                ? "workspace.tabs.confirmations.archiveRunningAgentTitle"
+                : "workspace.tabs.confirmations.archiveAgentTitle",
+            ),
+            message: t(
+              isRunning
+                ? "workspace.tabs.confirmations.archiveRunningAgentMessage"
+                : "workspace.tabs.confirmations.archiveAgentMessage",
+            ),
             confirmLabel: t("workspace.tabs.confirmations.archive"),
             cancelLabel: t("workspace.tabs.confirmations.cancel"),
             destructive: true,
@@ -2056,6 +2068,7 @@ function WorkspaceScreenContent({
       });
     },
     [
+      alwaysConfirmAgentArchive,
       archiveAgent,
       closeTab,
       closeWorkspaceTabWithCleanup,

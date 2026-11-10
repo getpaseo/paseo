@@ -736,6 +736,8 @@ export const zhCN: TranslationResources = {
         archive: "归档",
         closeTerminalTitle: "关闭 Terminal？",
         closeTerminalMessage: "此 Terminal 中任何正在运行的进程都会立即停止。",
+        archiveAgentTitle: "归档 Agent？",
+        archiveAgentMessage: "关闭此标签会归档该 Agent。",
         archiveRunningAgentTitle: "归档正在运行的 Agent？",
         archiveRunningAgentMessage: "此 Agent 仍在运行。归档会停止该 Agent 并关闭标签。",
         closeTabsLeftTitle: "关闭左侧标签？",
@@ -2399,6 +2401,10 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      alwaysConfirmAgentArchive: {
+        label: "归档 Agent 前始终确认",
+        description: "关闭标签归档 Agent 前先确认。正在运行的 Agent 始终会确认。",
+      },
       setup: {
         label: "首次设置",
         description: "重新设置外观、提供方、项目和手机配对",

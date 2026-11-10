@@ -739,6 +739,8 @@ export const ko: TranslationResources = {
           "{{count}} 탭에 저장되지 않은 변경 사항이 있습니다. 종료하면 해당 초안이 삭제됩니다.",
         closeTerminalTitle: "터미널을 닫을까요?",
         closeTerminalMessage: "이 터미널에서 실행 중인 프로세스가 즉시 중지됩니다.",
+        archiveAgentTitle: "에이전트를 보관할까요?",
+        archiveAgentMessage: "이 탭을 닫으면 에이전트가 보관됩니다.",
         archiveRunningAgentTitle: "실행 중인 에이전트를 보관할까요?",
         archiveRunningAgentMessage:
           "이 에이전트는 아직 실행 중입니다. 보관하면 에이전트가 중지되고 탭이 닫힙니다.",
@@ -2434,6 +2436,11 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      alwaysConfirmAgentArchive: {
+        label: "에이전트 보관 전 항상 확인",
+        description:
+          "탭을 닫아 에이전트를 보관하기 전에 확인합니다. 실행 중인 에이전트는 항상 확인합니다.",
+      },
       setup: {
         label: "초기 설정",
         description: "모양, 제공자, 프로젝트, 휴대폰 페어링을 다시 진행합니다",

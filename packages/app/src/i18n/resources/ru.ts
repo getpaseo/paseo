@@ -746,6 +746,8 @@ export const ru: TranslationResources = {
         closeTerminalTitle: "Закрыть терминал?",
         closeTerminalMessage:
           "Любой запущенный процесс в этом терминале будет немедленно остановлен.",
+        archiveAgentTitle: "Архивировать агента?",
+        archiveAgentMessage: "При закрытии этой вкладки агент будет архивирован.",
         archiveRunningAgentTitle: "Архивировать работающего агента?",
         archiveRunningAgentMessage:
           "Этот агент всё ещё работает. При архивировании агент будет остановлен, а вкладка закрыта.",
@@ -2460,6 +2462,11 @@ export const ru: TranslationResources = {
     general: {
       title: "Основные",
       sending: "Отправка",
+      alwaysConfirmAgentArchive: {
+        label: "Всегда подтверждать архивирование агентов",
+        description:
+          "Спрашивать, прежде чем закрытие вкладки архивирует агента. Для работающих агентов подтверждение запрашивается всегда.",
+      },
       setup: {
         label: "Первоначальная настройка",
         description: "Снова пройти оформление, провайдеры, проекты и привязку телефона",
