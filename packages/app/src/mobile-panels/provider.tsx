@@ -1,4 +1,5 @@
 import { useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { useAppWindowSize } from "@/hooks/use-app-window-size";
 import { subscribeMobilePanelSelection } from "./selection";
 
 import {
@@ -13,7 +14,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Keyboard, useWindowDimensions } from "react-native";
+import { Keyboard } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
 import {
   cancelAnimation,
@@ -84,7 +85,7 @@ function useResolvedLeftPanelWidth(windowWidth: number): number {
   const isCompact = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight } = useAppWindowSize();
   const divisionLayout = resolveDesktopDivisionLayout({
     geometry: useWindowLayout(),
     windowWidth,
@@ -103,7 +104,7 @@ function useResolvedLeftPanelWidth(windowWidth: number): number {
 }
 
 export function MobilePanelsProvider({ children }: { children: ReactNode }) {
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth } = useAppWindowSize();
   const leftPanelWidth = useResolvedLeftPanelWidth(windowWidth);
   const initialSelection = useRef(usePanelStore.getState().mobilePanel).current;
   const position = useSharedValue(getMobilePanelAnchor(initialSelection.target));

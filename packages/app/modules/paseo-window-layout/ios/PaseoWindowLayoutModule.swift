@@ -7,12 +7,24 @@ public final class PaseoWindowLayoutModule: Module {
     View(WindowLayoutView.self) {
       Events("onGeometryChange")
     }
+    View(WindowLayoutTopInsetView.self) {
+      Prop("additionalPadding", 0.0) { (view: WindowLayoutTopInsetView, padding: Double) in
+        view.additionalPadding = CGFloat(padding)
+      }
+      Prop("unownedInset", 0.0) { (view: WindowLayoutTopInsetView, inset: Double) in
+        view.unownedInset = CGFloat(inset)
+      }
+    }
   }
 }
 
+private let windowLayoutInsetsDidChange = Notification.Name("PaseoWindowLayoutInsetsDidChange")
+
 final class WindowLayoutView: ExpoView {
   let onGeometryChange = EventDispatcher()
-  private var updateScheduled = false
+  private(set) var topInset: CGFloat = 0
+  private(set) var hasTopBand = false
+  private var updateObserver: CFRunLoopObserver?
   private var previousPayload: [String: Any]?
   private var divisions: [CGRect] = []
   private var barGuide: UILayoutGuide?
@@ -24,7 +36,6 @@ final class WindowLayoutView: ExpoView {
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
-    isUserInteractionEnabled = false
     #if compiler(>=6.4)
     if #available(iOS 27.1, *) {
       registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) {
@@ -34,6 +45,10 @@ final class WindowLayoutView: ExpoView {
       }
     }
     #endif
+  }
+
+  deinit {
+    if let updateObserver { CFRunLoopObserverInvalidate(updateObserver) }
   }
 
   override func didMoveToWindow() {
@@ -48,6 +63,7 @@ final class WindowLayoutView: ExpoView {
   override func safeAreaInsetsDidChange() {
     super.safeAreaInsetsDidChange()
     setNeedsUpdateConstraints()
+    setNeedsLayout()
     scheduleUpdate()
   }
 
@@ -96,17 +112,24 @@ final class WindowLayoutView: ExpoView {
   }
 
   private func scheduleUpdate() {
-    guard !updateScheduled else { return }
-    updateScheduled = true
-    DispatchQueue.main.async { [weak self] in
+    guard updateObserver == nil else { return }
+    // A main-queue block can run between bounds and safe-area updates. Sample after
+    // UIKit's layout transaction, once per turn, before the run loop goes idle.
+    updateObserver = CFRunLoopObserverCreateWithHandler(
+      kCFAllocatorDefault, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max
+    ) { [weak self] _, _ in
       guard let self else { return }
-      self.updateScheduled = false
+      self.updateObserver = nil
       self.publish()
     }
+    CFRunLoopAddObserver(CFRunLoopGetMain(), updateObserver, .commonModes)
   }
 
   private func publish() {
     guard window != nil, bounds.width > 0, bounds.height > 0 else { return }
+    // Resolve pending constraints and guides before pairing them with this view's insets.
+    updateConstraintsIfNeeded()
+    layoutIfNeeded()
     let bar = barGuide?.layoutFrame
     var barPayload: Any = NSNull()
     if let bar, bar.width > 0, bar.height > 0 { barPayload = rect(bar) }
@@ -117,11 +140,31 @@ final class WindowLayoutView: ExpoView {
       bottomClearance = max(0, bounds.maxY - bottomBar.maxY)
     }
     var topBar: Any = NSNull()
+    var topBarFrame: CGRect? = nil
     if let frame = topBarGuide?.layoutFrame, frame.width > 0, frame.height > 0 {
       topBar = rect(frame)
+      topBarFrame = frame
+    }
+    let insets = safeAreaInsets
+    var nextTopInset = insets.top
+    var nextHasTopBand = false
+    if let frame = topBarFrame, frame.minY < insets.top {
+      nextTopInset = max(0, frame.minY)
+      nextHasTopBand = true
+    }
+    if nextTopInset != topInset || nextHasTopBand != hasTopBand {
+      topInset = nextTopInset
+      hasTopBand = nextHasTopBand
+      NotificationCenter.default.post(name: windowLayoutInsetsDidChange, object: self)
     }
     let payload: [String: Any] = [
       "bounds": rect(bounds),
+      "insets": [
+        "top": insets.top,
+        "right": insets.right,
+        "bottom": insets.bottom,
+        "left": insets.left
+      ],
       "verticalBarEdge": barEdge,
       "verticalBar": barPayload,
       "bottomClearance": bottomClearance,
@@ -136,5 +179,74 @@ final class WindowLayoutView: ExpoView {
 
   private func rect(_ frame: CGRect) -> [String: CGFloat] {
     ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+  }
+}
+
+final class WindowLayoutTopInsetView: ExpoView {
+  var additionalPadding: CGFloat = 0 {
+    didSet { updatePadding() }
+  }
+  // A Modal has its own physical viewport outside the owning native layout root.
+  var unownedInset: CGFloat = 0 {
+    didSet { updatePadding() }
+  }
+  private weak var layoutSource: WindowLayoutView?
+  private var appliedHeight: CGFloat?
+
+  override func didMoveToSuperview() {
+    super.didMoveToSuperview()
+    bindSource()
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    bindSource()
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self, name: windowLayoutInsetsDidChange, object: nil)
+  }
+
+  private func bindSource() {
+    var ancestor = superview
+    var source: WindowLayoutView?
+    while let view = ancestor {
+      if let root = view as? WindowLayoutView {
+        source = root
+        break
+      }
+      ancestor = view.superview
+    }
+    if layoutSource !== source {
+      NotificationCenter.default.removeObserver(
+        self, name: windowLayoutInsetsDidChange, object: layoutSource
+      )
+      layoutSource = source
+      if let source {
+        NotificationCenter.default.addObserver(
+          self, selector: #selector(insetsDidChange(_:)),
+          name: windowLayoutInsetsDidChange, object: source
+        )
+      }
+    }
+    updatePadding()
+  }
+
+  @objc private func insetsDidChange(_ notification: Notification) {
+    updatePadding()
+  }
+
+  private func updatePadding() {
+    guard window != nil else { return }
+    let height: CGFloat
+    if let source = layoutSource {
+      height = source.topInset + (source.hasTopBand ? 0 : additionalPadding)
+    } else {
+      height = unownedInset
+    }
+    guard height != appliedHeight else { return }
+    appliedHeight = height
+    // Update Yoga on the native side; a JS geometry/context commit can trail rotation.
+    setStyleSize(nil, height: NSNumber(value: Double(height)))
   }
 }

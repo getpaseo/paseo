@@ -8,7 +8,6 @@ import {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -125,7 +124,6 @@ export function useExplorerGeometry({
   return {
     frameStyle: animatedWidthStyle,
     panelStyle: {
-      paddingTop: insets.top + (overlay ? HEADER_TOP_PADDING_MOBILE : 0),
       paddingLeft: overlay ? insets.left : 0,
       paddingRight: overlay ? insets.right : 0,
     },

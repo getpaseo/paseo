@@ -12,6 +12,8 @@ import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layou
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useExplorerGeometry } from "./geometry";
 import type { ExplorerFrameProps } from "./frame-props";
+import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import { WindowLayoutTopInset } from "@/window-layout";
 
 function ExplorerFrameBase({
   children,
@@ -53,6 +55,7 @@ function ExplorerFrameBase({
           frameStyle={geometry.frameStyle}
           panelStyle={[{ backgroundColor: surfaceColor }, geometry.panelStyle]}
         >
+          <WindowLayoutTopInset additionalPadding={overlay ? HEADER_TOP_PADDING_MOBILE : 0} />
           <View style={styles.content}>
             {resizeEnabled ? geometry.resizeHandle : null}
             {children}

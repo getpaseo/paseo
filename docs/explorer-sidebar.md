@@ -26,6 +26,14 @@ close-gesture lifetime. Platform adapters own resizing and inset geometry.
 The host keeps three recently used tabs plus modified tabs; unmodified tabs beyond that budget
 can remount. Native retained content stays live, while web chat uses its existing deferred Freeze.
 
+On iOS, read window bounds, safe-area insets, and reserved regions from the same native snapshot
+through window-layout and `useAppWindowSize`. Sample after UIKit's layout transaction: a main-queue
+callback can still see new bounds with the previous safe area. Use `WindowLayoutTopInset` for the
+top clearance of headers and sidebars. Its native spacer reads the nearest layout root and updates
+Yoga without waiting for the workspace's JS render; applying `insets.top` in React can leave the old
+padding visible during rotation. Modals outside that root use their own context inset. Changes to
+the native probe or spacer require a client rebuild; a Metro reload cannot apply them.
+
 ## Sheets
 
 On compact layouts, files and subagents open in a sheet over the workspace, so the tab switcher

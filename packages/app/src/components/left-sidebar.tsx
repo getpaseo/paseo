@@ -16,7 +16,6 @@ import {
   ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
-  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -31,7 +30,13 @@ import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import {
+  useTopBand,
+  useWindowLayout,
+  resolveDesktopDivisionLayout,
+  WindowLayoutTopInset,
+} from "@/window-layout";
+import { useAppWindowSize } from "@/hooks/use-app-window-size";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -135,13 +140,11 @@ interface SidebarLabels {
 
 interface MobileSidebarProps extends SidebarSharedProps {
   active: boolean;
-  insetsTop: number;
   insetsBottom: number;
   closeSidebar: () => void;
 }
 
 interface DesktopSidebarProps extends SidebarSharedProps {
-  insetsTop: number;
   active: boolean;
   overlay: boolean;
 }
@@ -262,18 +265,11 @@ export const LeftSidebar = memo(function LeftSidebar({
             {...sharedProps}
             {...handlers}
             active={active}
-            insetsTop={insets.top}
             insetsBottom={insets.bottom}
             closeSidebar={showMobileAgent}
           />
         ) : (
-          <DesktopSidebar
-            {...sharedProps}
-            {...handlers}
-            insetsTop={insets.top}
-            active={active}
-            overlay={desktopOverlay}
-          />
+          <DesktopSidebar {...sharedProps} {...handlers} active={active} overlay={desktopOverlay} />
         )}
       </RetainedPanelActivity>
       {importSessionSheet}
@@ -570,7 +566,6 @@ function MobileSidebar({
   labels,
   handleAddHost,
   handleOpenHostSettings,
-  insetsTop,
   insetsBottom,
   closeSidebar,
 }: MobileSidebarProps) {
@@ -597,11 +592,10 @@ function MobileSidebar({
 
   const mobileSidebarInsetStyle = useMemo(
     () => ({
-      paddingTop: insetsTop,
       paddingBottom: insetsBottom,
       backgroundColor: theme.colors.surfaceSidebar,
     }),
-    [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
+    [insetsBottom, theme.colors.surfaceSidebar],
   );
 
   const navRows = (
@@ -619,6 +613,7 @@ function MobileSidebar({
       panelStyle={mobileSidebarInsetStyle}
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
+        <WindowLayoutTopInset />
         <WindowChromeSafeArea placement="below" />
         {platformIsNative ? (
           <GHScrollView
@@ -710,14 +705,13 @@ function DesktopSidebar({
   labels,
   handleAddHost,
   handleOpenHostSettings,
-  insetsTop,
   active,
   overlay,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useAppWindowSize();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
   const divisionLayout = resolveDesktopDivisionLayout({
@@ -800,12 +794,11 @@ function DesktopSidebar({
       styles.desktopSidebarBorder(divisionLayout !== null),
       {
         flex: 1,
-        paddingTop: insetsTop,
         paddingBottom: insets.bottom,
         paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }),
       },
     ],
-    [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
+    [insets.bottom, insets.left, overlay, divisionLayout],
   );
   // Below the window controls' row, or in the top band's place, the first row starts flush.
   const inTopBand = useTopBand() !== null;
@@ -822,6 +815,7 @@ function DesktopSidebar({
     >
       <Animated.View style={desktopSidebarStyle}>
         <View style={desktopSidebarBorderStyle}>
+          <WindowLayoutTopInset />
           <View style={styles.sidebarDragArea}>
             {ownsTopLeft || DEV_BUILD_LABEL ? (
               <View style={styles.desktopChromeRow}>

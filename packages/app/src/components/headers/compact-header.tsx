@@ -18,7 +18,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-import { useTopBand } from "@/window-layout";
+import { useTopBand, WindowLayoutTopInset } from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
@@ -62,17 +62,17 @@ export function CompactHeader({
     () => [
       styles.root,
       {
-        paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [inTopBand, insets.top, insets.left, insets.right],
+    [insets.left, insets.right],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
       <View style={rootStyle}>
+        <WindowLayoutTopInset additionalPadding={HEADER_TOP_PADDING_MOBILE} />
         <View style={inTopBand ? styles.topBandRow : styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}

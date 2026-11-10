@@ -7,6 +7,8 @@ export interface WindowLayoutRect {
 
 export interface WindowLayout {
   bounds: WindowLayoutRect;
+  /** Rectangular safe area measured with these bounds and system-control guides. */
+  insets?: { top: number; right: number; bottom: number; left: number };
   verticalBarEdge: "none" | "leading" | "trailing";
   verticalBar: WindowLayoutRect | null;
   /**
@@ -38,7 +40,7 @@ export interface TopBand {
 /** Null unless the top bar guide starts above the system's rectangular safe area. */
 export function resolveTopBand(systemTop: number, layout: WindowLayout | null): TopBand | null {
   const bar = layout?.topBar;
-  if (!layout || !bar || bar.y >= systemTop) return null;
+  if (!layout || !bar || bar.y >= (layout.insets?.top ?? systemTop)) return null;
   const top = Math.max(0, bar.y);
   const barEnd = bar.x + bar.width;
   const width = Math.ceil(layout.bounds.width - barEnd);
@@ -51,19 +53,22 @@ export function resolveTopBand(systemTop: number, layout: WindowLayout | null): 
 }
 
 /**
- * The window's measured bars replace the rectangular safe area: the bottom bar's clearance,
- * and the top bar's start when it sits above the system top.
+ * Frame, insets and system controls share one native snapshot. The bar guides refine its
+ * rectangular safe area without mixing insets from a separately timed provider event.
  */
-export function resolveSafeAreaInsets<Insets extends { top: number; bottom: number }>(
-  systemInsets: Insets,
-  layout: WindowLayout | null,
-): Insets {
+export function resolveSafeAreaInsets<
+  Insets extends { top: number; right?: number; bottom: number; left?: number },
+>(systemInsets: Insets, layout: WindowLayout | null): Insets {
+  const insets = layout?.insets ?? systemInsets;
   const clearance = layout?.bottomClearance;
-  const bottom = typeof clearance === "number" ? clearance : systemInsets.bottom;
-  const top = resolveTopBand(systemInsets.top, layout)?.top ?? systemInsets.top;
-  return top === systemInsets.top && bottom === systemInsets.bottom
+  const bottom = typeof clearance === "number" ? clearance : insets.bottom;
+  const top = resolveTopBand(insets.top, layout)?.top ?? insets.top;
+  return top === systemInsets.top &&
+    insets.right === systemInsets.right &&
+    bottom === systemInsets.bottom &&
+    insets.left === systemInsets.left
     ? systemInsets
-    : { ...systemInsets, top, bottom };
+    : { ...systemInsets, ...insets, top, bottom };
 }
 
 export interface DesktopDivisionLayout {
