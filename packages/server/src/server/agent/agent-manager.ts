@@ -1512,7 +1512,7 @@ export class AgentManager {
           );
         }
         return this.createAgentInternal(
-          { ...config, ...(overrides ? { thinkingOptionId: undefined, ...overrides } : {}) },
+          config,
           resolvedAgentId,
           {
             labels: record.labels,
@@ -1584,7 +1584,7 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const createOptions = this.buildCreateSessionOptions(options);
+    const createOptions = { ...this.buildCreateSessionOptions(options), configChange };
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     const initialization = await this.applyInitialConfigChange(session, storedConfig, configChange);

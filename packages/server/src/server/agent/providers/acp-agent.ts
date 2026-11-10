@@ -1028,9 +1028,13 @@ export class ACPAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     this.assertProvider(config);
-    const providerOptions = ACPProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const { startupConfig, reconcileSavedThinking } = this.prepareInitialConfigChange(
+      options?.configChange,
+    );
+    const openedConfig = { ...config, ...startupConfig };
+    const providerOptions = ACPProviderOptionsSchema.parse(openedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(
-      { ...config, provider: this.provider },
+      { ...openedConfig, provider: this.provider },
       {
         provider: this.provider,
         usageProvider: this.usageProvider,
@@ -1055,6 +1059,7 @@ export class ACPAgentClient implements AgentClient {
             providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
         },
         configuredModelIds: options?.configuredModelIds,
+        reconcileSavedThinking,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
@@ -1066,7 +1071,7 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
-  private prepareResumeConfigChange(change?: AgentSessionConfigChange) {
+  private prepareInitialConfigChange(change?: AgentSessionConfigChange) {
     const changesModel = change !== undefined && "model" in change;
     const changesThinking = change !== undefined && "thinkingOptionId" in change;
     return {
@@ -1095,7 +1100,7 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} resume requires the original working directory`);
     }
 
-    const { startupConfig, reconcileSavedThinking } = this.prepareResumeConfigChange(
+    const { startupConfig, reconcileSavedThinking } = this.prepareInitialConfigChange(
       options?.configChange,
     );
     const mergedConfig: AgentSessionConfig = {

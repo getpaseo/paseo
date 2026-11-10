@@ -649,6 +649,8 @@ export interface AgentLaunchContext {
 }
 
 export interface AgentCreateSessionOptions {
+  /** Settings to reconcile while reopening a record that has no provider handle. */
+  configChange?: AgentSessionConfigChange;
   /**
    * Whether the provider should leave a durable native session behind.
    * Defaults to true. Providers that cannot honor false should no-op.

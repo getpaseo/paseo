@@ -99,13 +99,19 @@ describe("GenericACPAgentClient request errors", () => {
 });
 
 test.each([
-  { surface: "single", modelId: "default" },
-  { surface: "single", modelId: null },
-  { surface: "bundle", modelId: "default" },
-  { surface: "bundle", modelId: null },
+  { surface: "single", modelId: "default", savedThinking: "high", expectedThinking: "high" },
+  { surface: "single", modelId: null, savedThinking: "high", expectedThinking: "high" },
+  { surface: "bundle", modelId: "default", savedThinking: "high", expectedThinking: undefined },
+  { surface: "bundle", modelId: null, savedThinking: "high", expectedThinking: undefined },
+  {
+    surface: "single",
+    modelId: "default",
+    savedThinking: "removed-thinking",
+    expectedThinking: "low",
+  },
 ] as const)(
   "recovers a removed saved model through $surface with $modelId",
-  async ({ surface, modelId }) => {
+  async ({ surface, modelId, savedThinking, expectedThinking }) => {
     await withFakeACPAgent("removed-on-load", async (command, cwd) => {
       const logger = createTestLogger();
       const storage = new AgentStorage(path.join(cwd, "agents"), logger);
@@ -146,7 +152,10 @@ test.each([
         await manager.flush();
         const saved = await storage.get(created.id);
         if (!saved) throw new Error("Expected stored agent");
-        await storage.upsert({ ...saved, config: { ...saved.config, thinkingOptionId: "high" } });
+        await storage.upsert({
+          ...saved,
+          config: { ...saved.config, thinkingOptionId: savedThinking },
+        });
         await expect(
           ensureUnarchivedAgentLoaded(created.id, {
             agentManager: manager,
@@ -193,9 +202,7 @@ test.each([
         ]);
         await manager.flush();
         expect(manager.getAgent(created.id)?.config.model).toBe(modelId ?? undefined);
-        expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(
-          surface === "bundle" ? undefined : "high",
-        );
+        expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(expectedThinking);
         expect((await storage.get(created.id))?.config?.model).toBe(modelId ?? undefined);
         await manager.closeAgent(created.id);
         await ensureUnarchivedAgentLoaded(created.id, {
@@ -308,6 +315,127 @@ test.each([
         expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(thinking ?? undefined);
       } finally {
         await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+        await manager.flush();
+        await storage.flush();
+      }
+    });
+  },
+);
+
+test.each([
+  {
+    savedThinking: "high",
+    model: "default",
+    resetThinking: false,
+    expectedThinking: "high",
+    expectedModel: "default",
+  },
+  {
+    savedThinking: "removed-thinking",
+    model: "default",
+    resetThinking: false,
+    expectedThinking: "low",
+    expectedModel: "default",
+  },
+  {
+    savedThinking: "high",
+    model: "default",
+    resetThinking: true,
+    expectedThinking: undefined,
+    expectedModel: "default",
+  },
+  {
+    savedThinking: "high",
+    model: null,
+    resetThinking: false,
+    expectedThinking: "high",
+    expectedModel: undefined,
+  },
+] as const)(
+  "no-handle model recovery: $savedThinking / $model / reset $resetThinking",
+  async ({ savedThinking, model, resetThinking, expectedThinking, expectedModel }) => {
+    await withFakeACPAgent("removed-on-load", async (command, cwd) => {
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { acp: new GenericACPAgentClient({ logger, command }) },
+        registry: storage,
+        logger,
+      });
+      const id = "00000000-0000-4000-8000-000000000821";
+      const now = new Date().toISOString();
+      const messages: SessionOutboundMessage[] = [];
+      const configSession = new AgentConfigSession({
+        host: { emit: (message) => messages.push(message) },
+        logger,
+        operations: {
+          ensureLoaded: async (agentId, configOverrides) => {
+            let initialization: AgentConfigInitialization | undefined;
+            await ensureUnarchivedAgentLoaded(agentId, {
+              agentManager: manager,
+              agentStorage: storage,
+              logger,
+              configOverrides,
+              onConfigApplied: (result) => {
+                initialization = result;
+              },
+            });
+            return initialization;
+          },
+          setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+          setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
+          setMode: (agentId, value) => manager.setAgentMode(agentId, value),
+          setOptions: (agentId, value) => manager.setAgentOptions(agentId, value),
+        },
+      });
+      try {
+        await storage.upsert({
+          id,
+          provider: "acp",
+          cwd,
+          createdAt: now,
+          updatedAt: now,
+          labels: {},
+          archivedAt: null,
+          lastStatus: "closed",
+          config: { model: "missing-saved-model", thinkingOptionId: savedThinking },
+        });
+        const original = await storage.get(id);
+        await expect(
+          ensureUnarchivedAgentLoaded(id, { agentManager: manager, agentStorage: storage, logger }),
+        ).rejects.toThrow("missing-saved-model");
+        await configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: id,
+          requestId: "invalid",
+          modelId: "invalid-replacement",
+        });
+        expect(messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: expect.stringContaining("invalid-replacement") },
+        });
+        await manager.flush();
+        expect(await storage.get(id)).toEqual(original);
+        expect(manager.getAgent(id)).toBeNull();
+        await configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: id,
+          requestId: "repair",
+          config: { modelId: model, ...(resetThinking ? { thinkingOptionId: null } : {}) },
+        });
+        expect(messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+        await manager.flush();
+        expect(manager.getAgent(id)?.config.thinkingOptionId).toBe(expectedThinking);
+        expect((await storage.get(id))?.config?.thinkingOptionId).toBe(expectedThinking);
+        expect((await storage.get(id))?.config?.model).toBe(expectedModel);
+        await manager.closeAgent(id);
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(id)?.config.thinkingOptionId).toBe(expectedThinking);
+      } finally {
+        await manager.closeAgent(id);
         await manager.flush();
         await storage.flush();
       }
@@ -520,6 +648,10 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "session/set_config_option" && message.params.configId === "effort" && mode === "removed-on-load") {
+    if (!["low", "high"].includes(message.params.value)) {
+      write({ id: message.id, error: { code: -32603, message: "Internal error", data: { details: "Effort " + message.params.value + " is not allowed" } } });
+      return;
+    }
     write({ id: message.id, result: { configOptions: [
       { id: "model", name: "Model", category: "model", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] },
       { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: message.params.value,

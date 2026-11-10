@@ -115,11 +115,18 @@ export class OpenCodeV2AgentClient implements AgentClient {
       requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
     );
     try {
+      let model = config.model ? modelRef(config.model, config.thinkingOptionId) : undefined;
+      if (options?.configChange) {
+        // The manager validates the replacement before publication. Don't launch on the
+        // stale model or apply the explicit thinking step ahead of the bundle's mode.
+        model = undefined;
+        if (!("model" in options.configChange) && config.model) model = modelRef(config.model);
+      }
       const info = await connection.client.session.create({
         location: { directory: config.cwd },
         title: config.title,
         agent: config.modeId ?? "build",
-        model: config.model ? modelRef(config.model, config.thinkingOptionId) : undefined,
+        model,
         permissions: permissionRules(config),
       });
       return await this.attach(connection, info, config, launch, options?.persistSession !== false);
