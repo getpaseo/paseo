@@ -436,7 +436,9 @@ export async function withPluginHoldingNewWorkspaceComposer(
     openNewWorkspace(): Promise<void>;
     leaveCompactExplorerForNewWorkspace(): Promise<void>;
     openSettings(): Promise<void>;
+    openThinkingPicker(): Promise<void>;
     expectHeldComposerFocusResult(result: string): Promise<void>;
+    expectHeldComposerReadyToType(): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedWorkspace({ repoPrefix: "held-composer-", title: "Held composer" });
@@ -492,6 +494,19 @@ export default function contribute(client) {
         test.step("push Settings over the New workspace screen", async () => {
           await page.getByTestId("sidebar-settings").filter({ visible: true }).click();
           await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+        }),
+      openThinkingPicker: () =>
+        test.step("open the thinking picker in the New workspace composer", async () => {
+          await page
+            .getByRole("button", { name: /^Select thinking option/ })
+            .filter({ visible: true })
+            .click();
+          await expect(page.getByText("High", { exact: true })).toBeVisible();
+        }),
+      expectHeldComposerReadyToType: () =>
+        test.step("the picker is closed and the cursor is in the composer", async () => {
+          await expect(page.getByText("High", { exact: true })).toHaveCount(0);
+          await expect(prompt(page).filter({ visible: true })).toBeFocused();
         }),
       expectHeldComposerFocusResult: (result) =>
         test.step(`the held composer's focus() reports ${result}`, async () => {

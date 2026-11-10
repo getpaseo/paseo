@@ -129,6 +129,16 @@ test("focus rejects on a New workspace composer the user has left", async ({ pag
   });
 });
 
+test("focus closes a picker the composer opened over itself", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginHoldingNewWorkspaceComposer(page, async (author) => {
+    await author.openNewWorkspace();
+    await author.openThinkingPicker();
+    await author.expectHeldComposerFocusResult("focused");
+    await author.expectHeldComposerReadyToType();
+  });
+});
+
 test("focus closes a page the composer's Subagents track opened over it", async ({ page }) => {
   test.setTimeout(120_000);
   await withPluginFocusingASubagent(page, async (author) => {

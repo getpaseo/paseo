@@ -2010,8 +2010,8 @@ You do not need to know where the user is. On a running agent's composer, Paseo 
 agent's tab or workspace when it is not on screen, closes a phone's agent list or Explorer panel
 that covers it, and moves focus to the agent's pane, then focuses the input. When the input is
 already on screen and focused in its pane, `focus()` only puts the cursor there. Every composer also
-closes the sheets and menus it opened over itself first, such as the controls sheet that holds your
-items on a phone. A phone opens its keyboard.
+closes the sheets, menus and pickers it opened over itself first, such as the controls sheet that
+holds your items on a phone. A phone opens its keyboard.
 
 `focus()` rejects when the composer cannot take focus: the agent was archived, its composer did not
 come on screen within 15 seconds, or the input refused focus. A rejected promise returned from a

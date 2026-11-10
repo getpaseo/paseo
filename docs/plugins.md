@@ -719,10 +719,10 @@ an unfocused pane leave the input live but unable to take the keyboard, so the a
 first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change
 re-runs `attachInput`, which is what tells the pending request the input is on screen. The draft
 half has nothing to navigate to and does not pull the user back to a draft they left, so it rejects
-when not revealed. Sheets and menus the composer opens over itself do not count against `revealed`:
+when not revealed. Sheets, menus and pickers the composer opens over itself do not count against `revealed`:
 `takeInputFocus` closes them first through the `OverlayDismissalScope` in
-`components/ui/overlay-dismissal.tsx`. `AdaptiveModalSheet` and `MenuRoot` register with it while
-open; any other surface a composer opens must call `useDismissibleOverlay`. The agent panel opens the
+`components/ui/overlay-dismissal.tsx`. `AdaptiveModalSheet`, `MenuRoot` and `Combobox` register with it
+while open; any other surface a composer opens must call `useDismissibleOverlay`. The agent panel opens the
 scope around its whole chat because the tracks above the composer render outside `Composer`, and
 the composer's own scope joins it. `toPluginComposer` clears the Command Center's focus restore, which would
 otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so
