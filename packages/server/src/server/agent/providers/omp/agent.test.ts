@@ -1708,6 +1708,19 @@ test("omp runtime safety protects queued replies and runtime-owned activity", as
   await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
 });
 
+test("omp runtime safety lets a runtime whose process is gone be released", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.getStateError = new Error("OMP RPC process is closed");
+  native.closed = true;
+  expect(await session.canStopRuntime!()).toBe(true);
+});
+
 test("OMP runtime safety retains async work after the foreground turn finishes", async () => {
   const runtime = new FakeOmp();
   const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({

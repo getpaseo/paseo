@@ -58,6 +58,8 @@ export interface OmpRuntimeSession {
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<OmpSessionState>;
+  /** The transport is closed, so no request can reach the process any more. */
+  isClosed?(): boolean;
   setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;

@@ -143,6 +143,11 @@ export class JsonlRpcProcess {
     };
   }
 
+  /** True once the transport is closed: every later request rejects. */
+  get isClosed(): boolean {
+    return this.disposed;
+  }
+
   onExit(callback: (exit: JsonlRpcExit) => void): () => void {
     this.exitSubscribers.add(callback);
     return () => {
