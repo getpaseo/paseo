@@ -3,6 +3,9 @@ import { runGitCommand, type GitCommandOptions } from "../../utils/run-git-comma
 
 interface Interpretation {
   config: string;
+  configSorted: string;
+  configBytes: number;
+  configRecords: number;
   attributes: Map<string, string[]>;
   fingerprint: string;
 }
@@ -40,14 +43,14 @@ export async function readGitInputs(
   );
   return {
     identities,
-    hasInterpretationChanged: interpretationCheck(paths, options.cwd, interpretation.fingerprint),
+    hasInterpretationChanged: interpretationCheck(paths, options.cwd, interpretation),
   };
 }
 
 function interpretationCheck(
   paths: string[],
   cwd: string,
-  baseline: string,
+  baseline: Interpretation,
 ): () => Promise<boolean> {
   // Retain only the input description, never a comparison's patch/source pages.
   return async () => {
@@ -55,7 +58,21 @@ function interpretationCheck(
       cwd,
       envOverlay: { GIT_OPTIONAL_LOCKS: "0" },
     });
-    return current.fingerprint !== baseline;
+    const changed = current.fingerprint !== baseline.fingerprint;
+    if (changed) {
+      // Temporary CI diagnosis: no paths, configuration keys, or values are logged.
+      console.warn("Git interpretation changed", {
+        configChanged: current.config !== baseline.config,
+        configOrderOnly: current.configSorted === baseline.configSorted,
+        configBytes: [baseline.configBytes, current.configBytes],
+        configRecords: [baseline.configRecords, current.configRecords],
+        attributePaths: [baseline.attributes.size, current.attributes.size],
+        attributeValues: [baseline, current].map((value) =>
+          [...value.attributes.values()].reduce((sum, attributes) => sum + attributes.length, 0),
+        ),
+      });
+    }
+    return changed;
   };
 }
 
@@ -63,7 +80,15 @@ async function readInterpretation(
   paths: string[],
   options: GitCommandOptions,
 ): Promise<Interpretation> {
-  if (!paths.length) return { config: "", attributes: new Map(), fingerprint: "" };
+  if (!paths.length)
+    return {
+      config: "",
+      configSorted: "",
+      configBytes: 0,
+      configRecords: 0,
+      attributes: new Map(),
+      fingerprint: "",
+    };
   const [config, result] = await Promise.all([
     runGitCommand(["config", "--null", "--list"], options),
     runGitCommand(["check-attr", "--all", "-z", "--stdin"], {
@@ -86,6 +111,9 @@ async function readInterpretation(
   const configIdentity = createHash("sha256").update(config.stdout).digest("hex");
   return {
     config: configIdentity,
+    configSorted: fingerprint(config.stdout.split("\0").sort()),
+    configBytes: Buffer.byteLength(config.stdout),
+    configRecords: config.stdout.split("\0").length - 1,
     attributes,
     fingerprint: fingerprint([
       configIdentity,
