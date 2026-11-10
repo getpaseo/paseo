@@ -52,6 +52,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("devin").command).toEqual(["devin", "acp"]);
     expect(findProvider("goose").command).toEqual(["goose", "acp"]);
     expect(findProvider("hoplite").command).toEqual(["hoplite", "acp"]);
+    expect(findProvider("fx").command).toEqual(["fx", "acp"]);
     expect(findProvider("junie").command).toEqual(["junie", "--acp", "true"]);
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
     expect(findProvider("poolside").command).toEqual(["pool", "acp"]);
@@ -75,7 +76,7 @@ describe("ACP provider catalog", () => {
       command: ["hoplite", "acp"],
       installLink: "https://hoplite.sh/docs/cli#install",
     });
-    expect(buildAcpProviderConfigPatch(findProvider("hoplite"), true)).toEqual({
+    expect(buildAcpProviderConfigPatch(findProvider("hoplite"), () => true)).toEqual({
       providers: {
         hoplite: { enabled: true },
       },
@@ -86,14 +87,31 @@ describe("ACP provider catalog", () => {
     expect(findProvider("hoplite").iconSvg).toContain('fill="currentColor"');
   });
 
-  it.each([undefined, false])(
-    "rejects unsupported bundled Hoplite before producing a patch (%s)",
-    (supported) => {
-      expect(() => buildAcpProviderConfigPatch(findProvider("hoplite"), supported)).toThrow(
-        "Update the host to add Hoplite.",
-      );
-    },
-  );
+  it("offers fx as a bundled provider gated on its own host feature", () => {
+    expect(findProvider("fx")).toMatchObject({
+      title: "fx",
+      installLink: "https://fx.sh/docs/getting-started/installation",
+    });
+    expect(findProvider("fx").iconSvg).toContain('fill="currentColor"');
+    const supported: string[] = [];
+    expect(
+      buildAcpProviderConfigPatch(findProvider("fx"), (feature) => {
+        supported.push(feature);
+        return true;
+      }),
+    ).toEqual({ providers: { fx: { enabled: true } } });
+    expect(supported).toEqual(["fxProvider"]);
+  });
+
+  it.each([
+    ["hoplite", "Hoplite"],
+    ["fx", "fx"],
+  ])("rejects unsupported bundled %s before producing a patch", (id, title) => {
+    const unsupported = () => false;
+    expect(() => buildAcpProviderConfigPatch(findProvider(id), unsupported)).toThrow(
+      `Update the host to add ${title}.`,
+    );
+  });
 
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({

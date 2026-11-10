@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  pluginCombobox: {
+    searching: "Buscando…",
+    empty: "Sin resultados",
+    failed: "La búsqueda falló: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
@@ -1208,6 +1213,8 @@ export const es: TranslationResources = {
     title: "Novedades",
     installed: "Instalada",
     showMore: "Mostrar más",
+    showAllChanges: "Mostrar todos los cambios",
+    hideAllChanges: "Ocultar todos los cambios",
     openWebsite: "Registro de cambios completo",
     error: {
       title: "No se pudo cargar el registro de cambios",

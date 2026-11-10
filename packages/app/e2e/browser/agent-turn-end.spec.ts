@@ -21,7 +21,10 @@ interface Box {
 interface TurnEndFrame {
   at: number;
   running: boolean;
+  replyLength: number;
   footer: Box | null;
+  footerText: string;
+  elapsed: string | null;
   userRow: Box | null;
   replyVisible: boolean;
 }
@@ -61,10 +64,13 @@ async function recordTurnEndFrames(
       const viewport = Array.from(
         document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
       ).find((candidate) => isVisible(candidate));
-      const footers = Array.from(viewport?.querySelectorAll('[data-testid="turn-footer"]') ?? [])
-        .map(boxOf)
-        .filter((box): box is Box => box !== null)
-        .sort((left, right) => left.top - right.top);
+      const footer = Array.from(viewport?.querySelectorAll('[data-testid="turn-footer"]') ?? [])
+        .map((element) => ({ element, box: boxOf(element) }))
+        .filter((row): row is { element: Element; box: Box } => row.box !== null)
+        .sort((left, right) => left.box.top - right.box.top)
+        .at(-1);
+      const elapsed =
+        viewport?.querySelector('[data-testid="turn-working-elapsed"]')?.textContent ?? null;
       const userRow = Array.from(
         viewport?.querySelectorAll('[data-testid="user-message"]') ?? [],
       ).find((candidate) => candidate.textContent?.includes(prompt));
@@ -74,10 +80,16 @@ async function recordTurnEndFrames(
           : Array.from(viewport?.querySelectorAll('[data-testid="assistant-message"]') ?? []).find(
               (candidate) => candidate.textContent?.includes(reply),
             );
+      const assistantRows = Array.from(
+        viewport?.querySelectorAll('[data-testid="assistant-message"]') ?? [],
+      );
       state.frames.push({
         at: performance.now(),
         running: Boolean(viewport?.querySelector('[data-testid="turn-working-indicator"]')),
-        footer: footers.at(-1) ?? null,
+        replyLength: assistantRows.reduce((sum, row) => sum + (row.textContent?.length ?? 0), 0),
+        footer: footer?.box ?? null,
+        footerText: (footer?.element.textContent ?? "").replace(elapsed ?? "", ""),
+        elapsed,
         userRow: boxOf(userRow),
         replyVisible: boxOf(replyRow) !== null,
       });
@@ -147,7 +159,7 @@ function describeFrames(frames: TurnEndFrame[]): string {
       (frame, index) =>
         `${index}: ${frame.running ? "running " : "complete"} footer=${
           frame.footer ? `${frame.footer.top.toFixed(1)}+${frame.footer.height.toFixed(1)}` : "none"
-        } prompt=${frame.userRow?.top.toFixed(1) ?? "none"} reply=${frame.replyVisible}`,
+        } timer=${frame.elapsed ?? "none"} prompt=${frame.userRow?.top.toFixed(1) ?? "none"} reply=${frame.replyVisible}`,
     )
     .join("\n");
 }
@@ -181,6 +193,192 @@ function expectSteadyTurnEnd(frames: TurnEndFrame[], input: { reply: string | nu
     `the prompt must move at most once as the turn ends\n${record}`,
   ).toBeLessThanOrEqual(1);
 }
+
+interface ReturnedTurn {
+  frames: TurnEndFrame[];
+  reconnectedAt: number;
+  finalReplyLength: number;
+}
+
+// The agent finishes while the socket is down, then the catch-up is held so the idle status
+// reaches the chat first. Painted frames are sampled from the running footer until everything
+// has settled.
+async function returnAfterTurnFinished(input: {
+  page: Page;
+  agent: MockAgentWorkspace;
+  prompt: string;
+  leaveWhile: (gate: DaemonWebSocketGate) => Promise<void>;
+}): Promise<ReturnedTurn> {
+  const { page, agent, prompt, leaveWhile } = input;
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+
+  await recordTurnEndFrames(page, { prompt, reply: "" });
+  await leaveWhile(gate);
+  gate.holdTimelineResponses(agent.agentId);
+  const reconnectedAt = await page.evaluate(() => performance.now());
+  gate.restore();
+  await gate.waitForHeldTimelineResponse();
+  await expectAgentIdle(page);
+
+  await recordPaintsFor(page, 2_000);
+  gate.releaseHeldTimelineResponses();
+  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expect(page.getByTestId("turn-footer").last()).toBeVisible();
+  await recordPaintsFor(page, 500);
+  const frames = await stopRecording(page);
+  return { frames, reconnectedAt, finalReplyLength: frames.at(-1)?.replyLength ?? 0 };
+}
+
+type DaemonWebSocketGate = Awaited<ReturnType<typeof installDaemonWebSocketGate>>;
+
+async function leaveWithOnlyThePromptOnScreen(
+  page: Page,
+  agent: MockAgentWorkspace,
+  gate: DaemonWebSocketGate,
+  prompt: string,
+): Promise<void> {
+  gate.setAgentStreamItemSuppressed("assistant_message", true);
+  gate.holdNextAgentStreamEvent("turn_completed");
+  gate.holdNextAgentUpdate(agent.agentId, "idle");
+  gate.setServerMessageSuppressed("agent_update", true);
+  await submitMessage(page, prompt);
+  await Promise.all([
+    gate.waitForHeldAgentStreamEvent("turn_completed"),
+    gate.waitForHeldAgentUpdate(agent.agentId, "idle"),
+  ]);
+  await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+  await gate.drop();
+  await agent.client.waitForFinish(agent.agentId, 15_000);
+  gate.setAgentStreamItemSuppressed("assistant_message", false);
+  gate.setServerMessageSuppressed("agent_update", false);
+}
+
+async function leaveWithAPartialReplyOnScreen(
+  page: Page,
+  agent: MockAgentWorkspace,
+  gate: DaemonWebSocketGate,
+  prompt: string,
+): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, prompt);
+  await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+  await expect(page.getByTestId("assistant-message").first()).toBeVisible();
+  await gate.drop();
+  await agent.client.waitForFinish(agent.agentId, 30_000);
+}
+
+function elapsedSeconds(frame: TurnEndFrame): number {
+  const units: Record<string, number> = { h: 3600, m: 60, s: 1 };
+  return [...(frame.elapsed ?? "").matchAll(/(\d+)([hms])/g)].reduce(
+    (total, [, value, unit]) => total + Number(value) * units[unit],
+    0,
+  );
+}
+
+function expectFooterUnchangedUntilMessagesLand(
+  { frames, reconnectedAt }: ReturnedTurn,
+  record: string,
+): void {
+  const held = frames.slice(
+    frames.findIndex((frame) => frame.at >= reconnectedAt),
+    frames.findIndex((frame) => frame.at >= reconnectedAt && !frame.running),
+  );
+  expect(
+    held.length,
+    `the running footer must hold until the messages land\n${record}`,
+  ).toBeGreaterThan(0);
+  expect(
+    new Set(held.map((frame) => `${frame.footer?.top}+${frame.footer?.height}`)).size,
+    `the held footer must not move or resize\n${record}`,
+  ).toBe(1);
+  expect(
+    new Set(held.map((frame) => frame.footerText)).size,
+    `the held footer's content must not change\n${record}`,
+  ).toBe(1);
+  expect(
+    held.filter((frame) => frame.elapsed === null).map((frame) => frame.at),
+    `the timer must stay on screen\n${record}`,
+  ).toEqual([]);
+  const seconds = held.map(elapsedSeconds);
+  expect(seconds, `the timer must keep counting up\n${record}`).toEqual(
+    seconds.toSorted((left, right) => left - right),
+  );
+}
+
+function expectReturnLandsWhole(returned: ReturnedTurn): void {
+  const { frames, finalReplyLength } = returned;
+  const record = `frames:\n${describeFrames(frames)}`;
+  const firstRunning = frames.findIndex((frame) => frame.running && frame.footer !== null);
+  expect(firstRunning, record).toBeGreaterThanOrEqual(0);
+  const fromRunning = frames.slice(firstRunning);
+
+  expect(
+    fromRunning.filter((frame) => frame.footer === null).map((frame) => frame.at),
+    `the footer must never disappear\n${record}`,
+  ).toEqual([]);
+
+  const completed = fromRunning.filter((frame) => !frame.running);
+  expect(completed.length, record).toBeGreaterThan(0);
+  // The first Markdown on a page paints an empty row until the web parser loads. Only text that
+  // is present and short of the final reply is stale.
+  expect(
+    completed
+      .filter((frame) => frame.replyLength > 0 && frame.replyLength !== finalReplyLength)
+      .map((frame) => frame.at),
+    `a completed footer must never sit under stale messages\n${record}`,
+  ).toEqual([]);
+
+  expectFooterUnchangedUntilMessagesLand(returned, record);
+}
+
+async function withFirstTurnAgent(
+  model: string,
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "turn-return-",
+    title: "Turn return",
+    model,
+  });
+  try {
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+test.describe("Returning to a turn that finished while away", () => {
+  test("keeps the running footer until the messages land when only the prompt was on screen", async ({
+    page,
+  }) => {
+    await withFirstTurnAgent("e2e-fast-stream", async (agent) => {
+      const prompt = "emit 1 coalesced agent stream updates";
+      const returned = await returnAfterTurnFinished({
+        page,
+        agent,
+        prompt,
+        leaveWhile: (gate) => leaveWithOnlyThePromptOnScreen(page, agent, gate, prompt),
+      });
+      expectReturnLandsWhole(returned);
+    });
+  });
+
+  test("keeps the running footer until the messages land under a partial reply", async ({
+    page,
+  }) => {
+    await withFirstTurnAgent("ten-second-stream", async (agent) => {
+      const prompt = "Return partial prompt";
+      const returned = await returnAfterTurnFinished({
+        page,
+        agent,
+        prompt,
+        leaveWhile: (gate) => leaveWithAPartialReplyOnScreen(page, agent, gate, prompt),
+      });
+      expectReturnLandsWhole(returned);
+    });
+  });
+});
 
 test.describe("Turn end", () => {
   test("ends a plain reply without moving or dropping its footer", async ({ page, agent }) => {
@@ -275,4 +473,53 @@ test("footer timing fits the chat column and swapping labels keeps controls in p
   await expectFooterWithinWidth(page, 150);
   await expectFooterWithinWidth(page, 300);
   await expectFooterWithinWidth(page, 880);
+});
+
+async function visibleFooterLeftEdges(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const viewport = Array.from(
+      document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
+    ).find((candidate) => candidate.checkVisibility());
+    return Array.from(viewport?.querySelectorAll('[data-testid="turn-footer"]') ?? [])
+      .filter((footer) => footer.checkVisibility())
+      .map((footer) => Math.round(footer.getBoundingClientRect().left));
+  });
+}
+
+async function expectFootersInOneColumn(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const edges = await visibleFooterLeftEdges(page);
+      return edges.length >= 2 && new Set(edges).size === 1 ? "one column" : edges;
+    })
+    .toBe("one column");
+}
+
+test("keeps the latest turn's footer in the chat column while it runs and after it ends", async ({
+  page,
+  agent,
+}) => {
+  // Wider than the chat's max width, so the column is centered with space on both sides.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const gate = await installDaemonWebSocketGate(page);
+  await openAgentRoute(page, agent);
+  await expectAgentIdle(page);
+
+  gate.holdNextAgentStreamEvent("turn_completed");
+  gate.holdNextAgentUpdate(agent.agentId, "idle");
+  gate.setServerMessageSuppressed("agent_update", true);
+  await submitMessage(page, "emit 1 coalesced agent stream updates");
+  await Promise.all([
+    gate.waitForHeldAgentStreamEvent("turn_completed"),
+    gate.waitForHeldAgentUpdate(agent.agentId, "idle"),
+  ]);
+  await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+  await expectFootersInOneColumn(page);
+
+  gate.releaseHeldAgentStreamEvent("turn_completed");
+  gate.releaseHeldAgentUpdate(agent.agentId, "idle");
+  gate.setServerMessageSuppressed("agent_update", false);
+  await expectAgentIdle(page);
+  await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+  await expectFootersInOneColumn(page);
 });

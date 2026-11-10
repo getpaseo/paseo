@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  pluginCombobox: {
+    searching: "Поиск…",
+    empty: "Нет результатов",
+    failed: "Не удалось выполнить поиск: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
@@ -1189,6 +1194,8 @@ export const ru: TranslationResources = {
     title: "Что нового",
     installed: "Установлена",
     showMore: "Показать ещё",
+    showAllChanges: "Показать все изменения",
+    hideAllChanges: "Скрыть все изменения",
     openWebsite: "Полный список изменений",
     error: {
       title: "Не удалось загрузить список изменений",

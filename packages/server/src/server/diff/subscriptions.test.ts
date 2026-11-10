@@ -6,6 +6,115 @@ import { expect, test } from "vitest";
 import { DiffOpcode, type DiffFrame } from "@getpaseo/protocol/binary-frames/index";
 import { DiffSubscriptions } from "./index.js";
 import { createFileObserver } from "../file-observer/index.js";
+import {
+  configureGitProcessPolicy,
+  runGitCommand,
+  runWithGitCommandPriority,
+} from "../../utils/run-git-command.js";
+import {
+  DEFAULT_GIT_PROCESS_POLICY,
+  resolveGitProcessPolicy,
+} from "../../utils/git-process-scheduler.js";
+
+async function createObservedWorktreeDiff(prefix: string) {
+  const cwd = await mkdtemp(join(tmpdir(), prefix));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const observer = createFileObserver();
+  const subscriptions = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root, onChange) {
+      const watch = await observer.subscribe(root, () => onChange(), {
+        ignore: [join(root, ".git")],
+      });
+      return {
+        repoRoot: root,
+        unsubscribe: async () => {
+          await watch.unsubscribe();
+        },
+      };
+    },
+  });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  for (const directory of ["src", "src/nested", "docs"]) {
+    await mkdir(join(cwd, directory), { recursive: true });
+    for (let index = 0; index < 40; index++)
+      await writeFile(join(cwd, directory, `${index}.ts`), `export const value = ${index};\n`);
+  }
+  git("add", ".");
+  git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+  for (let index = 0; index < 10; index++)
+    await writeFile(join(cwd, "src", `${index}.ts`), `export const value = ${index + 100};\n`);
+  return {
+    cwd,
+    subscriptions,
+    compare: {
+      cwd,
+      base: { kind: "rev" as const, rev: "HEAD" },
+      head: { kind: "worktree" as const },
+      highlight: true,
+    },
+    async close() {
+      await subscriptions.close();
+      await observer.close();
+      await rm(cwd, { recursive: true, force: true });
+    },
+  };
+}
+
+test("a cold worktree diff over existing files is complete at its first revision", async () => {
+  const fixture = await createObservedWorktreeDiff("diff-cold-revision-");
+  const frames: DiffFrame[] = [];
+  try {
+    const subscription = await fixture.subscriptions.subscribe(fixture.compare, async (frame) => {
+      frames.push(frame);
+    });
+    await subscription.start();
+    await writeFile(join(fixture.cwd, "docs", "0.ts"), "export const value = 999;\n");
+    await expect
+      .poll(() => frames.filter((frame) => frame.opcode === DiffOpcode.End).length, {
+        timeout: 10_000,
+      })
+      .toBe(2);
+    expect(
+      frames.filter((frame) => frame.opcode === DiffOpcode.Begin).map((frame) => frame.revision),
+    ).toEqual([1, 2]);
+    await subscription.release();
+  } finally {
+    await fixture.close();
+  }
+}, 30_000);
+
+test("a cold diff finishes ahead of a queued background Git burst", async () => {
+  const fixture = await createObservedWorktreeDiff("diff-cold-burst-");
+  // The suite lifts the start-rate cap; the burst needs the daemon's real one.
+  configureGitProcessPolicy(DEFAULT_GIT_PROCESS_POLICY);
+  try {
+    let burstSettledAt = Number.POSITIVE_INFINITY;
+    // ~3 s of queued work at 64 starts/s, the shape of a reconciliation rescan.
+    const burst = runWithGitCommandPriority("background", () =>
+      Promise.all(
+        Array.from({ length: 200 }, () =>
+          runGitCommand(["rev-parse", "HEAD"], { cwd: fixture.cwd }),
+        ),
+      ),
+    ).then(() => {
+      burstSettledAt = performance.now();
+      return undefined;
+    });
+    let readyAt = Number.POSITIVE_INFINITY;
+    const subscription = await fixture.subscriptions.subscribe(fixture.compare, async (frame) => {
+      if (frame.opcode === DiffOpcode.End && frame.error === null) readyAt = performance.now();
+    });
+    await subscription.start();
+    await burst;
+    expect(readyAt).toBeLessThan(burstSettledAt);
+    await subscription.release();
+  } finally {
+    configureGitProcessPolicy(resolveGitProcessPolicy({ env: process.env }));
+    await fixture.close();
+  }
+}, 30_000);
 
 test("shares computation, highlights only the changed file, recovers refs and releases observations", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "diff-subscriptions-"));

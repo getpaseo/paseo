@@ -322,6 +322,17 @@ export function HoverCardContent(props: HoverCardContentProps): ReactElement | n
   );
 }
 
+// A card above its trigger holds its bottom edge, so content that loads while it is open grows it
+// upward without a correction. Anchored by its top, it would paint over the trigger until placed.
+type CardPosition = { left: number; top: number } | { left: number; bottom: number };
+
+function isSamePosition(current: CardPosition | null, next: CardPosition): boolean {
+  if (!current || current.left !== next.left) return false;
+  return "top" in current
+    ? "top" in next && current.top === next.top
+    : "bottom" in next && current.bottom === next.bottom;
+}
+
 function readDomRect(view: View | null): Rect | null {
   const element = view as unknown as HTMLElement | null;
   if (!element) return null;
@@ -349,7 +360,7 @@ function HoverCardSurface({
   contentRef: RefObject<View | null>;
 }): ReactElement {
   const overlayRef = useRef<View>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [position, setPosition] = useState<CardPosition | null>(null);
 
   const place = useCallback(() => {
     const triggerRect = readDomRect(triggerRef.current);
@@ -357,7 +368,7 @@ function HoverCardSurface({
     const content = contentRef.current as unknown as HTMLElement | null;
     if (!triggerRect || !overlayRect || !content) return;
     const { width, height } = Dimensions.get("window");
-    const { x, y } = computePosition({
+    const { x, y, actualPlacement } = computePosition({
       triggerRect,
       contentSize: { width: content.offsetWidth, height: content.offsetHeight },
       displayArea: { x: 0, y: 0, width, height },
@@ -366,19 +377,19 @@ function HoverCardSurface({
       alignment,
       offset,
     });
-    const next = { x: x - overlayRect.x, y: y - overlayRect.y };
-    setPosition((current) => (current?.x === next.x && current.y === next.y ? current : next));
+    const left = x - overlayRect.x;
+    const next: CardPosition =
+      actualPlacement === "top"
+        ? { left, bottom: overlayRect.height - (y + content.offsetHeight - overlayRect.y) }
+        : { left, top: y - overlayRect.y };
+    setPosition((current) => (isSamePosition(current, next) ? current : next));
   }, [alignment, contentRef, offset, placement, triggerRef]);
 
   useLayoutEffect(place, [place]);
 
   const frameStyle = useMemo(
-    () => ({
-      position: "absolute" as const,
-      top: position?.y ?? -9999,
-      left: position?.x ?? -9999,
-    }),
-    [position?.x, position?.y],
+    () => ({ position: "absolute" as const, ...(position ?? { top: -9999, left: -9999 }) }),
+    [position],
   );
   const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
 

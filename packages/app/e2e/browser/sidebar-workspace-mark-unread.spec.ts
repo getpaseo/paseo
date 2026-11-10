@@ -300,15 +300,11 @@ test("clicking the already focused timeline acknowledges a new completion", asyn
 async function reconnectWithoutInteracting(
   page: Page,
   gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
-  agentId: string,
 ) {
   await gate.drop();
   await gate.waitForBlockedConnection();
-  gate.holdTimelineResponses(agentId);
   gate.restore();
-  await gate.waitForHeldTimelineResponse();
   await expectReconnectingToastGone(page);
-  gate.releaseHeldTimelineResponses();
   await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
 }
 
@@ -325,7 +321,7 @@ test("reconnecting a focused chat preserves its unread completion until another 
   );
   await workspaces.subject.client.waitForFinish(workspaces.subject.agentId, 20_000);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
-  await reconnectWithoutInteracting(page, gate, workspaces.subject.agentId);
+  await reconnectWithoutInteracting(page, gate);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
   await page.getByText("Unread across reconnect.", { exact: true }).click();
   await expectStatus(page, workspaces.subject.workspaceId, "done");

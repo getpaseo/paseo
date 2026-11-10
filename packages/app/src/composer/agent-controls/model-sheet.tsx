@@ -12,6 +12,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { TailEllipsisText } from "@/components/ui/tail-ellipsis-text";
 import { useProviderIcon } from "@/components/provider-icons";
@@ -26,7 +27,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
-  TOUCH_ICON_SIZE,
   toolbarContentSlot,
   toolbarSlot,
   type ToolbarGlyphs,
@@ -61,6 +61,8 @@ interface CompactModelSheetProps {
   /** False when the toolbar is too narrow for labels: the trigger shows the provider glyph only. */
   showLabels: boolean;
   canSwitchProvider: boolean;
+  /** Carries the composer's contexts into the sheets, which draw away from it. */
+  contextBridge?: ContextBridge | null;
   children: ReactNode;
 }
 
@@ -151,6 +153,7 @@ export function CompactModelSheet({
   glyphs,
   showLabels,
   canSwitchProvider,
+  contextBridge = null,
   children,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
@@ -331,6 +334,7 @@ export function CompactModelSheet({
         snapPoints={SNAP_POINTS}
         scrollable={false}
         contentStyle={styles.sheetBody}
+        contextBridge={contextBridge}
         testID="agent-controls-model-sheet"
       >
         <View
@@ -379,6 +383,7 @@ export function CompactModelSheet({
           scrollable={false}
           presentation="push"
           contentStyle={styles.sheetBody}
+          contextBridge={contextBridge}
           testID="agent-controls-model-browser-sheet"
         >
           <View
@@ -529,12 +534,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(theme.spacing[2]),
+    ...toolbarContentSlot(),
     borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
   },
   triggerIconOnly: {
-    ...toolbarSlot(TOUCH_ICON_SIZE.md),
+    ...toolbarSlot(),
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",

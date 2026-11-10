@@ -145,6 +145,22 @@ describe("workspace navigation", () => {
     ]);
   });
 
+  it("carries a request for a tab through a deferred open", () => {
+    const { deps, deferredTabs } = createFakeDeps({ getSessionWorkspaces: () => new Map() });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        asTab: true,
+      },
+      deps,
+    );
+
+    expect(deferredTabs[0]).toMatchObject({ asTab: true });
+  });
+
   it("defers an agent tab until a missing workspace is recovered", () => {
     const { deps, navigations, openedTabs, deferredTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map(),
