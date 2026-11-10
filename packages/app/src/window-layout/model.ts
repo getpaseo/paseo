@@ -66,6 +66,26 @@ export function resolveSafeAreaInsets<Insets extends { top: number; bottom: numb
     : { ...systemInsets, top, bottom };
 }
 
+/**
+ * Where a full-window overlay's top-trailing controls start so they clear the system's
+ * occlusions there, such as the front camera on a folded iPhone Duo. A modal window's
+ * rectangular safe area leaves those out. Zero where nothing occludes the top-trailing corner.
+ */
+export function resolveTopTrailingOcclusionClearance(layout: WindowLayout | null): number {
+  if (!layout) return 0;
+  const { width, height } = layout.bounds;
+  const bottoms = (layout.occlusions ?? [])
+    .filter(
+      (frame) =>
+        frame.width > 0 &&
+        frame.height > 0 &&
+        frame.y < height / 4 &&
+        frame.x + frame.width > width / 2,
+    )
+    .map((frame) => frame.y + frame.height);
+  return bottoms.length === 0 ? 0 : Math.ceil(Math.max(...bottoms));
+}
+
 export interface DesktopDivisionLayout {
   sidebarWidth: number;
   gap: number;

@@ -15,6 +15,7 @@ import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
 import { useGlobalOverlayLayer } from "@/lib/overlay-root";
+import { resolveTopTrailingOcclusionClearance, useWindowLayout } from "@/window-layout";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -120,17 +121,19 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
 
 function LightboxImageArea({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
+  // The toolbar sits in the top-trailing corner, where a folded iPhone Duo's front camera is.
+  const occlusionClearance = resolveTopTrailingOcclusionClearance(useWindowLayout());
   const style = useMemo(
     () => [
       styles.contentLayer,
       {
-        paddingTop: insets.top,
+        paddingTop: Math.max(insets.top, occlusionClearance),
         paddingRight: insets.right,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
       },
     ],
-    [insets.bottom, insets.left, insets.right, insets.top],
+    [insets.bottom, insets.left, insets.right, insets.top, occlusionClearance],
   );
   return (
     <View pointerEvents="box-none" style={style}>
