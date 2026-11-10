@@ -4,6 +4,9 @@ import UIKit
 public final class PaseoWindowLayoutModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PaseoWindowLayout")
+    OnCreate {
+      DispatchQueue.main.async { VerticalBarPreference.restore() }
+    }
     Function("setVerticalBarBehavior") { (behavior: String) in
       let disabled = behavior == "disabled"
       DispatchQueue.main.async { VerticalBarPreference.setDisabled(disabled) }
@@ -170,16 +173,24 @@ final class WindowLayoutView: ExpoView {
 /// controller; every other view controller keeps UIKit's answer.
 enum VerticalBarPreference {
   static let didChange = Notification.Name("PaseoVerticalBarPreferenceDidChange")
-  private(set) static var disabled = false
+  private static let defaultsKey = "paseo.verticalBarDisabled"
+  /// Persisted, so an expanded window stays expanded across launches.
+  private(set) static var disabled = UserDefaults.standard.bool(forKey: defaultsKey)
   private static var installed = false
 
   static func setDisabled(_ value: Bool) {
     guard value != disabled else { return }
-    // Devices and windows without a bar still receive the request. Honoring a disable
-    // there makes the layout report "disabled" and the compact header drops its top padding.
-    // Enabling stays allowed so a preference left on from another window can be restored.
-    if value, !supportsVerticalBar() { return }
     disabled = value
+    UserDefaults.standard.set(value, forKey: defaultsKey)
+    apply()
+  }
+
+  /// Applies the persisted preference once the app has windows to apply it to.
+  static func restore() {
+    if disabled { apply() }
+  }
+
+  private static func apply() {
     #if compiler(>=6.4)
     if #available(iOS 27.1, *) {
       install()
@@ -192,22 +203,6 @@ enum VerticalBarPreference {
     }
     #endif
     NotificationCenter.default.post(name: didChange, object: nil)
-  }
-
-  /// True when a connected window can show a vertical bar. Must run on the main queue.
-  private static func supportsVerticalBar() -> Bool {
-    #if compiler(>=6.4)
-    if #available(iOS 27.1, *) {
-      for scene in UIApplication.shared.connectedScenes {
-        guard let windowScene = scene as? UIWindowScene else { continue }
-        for window in windowScene.windows {
-          let edge = window.traitCollection.verticalBarEdge
-          if edge == .leading || edge == .trailing { return true }
-        }
-      }
-    }
-    #endif
-    return false
   }
 
   #if compiler(>=6.4)
