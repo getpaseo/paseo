@@ -60,6 +60,7 @@ import { StreamTopOverlayProvider, supportsStreamTopOverlay } from "@/agent-stre
 import {
   CompactWorkspaceHeader,
   CompactWorkspaceTabStrip,
+  type CompactWorkspaceTabStripMenuActions,
   MobileWorkspaceTabSwitcher,
 } from "@/screens/workspace/compact-workspace-header";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
@@ -3469,6 +3470,26 @@ function WorkspaceScreenContent({
   // keep their tab rails.
   // A folded iPhone with its vertical bar off gives the header a full-width row for tabs.
   const verticalBarDisabled = useVerticalBarDisabled();
+  const tabStripMenuActions = useMemo<CompactWorkspaceTabStripMenuActions>(
+    () => ({
+      onCopyResumeCommand: handleCopyResumeCommand,
+      onCopyAgentId: handleCopyAgentId,
+      onCopyTerminalId: handleCopyTerminalId,
+      onCopyFilePath: handleCopyFilePath,
+      onReloadAgent: handleReloadAgent,
+      onRenameTab: handleRenameTab,
+      onCloseTab: handleCloseTabById,
+    }),
+    [
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabById,
+    ],
+  );
   const renderWorkspaceTabStrip = useCallback(
     (paneTabs: WorkspaceCompactHeaderTabs) => (
       <CompactWorkspaceTabStrip
@@ -3477,9 +3498,11 @@ function WorkspaceScreenContent({
         serverId={normalizedServerId}
         workspaceId={normalizedWorkspaceId}
         onSelectTab={handleSelectSwitcherTab}
+        menuActions={tabStripMenuActions}
+        paneActions={paneTabs.actions}
       />
     ),
-    [normalizedServerId, normalizedWorkspaceId, handleSelectSwitcherTab],
+    [normalizedServerId, normalizedWorkspaceId, handleSelectSwitcherTab, tabStripMenuActions],
   );
   const renderCompactWorkspaceHeader = useCallback(
     (paneTabs: WorkspaceCompactHeaderTabs | null, actionsOnly = false) => {

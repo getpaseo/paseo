@@ -16,7 +16,7 @@ import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
 import { PluginVerticalBarButtons } from "@/plugins";
 
 export { MobileWorkspaceTabSwitcher } from "./tab-switcher";
-export { CompactWorkspaceTabStrip } from "./tab-strip";
+export { CompactWorkspaceTabStrip, type CompactWorkspaceTabStripMenuActions } from "./tab-strip";
 
 interface CompactWorkspaceHeaderProps {
   serverId: string;
