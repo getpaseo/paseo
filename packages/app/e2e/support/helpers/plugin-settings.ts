@@ -12,7 +12,8 @@ import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 
 type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
-const COMPACT_VIEWPORT_MAX_WIDTH = 500;
+// The app is compact below the `md` breakpoint (600) in styles/unistyles.ts.
+const COMPACT_VIEWPORT_MAX_WIDTH = 599;
 function isCompactViewport(page: Page): boolean {
   return (page.viewportSize()?.width ?? 0) <= COMPACT_VIEWPORT_MAX_WIDTH;
 }
