@@ -287,6 +287,8 @@ export class ScheduleService {
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private activeTickPromise: Promise<void> | null = null;
+  private stopping = false;
 
   constructor(options: ScheduleServiceOptions) {
     this.logger = options.logger.child({ module: "schedule-service" });
@@ -302,6 +304,7 @@ export class ScheduleService {
   }
 
   async start(): Promise<void> {
+    this.stopping = false;
     await this.recoverInterruptedRuns();
     await this.sweepOrphanedSchedules();
     if (this.tickTimer) {
@@ -317,9 +320,13 @@ export class ScheduleService {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
+    }
+    if (this.activeTickPromise) {
+      await this.activeTickPromise.catch(() => undefined);
     }
   }
 
@@ -569,23 +576,39 @@ export class ScheduleService {
   }
 
   async tick(): Promise<void> {
-    const now = this.now();
-    const schedules = await this.store.list();
-    for (const schedule of schedules) {
-      if (schedule.status !== "active" || !schedule.nextRunAt) {
-        continue;
+    if (this.stopping) {
+      return;
+    }
+    const run = (async () => {
+      const now = this.now();
+      const schedules = await this.store.list();
+      for (const schedule of schedules) {
+        if (this.stopping) {
+          break;
+        }
+        if (schedule.status !== "active" || !schedule.nextRunAt) {
+          continue;
+        }
+        if (this.runningScheduleIds.has(schedule.id)) {
+          continue;
+        }
+        if (shouldCompleteSchedule(schedule, now)) {
+          await this.completeScheduleIfDue(schedule.id, now);
+          continue;
+        }
+        if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
+          continue;
+        }
+        await this.runSchedule(schedule, now);
       }
-      if (this.runningScheduleIds.has(schedule.id)) {
-        continue;
+    })();
+    this.activeTickPromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.activeTickPromise === run) {
+        this.activeTickPromise = null;
       }
-      if (shouldCompleteSchedule(schedule, now)) {
-        await this.completeScheduleIfDue(schedule.id, now);
-        continue;
-      }
-      if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
-        continue;
-      }
-      await this.runSchedule(schedule, now);
     }
   }
 

@@ -3377,7 +3377,6 @@ export class AgentManager {
   }
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
-    this.captureRunningAgentAtShutdown(agent);
     const mutableAgent = agent;
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
@@ -3395,6 +3394,9 @@ export class AgentManager {
       nextLifecycle = "idle";
     }
     mutableAgent.lifecycle = nextLifecycle;
+    if (this.shuttingDown && nextLifecycle === "idle") {
+      this.runningAgentsAtShutdown.delete(mutableAgent.id);
+    }
     const persistenceHandle =
       mutableAgent.session.describePersistence() ??
       (mutableAgent.runtimeInfo?.sessionId
