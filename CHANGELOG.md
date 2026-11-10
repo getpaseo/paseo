@@ -1,5 +1,130 @@
 # Changelog
 
+## 0.16.0-beta.1 - 2026-11-10
+
+- **Background tasks:** Paseo now shows the background tasks an agent is running, such as shells and monitors, above the composer, with a Stop button for each. Works with Claude Code, Codex and OpenCode v2. ([#6220](https://github.com/getpaseo/paseo/pull/6220), [#9162](https://github.com/getpaseo/paseo/pull/9162) by [@fxlelouarn](https://github.com/fxlelouarn))
+- **Faster diff loading:** Opening Changes shows the file tree right away while file contents load. Large diffs arrive in batches, so the rest of the app keeps responding while they load, and diffs take priority over the daemon's background worktree scans. ([#8907](https://github.com/getpaseo/paseo/pull/8907), [#9241](https://github.com/getpaseo/paseo/pull/9241), [#9243](https://github.com/getpaseo/paseo/pull/9243))
+- **Fewer reconnects on return:** Returning to the app keeps a working connection, including one in the middle of a large response, and reconnects once when it has to. On a host with several saved connections, Paseo stays on the one that works. ([#8651](https://github.com/getpaseo/paseo/pull/8651), [#9086](https://github.com/getpaseo/paseo/pull/9086), [#8855](https://github.com/getpaseo/paseo/pull/8855), [#9116](https://github.com/getpaseo/paseo/pull/9116))
+- **Keyboard shortcuts on mobile:** With a keyboard connected, iPad and Android now run the same shortcuts as desktop, including your custom bindings. Shortcut hints and Settings → Shortcuts appear when a keyboard is detected. Shortcuts also work in narrow desktop and browser windows. ([#8625](https://github.com/getpaseo/paseo/pull/8625) by [@jeroenfrenken](https://github.com/jeroenfrenken), [@lstroud](https://github.com/lstroud))
+- **Touch-sized tablet controls:** On iPad and other touch-screen devices, the wide layout now has touch-sized buttons, rows and bars. The composer toolbar folds its controls into the model menu when space runs out, and swiping right on the workspace reveals a collapsed sidebar as an overlay. ([#8748](https://github.com/getpaseo/paseo/pull/8748), [#8885](https://github.com/getpaseo/paseo/pull/8885), [#8891](https://github.com/getpaseo/paseo/pull/8891), [#8909](https://github.com/getpaseo/paseo/pull/8909), [#9151](https://github.com/getpaseo/paseo/pull/9151), [#9238](https://github.com/getpaseo/paseo/pull/9238), [#8739](https://github.com/getpaseo/paseo/pull/8739) by [@zeyugao](https://github.com/zeyugao))
+- **Plugin sidebar views:** A plugin can replace the sidebar's content with its own layout of workspaces, agents, projects and terminals across every connected host. Pick the view per device under Settings → Sidebar; Paseo's sidebar header and footer stay in place. ([#8906](https://github.com/getpaseo/paseo/pull/8906))
+- **Plugin composer controls:** Plugins can add their own controls to the composer, and read and set its prompt, attachments, provider, model, mode and thinking. They can also put the cursor in any agent's composer, add items to New workspace, and store their own metadata on agents and workspaces. ([#8744](https://github.com/getpaseo/paseo/pull/8744), [#9209](https://github.com/getpaseo/paseo/pull/9209), [#9207](https://github.com/getpaseo/paseo/pull/9207))
+- **Polish:** The chat stays still when a turn ends, and returning to a chat that has not changed shows it as it is with no refresh. Tool rows show their final title and icon from the first frame, the context window popover opens with usage already loaded, and sidebar hover cards open one at a time. ([#8944](https://github.com/getpaseo/paseo/pull/8944), [#9175](https://github.com/getpaseo/paseo/pull/9175), [#9242](https://github.com/getpaseo/paseo/pull/9242), [#9248](https://github.com/getpaseo/paseo/pull/9248), [#9212](https://github.com/getpaseo/paseo/pull/9212), [#9071](https://github.com/getpaseo/paseo/pull/9071))
+- **Rebuilt mobile chat timeline:** The chat timeline on iOS and Android was rebuilt. Expanding or collapsing a turn summary, todo card or tool-call group keeps the line you tapped in place, and on Android so do Show more, Show less and plan cards. ([#8717](https://github.com/getpaseo/paseo/pull/8717), [#9085](https://github.com/getpaseo/paseo/pull/9085))
+- **Undo workspace archive:** Archiving a workspace in the app now shows a "Workspace archived" toast for six seconds. Undo, or Cmd/Ctrl+Z, restores the workspace with its tabs and agents. On desktop, sidebar workspace rows also get an archive button on hover. ([#8904](https://github.com/getpaseo/paseo/pull/8904), [#9104](https://github.com/getpaseo/paseo/pull/9104))
+
+### Added
+
+- Added a Change base picker in Changes for worktree workspaces, so diffs, the commit list and Git actions can use another branch ([#8642](https://github.com/getpaseo/paseo/pull/8642), [#8934](https://github.com/getpaseo/paseo/pull/8934) by [@Myasuka](https://github.com/Myasuka))
+- Added links for issue and pull request references such as `#123` and `owner/repo#123` in agent replies, plans, the pull request panel and file previews, for GitHub, GitLab, Gitea, Forgejo and Codeberg ([#8636](https://github.com/getpaseo/paseo/pull/8636))
+- Added iPhone Duo layout support: workspace actions sit in the system vertical bar, and the sidebar and workspace split on either side of the fold ([#8741](https://github.com/getpaseo/paseo/pull/8741), [#8901](https://github.com/getpaseo/paseo/pull/8901) by [@zeyugao](https://github.com/zeyugao))
+- Added fx as a provider you can add from the provider catalog in Settings → Hosts → Providers ([#9160](https://github.com/getpaseo/paseo/pull/9160))
+- Added background agents: an agent or plugin can create a helper with `background: true` that opens no tab, sends no notification and stays out of the sidebar and default agent lists ([#8683](https://github.com/getpaseo/paseo/pull/8683))
+- Added syntax highlighting for Terraform and HCL files (`.tf`, `.tfvars`, `.hcl`) ([#9106](https://github.com/getpaseo/paseo/pull/9106))
+- Added `PASEO_WORKSPACE_ID` to each agent's environment so an agent can identify, rename or archive its own workspace ([#8939](https://github.com/getpaseo/paseo/pull/8939) by [@DTTerastar](https://github.com/DTTerastar))
+
+### Changed
+
+- Changed opening a workspace to restore the tab you left instead of jumping to the agent that needs attention ([#8935](https://github.com/getpaseo/paseo/pull/8935))
+- Changed question cards so picking an option no longer advances automatically; continue with Next or Submit ([#8525](https://github.com/getpaseo/paseo/pull/8525))
+- Changed the slash command menu to show loading and error states with Retry, and to stop selecting `/exit` by default ([#8905](https://github.com/getpaseo/paseo/pull/8905))
+- Changed the workspace header and tabs to switch to compact controls when Explorer or a split pane narrows the workspace ([#8740](https://github.com/getpaseo/paseo/pull/8740), [#9088](https://github.com/getpaseo/paseo/pull/9088) by [@zeyugao](https://github.com/zeyugao))
+- Changed sending a message to a Pi agent whose process has exited to fail immediately with an instruction to reload the agent ([#8718](https://github.com/getpaseo/paseo/pull/8718))
+
+### Fixed
+
+- Fixed the working indicator disappearing when returning to a chat whose agent finished while you were away ([#9170](https://github.com/getpaseo/paseo/pull/9170))
+- Fixed chats with short collapsed turns opening with empty space until you scrolled ([#8358](https://github.com/getpaseo/paseo/pull/8358), [#9083](https://github.com/getpaseo/paseo/pull/9083))
+- Fixed Collapse turns hiding an earlier reply inside a later turn's summary line after an idle Claude, Codex or OpenCode agent was resumed ([#9098](https://github.com/getpaseo/paseo/pull/9098))
+- Fixed the missing space between a prompt and the reply or collapsed-turn summary line below it ([#9009](https://github.com/getpaseo/paseo/pull/9009))
+- Fixed Markdown tables showing as literal pipes when written directly below a paragraph with no blank line ([#8485](https://github.com/getpaseo/paseo/pull/8485) by [@ragokan](https://github.com/ragokan), [@suk-6](https://github.com/suk-6), [@thsrite](https://github.com/thsrite))
+- Fixed linked badge images that share a line with text rendering as full-width blocks on web and desktop ([#8530](https://github.com/getpaseo/paseo/pull/8530))
+- Fixed View diagram opening fullscreen instead of returning to the inline Mermaid diagram after View source ([#8932](https://github.com/getpaseo/paseo/pull/8932) by [@luoph](https://github.com/luoph))
+- Fixed mouse-wheel scrolling running in the opposite direction in chats on Android ([#8693](https://github.com/getpaseo/paseo/pull/8693) by [@sjeon87](https://github.com/sjeon87))
+- Fixed unsent composer text and attachments being deleted when an agent tab was closed ([#9079](https://github.com/getpaseo/paseo/pull/9079))
+- Fixed pasting text with hyperlinks into the composer dropping the link URLs; links now paste as Markdown ([#8972](https://github.com/getpaseo/paseo/pull/8972))
+- Fixed the composer losing focus after clicking Send with a mouse ([#9015](https://github.com/getpaseo/paseo/pull/9015))
+- Fixed the composer resting 50pt above the bottom edge on iPhone ([#8823](https://github.com/getpaseo/paseo/pull/8823) by [@zeyugao](https://github.com/zeyugao))
+- Fixed Add host sending you to Settings from the sidebar and New workspace ([#8512](https://github.com/getpaseo/paseo/pull/8512))
+- Fixed a failed agent's red dot and Failed grouping staying in the sidebar after opening the agent or choosing Mark as read ([#8831](https://github.com/getpaseo/paseo/pull/8831))
+- Fixed a workspace's unread indicator staying on after it was cleared while the agent's runtime was closed ([#9087](https://github.com/getpaseo/paseo/pull/9087))
+- Fixed the context window popover closing by itself whenever the chat scrolled during a streaming reply ([#8742](https://github.com/getpaseo/paseo/pull/8742) by [@3ae3ae](https://github.com/3ae3ae))
+- Fixed the sidebar usage summary updating only when Usage was opened ([#7806](https://github.com/getpaseo/paseo/pull/7806) by [@ragokan](https://github.com/ragokan))
+- Fixed tooltips and menus above their trigger briefly covering it on Android when their content grew after opening ([#9247](https://github.com/getpaseo/paseo/pull/9247))
+- Fixed History showing "Could not load history" after reloading the web app on the History screen ([#9029](https://github.com/getpaseo/paseo/pull/9029))
+- Fixed section links in an HTML file preview replacing the preview with the Paseo app instead of scrolling within the file ([#8559](https://github.com/getpaseo/paseo/pull/8559) by [@3ae3ae](https://github.com/3ae3ae))
+- Fixed Files Refresh leaving a newly created file hidden when its folder was collapsed during the refresh ([#8582](https://github.com/getpaseo/paseo/pull/8582) by [@hadan8977](https://github.com/hadan8977))
+- Fixed the branch switcher showing "No branches found" while branches are still loading or after the request fails ([#8938](https://github.com/getpaseo/paseo/pull/8938))
+- Fixed commit history showing a doubled slash, no rename status and no diff for a file moved up a directory ([#8509](https://github.com/getpaseo/paseo/pull/8509) by [@hadan8977](https://github.com/hadan8977))
+- Fixed a merged pull request disappearing from its workspace when the checkout was behind the pull request's head
+- Fixed workspace Git watchers staying in fallback polling after a watcher setup timeout
+- Fixed abandoned connections staying open for up to 45 seconds after the web or desktop app reconnected ([#9067](https://github.com/getpaseo/paseo/pull/9067))
+- Fixed a connection routed through another host closing with "The receiving client cannot keep up with host output" while fetching a very large timeline ([#9109](https://github.com/getpaseo/paseo/pull/9109))
+- Fixed a connected host staying in error after it was updated to a supported version ([#8423](https://github.com/getpaseo/paseo/pull/8423) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed handshake retries and a once-per-second `relay_e2ee_channel_error` warning continuing after a connection attempt to an unreachable host had timed out ([#9025](https://github.com/getpaseo/paseo/pull/9025), [#9038](https://github.com/getpaseo/paseo/pull/9038))
+- Fixed app diagnostics reporting `Last online: never` for a host that had connected and then disconnected ([#9054](https://github.com/getpaseo/paseo/pull/9054), [#9058](https://github.com/getpaseo/paseo/pull/9058))
+- Fixed shell commands started by a Codex turn continuing to run after the turn is stopped or interrupted ([#7525](https://github.com/getpaseo/paseo/pull/7525) by [@thomasvan](https://github.com/thomasvan))
+- Fixed Claude turns that stop on an API error, such as a session limit or an invalid API key, being reported as completed instead of failed ([#8480](https://github.com/getpaseo/paseo/pull/8480) by [@RRD-dev](https://github.com/RRD-dev), [@luoph](https://github.com/luoph))
+- Fixed Claude processes staying in memory until the daemon restarted when an idle chat was reopened without sending a prompt ([#9019](https://github.com/getpaseo/paseo/pull/9019) by [@Brandon168](https://github.com/Brandon168))
+- Fixed Claude agents not resuming after a graceful daemon stop or restart when agent recovery is turned on ([#8686](https://github.com/getpaseo/paseo/pull/8686) by [@babo-jeonguk](https://github.com/babo-jeonguk))
+- Fixed the effort control missing in the composer for Claude models that come from Claude's `settings.json` ([#8699](https://github.com/getpaseo/paseo/pull/8699) by [@ragokan](https://github.com/ragokan), [@yahao123](https://github.com/yahao123))
+- Fixed importing a Claude session failing with `Invalid string length` when its transcript is very large ([#8457](https://github.com/getpaseo/paseo/pull/8457) by [@qwist1233-cpu](https://github.com/qwist1233-cpu))
+- Fixed Claude turns that end at the maximum-turn limit losing their final token counts and cost ([#8519](https://github.com/getpaseo/paseo/pull/8519))
+- Fixed Codex "Apply file changes" approvals showing no file name or diff before you accept ([#8585](https://github.com/getpaseo/paseo/pull/8585) by [@ragokan](https://github.com/ragokan))
+- Fixed the timeline showing only the first file's diff when Codex edits several files in one patch ([#8613](https://github.com/getpaseo/paseo/pull/8613) by [@ragokan](https://github.com/ragokan))
+- Fixed Codex session discovery and startup intermittently failing with a SQLite initialization error when several Codex operations start at once ([#9008](https://github.com/getpaseo/paseo/pull/9008) by [@colonelpanic8](https://github.com/colonelpanic8), [@michaelmwu](https://github.com/michaelmwu))
+- Fixed OpenCode conversations that were mid-turn during a daemon restart showing idle and ignoring Stop ([#8698](https://github.com/getpaseo/paseo/pull/8698))
+- Fixed OpenCode being told you declined a tool call when you sent a message while its approval was pending ([#8477](https://github.com/getpaseo/paseo/pull/8477))
+- Fixed reopened Pi conversations missing the messages from before a context compaction ([#8523](https://github.com/getpaseo/paseo/pull/8523))
+- Fixed archived Pi chats failing to open with `spawn pi ENOENT` after their working folder was removed ([#8442](https://github.com/getpaseo/paseo/pull/8442) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed reading an archived Pi chat leaving a Pi process running when idle runtime cleanup is disabled ([#8554](https://github.com/getpaseo/paseo/pull/8554) by [@rylwin](https://github.com/rylwin))
+- Fixed a prompt sent to an ACP agent whose process has exited staying in running forever instead of failing with an error ([#8406](https://github.com/getpaseo/paseo/pull/8406) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed an ACP agent staying stuck on "waiting for permission" after it abandoned an approval request and ended its turn ([#8548](https://github.com/getpaseo/paseo/pull/8548) by [@3ae3ae](https://github.com/3ae3ae))
+- Fixed changing the mode of an ACP agent failing with `invalid_params` after the agent sends a config update ([#8912](https://github.com/getpaseo/paseo/pull/8912) by [@a-sh](https://github.com/a-sh))
+- Fixed Paseo showing and saving an unavailable model after selecting it on a running ACP agent ([#8957](https://github.com/getpaseo/paseo/pull/8957))
+- Fixed importing a session switching it from its own model to the provider's default model ([#8948](https://github.com/getpaseo/paseo/pull/8948))
+- Fixed a message from another agent cancelling the recipient's pending question or approval before you could answer it ([#8453](https://github.com/getpaseo/paseo/pull/8453) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed an agent never being notified of completion after sending a prompt to a closed or archived agent on a connected host ([#8575](https://github.com/getpaseo/paseo/pull/8575))
+- Fixed creating a child agent failing with "Caller agent not found" after a daemon restart until the parent chat had been opened ([#8714](https://github.com/getpaseo/paseo/pull/8714))
+- Fixed an agent still showing as failed after it resumed from a provider error and completed its next turn ([#8083](https://github.com/getpaseo/paseo/pull/8083) by [@luoph](https://github.com/luoph))
+- Fixed a detached subagent still showing under its archived parent until refresh ([#8903](https://github.com/getpaseo/paseo/pull/8903) by [@luoph](https://github.com/luoph))
+- Fixed opening an agent failing with "Working directory does not exist" instead of showing its saved conversation ([#8737](https://github.com/getpaseo/paseo/pull/8737))
+- Fixed the daemon re-reading all archived agent and workspace history on every workspace update ([#8735](https://github.com/getpaseo/paseo/pull/8735))
+- Fixed the daemon repeatedly running Git commands in a workspace folder that was deleted while its file watcher was in fallback polling ([#8462](https://github.com/getpaseo/paseo/pull/8462) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed workspace service connections staying open after the browser tab closes or reloads ([#8421](https://github.com/getpaseo/paseo/pull/8421) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed the daemon web UI answering missing `/.well-known/*` requests with the app page instead of a 404 ([#8622](https://github.com/getpaseo/paseo/pull/8622) by [@HomicideZero](https://github.com/HomicideZero))
+- Fixed schedules accepting cron steps after a single number, such as `0/15 * * * *`, and running them hourly; they are now rejected ([#8607](https://github.com/getpaseo/paseo/pull/8607) by [@Mar-garet](https://github.com/Mar-garet))
+- Fixed cron schedules that set both day-of-month and day-of-week running only when both matched instead of when either matches ([#8611](https://github.com/getpaseo/paseo/pull/8611) by [@Mar-garet](https://github.com/Mar-garet))
+- Fixed `paseo logs --json` printing the plain-text transcript instead of JSON ([#8589](https://github.com/getpaseo/paseo/pull/8589) by [@hadan8977](https://github.com/hadan8977))
+- Fixed the `create_agent` tool not telling agents that creating an agent on another provider needs a mode ([#8483](https://github.com/getpaseo/paseo/pull/8483) by [@guerinnoah](https://github.com/guerinnoah))
+- Fixed terminals failing to open on Windows machines where Windows PowerShell cannot run `Get-CimInstance` ([#8818](https://github.com/getpaseo/paseo/pull/8818))
+- Fixed the terminal typing its version reply into the shell when a program queries the terminal version ([#8419](https://github.com/getpaseo/paseo/pull/8419) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed a finger drag in the web terminal scrolling history about twice as far as the drag ([#8776](https://github.com/getpaseo/paseo/pull/8776) by [@sinomoe](https://github.com/sinomoe))
+- Fixed mouse scrolling in terminal programs such as Copilot CLI stopping after switching away from the terminal and back ([#9004](https://github.com/getpaseo/paseo/pull/9004) by [@imink](https://github.com/imink))
+- Fixed dropping several files onto a remote terminal pasting their paths with no space between them ([#8946](https://github.com/getpaseo/paseo/pull/8946) by [@sebastianarena](https://github.com/sebastianarena))
+- Fixed the `browser_fill` tool reporting success without updating React-controlled inputs and textareas ([#9022](https://github.com/getpaseo/paseo/pull/9022))
+- Fixed `browser_evaluate` failing on pages whose Content Security Policy omits `unsafe-eval` ([#8973](https://github.com/getpaseo/paseo/pull/8973) by [@amustapha](https://github.com/amustapha))
+- Fixed `browser_logs` omitting the HTTP status of each network request ([#8956](https://github.com/getpaseo/paseo/pull/8956) by [@amustapha](https://github.com/amustapha))
+
+### Plugins
+
+- Added plugin subscriptions, which stream live events from the daemon to a plugin's panels, and binary (`Uint8Array`) payloads for plugin RPCs and events ([#8527](https://github.com/getpaseo/paseo/pull/8527))
+- Changed Settings → Plugins to open a plugin's settings from a cog button, with a tab per settings screen ([#8675](https://github.com/getpaseo/paseo/pull/8675))
+- Added an upward chevron to plugin composer pills that open a menu or popover ([#8673](https://github.com/getpaseo/paseo/pull/8673))
+- Changed daemon startup to launch configured plugins concurrently instead of one after another ([#8427](https://github.com/getpaseo/paseo/pull/8427) by [@DAnaeto](https://github.com/DAnaeto))
+- Fixed registry plugin installs failing with "npm artifact changed since review" when the host's npm uses a registry mirror ([#8756](https://github.com/getpaseo/paseo/pull/8756) by [@tlipoca9](https://github.com/tlipoca9))
+- Fixed the published `@getpaseo/*` npm packages declaring no license; they now declare Apache-2.0 ([#7816](https://github.com/getpaseo/paseo/pull/7816) by [@mdlawson](https://github.com/mdlawson), [@ragokan](https://github.com/ragokan))
+- Fixed forking from an earlier reply failing with "This checkpoint changed after it was created" after a plugin updated one of its timeline cards ([#8746](https://github.com/getpaseo/paseo/pull/8746) by [@monarchmaisuriya](https://github.com/monarchmaisuriya))
+- Fixed Collapse turns leaving a turn open, or folding to an earlier reply, when a plugin renders the final reply ([#8811](https://github.com/getpaseo/paseo/pull/8811) by [@geoqiao](https://github.com/geoqiao))
+- Fixed plugin screens showing "This plugin surface is unavailable" while the plugin catalog is still loading after an app reload ([#8123](https://github.com/getpaseo/paseo/pull/8123) by [@vs-tahir](https://github.com/vs-tahir))
+- Fixed the Workspaces list being pushed out of the mobile sidebar on short screens when plugins add many navigation items ([#8727](https://github.com/getpaseo/paseo/pull/8727) by [@jaredwang](https://github.com/jaredwang))
+- Fixed timeline plugins not receiving the sender, event and original text on agent-message tool calls ([#8492](https://github.com/getpaseo/paseo/pull/8492) by [@RRD-dev](https://github.com/RRD-dev), [@luoph](https://github.com/luoph))
+- Fixed plugin RPCs failing when their input or output schema uses a transform ([#8550](https://github.com/getpaseo/paseo/pull/8550))
+
+### Notes
+
+- Background tasks, the Change base picker, archive undo, background agents, plugin subscriptions and fx need both the host and the app on this version
+
 ## 0.15.4 - 2026-11-10
 
 ### Added

@@ -47,6 +47,26 @@ export function parseChangelogEntries(changelogText) {
   });
 }
 
+// Splits an entry body at its first `### ` section. What comes before it is the
+// release's highlights; the sections after it are the full record. Either part is
+// empty when the entry has none.
+export function splitChangelogHighlights(bodyLines) {
+  const firstSection = bodyLines.findIndex((line) => sectionHeadingPattern.test(line));
+  const split = firstSection === -1 ? bodyLines.length : firstSection;
+  return {
+    highlightLines: trimBlankLines(bodyLines.slice(0, split)),
+    sectionLines: trimBlankLines(bodyLines.slice(split)),
+  };
+}
+
+function trimBlankLines(lines) {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start].trim() === "") start += 1;
+  while (end > start && lines[end - 1].trim() === "") end -= 1;
+  return lines.slice(start, end);
+}
+
 // Turns `[label](url)` into `label` and drops the trailing PR/attribution
 // parenthetical, which is pure noise in a store changelog with a 500 char budget.
 export function stripChangelogMarkup(text) {

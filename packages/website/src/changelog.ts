@@ -5,8 +5,11 @@ import { DEFAULT_LOCALE, type Locale, localizePath } from "~/i18n";
 export interface ChangelogRelease {
   version: string;
   date: string;
-  markdown: string;
-  /** The language of `markdown`; English when the release has no translation yet. */
+  /** Markdown before the first `###` section; empty when the release opens with a section. */
+  highlights: string;
+  /** Markdown from the first `###` section to the end of the release; the full record. */
+  sections: string;
+  /** The language of the notes; English when the release has no translation yet. */
   locale: Locale;
 }
 
@@ -16,6 +19,7 @@ export interface ChangelogReleaseGroup {
 }
 
 const releaseHeadingPattern = /^## (.+?) - (\d{4}-\d{2}-\d{2})$/;
+const sectionHeadingPattern = /^### /;
 
 export function releaseAnchor(version: string): string {
   return `release-${version}`;
@@ -25,10 +29,17 @@ function minorVersion(version: string): string {
   return version.split(".").slice(0, 2).join(".");
 }
 
+interface ReleaseDraft {
+  version: string;
+  date: string;
+  highlights: string[];
+  sections: string[];
+}
+
 export function parseChangelog(markdown: string, locale: Locale): ChangelogRelease[] {
-  const releases: ChangelogRelease[] = [];
+  const releases: ReleaseDraft[] = [];
   const versions = new Set<string>();
-  let currentRelease: ChangelogRelease | null = null;
+  let currentRelease: ReleaseDraft | null = null;
 
   for (const line of markdown.split("\n")) {
     const heading = line.match(releaseHeadingPattern);
@@ -40,20 +51,26 @@ export function parseChangelog(markdown: string, locale: Locale): ChangelogRelea
       versions.add(version);
 
       if (currentRelease) releases.push(currentRelease);
-      currentRelease = {
-        version,
-        date: heading[2],
-        markdown: "",
-        locale,
-      };
+      currentRelease = { version, date: heading[2], highlights: [], sections: [] };
       continue;
     }
 
-    if (currentRelease) currentRelease.markdown += `${line}\n`;
+    if (!currentRelease) continue;
+    if (currentRelease.sections.length > 0 || sectionHeadingPattern.test(line)) {
+      currentRelease.sections.push(line);
+    } else {
+      currentRelease.highlights.push(line);
+    }
   }
 
   if (currentRelease) releases.push(currentRelease);
-  return releases;
+  return releases.map((release) => ({
+    version: release.version,
+    date: release.date,
+    highlights: release.highlights.join("\n").trim(),
+    sections: release.sections.join("\n").trim(),
+    locale,
+  }));
 }
 
 /**

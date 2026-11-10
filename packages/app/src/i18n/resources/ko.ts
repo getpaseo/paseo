@@ -1184,6 +1184,8 @@ export const ko: TranslationResources = {
     title: "새로운 소식",
     installed: "설치됨",
     showMore: "더 보기",
+    showAllChanges: "모든 변경 사항 보기",
+    hideAllChanges: "모든 변경 사항 숨기기",
     openWebsite: "전체 변경 내역",
     error: {
       title: "변경 내역을 불러오지 못했습니다",

@@ -16,6 +16,42 @@ const ENGLISH = parseChangelog(
   "en",
 );
 
+describe("parseChangelog", () => {
+  it("splits a release into the highlights it leads with and its sections", () => {
+    const [release] = parseChangelog(
+      [
+        "## 0.3.0 - 2026-05-03",
+        "",
+        "- **Faster diffs:** Diffs load sooner.",
+        "",
+        "### Added",
+        "",
+        "- Added a picker",
+        "",
+        "### Fixed",
+        "",
+        "- Fixed a crash",
+        "",
+      ].join("\n"),
+      "en",
+    );
+
+    expect(release).toEqual({
+      version: "0.3.0",
+      date: "2026-05-03",
+      highlights: "- **Faster diffs:** Diffs load sooner.",
+      sections: "### Added\n\n- Added a picker\n\n### Fixed\n\n- Fixed a crash",
+      locale: "en",
+    });
+  });
+
+  it("has no highlights when a release opens with a section", () => {
+    const [release] = parseChangelog("## 0.3.0 - 2026-05-03\n\n### Fixed\n\n- One\n", "en");
+
+    expect(release).toMatchObject({ highlights: "", sections: "### Fixed\n\n- One" });
+  });
+});
+
 describe("localizeReleases", () => {
   it("uses a translation whose version and date match the English entry", () => {
     const chinese = parseChangelog("## 0.1.0 - 2026-05-01\n\n- 旧\n", "zh-CN");
