@@ -700,6 +700,8 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       label: z.string().optional(),
       text: z.string().optional(),
       icon: z.enum(TOOL_CALL_ICON_NAMES).optional(),
+      // Clients before this field strip it and keep showing the text raw.
+      format: z.literal("markdown").optional(),
     }),
     z.object({
       type: z.literal("plan"),

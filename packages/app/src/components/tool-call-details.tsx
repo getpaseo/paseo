@@ -22,6 +22,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
+import { MarkdownRenderer } from "./markdown/renderer";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -274,7 +275,15 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
   );
 }
 
-function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
+function ScrollablePlainTextSection({
+  text,
+  markdown,
+  ds,
+}: {
+  text: string;
+  markdown: boolean;
+  ds: DetailStyles;
+}) {
   return (
     <View style={styles.section}>
       <ScrollView
@@ -283,9 +292,13 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
         nestedScrollEnabled
         showsVerticalScrollIndicator
       >
-        <Text selectable style={styles.plainText}>
-          {text}
-        </Text>
+        {markdown ? (
+          <MarkdownRenderer text={text} compact />
+        ) : (
+          <Text selectable style={styles.plainText}>
+            {text}
+          </Text>
+        )}
       </ScrollView>
     </View>
   );
@@ -367,7 +380,14 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
   if (plainInputText !== null) {
-    return [<ScrollablePlainTextSection key="unknown-plain-text" text={plainInputText} ds={ds} />];
+    return [
+      <ScrollablePlainTextSection
+        key="unknown-plain-text"
+        text={plainInputText}
+        markdown={false}
+        ds={ds}
+      />,
+    ];
   }
 
   const sectionsFromTopLevel = [
@@ -496,7 +516,14 @@ function buildDetailSections(
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<ScrollablePlainTextSection key="plain-text" text={detail.text} ds={ds} />];
+    return [
+      <ScrollablePlainTextSection
+        key="plain-text"
+        text={detail.text}
+        markdown={detail.format === "markdown"}
+        ds={ds}
+      />,
+    ];
   }
   if (detail.type === "unknown") {
     return buildPaseoUnknownSections(toolName, detail) ?? buildUnknownSections(detail, ds, t);

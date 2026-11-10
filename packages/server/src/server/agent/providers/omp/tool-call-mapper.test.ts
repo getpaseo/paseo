@@ -245,6 +245,40 @@ describe("OMP tool call mapper", () => {
     ).toEqual({ type: "plain_text", label: `bash completed: ${command}`, text: "finished" });
   });
 
+  test("marks a subagent's wait result and a bare wait report as Markdown, not a bash job", () => {
+    const report = "## Report\n\n- **done**";
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("wait", {}),
+        parseToolResult({
+          content: [{ type: "text", text: "## Completed (1)" }],
+          details: {
+            jobs: [
+              {
+                id: "0-Scout",
+                type: "task",
+                status: "completed",
+                label: "Scout",
+                resultText: report,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({
+      type: "plain_text",
+      label: "task completed: Scout",
+      text: report,
+      format: "markdown",
+    });
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("wait", {}),
+        parseToolResult({ content: [{ type: "text", text: "## Completed (2)\n\n### bg_1" }] }),
+      ),
+    ).toMatchObject({ text: "## Completed (2)\n\n### bg_1", format: "markdown" });
+  });
+
   test("maps web search and URL reads to search and fetch", () => {
     expect(mapOmpToolDetail(parseToolArgs("web_search", { query: "Paseo" }), null)).toMatchObject({
       type: "search",
