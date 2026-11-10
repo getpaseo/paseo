@@ -39,6 +39,19 @@ function hasChildTimeline(events: AgentStreamEvent[], id?: string) {
   );
 }
 
+function childAssistantTexts(events: AgentStreamEvent[], id: string) {
+  return events.flatMap((event) => {
+    if (
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === id &&
+      event.event.item.type === "assistant_message"
+    )
+      return [event.event.item.text];
+    return [];
+  });
+}
+
 function lastChildUpsert(events: AgentStreamEvent[], id: string) {
   const last = events.findLast(
     (event) =>
@@ -159,6 +172,7 @@ describe("pi-subagents adapter", () => {
     const received: AgentStreamEvent[] = [];
     try {
       host.follow((event) => received.push(event));
+      const initialTexts: string[] = [];
       for (const [run, source] of [
         ["b", "a"],
         ["c", "b"],
@@ -200,7 +214,10 @@ describe("pi-subagents adapter", () => {
           expect.objectContaining({ id: `resume-${run}`, status: "running" }),
         ]);
         replay.mapToolCall(call);
-        await expect.poll(() => hasChildTimeline(received, `resume-${run}`)).toBe(true);
+        initialTexts.push(`Attempt ${run}`);
+        await expect
+          .poll(() => childAssistantTexts(received, `resume-${run}`))
+          .toEqual(initialTexts);
       }
       const oldNotice = {
         role: "custom" as const,
@@ -215,6 +232,24 @@ describe("pi-subagents adapter", () => {
         { type: "upsert", id: "resume-b", status: "completed" },
       ]);
       expect(hasChildTimeline(await oldReplay!.hydration)).toBe(true);
+      expect(lastChildUpsert(received, "resume-c")).toEqual({
+        type: "upsert",
+        id: "resume-c",
+        title: "scout",
+        status: "running",
+      });
+      await appendFile(
+        join(root, "shared-child.jsonl"),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Attempt c follow-up" }],
+          },
+        }) + "\n",
+      );
+      const expectedCTexts = ["Attempt b", "Attempt c", "Attempt c follow-up"];
+      await expect.poll(() => childAssistantTexts(received, "resume-c")).toEqual(expectedCTexts);
       expect(lastChildUpsert(received, "resume-c")).toEqual({
         type: "upsert",
         id: "resume-c",
@@ -238,7 +273,19 @@ describe("pi-subagents adapter", () => {
         content: `Background task completed: **scout**\nRetention-managed async directory: ${join(root, "c")}\nSession file: ${join(root, "shared-child.jsonl")}`,
       });
       expect(notice?.subagents).toEqual([{ type: "upsert", id: "resume-c", status: "completed" }]);
-      expect(hasChildTimeline(await notice!.hydration)).toBe(true);
+      const hydration = await notice!.hydration;
+      expect(childAssistantTexts(hydration, "resume-c")).toEqual(expectedCTexts);
+      expect(hydration).toEqual(
+        expectedCTexts.map((text) => ({
+          type: "provider_subagent",
+          provider: "pi",
+          event: {
+            type: "timeline",
+            id: "resume-c",
+            item: expect.objectContaining({ type: "assistant_message", text }),
+          },
+        })),
+      );
       expect(
         host.mapToolCall({
           callId: "wait-c",
