@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import {
@@ -30,6 +31,12 @@ export function WorkspaceRenameModal({
 }: WorkspaceRenameModalProps) {
   const { t } = useTranslation();
   const setWorkspaceTitle = useSetWorkspaceTitle(workspace);
+  const submit = useCallback(
+    async (title: string) => {
+      await setWorkspaceTitle(title);
+    },
+    [setWorkspaceTitle],
+  );
 
   return (
     <AdaptiveRenameModal
@@ -39,7 +46,7 @@ export function WorkspaceRenameModal({
       placeholder={workspace.name}
       submitLabel={t("sidebar.workspace.rename.submit")}
       onClose={onClose}
-      onSubmit={setWorkspaceTitle}
+      onSubmit={submit}
       testID={testID}
     />
   );

@@ -16,10 +16,10 @@ export function workspaceRenameInitialValue(workspace: RenamableWorkspace): stri
   return workspace.title ?? workspace.name;
 }
 
-/** Resolves once the daemon accepts the title; rejects with a displayable message. */
+/** Resolves to the title the daemon accepted; rejects with a displayable message. */
 export function useSetWorkspaceTitle(
   workspace: Pick<RenamableWorkspace, "serverId" | "workspaceId">,
-): (title: string) => Promise<void> {
+): (title: string) => Promise<string | null> {
   const { t } = useTranslation();
   const mutation = useMutation({
     mutationFn: async (title: string) => {
@@ -28,7 +28,11 @@ export function useSetWorkspaceTitle(
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }
       const trimmed = title.trim();
-      await client.setWorkspaceTitle(workspace.workspaceId, trimmed.length === 0 ? null : trimmed);
+      const accepted = await client.setWorkspaceTitle(
+        workspace.workspaceId,
+        trimmed.length === 0 ? null : trimmed,
+      );
+      return accepted.title;
     },
   });
   return mutation.mutateAsync;

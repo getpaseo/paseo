@@ -19,12 +19,12 @@ export interface SidebarRenamableWorkspace extends RenamableWorkspace {
  *
  * `saving` and `saved` keep the field on screen holding the submitted text. The daemon answers
  * the request before it pushes the updated workspace, so closing on the answer would show the
- * old title for a beat. `saved` ends when the row's title moves off the one it had at submit,
- * which is not the one editing started from when another client renamed it in between.
+ * old title for a beat. `saved` ends when the row shows the title the daemon accepted. Any other
+ * title change is a different client's rename, delivered before ours.
  */
 type InlineRenameSession = { kind: "inline"; initialValue: string } & (
-  | { phase: "editing" }
-  | { phase: "saving" | "saved"; titleBeforeSave: string | null }
+  | { phase: "editing" | "saving" }
+  | { phase: "saved"; acceptedTitle: string | null }
 );
 
 type RenameSession = { kind: "closed" } | { kind: "modal" } | InlineRenameSession;
@@ -51,7 +51,7 @@ export function useSidebarWorkspaceRename(
   if (
     session.kind === "inline" &&
     session.phase === "saved" &&
-    currentTitle !== session.titleBeforeSave
+    currentTitle === session.acceptedTitle
   ) {
     setSession(CLOSED);
   }
@@ -71,22 +71,21 @@ export function useSidebarWorkspaceRename(
     (text: string) => {
       if (session.kind !== "inline") return;
       const title = text.trim();
-      // Saving the title the row already has would never move it, so `saved` would never end.
-      if (title.length === 0 || title === session.initialValue || title === currentTitle) {
+      if (title.length === 0 || title === session.initialValue) {
         setSession(CLOSED);
         return;
       }
-      setSession({
-        kind: "inline",
-        initialValue: session.initialValue,
-        phase: "saving",
-        titleBeforeSave: currentTitle,
-      });
+      setSession({ kind: "inline", initialValue: session.initialValue, phase: "saving" });
       setWorkspaceTitle(title).then(
-        () =>
+        (acceptedTitle) =>
           setSession((previous) =>
             previous.kind === "inline" && previous.phase === "saving"
-              ? { ...previous, phase: "saved" }
+              ? {
+                  kind: "inline",
+                  initialValue: previous.initialValue,
+                  phase: "saved",
+                  acceptedTitle,
+                }
               : previous,
           ),
         (error: unknown) => {
@@ -95,7 +94,7 @@ export function useSidebarWorkspaceRename(
         },
       );
     },
-    [currentTitle, session, setWorkspaceTitle, toast],
+    [session, setWorkspaceTitle, toast],
   );
 
   const titleEditor =

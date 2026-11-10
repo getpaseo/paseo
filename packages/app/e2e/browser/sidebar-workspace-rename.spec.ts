@@ -249,9 +249,7 @@ test.describe("Sidebar workspace rename", () => {
     }
   });
 
-  test("submitting the title another client just set closes the field without saving", async ({
-    page,
-  }) => {
+  test("submitting the title another client just set closes the field", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-external-same-" });
 
     try {
@@ -265,15 +263,58 @@ test.describe("Sidebar workspace rename", () => {
       await expect(input).toBeFocused();
       await renameFromAnotherClient(page, gate, workspace, "External title");
 
+      // The daemon accepts it, but the title does not change, so no renamed workspace follows.
       await input.fill("External title");
       await page.keyboard.press("Enter");
       await expect(input).toHaveCount(0);
       await expect(row).toContainText("External title");
-      expect(gate.getClientRequestCount("workspace.title.set.request")).toBe(0);
 
       // The row is a row again: its menu opens and renames.
       await chooseRenameFromKebab(page, workspace.workspaceId);
       await expect(input).toBeFocused();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("a rename elsewhere delivered while saving does not close the field", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-external-pending-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await input.fill("Submitted title");
+
+      // Another client's rename lands just before ours. The page receives, in daemon order: that
+      // rename, our response, our renamed workspace. Each is held until the previous is rendered.
+      gate.holdNextServerMessage("workspace_update");
+      await workspace.client.setWorkspaceTitle(workspace.workspaceId, "External title");
+      await gate.waitForHeldServerMessage("workspace_update");
+      gate.holdNextServerMessage("workspace.title.set.response");
+      gate.holdNextServerMessage("workspace_update");
+      await page.keyboard.press("Enter");
+      await gate.waitForHeldServerMessage("workspace.title.set.response");
+
+      // Releases the oldest held update: the other client's. Ours stays held behind it.
+      gate.releaseHeldServerMessage("workspace_update");
+      await gate.waitForHeldServerMessage("workspace_update");
+      await waitForTwoFrames(page);
+      await expect(input).toHaveValue("Submitted title");
+
+      gate.releaseHeldServerMessage("workspace.title.set.response");
+      await waitForTwoFrames(page);
+      await expect(input).toHaveValue("Submitted title");
+      await expect(row).not.toContainText("External title");
+
+      gate.releaseHeldServerMessage("workspace_update");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("Submitted title");
     } finally {
       await workspace.cleanup();
     }
