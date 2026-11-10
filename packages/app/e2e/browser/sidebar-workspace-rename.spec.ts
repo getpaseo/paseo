@@ -320,6 +320,41 @@ test.describe("Sidebar workspace rename", () => {
     }
   });
 
+  test("a later rename that replaces the saved title closes the field", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-superseded-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await input.fill("Submitted title");
+
+      // The daemon builds each update from its latest record, so a rename that lands after ours
+      // is accepted can be published in its place. Our update stays held: the page never sees it.
+      gate.holdNextServerMessage("workspace.title.set.response");
+      gate.holdNextServerMessage("workspace_update");
+      await page.keyboard.press("Enter");
+      await gate.waitForHeldServerMessage("workspace.title.set.response");
+      await gate.waitForHeldServerMessage("workspace_update");
+      gate.releaseHeldServerMessage("workspace.title.set.response");
+      await waitForTwoFrames(page);
+      await expect(input).toHaveValue("Submitted title");
+
+      await workspace.client.setWorkspaceTitle(workspace.workspaceId, "Later title");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("Later title");
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("below the lg breakpoint renaming opens the modal", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-modal-" });
 
