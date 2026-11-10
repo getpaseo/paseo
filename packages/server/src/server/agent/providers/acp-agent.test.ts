@@ -4042,7 +4042,7 @@ describe("interrupt", () => {
         }),
     );
     const cancel = vi.fn(async () => undefined);
-    internals.connection = { prompt, cancel };
+    internals.connection = { prompt, cancel, signal: new AbortController().signal };
     const { turnId } = await session.startTurn("hello");
     return { session, cancel, resolvePrompt, rejectPrompt, turnId };
   }
