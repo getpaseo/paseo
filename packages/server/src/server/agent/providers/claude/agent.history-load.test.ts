@@ -1,5 +1,13 @@
 import { measureMainThreadWork } from "../../../../test-utils/main-thread-work.js";
-import fs, { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import * as os from "node:os";
@@ -660,6 +668,118 @@ describe("ClaudeAgentSession persisted history load", () => {
     for (const variable of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(variable, unavailable);
     await withClaudeReplayHistory(file, async (history) => {
       expect(await Array.fromAsync(history.parentEntries)).toEqual([entry]);
+    });
+  });
+
+  test("replays dense history with bounded filesystem reads and keeps every record", async () => {
+    const file = transcriptPath();
+    const entries = Array.from({ length: 2_000 }, (_, index) => ({
+      type: "assistant",
+      uuid: `message-${index}`,
+      message: { content: `Saved reply ${index}: é🙂` },
+    }));
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n"));
+    // Observe real filesystem calls, without replacing the descriptor or its IO.
+    const descriptor = await open(file, "r");
+    const reads = vi.spyOn(Object.getPrototypeOf(descriptor), "read");
+    await descriptor.close();
+    await withClaudeReplayHistory(file, async (history) => {
+      for (let pass = 0; pass < 2; pass++) {
+        reads.mockClear();
+        expect(await Array.fromAsync(history.parentEntries)).toEqual(entries);
+        expect(reads.mock.calls.length).toBeLessThan(20);
+      }
+    });
+  });
+
+  test("keeps appended records outside the indexed replay snapshot", async () => {
+    const file = transcriptPath();
+    const entry = { type: "assistant", message: { content: "Indexed reply" } };
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(entry) + "\n");
+    await withClaudeReplayHistory(file, async (history) => {
+      appendFileSync(file, JSON.stringify({ ...entry, uuid: "new-live-reply" }) + "\n");
+      expect(await Array.fromAsync(history.parentEntries)).toEqual([entry]);
+      expect(await Array.fromAsync(history.parentEntries)).toEqual([entry]);
+    });
+  });
+
+  test("indexes parent and nested Task ownership with each transcript", async () => {
+    const file = transcriptPath();
+    const child = path.join(file.slice(0, -".jsonl".length), "subagents", "agent-child.jsonl");
+    mkdirSync(path.dirname(child), { recursive: true });
+    writeFileSync(
+      file,
+      [
+        {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "task",
+                name: "Agent",
+                input: { name: "Reviewer", description: "Review changes" },
+              },
+            ],
+          },
+        },
+        {
+          type: "user",
+          toolUseResult: { status: "async_launched" },
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "task", content: "agentId: child" }],
+          },
+        },
+        { type: "system", subtype: "task_notification", tool_use_id: "task", status: "completed" },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    writeFileSync(
+      child,
+      JSON.stringify({
+        type: "assistant",
+        isSidechain: true,
+        agentId: "child",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "nested-task",
+              name: "Task",
+              input: { subagent_type: "Explore" },
+            },
+          ],
+        },
+      }),
+    );
+    await withClaudeReplayHistory(file, async (history) => {
+      expect(history.parentFacts).toEqual({
+        toolCalls: new Map([["task", { title: "Reviewer", description: "Review changes" }]]),
+        linksByAgentId: new Map([["child", { toolCallId: "task" }]]),
+        outcomesByToolCallId: new Map([["task", { status: "completed" }]]),
+      });
+      expect(history.subagents[0]!.parentFacts).toEqual({
+        toolCalls: new Map([["nested-task", { title: "Explore" }]]),
+        linksByAgentId: new Map(),
+        outcomesByToolCallId: new Map(),
+      });
+    });
+  });
+
+  test("does not reuse buffered history after its source is truncated between passes", async () => {
+    const file = transcriptPath();
+    const entry = { type: "assistant", message: { content: "Indexed reply" } };
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(entry));
+    await withClaudeReplayHistory(file, async (history) => {
+      expect(await Array.fromAsync(history.parentEntries)).toEqual([entry]);
+      truncateSync(file, 0);
+      await expect(Array.fromAsync(history.parentEntries)).rejects.toThrow(
+        "Claude transcript was truncated during replay",
+      );
     });
   });
 
