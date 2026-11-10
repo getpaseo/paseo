@@ -1,6 +1,7 @@
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
+import { normalizeTexDelimiters } from "./tex-delimiters";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
@@ -130,7 +131,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
   return link.url.slice(workspaceRoot.length + 1);
 }
 
-/** Preserve source spelling; adapt workspace images, spoiler delimiters, and entity text. */
+/** Preserve source spelling; adapt workspace images, spoiler and TeX delimiters, and entity text. */
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
@@ -141,7 +142,7 @@ export function prepareMarkdownSource(
     forgeReferencePattern?: string;
   } = {},
 ) {
-  source = normalizeMarkdownHtml(source);
+  source = normalizeTexDelimiters(normalizeMarkdownHtml(source));
   const images: MarkdownImage[] = [];
   let tree: Root | undefined;
   const getTree = () =>
