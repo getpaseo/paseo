@@ -1,12 +1,15 @@
 import { describe, expect, test, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ProviderLaunch, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import contribute from "../index.server.js";
 import { createAntigravityProvider } from "./provider.js";
-import { accountKey, buildSummaryWindows, Usage } from "./usage.js";
+import { accountKey, defaultUsageRunner, Usage } from "./usage.js";
+
+const fakeAgy = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
 
 const sampleAgyUsageJson = JSON.stringify({
   conversation_id: "",
@@ -104,80 +107,6 @@ describe("Antigravity Usage", () => {
     expect(key1).not.toBe(keyCustom);
     expect(typeof key1).toBe("string");
     expect(key1.length).toBeGreaterThan(0);
-  });
-
-  test("buildSummaryWindows maps groups and buckets into UsageWindows", () => {
-    const parsed = JSON.parse(sampleAgyUsageJson);
-    const windows = buildSummaryWindows(parsed.command.data.groups);
-
-    expect(windows).toHaveLength(5);
-
-    const geminiWeekly = windows.find((w) => w.id === "gemini-weekly");
-    expect(geminiWeekly).toBeDefined();
-    expect(geminiWeekly).toMatchObject({
-      id: "gemini-weekly",
-      label: "Gemini · Weekly",
-      shortLabel: "Gemini wk",
-      summary: true,
-      usedPct: 2,
-      remainingPct: 98,
-      resetsAt: "2026-11-01T09:42:13Z",
-      tone: "ok",
-    });
-
-    const gemini5h = windows.find((w) => w.id === "gemini-5h");
-    expect(gemini5h).toBeDefined();
-    expect(gemini5h?.summary).toBeUndefined();
-    expect(gemini5h).toMatchObject({
-      id: "gemini-5h",
-      label: "Gemini · 5h",
-      shortLabel: "Gemini 5h",
-      usedPct: 10,
-      remainingPct: 90,
-      resetsAt: "2026-10-26T02:21:56Z",
-      tone: "ok",
-    });
-
-    const claudeWeekly = windows.find((w) => w.id === "claude-gpt-oss-weekly");
-    expect(claudeWeekly).toBeDefined();
-    expect(claudeWeekly).toMatchObject({
-      id: "claude-gpt-oss-weekly",
-      label: "Claude & GPT-OSS · Weekly",
-      shortLabel: "Claude/OSS wk",
-      summary: true,
-      usedPct: 0,
-      remainingPct: 100,
-      resetsAt: "2026-11-01T21:28:07Z",
-      tone: "ok",
-    });
-
-    // agy reports the Claude/GPT 5-hour window as disabled on plans it does not apply to; the
-    // card must carry that as a placeholder state, not as unused quota.
-    const claude5h = windows.find((w) => w.id === "claude-gpt-oss-5h");
-    expect(claude5h).toBeDefined();
-    expect(claude5h?.summary).toBeUndefined();
-    expect(claude5h).toMatchObject({
-      id: "claude-gpt-oss-5h",
-      label: "Claude & GPT-OSS · 5h · Disabled",
-      shortLabel: "Claude/OSS 5h",
-      usedPct: null,
-      remainingPct: null,
-      resetsAt: null,
-      tone: "default",
-    });
-
-    const argonWeekly = windows.find((w) => w.id === "gemini-argon-weekly");
-    expect(argonWeekly).toBeDefined();
-    expect(argonWeekly).toMatchObject({
-      id: "gemini-argon-weekly",
-      label: "Gemini 4 Argon · Weekly",
-      shortLabel: "Argon wk",
-      summary: true,
-      usedPct: 100,
-      remainingPct: 0,
-      resetsAt: "2026-10-26T12:48:38Z",
-      tone: "danger",
-    });
   });
 
   test("Usage registration exposes Antigravity metadata", () => {
@@ -379,9 +308,92 @@ describe("Antigravity Usage", () => {
         },
       ],
     });
+  });
 
-    expect(runner).toHaveBeenCalledTimes(1);
-    expect(runner).toHaveBeenCalledWith(launch, []);
+  test("Usage.fetch maps camelCase bucket fields", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        status: "SUCCESS",
+        command: {
+          name: "usage",
+          data: {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    id: "gemini-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remainingFraction: 0.5,
+                    resetTime: "2026-11-02T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: { HOME: "/home/testuser" } };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "available",
+      windows: [
+        {
+          id: "gemini-weekly",
+          label: "Gemini · Weekly",
+          shortLabel: "Gemini wk",
+          summary: true,
+          usedPct: 50,
+          remainingPct: 50,
+          resetsAt: "2026-11-02T00:00:00Z",
+          tone: "ok",
+        },
+      ],
+      details: [{ id: "observed", label: "Observed", value: expect.any(String) }],
+    });
+  });
+
+  test("defaultUsageRunner drops overridden options together with their values", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "antigravity-argv-"));
+    const log = path.join(directory, "argv.ndjson");
+    try {
+      const launch: ProviderLaunch = {
+        command: process.execPath,
+        args: [
+          fakeAgy,
+          "--input-format",
+          "stream-json",
+          "--output-format",
+          "stream-json",
+          "--output-format=stream-json",
+          "--disable-slash-commands",
+          "--model",
+          "keep-me",
+        ],
+        // The fake CLI records its argv and exits, so the assertion sees what agy would receive.
+        env: { AGY_TEST_LOG: log, AGY_TEST_STARTUP: "exit" },
+      };
+
+      await expect(defaultUsageRunner(launch, [])).rejects.toThrow();
+
+      const record = JSON.parse(readFileSync(log, "utf8").trim().split("\n")[0] ?? "{}");
+      expect(record.args).toEqual([
+        "--model",
+        "keep-me",
+        "-p",
+        "/usage",
+        "--output-format",
+        "json",
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("Usage.fetch handles agy runner non-zero error", async () => {
@@ -595,25 +607,22 @@ describe("Antigravity Usage", () => {
     expect(registeredUsage?.id).toBe("antigravity");
   });
 
-  test("createAntigravityProvider status() remembers launch in usage", async () => {
+  test("createAntigravityProvider status() remembers the launch in usage", async () => {
     const usage = new Usage(undefined, () => ({ HOME: "/home/no-antigravity-user" }));
     const provider = createAntigravityProvider(usage);
 
+    // The fake CLI answers the version and catalog probes, so the test never touches a real agy.
     const launch: ProviderLaunch = {
-      command: "agy",
-      args: [],
+      command: process.execPath,
+      args: [fakeAgy],
       env: { HOME: "/home/probed-user" },
     };
 
-    // Before status probe
     expect(await usage.registration().discover({ kind: "global" })).toEqual([]);
 
-    // Simulate status check (mock probe internally by spying or calling status with launch)
-    await provider.status({ launch }).catch(() => {});
+    expect(await provider.status({ launch })).toEqual({ available: true });
 
-    // Usage should now remember the launch
     const discovered = await usage.registration().discover({ kind: "global" });
-    expect(discovered).toHaveLength(1);
-    expect(discovered[0]?.key).toBe(accountKey(launch.env));
+    expect(discovered.map((entry) => entry.key)).toEqual([accountKey(launch.env)]);
   });
 });

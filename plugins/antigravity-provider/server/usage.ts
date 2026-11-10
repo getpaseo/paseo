@@ -110,7 +110,7 @@ function bucketWindowShape(
   };
 }
 
-export function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): UsageWindow[] {
+function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): UsageWindow[] {
   const windows: UsageWindow[] = [];
 
   for (const group of groups) {
@@ -161,16 +161,39 @@ export function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): U
 
 export type UsageRunner = (launch: ProviderLaunch, args: string[]) => Promise<string>;
 
+/** Options the usage call sets itself, so the launch's own copies must not reach the command. */
+const OVERRIDDEN_FLAGS = new Set(["--disable-slash-commands"]);
+/** Overridden options that take a value; the bare form carries it in the next argument. */
+const OVERRIDDEN_VALUE_FLAGS = new Set([
+  "-p",
+  "--print",
+  "--prompt",
+  "--input-format",
+  "--output-format",
+]);
+
+/**
+ * Drops the launch arguments the usage call supplies for itself. A flag and its value travel as
+ * two arguments (`--output-format stream-json`), so removing the flag alone would leave the value
+ * behind as a stray positional argument.
+ */
+function stripLaunchArgs(args: readonly string[]): string[] {
+  const safe: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    const flag = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
+    if (OVERRIDDEN_FLAGS.has(flag)) continue;
+    if (OVERRIDDEN_VALUE_FLAGS.has(flag)) {
+      if (!arg.includes("=")) index += 1;
+      continue;
+    }
+    safe.push(arg);
+  }
+  return safe;
+}
+
 export async function defaultUsageRunner(launch: ProviderLaunch, args: string[]): Promise<string> {
-  const safeArgs = launch.args.filter(
-    (arg) =>
-      arg !== "--disable-slash-commands" &&
-      arg !== "-p" &&
-      arg !== "--print" &&
-      arg !== "--prompt" &&
-      !arg.startsWith("--input-format") &&
-      !arg.startsWith("--output-format"),
-  );
+  const safeArgs = stripLaunchArgs(launch.args);
   const result = await execCommand(
     launch.command,
     [...safeArgs, "-p", "/usage", "--output-format", "json", ...args],
@@ -225,6 +248,12 @@ export class Usage {
    * card would stay hidden until the first status()/connect(). The CLI's config directory is
    * the one launch-free signal that a login exists here, so a placeholder launch standing in
    * for the daemon-resolved one keeps the card visible from the first `paseo usage`.
+   *
+   * The plugin cannot see the daemon's resolved launch before the daemon resolves one, so a
+   * custom executable outside PATH or a provider-level HOME/ANTIGRAVITY_HOME override is only
+   * honoured once status()/connect() delivers that launch; until then this placeholder can fetch
+   * the default login instead. The placeholder is dropped the moment the real launch arrives
+   * with a different account key, so the wrong card never outlives the first snapshot.
    */
   private rememberFallbackLaunch(): void {
     const env = this.environment();
