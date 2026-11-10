@@ -20,7 +20,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
-import { useSidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
+import { useSidebarWorkspaceTabCount } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
 import { hasSidebarWorkspaceTabsDisclosure } from "@/components/sidebar/workspace-tabs/model";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -1031,8 +1031,8 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
-  const { tabs } = useSidebarWorkspaceTabs(workspace.serverId, workspace.workspaceId);
-  const tabsDisclosureCount = hasSidebarWorkspaceTabsDisclosure(tabs.length) ? tabs.length : null;
+  const tabCount = useSidebarWorkspaceTabCount(workspace.serverId, workspace.workspaceId);
+  const tabsDisclosureCount = hasSidebarWorkspaceTabsDisclosure(tabCount) ? tabCount : null;
   return (
     <SidebarWorkspaceTrailingActionSlot
       reserveWidth={reserveSlotWidth}

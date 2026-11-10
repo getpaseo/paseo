@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { mapLayout } from "@/components/ui/control-geometry";
 import { isWeb } from "@/constants/platform";
+import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { density, densityIconBox } from "@/styles/density";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -40,6 +41,9 @@ function SidebarWorkspaceTabList({
   workspaceKey,
   inStatusGroup = false,
 }: SidebarWorkspaceTabsProps) {
+  // The registry is filled by the workspace screen, and the sidebar can render first: a cold
+  // load of /open-project or Settings with saved tabs would otherwise throw in the resolver.
+  ensurePanelsRegistered();
   const { tabs, activeTabId } = useSidebarWorkspaceTabs(serverId, workspaceId);
   // The disclosure leaves with the second-to-last tab; the list goes with it, and comes back
   // expanded when a second tab opens again.
@@ -163,7 +167,8 @@ const styles = StyleSheet.create((theme) => {
   );
   const statusGroupTitleRail = mapLayout(
     titleRail,
-    (rail) => rail + theme.spacing[2] + theme.spacing[2],
+    // `rowIndented` replaces the row's leading padding rather than adding to it: one step more.
+    (rail) => rail + theme.spacing[2],
   );
   return {
     list: {
