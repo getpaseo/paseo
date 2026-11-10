@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  pluginCombobox: {
+    searching: "Pesquisando…",
+    empty: "Nenhum resultado",
+    failed: "Falha na pesquisa: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
@@ -1198,6 +1203,8 @@ export const ptBR: TranslationResources = {
     title: "Novidades",
     installed: "Instalada",
     showMore: "Mostrar mais",
+    showAllChanges: "Mostrar todas as mudanças",
+    hideAllChanges: "Ocultar todas as mudanças",
     openWebsite: "Changelog completo",
     error: {
       title: "Não foi possível carregar o changelog",

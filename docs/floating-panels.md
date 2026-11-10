@@ -446,6 +446,13 @@ Before you write a new one, ask:
    positioning (`bottom: windowHeight - anchor.y + gap`) and skip the
    `contentSize` round-trip entirely. **But only if the height is genuinely
    bounded**. Verify before you commit.
+6. **Can the content change size after the panel paints, and does the panel
+   sit above its anchor?** Hold it by its bottom edge with `holdSurfaceEdge`
+   and `surfaceFrameStyles` from `components/ui/anchor.ts`. Native delivers
+   `onLayout` after the frame that shows the new size, so a panel placed by
+   `top` paints over its anchor until the next placement lands, about 150 ms
+   on Android. Web hides this because React commits the resize and the
+   re-placement in one task.
 
 Then copy the closest canonical file and trim.
 

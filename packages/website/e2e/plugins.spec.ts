@@ -654,41 +654,41 @@ test.describe("registry fixture layout", () => {
     );
   });
 
-  test("features listed plugins above What's new in the registry's order", async ({ page }) => {
-    await openPlugins(page);
-    await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
-    const featured = page.getByRole("region", { name: "Featured" });
-    await expect(featured).toContainText("A selection of hand picked plugins");
-    await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
-  });
-
-  test("lists the nine categories in order with counts, and the newest plugins first", async ({
+  test("browses featured, new, and recently updated plugins from the directory", async ({
     page,
   }) => {
     await openPlugins(page);
-    const categories = page.getByRole("region", { name: "Categories" });
-    await expect(categories.getByRole("link")).toHaveText(
-      CATEGORIES.map((slug) => new RegExp(`^${copy.plugins.categories[slug].label}\\s*\\d+$`)),
+
+    await test.step("features listed plugins above What's new in the registry's order", async () => {
+      await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
+      const featured = page.getByRole("region", { name: "Featured" });
+      await expect(featured).toContainText("A selection of hand picked plugins");
+      await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
+    });
+
+    const categoriesWithCounts = CATEGORIES.map(
+      (slug) => new RegExp(`^${copy.plugins.categories[slug].label}\\s*\\d+$`),
     );
-    await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
-    await expect(pluginCards(page, "What’s new")).toHaveText([
-      /Base2Tone/,
-      /Sayr/,
-      /PromptKit/,
-      /Defer/,
-    ]);
-  });
+    await test.step("lists the nine categories in order with counts, and the newest plugins first", async () => {
+      const categories = page.getByRole("region", { name: "Categories" });
+      await expect(categories.getByRole("link")).toHaveText(categoriesWithCounts);
+      await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
+      await expect(pluginCards(page, "What’s new")).toHaveText([
+        /Base2Tone/,
+        /Sayr/,
+        /PromptKit/,
+        /Defer/,
+      ]);
+    });
 
-  test("lists only plugins updated since they were listed under Recently updated", async ({
-    page,
-  }) => {
-    await openPlugins(page);
-    await expect(pluginCards(page, "Recently updated")).toHaveText([/Defer/, /OMP/]);
-    await page
-      .getByRole("region", { name: "Recently updated" })
-      .getByRole("link", { name: "See all" })
-      .click();
-    await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
+    await test.step("lists only plugins updated since they were listed under Recently updated", async () => {
+      await expect(pluginCards(page, "Recently updated")).toHaveText([/Defer/, /OMP/]);
+      await page
+        .getByRole("region", { name: "Recently updated" })
+        .getByRole("link", { name: "See all" })
+        .click();
+      await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
+    });
   });
 });
 

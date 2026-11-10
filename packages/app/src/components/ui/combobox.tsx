@@ -63,6 +63,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { density, densityIconBox } from "@/styles/density";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -87,6 +88,8 @@ export interface ComboboxProps {
   }) => ReactElement;
   onSearchQueryChange?: (query: string) => void;
   searchable?: boolean;
+  /** The caller answers the search query itself, so the options are shown as given. */
+  remoteSearch?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -1294,6 +1297,10 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   );
 }
 
+function filtersLocally(input: { searchable: boolean; remoteSearch?: boolean }): boolean {
+  return input.searchable && !input.remoteSearch;
+}
+
 // oxlint-disable-next-line eslint(complexity)
 export function Combobox({
   options,
@@ -1302,6 +1309,7 @@ export function Combobox({
   renderOption,
   onSearchQueryChange,
   searchable = true,
+  remoteSearch,
   placeholder,
   searchPlaceholder,
   emptyText,
@@ -1379,6 +1387,7 @@ export function Combobox({
   useEffect(() => {
     if (!active && isOpen) handleClose();
   }, [active, isOpen, handleClose]);
+  useDismissibleOverlay(isOpen, handleClose);
 
   useResetSearchOnOpen(isOpen, setSearchQueryWithCallback, bumpSearchResetKey);
 
@@ -1463,7 +1472,7 @@ export function Combobox({
       buildVisibleComboboxOptions({
         options,
         searchQuery,
-        searchable,
+        searchable: filtersLocally({ searchable, remoteSearch }),
         allowCustomValue,
         customValuePrefix,
         customValueDescription,
@@ -1475,6 +1484,7 @@ export function Combobox({
       customValueKind,
       customValuePrefix,
       options,
+      remoteSearch,
       searchQuery,
       searchable,
     ],

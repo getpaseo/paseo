@@ -63,6 +63,7 @@ const agent: PluginAgentSnapshot = {
   attentionReason: null,
   parentAgentId: null,
   labels: {},
+  metadata: {},
 };
 
 const inspect = defineRpc({
@@ -103,6 +104,8 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [
       {
         id: "details",
