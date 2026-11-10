@@ -886,6 +886,7 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
   private shuttingDown = false;
   private readonly runningAgentsAtShutdown = new Set<string>();
+  private readonly completedAgentsAtShutdown = new Set<string>();
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -1001,6 +1002,14 @@ export class AgentManager {
     return new Set(this.runningAgentsAtShutdown);
   }
 
+  hasRunningAgentAtShutdown(agentId: string): boolean {
+    return this.runningAgentsAtShutdown.has(agentId);
+  }
+
+  getCompletedAgentsAtShutdown(): Set<string> {
+    return new Set(this.completedAgentsAtShutdown);
+  }
+
   private isAgentRunning(agent: LiveManagedAgent | ActiveManagedAgent): boolean {
     return (
       agent.lifecycle === "running" ||
@@ -1011,11 +1020,13 @@ export class AgentManager {
 
   private captureRunningAgentAtShutdown(
     agent: LiveManagedAgent | ActiveManagedAgent | string,
+    options?: { force?: boolean },
   ): void {
     if (!this.shuttingDown) return;
     const targetAgent = typeof agent === "string" ? this.agents.get(agent) : agent;
     const targetId = typeof agent === "string" ? agent : agent.id;
-    if (targetAgent && this.isAgentRunning(targetAgent)) {
+    if (options?.force || (targetAgent && this.isAgentRunning(targetAgent))) {
+      this.completedAgentsAtShutdown.delete(targetId);
       this.runningAgentsAtShutdown.add(targetId);
     }
   }
@@ -3306,6 +3317,9 @@ export class AgentManager {
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.attention = { requiresAttention: false };
       agent.lifecycle = "running";
+      if (this.shuttingDown) {
+        this.captureRunningAgentAtShutdown(agent);
+      }
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
       // prompt so clients can retire optimistic activity without painting an idle frame.
@@ -3404,10 +3418,15 @@ export class AgentManager {
     }
     mutableAgent.lifecycle = nextLifecycle;
     if (this.shuttingDown) {
-      if (terminalEventType === "turn_completed") {
+      if (terminalEventType === "turn_completed" && !shouldHoldBusyForReplacement) {
         this.runningAgentsAtShutdown.delete(mutableAgent.id);
-      } else if (terminalEventType === "turn_canceled" || terminalEventType === "turn_failed") {
-        this.captureRunningAgentAtShutdown(mutableAgent);
+        this.completedAgentsAtShutdown.add(mutableAgent.id);
+      } else if (
+        terminalEventType === "turn_canceled" ||
+        terminalEventType === "turn_failed" ||
+        shouldHoldBusyForReplacement
+      ) {
+        this.captureRunningAgentAtShutdown(mutableAgent, { force: true });
       }
     }
     const persistenceHandle =
@@ -5372,6 +5391,10 @@ export class AgentManager {
       agent.lifecycle !== "idle" &&
       !agent.pendingReplacement
     ) {
+      if (this.shuttingDown) {
+        this.runningAgentsAtShutdown.delete(agent.id);
+        this.completedAgentsAtShutdown.add(agent.id);
+      }
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
     }
@@ -5387,7 +5410,9 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
-    this.captureRunningAgentAtShutdown(agent);
+    if (!options?.fromHistory && terminalDisposition !== "stale") {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.logger.warn(
       {
         agentId: agent.id,
@@ -5433,7 +5458,9 @@ export class AgentManager {
       | undefined;
   }): void {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
-    this.captureRunningAgentAtShutdown(agent);
+    if (!options?.fromHistory && terminalDisposition !== "stale") {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.logger.trace(
       {
         agentId: agent.id,
@@ -5492,6 +5519,9 @@ export class AgentManager {
     agent.lastError = undefined;
     agent.attention = { requiresAttention: false };
     agent.lifecycle = "running";
+    if (this.shuttingDown) {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.emitState(agent);
   }
 

@@ -142,3 +142,32 @@ test("captureRunningAgents captures agents supplied via runningAgentIds even if 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("captureRunningAgents clears resumeOnStartup for agents in completedAgentIds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "restart-recovery-completed-"));
+  try {
+    const storage = new AgentStorage(root, createTestLogger());
+    await storage.upsert(
+      parseStoredAgentRecord({
+        id: "completed-agent",
+        lastStatus: "idle",
+        provider: "claude",
+        cwd: root,
+        resumeOnStartup: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    const recovery = createRestartRecovery({
+      storage,
+      settings: () => ({ enabled: true, prompt: "Resume working." }),
+      eligible: async () => true,
+      dispatch: async () => {},
+      report: () => {},
+    });
+    await recovery.captureRunningAgents([], ["completed-agent"]);
+    expect((await storage.get("completed-agent"))?.resumeOnStartup).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

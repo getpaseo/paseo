@@ -1987,12 +1987,15 @@ export async function createPaseoDaemon(
     // turns or message-triggered cancellations are remembered, while
     // keeping registrations open so message delivery can resume persisted agents.
     agentManager.beginShutdownTracking();
-    agentStorage.prepareForShutdown();
+    agentStorage.prepareForShutdown((agentId) => agentManager.hasRunningAgentAtShutdown(agentId));
     wsServer?.prepareForShutdown();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
-    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
+    await restartRecovery.captureRunningAgents(
+      agentManager.getRunningAgentsAtShutdown(),
+      agentManager.getCompletedAgentsAtShutdown(),
+    );
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
@@ -2002,7 +2005,10 @@ export async function createPaseoDaemon(
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
-    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
+    await restartRecovery.captureRunningAgents(
+      agentManager.getRunningAgentsAtShutdown(),
+      agentManager.getCompletedAgentsAtShutdown(),
+    );
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();

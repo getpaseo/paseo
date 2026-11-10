@@ -137,6 +137,7 @@ export class AgentStorage {
   private readonly promptTimes = new Map<string, string>();
   private loaded = false;
   private shuttingDown = false;
+  private preserveResumeOnShutdown: ((agentId: string) => boolean) | null = null;
   private baseDir: string;
   private loadPromise: Promise<void> | null = null;
   private logger: Logger;
@@ -146,8 +147,9 @@ export class AgentStorage {
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
   }
 
-  prepareForShutdown(): void {
+  prepareForShutdown(shouldPreserveResumeOnStartup?: (agentId: string) => boolean): void {
     this.shuttingDown = true;
+    this.preserveResumeOnShutdown = shouldPreserveResumeOnStartup ?? null;
   }
 
   async initialize(): Promise<void> {
@@ -414,7 +416,10 @@ export class AgentStorage {
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
       if (existing?.resumeOnStartup) {
-        record.resumeOnStartup = this.shuttingDown
+        const keepOnShutdown =
+          this.shuttingDown &&
+          (this.preserveResumeOnShutdown === null || this.preserveResumeOnShutdown(agent.id));
+        record.resumeOnStartup = keepOnShutdown
           ? true
           : agent.lifecycle !== "idle" && agent.lifecycle !== "error";
       }

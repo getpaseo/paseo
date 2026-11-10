@@ -792,6 +792,7 @@ export class ScheduleService {
     let claimed: { schedule: StoredSchedule; runId: string } | null = null;
     const updatedSchedule = await this.store.update(scheduleId, (schedule) => {
       if (
+        this.stopping ||
         schedule.status !== "active" ||
         !schedule.nextRunAt ||
         shouldCompleteSchedule(schedule, now) ||

@@ -2184,6 +2184,43 @@ test("prepareForShutdown records running agents and preserves them when cancelle
   }
 });
 
+test("prepareForShutdown clears completed agent from running candidates", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "shutdown-completed",
+    agentId: "00000000-0000-4000-8000-000000000306",
+    turnId: "shutdown-completed-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "shutdown-completed-turn",
+    });
+    await running;
+
+    fixture.manager.prepareForShutdown();
+    expect(fixture.manager.getRunningAgentsAtShutdown()).toEqual(new Set([fixture.agentId]));
+    expect(fixture.manager.hasRunningAgentAtShutdown(fixture.agentId)).toBe(true);
+
+    const idle = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+    fixture.session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "shutdown-completed-turn",
+    });
+    await idle;
+
+    expect(fixture.manager.getRunningAgentsAtShutdown()).toEqual(new Set());
+    expect(fixture.manager.hasRunningAgentAtShutdown(fixture.agentId)).toBe(false);
+    expect(fixture.manager.getCompletedAgentsAtShutdown()).toEqual(new Set([fixture.agentId]));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("reload does not create a replacement when the closed snapshot cannot be persisted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
   const storagePath = join(workdir, "agents");
