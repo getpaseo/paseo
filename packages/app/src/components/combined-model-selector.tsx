@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -12,7 +12,6 @@ import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   TOOLBAR_GLYPH_SIZES,
@@ -100,14 +99,6 @@ export function CombinedModelSelector({
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(isWeb);
-  const { preferences, updatePreferences } = useFormPreferences();
-  const defaultModelId = useMemo(
-    () =>
-      selectedProvider
-        ? (preferences.providerPreferences?.[selectedProvider]?.model ?? null)
-        : null,
-    [preferences, selectedProvider],
-  );
   const browser = useModelBrowser({
     providers,
     selectedProvider,
@@ -115,40 +106,7 @@ export function CombinedModelSelector({
     isLoading,
     profiles,
     serverId,
-    defaultModelId,
   });
-  const handleSetDefault = useCallback(
-    async (nextProvider: string, modelId: string) => {
-      try {
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: nextProvider as AgentProvider,
-            updates: { model: modelId },
-          }),
-        );
-      } catch (error) {
-        console.warn("[CombinedModelSelector] persist default model failed", error);
-      }
-    },
-    [updatePreferences],
-  );
-  const handleUseProviderDefault = useCallback(
-    async (nextProvider: string) => {
-      try {
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: nextProvider as AgentProvider,
-            updates: { model: null },
-          }),
-        );
-      } catch (error) {
-        console.warn("[CombinedModelSelector] clear default model failed", error);
-      }
-    },
-    [updatePreferences],
-  );
   const { prepareToOpen, reset } = browser;
 
   const handleOpenChange = useCallback(
@@ -250,8 +208,6 @@ export function CombinedModelSelector({
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={modelBrowserScrolling}
-      onSetDefault={handleSetDefault}
-      onUseProviderDefault={handleUseProviderDefault}
     />
   ) : (
     <View style={styles.sheetLoadingState}>
