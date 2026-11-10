@@ -1810,6 +1810,11 @@ export const fr: TranslationResources = {
     editProfilesLabel: "Modifier les profils d’agent",
     createProfile: "Créer un profil",
     createProfileFromModel: "Créer un profil à partir de ce modèle",
+    providerDefault: "Défaut du fournisseur",
+    providerDefaultDescription:
+      "Les nouvelles sessions utilisent le modèle par défaut configuré du fournisseur",
+    setDefault: "Définir par défaut pour les nouvelles sessions",
+    defaultBadge: "Défaut",
     editProfileLabel: "Modifier {{name}}",
     editProfilesCount: "Modifier les profils ({{count}})",
     modelCount: "{{count}} modèle",

@@ -27,6 +27,7 @@ import {
   Plus,
   Search,
   Settings,
+  Star,
 } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import {
@@ -75,6 +76,7 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedSearch = withUnistyles(Search);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedStar = withUnistyles(Star);
 
 function ProviderSettingsAction({
   accessibilityLabel,
@@ -154,6 +156,8 @@ interface ModelBrowserInput {
   /** Pinned above the provider list on the root view. `null` hides the section. */
   profiles?: AgentProfilePicker | null;
   serverId?: string | null;
+  /** The saved default model for the selected provider. `null` means the provider's own default applies. */
+  defaultModelId?: string | null;
 }
 
 export interface ModelBrowserState {
@@ -162,6 +166,8 @@ export interface ModelBrowserState {
   selectedProvider: string;
   selectedModel: string;
   profiles: AgentProfilePicker | null;
+  /** The saved default model for the selected provider. `null` means the provider's own default applies. */
+  defaultModelId: string | null;
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -186,6 +192,10 @@ interface ModelBrowserProps {
   onEditProfile?: (profileId: string) => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
+  /** Saves a model as the provider's default for new sessions. */
+  onSetDefault?: (provider: string, modelId: string) => void;
+  /** Clears the saved default so the provider's own configured default applies to new sessions. */
+  onUseProviderDefault?: (provider: string) => void;
   scrolling?: "sheet" | "independent";
   /** Empty focused search shows all model rows instead of the browse root. */
   searchAllOnFocus?: boolean;
@@ -201,6 +211,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
+  defaultModelId: string | null;
   searchQuery: string;
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
@@ -274,6 +285,7 @@ export function useModelBrowser({
   autoFocusSearch = isWeb,
   profiles = null,
   serverId = null,
+  defaultModelId = null,
 }: ModelBrowserInput): ModelBrowserState {
   const { t } = useTranslation();
   const [view, setView] = useState<ModelBrowserView>({ kind: "all" });
@@ -408,6 +420,7 @@ export function useModelBrowser({
     selectedProvider,
     selectedModel,
     profiles,
+    defaultModelId,
     view,
     searchQuery,
     isSearchFocused,
@@ -668,6 +681,8 @@ function ModelRow({
   onCreateProfile,
   onEditProfile,
   onEditProfiles,
+  isDefault,
+  onSetDefault,
 }: {
   row: ProviderSelectionModelRow;
   serverId: string | null;
@@ -678,6 +693,8 @@ function ModelRow({
   onCreateProfile?: (seed: AgentProfileSeed) => void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  isDefault?: boolean;
+  onSetDefault?: (provider: string, modelId: string) => void;
 }) {
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
@@ -704,6 +721,10 @@ function ModelRow({
   const handleEditProfiles = useCallback(() => {
     onEditProfiles?.();
   }, [onEditProfiles]);
+
+  const handleSetDefault = useCallback(() => {
+    onSetDefault?.(row.provider, row.modelId);
+  }, [onSetDefault, row.modelId, row.provider]);
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -770,6 +791,31 @@ function ModelRow({
     t,
   ]);
 
+  const setDefaultAction = useMemo(() => {
+    if (!onSetDefault || isDefault || profileAction || row.modelId.length === 0) {
+      return null;
+    }
+    return (
+      <ModelRowProfileAction
+        hovered={isHovered}
+        onPress={handleSetDefault}
+        label={t("modelSelector.setDefault")}
+        testID={`model-set-default-${row.provider}-${row.modelId}`}
+      >
+        <ThemedStar size={ICON_SIZE.xs} uniProps={foregroundMutedMapping} />
+      </ModelRowProfileAction>
+    );
+  }, [
+    handleSetDefault,
+    isDefault,
+    isHovered,
+    onSetDefault,
+    profileAction,
+    row.modelId,
+    row.provider,
+    t,
+  ]);
+
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
@@ -794,9 +840,16 @@ function ModelRow({
         <View style={styles.browserRowContent}>
           <View style={styles.browserRowLeading}>{leadingSlot}</View>
           <View style={[styles.browserRowText, description && styles.browserRowTextInline]}>
-            <Text numberOfLines={1} style={styles.browserRowLabel}>
-              {row.modelLabel}
-            </Text>
+            <View style={styles.browserRowLabelLine}>
+              <Text numberOfLines={1} style={styles.browserRowLabel}>
+                {row.modelLabel}
+              </Text>
+              {isDefault ? (
+                <View style={styles.defaultBadge}>
+                  <Text style={styles.defaultBadgeText}>{t("modelSelector.defaultBadge")}</Text>
+                </View>
+              ) : null}
+            </View>
             {description ? (
               <Text numberOfLines={1} style={styles.browserRowDescription}>
                 {description}
@@ -809,15 +862,15 @@ function ModelRow({
                 <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
               ) : null}
             </View>
-            {profileAction ? <View style={styles.rowIconButton} /> : null}
+            {profileAction || setDefaultAction ? <View style={styles.rowIconButton} /> : null}
           </View>
         </View>
       </ModelBrowserPressable>
       {/* The row renders a <button> on web, so its profile action sits beside it,
           over the slot reserved above, rather than inside it. */}
-      {profileAction ? (
+      {profileAction || setDefaultAction ? (
         <View style={styles.modelRowProfileActionSlot} pointerEvents="box-none">
-          {profileAction}
+          {profileAction ?? setDefaultAction}
         </View>
       ) : null}
     </View>
@@ -834,6 +887,8 @@ function SelectableModelRow({
   onCreateProfile,
   onEditProfile,
   onEditProfiles,
+  isDefault,
+  onSetDefault,
 }: {
   row: ProviderSelectionModelRow;
   serverId: string | null;
@@ -844,6 +899,8 @@ function SelectableModelRow({
   onCreateProfile?: (seed: AgentProfileSeed) => void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  isDefault?: boolean;
+  onSetDefault?: (provider: string, modelId: string) => void;
 }) {
   const handlePress = useCallback(() => {
     onSelect(row.provider, row.modelId);
@@ -859,6 +916,8 @@ function SelectableModelRow({
       onCreateProfile={onCreateProfile}
       onEditProfile={onEditProfile}
       onEditProfiles={onEditProfiles}
+      isDefault={isDefault}
+      onSetDefault={onSetDefault}
     />
   );
 }
@@ -1145,6 +1204,8 @@ function ModelRowList({
   onCreateProfile,
   onEditProfile,
   onEditProfiles,
+  defaultModelId,
+  onSetDefault,
 }: {
   rows: ProviderSelectionModelRow[];
   serverId: string | null;
@@ -1158,6 +1219,8 @@ function ModelRowList({
   onCreateProfile?: (seed: AgentProfileSeed) => void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  defaultModelId?: string | null;
+  onSetDefault?: (provider: string, modelId: string) => void;
 }) {
   const isCompact = useIsCompactFormFactor();
   const renderItem = useCallback(
@@ -1172,6 +1235,12 @@ function ModelRowList({
         onCreateProfile={onCreateProfile}
         onEditProfile={onEditProfile}
         onEditProfiles={onEditProfiles}
+        isDefault={
+          defaultModelId != null &&
+          item.provider === selectedProvider &&
+          item.modelId === defaultModelId
+        }
+        onSetDefault={onSetDefault}
       />
     ),
     [
@@ -1184,6 +1253,8 @@ function ModelRowList({
       selectedProvider,
       serverId,
       showProviderLabel,
+      defaultModelId,
+      onSetDefault,
     ],
   );
   const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
@@ -1255,6 +1326,37 @@ function ModelSearchEmptyState() {
   );
 }
 
+function ProviderDefaultRow({
+  provider,
+  isSelected,
+  onPress,
+}: {
+  provider: string;
+  isSelected: boolean;
+  onPress: (provider: string) => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => onPress(provider), [onPress, provider]);
+  const leadingSlot = useMemo(
+    () => <ThemedStar size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />,
+    [],
+  );
+  return (
+    <View style={styles.providerDefaultRowContainer}>
+      <ModelBrowserRow
+        label={t("modelSelector.providerDefault")}
+        description={t("modelSelector.providerDefaultDescription")}
+        tone="elevated"
+        onPress={handlePress}
+        leadingSlot={leadingSlot}
+        selected={isSelected}
+        selectionIndicator
+        testID={`model-provider-default-${provider}`}
+      />
+    </View>
+  );
+}
+
 function ProviderModelBrowserContent({
   serverId,
   view,
@@ -1262,6 +1364,7 @@ function ProviderModelBrowserContent({
   profiles,
   selectedProvider,
   selectedModel,
+  defaultModelId,
   normalizedQuery,
   onSelect,
   onApplyProfile,
@@ -1273,6 +1376,8 @@ function ProviderModelBrowserContent({
   onRetryProvider,
   isRetryingProvider,
   scrolling,
+  onSetDefault,
+  onUseProviderDefault,
 }: {
   serverId: string | null;
   view: Extract<ModelBrowserView, { kind: "provider" }>;
@@ -1280,6 +1385,7 @@ function ProviderModelBrowserContent({
   profiles: AgentProfilePicker | null;
   selectedProvider: string;
   selectedModel: string;
+  defaultModelId: string | null;
   normalizedQuery: string;
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
@@ -1291,6 +1397,8 @@ function ProviderModelBrowserContent({
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider: boolean;
   scrolling: "sheet" | "independent";
+  onSetDefault?: (provider: string, modelId: string) => void;
+  onUseProviderDefault?: (provider: string) => void;
 }) {
   const { t } = useTranslation();
   const visibleRows = useMemo(
@@ -1301,20 +1409,37 @@ function ProviderModelBrowserContent({
     () => profiles?.rows.filter((row) => row.provider === view.providerId) ?? [],
     [profiles, view.providerId],
   );
+  const providerDefaultRow = useMemo(
+    () =>
+      onUseProviderDefault && normalizedQuery.length === 0 ? (
+        <ProviderDefaultRow
+          provider={view.providerId}
+          isSelected={defaultModelId == null}
+          onPress={onUseProviderDefault}
+        />
+      ) : undefined,
+    [defaultModelId, normalizedQuery.length, onUseProviderDefault, view.providerId],
+  );
   const profileHeader = useMemo(
     () =>
       normalizedQuery.length === 0 && showProfilesSection && profiles ? (
-        <AgentProfilesPickerContent
-          rows={providerProfileRows}
-          onApplyProfile={onApplyProfile}
-          onEditProfiles={onEditProfiles}
-        />
-      ) : undefined,
+        <>
+          {providerDefaultRow}
+          <AgentProfilesPickerContent
+            rows={providerProfileRows}
+            onApplyProfile={onApplyProfile}
+            onEditProfiles={onEditProfiles}
+          />
+        </>
+      ) : (
+        providerDefaultRow
+      ),
     [
       normalizedQuery,
       onApplyProfile,
       onEditProfiles,
       profiles,
+      providerDefaultRow,
       providerProfileRows,
       showProfilesSection,
     ],
@@ -1358,6 +1483,8 @@ function ProviderModelBrowserContent({
       onCreateProfile={onCreateProfile}
       onEditProfile={onEditProfile}
       onEditProfiles={onEditProfiles}
+      defaultModelId={defaultModelId}
+      onSetDefault={onSetDefault}
     />
   );
 }
@@ -1368,6 +1495,7 @@ function ModelBrowserContent({
   providers,
   selectedProvider,
   selectedModel,
+  defaultModelId,
   searchQuery,
   isSearchFocused,
   profiles,
@@ -1383,6 +1511,8 @@ function ModelBrowserContent({
   searchAllOnFocus,
   rootBrowseContent,
   showProfilesSection = true,
+  onSetDefault,
+  onUseProviderDefault,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -1417,6 +1547,7 @@ function ModelBrowserContent({
         profiles={profiles}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
+        defaultModelId={defaultModelId}
         normalizedQuery={normalizedQuery}
         onSelect={onSelect}
         onApplyProfile={onApplyProfile}
@@ -1428,6 +1559,8 @@ function ModelBrowserContent({
         onRetryProvider={onRetryProvider}
         isRetryingProvider={isRetryingProvider}
         scrolling={scrolling}
+        onSetDefault={onSetDefault}
+        onUseProviderDefault={onUseProviderDefault}
       />
     );
   }
@@ -1521,6 +1654,8 @@ export function ModelBrowser({
   searchAllOnFocus = false,
   rootBrowseContent,
   showProfilesSection,
+  onSetDefault,
+  onUseProviderDefault,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -1529,6 +1664,7 @@ export function ModelBrowser({
       providers={state.providers}
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
+      defaultModelId={state.defaultModelId}
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
@@ -1544,6 +1680,8 @@ export function ModelBrowser({
       searchAllOnFocus={searchAllOnFocus}
       rootBrowseContent={rootBrowseContent}
       showProfilesSection={showProfilesSection}
+      onSetDefault={onSetDefault}
+      onUseProviderDefault={onUseProviderDefault}
     />
   );
 }
@@ -1636,6 +1774,27 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flexShrink: 0,
+  },
+  browserRowLabelLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  defaultBadge: {
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 1,
+  },
+  defaultBadgeText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  providerDefaultRowContainer: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   browserRowLabelMuted: {
     fontSize: theme.fontSize.base,

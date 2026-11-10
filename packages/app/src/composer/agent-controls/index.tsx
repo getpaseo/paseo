@@ -927,6 +927,44 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     canSwitchProvider,
   } = props;
 
+  const { preferences, updatePreferences } = useFormPreferences();
+  const defaultModelId = useMemo(
+    () => (provider ? (preferences.providerPreferences?.[provider]?.model ?? null) : null),
+    [preferences, provider],
+  );
+  const handleSetDefault = useCallback(
+    async (nextProvider: string, modelId: string) => {
+      try {
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: nextProvider as AgentProvider,
+            updates: { model: modelId },
+          }),
+        );
+      } catch (error) {
+        console.warn("[AgentControls] persist default model failed", error);
+      }
+    },
+    [updatePreferences],
+  );
+  const handleUseProviderDefault = useCallback(
+    async (nextProvider: string) => {
+      try {
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: nextProvider as AgentProvider,
+            updates: { model: null },
+          }),
+        );
+      } catch (error) {
+        console.warn("[AgentControls] clear default model failed", error);
+      }
+    },
+    [updatePreferences],
+  );
+
   const sheetControls = (
     <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
       <ComposerControls
@@ -962,6 +1000,9 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       onEditProfiles={onEditAgentProfiles}
       onCreateProfile={onCreateAgentProfile}
       onEditProfile={onEditAgentProfile}
+      onSetDefault={handleSetDefault}
+      onUseProviderDefault={handleUseProviderDefault}
+      defaultModelId={defaultModelId}
       contextBridge={sheetBridge}
       isLoading={isModelLoading}
       disabled={disabled}

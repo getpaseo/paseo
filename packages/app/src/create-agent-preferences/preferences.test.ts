@@ -50,6 +50,38 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("clears a saved default model with a null update so the provider default applies", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const setWrite = preferences.update((current) =>
+      mergeProviderPreferences({
+        preferences: current,
+        provider: "opencode",
+        updates: { model: "bifrost/vllm/zai/glm-5.3-flash" },
+      }),
+    );
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await setWrite;
+
+    const clearWrite = preferences.update((current) =>
+      mergeProviderPreferences({
+        preferences: current,
+        provider: "opencode",
+        updates: { model: null },
+      }),
+    );
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await clearWrite;
+
+    expect(storage.savedPreferences()).toEqual({
+      provider: "opencode",
+      providerPreferences: { opencode: {} },
+    });
+  });
+
   it("does not commit a failed write or leak it into the next update", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

@@ -1795,6 +1795,11 @@ export const ru: TranslationResources = {
     editProfilesLabel: "Изменить профили агентов",
     createProfile: "Создать профиль",
     createProfileFromModel: "Создать профиль из этой модели",
+    providerDefault: "По умолчанию у провайдера",
+    providerDefaultDescription:
+      "Новые сессии используют модель по умолчанию, настроенную провайдером",
+    setDefault: "Сделать по умолчанию для новых сессий",
+    defaultBadge: "По умолчанию",
     editProfileLabel: "Изменить {{name}}",
     editProfilesCount: "Изменить профили ({{count}})",
     modelCount: "{{count}} модель",
