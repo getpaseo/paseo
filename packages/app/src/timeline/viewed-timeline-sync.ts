@@ -408,6 +408,12 @@ export interface ViewedTimelineSyncPorts {
 }
 
 /**
+ * Why a freshness check was asked: opening a chat, the socket coming back, or the app
+ * returning to the foreground on a socket that stayed connected.
+ */
+type FreshnessCheckReason = "open" | "reconnect" | "resume";
+
+/**
  * "checking": the daemon has not said whether this chat is current; nothing to report yet.
  * "reattaching": the same question right after a reconnect, so the chat is still not back.
  */
@@ -599,11 +605,15 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const manualRetries = new Set<string>();
   const loadedCache = new Set<string>();
   const cacheLoads = new Map<string, Promise<void>>();
-  // Chats whose freshness answer is outstanding. No catch-up starts for them until it arrives;
-  // `quiet` holds the status short of "pending" until FRESHNESS_CHECK_QUIET_MS elapses.
+  // Chats whose freshness answer is outstanding. No catch-up starts for them until it arrives.
+  // An "open" check stays `quiet`, short of "pending", until FRESHNESS_CHECK_QUIET_MS elapses.
   const freshnessChecks = new Map<
     string,
-    { quiet: boolean; reattaching: boolean; timer: ReturnType<typeof setTimeout> | null }
+    {
+      reason: FreshnessCheckReason;
+      quiet: boolean;
+      timer: ReturnType<typeof setTimeout> | null;
+    }
   >();
   const listeners = new Set<() => void>();
   let active = true;
@@ -673,16 +683,19 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     ports.onCatchUpOwed(agentId);
   };
 
-  const startFreshnessCheck = (agentId: string, reattaching = false) => {
+  const startFreshnessCheck = (agentId: string, reason: FreshnessCheckReason = "open") => {
     if (freshnessChecks.has(agentId)) return;
-    freshnessChecks.set(agentId, { quiet: true, reattaching, timer: null });
+    freshnessChecks.set(agentId, { reason, quiet: true, timer: null });
   };
 
   // The delay measures the daemon's answer, so it starts when the question is sent. On a cold
-  // start the cache read that precedes the question can outlast it on its own.
+  // start the cache read that precedes the question can outlast it on its own. Only opening a
+  // chat escalates. A reconnect already shows Reconnecting to host until the answer. A resume
+  // kept its socket subscribed, so a slow answer is no reason to doubt the chat; a socket that
+  // died quietly is caught by the foreground liveness probe and becomes a reconnect.
   const startFreshnessCheckDelay = (agentId: string) => {
     const check = freshnessChecks.get(agentId);
-    if (!check || check.timer) return;
+    if (!check || check.timer || check.reason !== "open") return;
     check.timer = setTimeout(() => {
       check.quiet = false;
       notifyListeners();
@@ -1012,8 +1025,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const getUnconfirmedStatus = (agentId: string): ViewedTimelineStatus => {
     const check = freshnessChecks.get(agentId);
     if (check) {
-      if (!check.quiet) return "pending";
-      return check.reattaching ? "reattaching" : "checking";
+      if (check.reason === "reconnect") return "reattaching";
+      return check.quiet ? "checking" : "pending";
     }
     if (!ports.canCheckFreshness()) return "pending";
     if (!connected) return "reattaching";
@@ -1072,7 +1085,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
           ports.readCursor(agentId)
         ) {
           catchUps.delete(agentId);
-          startFreshnessCheck(agentId);
+          startFreshnessCheck(agentId, "resume");
           freshnessCheckOwed = true;
           continue;
         }
@@ -1100,7 +1113,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       }
       if (ports.canCheckFreshness()) {
         for (const agentId of desired) {
-          if (visibilityCatchUpPending.has(agentId)) startFreshnessCheck(agentId, true);
+          if (visibilityCatchUpPending.has(agentId)) startFreshnessCheck(agentId, "reconnect");
         }
       }
       membershipGeneration += 1;

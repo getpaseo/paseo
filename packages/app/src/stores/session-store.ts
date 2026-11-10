@@ -90,6 +90,7 @@ export interface Agent {
   pendingPermissions: AgentPermissionRequest[];
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
+  usageScopeKey?: string;
   lastUsage?: AgentUsage;
   lastError?: string | null;
   title: string | null;
