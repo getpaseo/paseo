@@ -1,26 +1,44 @@
-import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { build } from "esbuild";
+import {
+  createTestRegistries,
+  createTestLogger,
+  deferred,
+} from "./test-fixtures/reconciliation-registries.js";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, afterEach, describe, expect, test } from "vitest";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
-} from "./workspace-registry.js";
-import type {
-  PersistedProjectRecord,
-  PersistedWorkspaceRecord,
-  ProjectRegistry,
-  WorkspaceRegistry,
 } from "./workspace-registry.js";
 import {
   type ReconciliationChange,
   WorkspaceReconciliationService,
 } from "./workspace-reconciliation-service.js";
 import { deriveProjectKey } from "./project-key.js";
+
+let probeDirectory: string;
+let probePath: string;
+beforeAll(async () => {
+  probeDirectory = mkdtempSync(path.join(tmpdir(), "reconciliation-probe-"));
+  probePath = path.join(probeDirectory, "reconciliation.mjs");
+  await build({
+    entryPoints: [
+      fileURLToPath(new URL("./test-fixtures/reconciliation-responsiveness.ts", import.meta.url)),
+    ],
+    outfile: probePath,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+  });
+});
+afterAll(() => rmSync(probeDirectory, { recursive: true, force: true }));
 
 function canonicalLocalProjectKey(rootPath: string): string {
   return deriveProjectKey({
@@ -29,107 +47,6 @@ function canonicalLocalProjectKey(rootPath: string): string {
     worktreeRoot: null,
     mainRepoRoot: null,
   });
-}
-
-function createTestRegistries() {
-  let archiveGate: {
-    started: ReturnType<typeof deferred>;
-    release: ReturnType<typeof deferred>;
-  } | null = null;
-  const holdNextArchive = () => {
-    archiveGate = { started: deferred(), release: deferred() };
-    return archiveGate;
-  };
-  const projects = new Map<string, PersistedProjectRecord>();
-  const workspaces = new Map<string, PersistedWorkspaceRecord>();
-
-  const projectRegistry: ProjectRegistry = {
-    initialize: async () => {},
-    existsOnDisk: async () => true,
-    list: async () => Array.from(projects.values()),
-    get: async (id: string) => projects.get(id) ?? null,
-    getOrCreateActiveByRoot: async (input) => {
-      const existing = Array.from(projects.values()).find(
-        (project) => !project.archivedAt && project.rootPath === input.rootPath,
-      );
-      if (existing) return existing;
-      const record = createPersistedProjectRecord({
-        projectId: `prj_${projects.size}`,
-        rootPath: input.rootPath,
-        kind: input.kind,
-        displayName: input.displayName,
-        createdAt: input.timestamp,
-        updatedAt: input.timestamp,
-      });
-      projects.set(record.projectId, record);
-      return record;
-    },
-    update: async (id, updater) => {
-      const current = projects.get(id);
-      if (!current) return null;
-      const updated = updater(current);
-      projects.set(id, updated);
-      return updated;
-    },
-    upsert: async (record: PersistedProjectRecord) => {
-      projects.set(record.projectId, record);
-    },
-    archive: async (id: string, archivedAt: string) => {
-      const existing = projects.get(id);
-      if (existing) {
-        projects.set(id, { ...existing, archivedAt, updatedAt: archivedAt });
-      }
-    },
-    remove: async (id: string) => {
-      projects.delete(id);
-    },
-  };
-
-  const workspaceRegistry: WorkspaceRegistry = {
-    initialize: async () => {},
-    existsOnDisk: async () => true,
-    list: async () => Array.from(workspaces.values()),
-    get: async (id: string) => workspaces.get(id) ?? null,
-    update: async (id, updater) => {
-      const existing = workspaces.get(id);
-      if (!existing) return null;
-      const updated = updater(existing);
-      workspaces.set(id, updated);
-      return updated;
-    },
-    upsert: async (record: PersistedWorkspaceRecord) => {
-      workspaces.set(record.workspaceId, record);
-    },
-    archive: async (id: string, archivedAt: string) => {
-      const gate = archiveGate;
-      archiveGate = null;
-      if (gate) {
-        gate.started.resolve();
-        await gate.release.promise;
-      }
-      const existing = workspaces.get(id);
-      if (!existing || existing.archivedAt) return false;
-      workspaces.set(id, { ...existing, archivedAt, updatedAt: archivedAt });
-      return true;
-    },
-    remove: async (id: string) => {
-      workspaces.delete(id);
-    },
-  };
-
-  return { projects, workspaces, projectRegistry, workspaceRegistry, holdNextArchive };
-}
-
-function createTestLogger() {
-  const logger = {
-    child: () => logger,
-    trace: () => undefined,
-    debug: () => undefined,
-    info: () => undefined,
-    warn: () => undefined,
-    error: () => undefined,
-  };
-  return logger as unknown as pino.Logger;
 }
 
 interface CapturedLogRecord {
@@ -208,14 +125,6 @@ function createCheckout(
     mainRepoRoot: null,
     ...overrides,
   };
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((accept) => {
-    resolve = accept;
-  });
-  return { promise, resolve };
 }
 
 class TestCheckouts {
@@ -626,52 +535,53 @@ describe("WorkspaceReconciliationService", () => {
   test("keeps the event loop responsive while inspecting 20000 real workspace paths", async () => {
     const rootPath = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-many-")));
     tempDirs.push(rootPath);
-    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
-    projects.set(
-      "p1",
-      createPersistedProjectRecord({
-        projectId: "p1",
-        rootPath,
-        projectKey: canonicalLocalProjectKey(rootPath),
-        kind: "non_git",
-        displayName: "project",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    );
-    for (let i = 0; i < 20000; i++) {
-      const workspaceId = `w${i}`;
-      workspaces.set(
-        workspaceId,
-        createPersistedWorkspaceRecord({
-          workspaceId,
-          projectId: "p1",
-          cwd: path.join(rootPath, workspaceId),
-          kind: "directory",
-          displayName: workspaceId,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        }),
+    // This CPU belongs to the runner, not to reconciliation. Keep it present
+    // throughout the read so a later loop turn cannot contaminate the budget.
+    let running = true;
+    const unrelatedWork = () => {
+      const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+        process,
+        "threadCpuUsage",
       );
-    }
-    const service = new WorkspaceReconciliationService({
-      projectRegistry,
-      workspaceRegistry,
-      logger: createTestLogger(),
-    });
+      const start = threadCpuUsage();
+      let elapsed: NodeJS.CpuUsage;
+      do {
+        elapsed = threadCpuUsage(start);
+      } while (elapsed.user + elapsed.system < 60_000);
+      if (running) unrelated = setImmediate(unrelatedWork);
+    };
+    let unrelated = setImmediate(unrelatedWork);
     try {
-      const { result, blockingMs, filesystemRequests } = await measureMainThreadWork(
-        "workspace reconciliation main-thread work",
-        () => service.runOnce(),
+      const { stdout, stderr } = await promisify(execFile)(
+        process.execPath,
+        ["--expose-gc", probePath, rootPath],
+        { timeout: 25_000 },
       );
+      process.stderr.write(stderr);
+      const {
+        changesApplied,
+        blockingMs,
+        filesystemRequests,
+        yields,
+        allArchived,
+        workerMessages,
+      } = JSON.parse(stdout) as {
+        changesApplied: number;
+        blockingMs: number;
+        filesystemRequests: number;
+        yields: number;
+        allArchived: boolean;
+        workerMessages: number;
+      };
       expect(blockingMs).toBeLessThan(20);
       expect(filesystemRequests).toBe(20001);
-      expect(result.changesApplied).toHaveLength(20000);
-      expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(
-        true,
-      );
+      expect(changesApplied).toBe(20000);
+      expect(allArchived).toBe(true);
+      expect(yields).toBeGreaterThan(0);
+      expect(workerMessages).toBe(0);
     } finally {
-      service.dispose();
+      running = false;
+      clearImmediate(unrelated);
     }
   }, 30000);
 
@@ -860,6 +770,62 @@ describe("WorkspaceReconciliationService", () => {
     ]);
     expect(git.reads).toEqual([projectRoot, projectRoot]);
     expect(projects.get("p1")?.kind).toBe("git");
+  });
+
+  test("reads sibling checkouts a few at a time in the background Git lane", async () => {
+    const projectRoot = "/reconcile/fan-out/root";
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: projectRoot,
+        kind: "git",
+        displayName: "fan-out",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const siblingCwds = Array.from({ length: 40 }, (_, index) => `${projectRoot}-${index}`);
+    for (const [index, cwd] of siblingCwds.entries()) {
+      workspaces.set(
+        `w${index}`,
+        createPersistedWorkspaceRecord({
+          workspaceId: `w${index}`,
+          projectId: "p1",
+          cwd,
+          kind: "worktree",
+          displayName: `sibling-${index}`,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+    const reads: Array<{ cwd: string; priority: string | undefined }> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      inspectDirectory: async () => "directory",
+      workspaceGitService: {
+        async getCheckout(cwd, options) {
+          reads.push({ cwd, priority: options?.priority });
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          inFlight -= 1;
+          return createCheckout(cwd, { isGit: true, currentBranch: "main", worktreeRoot: cwd });
+        },
+      },
+    });
+
+    await service.runOnce();
+
+    expect(reads.map((read) => read.cwd).sort()).toEqual([projectRoot, ...siblingCwds].sort());
+    expect(new Set(reads.map((read) => read.priority))).toEqual(new Set(["background"]));
+    expect(maxInFlight).toBe(4);
   });
 
   test("deduplicates equivalent project and workspace paths across legacy duplicate projects", async () => {
@@ -1190,6 +1156,7 @@ describe("WorkspaceReconciliationService", () => {
       baseBranch: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      metadata: {},
       createdAt: timestamp,
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),

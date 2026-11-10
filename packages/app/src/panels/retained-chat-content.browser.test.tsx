@@ -34,11 +34,24 @@ import {
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 
 import { render as renderEnvironment } from "@testing-library/react";
-import { useWorkspaceSheetEnvironment } from "@/screens/workspace/workspace-sheet-environment";
+import {
+  SheetPaneHostProvider,
+  useSheetPaneBridge,
+  type SheetPaneHost,
+} from "@/screens/workspace/sheet-pane";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useAssistantFileLinkActions, type InlinePathTarget } from "@/assistant-file-links";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const SHEET_PANE_HOST: SheetPaneHost = {
+  workspaceKey: "host:workspace",
+  serverId: "host",
+  workspaceId: "workspace",
+  isWorkspaceFocused: true,
+  buildContent: () => {
+    throw new Error("The environment probe builds no pane content");
+  },
+};
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -155,12 +168,19 @@ describe("workspace sheet environment", () => {
       }, [name]);
       return null;
     }
-    function Capture() {
-      bridge = useWorkspaceSheetEnvironment();
+    function CaptureBridge() {
+      bridge = useSheetPaneBridge();
       return (
         <ComposerEditingScope tabId="file" targetKey="file:a">
           <Probe name="pane" />
         </ComposerEditingScope>
+      );
+    }
+    function Capture() {
+      return (
+        <SheetPaneHostProvider value={SHEET_PANE_HOST}>
+          <CaptureBridge />
+        </SheetPaneHostProvider>
       );
     }
     function Source({ workspaceRoot, active }: { workspaceRoot: string; active: boolean }) {

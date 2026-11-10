@@ -1,3 +1,4 @@
+import { getPluginClientApi } from "./client-state/api";
 import { filePanelTitle } from "@/file-panels/choice/presentation";
 import { i18n } from "@/i18n/i18next";
 import { createPluginHosts } from "./hosts";
@@ -50,18 +51,22 @@ function registry(
           },
           installation.lifetime.signal,
         ),
-        paseo: installation.paseo,
+        paseo: getPluginClientApi(installation).paseo,
         i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected plugin RPC");
         },
         openScreen: () => {},
         openSurface: () => {},
+        composers: () => [],
         openSettings: () => {},
         playAudio: async () => {},
         openPanel: () => {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
+        subscribe: () => {
+          throw new Error("Subscriptions are not used here");
+        },
       };
     },
   });
@@ -219,7 +224,10 @@ test("locale snapshots preserve installation state and observations, then releas
   expect(after.paseo).toBe(before.paseo);
   expect(after.surfaces[0].Component).toBe(before.surfaces[0].Component);
   expect(h.open).toEqual(new Set(["notes"]));
+  const translatedSnapshot = h.plugins.getSnapshot();
   h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getSnapshot()).toBe(translatedSnapshot);
+  expect(h.plugins.getSnapshot()[0].locale).toBe("zh-CN");
   expect(h.plugins.getSnapshot()[0].i18n).toBe(before.i18n);
   h.plugins.removeHost("host");
   expect(listeners.size).toBe(0);

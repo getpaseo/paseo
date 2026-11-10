@@ -723,3 +723,46 @@ test("copying a selection across an assistant image keeps its Markdown source an
     await agent.cleanup();
   }
 });
+
+test.describe("on a touch-capable desktop browser", () => {
+  // A touch screen registers the navigation pan's pointer listeners over the whole workspace.
+  // The pan accepts touch only, and a mouse drag must still extend the browser's selection.
+  test.use({ hasTouch: true });
+
+  test("a mouse drag selects across assistant paragraphs", async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "assistant-selection-drag-",
+      title: "Assistant selection drag",
+      initialPrompt: "Render three paragraphs.",
+      featureValues: {
+        mockAssistantResponse: "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+      },
+    });
+
+    try {
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "idle",
+        30_000,
+      );
+      await openAgentRoute(page, agent);
+      const blocks = assistantMessageBlocks(page);
+      const first = await blocks.getByText("First paragraph.").boundingBox();
+      const third = await blocks.getByText("Third paragraph.").boundingBox();
+      if (!first || !third) {
+        throw new Error("Expected rendered paragraphs");
+      }
+
+      await page.mouse.move(first.x + 1, first.y + first.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, { steps: 20 });
+      await page.mouse.up();
+
+      const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+      expect(selected).toContain("First paragraph.");
+      expect(selected).toContain("Third paragraph.");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+});

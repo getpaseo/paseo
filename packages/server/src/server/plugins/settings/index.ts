@@ -45,6 +45,7 @@ export class PluginSettingsStore {
 
   register<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
     defineSettings(definition);
+    if (definition.scope !== "host") throw new Error("Device settings belong to the client");
     if (this.definitions.has(definition.id))
       throw new Error(`Duplicate settings: ${definition.id}`);
     this.definitions.set(definition.id, definition);

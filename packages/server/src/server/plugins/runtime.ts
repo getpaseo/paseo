@@ -1,4 +1,6 @@
-import type { PluginWireBeforeRequests } from "./lifecycle/index.js";
+import { validateWorktreePath } from "../../utils/worktree-path.js";
+import type { PluginHookPayload } from "@getpaseo/plugin/server";
+import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
@@ -6,16 +8,12 @@ import {
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import type {
-  PluginLifecycleEvents,
-  PluginHookAgent,
-  AgentToolResult,
-} from "@getpaseo/plugin/server";
+import type { PluginHookEvents, PluginHookAgent, AgentToolResult } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
@@ -36,6 +34,10 @@ import type {
   PluginUsageSourceMetadata,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
+import {
+  BufferedPluginSubscription,
+  type PluginRuntimeSubscription,
+} from "./runtime-subscription.js";
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
@@ -74,8 +76,12 @@ interface LoadedPlugin {
   instanceId: string;
   requirements: PluginRequirements | undefined;
   clientBundle: string;
+  /** Lets a client that already holds this bundle skip downloading it again. */
+  clientBundleHash: string;
   methods: ReadonlySet<string>;
-  hooks: { events: string[]; before: string[] };
+  subscriptionMethods: ReadonlySet<string>;
+  subscriptions: Map<string, BufferedPluginSubscription>;
+  hooks: string[];
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
   child: PluginChild | null;
@@ -246,6 +252,10 @@ function terminatePluginChild(child: PluginChild): void {
   if (!child.killed) child.kill();
 }
 
+function hashClientBundle(clientBundle: string): string {
+  return createHash("sha256").update(clientBundle).digest("hex");
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -305,7 +315,7 @@ export class PluginRuntime {
   }
 
   private notifySessionOpenChange(loaded: LoadedPlugin): void {
-    if (!loaded.hooks.before.includes("agent.session_open")) return;
+    if (!loaded.hooks.includes("agent.open.before")) return;
     for (const listener of this.sessionOpenListeners) listener();
   }
 
@@ -369,9 +379,19 @@ export class PluginRuntime {
     return true;
   }
 
-  catalog(): Array<{ id: string; clientBundle: string; requirements?: PluginRequirements }> {
+  catalog(): Array<{
+    id: string;
+    clientBundle: string;
+    clientBundleHash: string;
+    requirements?: PluginRequirements;
+  }> {
     return [...this.plugins.values()]
-      .map(({ id, clientBundle, requirements }) => ({ id, clientBundle, requirements }))
+      .map(({ id, clientBundle, clientBundleHash, requirements }) => ({
+        id,
+        clientBundle,
+        clientBundleHash,
+        requirements,
+      }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -500,18 +520,48 @@ export class PluginRuntime {
     return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
   }
 
-  emit<Name extends keyof PluginLifecycleEvents>(
-    name: Name,
-    event: PluginLifecycleEvents[Name],
-  ): void {
+  /** Starts one subscriber's handler in the plugin process. */
+  startSubscription(pluginId: string, method: string, input: unknown): PluginRuntimeSubscription {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded.subscriptionMethods.has(method))
+      throw new Error(`Plugin ${pluginId} does not contribute subscription ${method}`);
+    const subscriptionId = randomUUID();
+    const subscription = new BufferedPluginSubscription();
+    loaded.subscriptions.set(subscriptionId, subscription);
+    const ready = this.request(loaded, {
+      type: "subscribe",
+      requestId: randomUUID(),
+      subscriptionId,
+      method,
+      input,
+    }).then(
+      () => undefined,
+      (error: unknown) => {
+        loaded.subscriptions.delete(subscriptionId);
+        throw error;
+      },
+    );
+    return {
+      ready,
+      attach: (sink) => subscription.attach(sink),
+      release: () => {
+        subscription.released();
+        if (!loaded.subscriptions.delete(subscriptionId)) return;
+        if (loaded.child?.connected)
+          void send(loaded.child, { type: "unsubscribe", subscriptionId }).catch(() => undefined);
+      },
+    };
+  }
+
+  emit<Name extends keyof PluginHookEvents>(name: Name, event: PluginHookEvents[Name]): void {
     for (const loaded of this.plugins.values()) {
-      if (!loaded.hooks.events.includes(name)) {
+      if (!loaded.hooks.includes(name)) {
         continue;
       }
       const request = this.request(loaded, {
         type: "hook",
         requestId: randomUUID(),
-        kind: "event",
         name,
         input: event,
       })
@@ -532,40 +582,76 @@ export class PluginRuntime {
     await Promise.all(this.pendingEvents);
   }
 
+  async wait(
+    name: "worktree.create.after",
+    payload: PluginHookPayload<"worktree.create.after">,
+  ): Promise<void> {
+    const plugins = [...this.plugins.values()].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    );
+    for (const loaded of plugins) {
+      if (!loaded.hooks.includes(name)) continue;
+      try {
+        await this.request(loaded, { type: "hook", requestId: randomUUID(), name, input: payload });
+      } catch (error) {
+        throw new Error(`Plugin ${loaded.id} ${name} failed: ${describeError(error)}`, {
+          cause: error,
+        });
+      }
+    }
+  }
+
   async before<Name extends keyof PluginWireBeforeRequests>(
     name: Name,
     input: PluginWireBeforeRequests[Name],
-  ): Promise<PluginWireBeforeRequests[Name]> {
+  ): Promise<PluginBeforeResults[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
       return left.id.localeCompare(right.id);
     });
     const attached: AttachedAgentTool[] = [];
+    const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
+    const mcpServerOwners: Record<string, string> = {};
     for (const loaded of plugins) {
-      if (!loaded.hooks.before.includes(name)) {
+      if (!loaded.hooks.includes(name)) {
         continue;
       }
       try {
         const output = await this.request(loaded, {
           type: "hook",
           requestId: randomUUID(),
-          kind: "before",
           name,
-          input: name === "agent.session_open" ? { ...request, tools: [] } : request,
+          input: name === "agent.open.before" ? { ...request, tools: [], mcpServers: {} } : request,
         });
-        request = validateBeforeResult(name, request, output);
-        if (name === "agent.session_open") {
-          this.collectAgentTools(attached, loaded, (request as SessionOpenWireRequest).tools);
+        request = await validateBeforeResult(name, request, output);
+        if (name === "worktree.create.before") {
+          const worktree = request as PluginWireBeforeRequests["worktree.create.before"];
+          worktree.path = await validateWorktreePath({
+            candidate: worktree.path,
+            repoPath: worktree.repoRoot,
+          });
+        }
+        if (name === "agent.open.before") {
+          const opened = request as SessionOpenWireRequest;
+          this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);
+          this.collectAgentTools(attached, loaded, opened.tools);
         }
       } catch (error) {
-        if (name === "agent.session_open")
+        if (name === "agent.open.before")
           this.detachTools((request as SessionOpenWireRequest).agentId);
-        throw new Error(`Plugin ${loaded.id} before ${name} failed: ${describeError(error)}`, {
+        throw new Error(`Plugin ${loaded.id} ${name} failed: ${describeError(error)}`, {
           cause: error,
         });
       }
     }
-    if (name === "agent.session_open") (request as SessionOpenWireRequest).tools = attached;
+    if (name === "agent.open.before") {
+      return {
+        ...request,
+        tools: attached,
+        mcpServers,
+        mcpServerOwners,
+      } as PluginBeforeResults[Name];
+    }
     return request;
   }
 
@@ -585,6 +671,23 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  private collectMcpServers(
+    servers: SessionOpenWireRequest["mcpServers"],
+    owners: Record<string, string>,
+    loaded: LoadedPlugin,
+    contributions: SessionOpenWireRequest["mcpServers"],
+  ): void {
+    for (const [name, server] of Object.entries(contributions)) {
+      if (Object.hasOwn(servers, name)) {
+        throw new Error(
+          `MCP server ${name} from plugin ${loaded.id} collides with plugin ${owners[name]}`,
+        );
+      }
+      servers[name] = server;
+      owners[name] = loaded.id;
+    }
   }
 
   private collectAgentTools(
@@ -664,6 +767,11 @@ export class PluginRuntime {
           if (message.type === "hook") {
             void send(child, { type: "hook.cancel", requestId }).catch(() => {});
           }
+          // The handler may still start after the daemon gave up on it.
+          if (message.type === "subscribe") {
+            const { subscriptionId } = message;
+            void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
+          }
           reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
         },
         message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
@@ -710,13 +818,17 @@ export class PluginRuntime {
     if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
     const serverBundle = bundles.serverBundle;
     if (!serverBundle) {
+      const clientBundle = bundles.clientBundle ?? "";
       return {
         id: pluginId,
         instanceId: randomUUID(),
-        clientBundle: bundles.clientBundle ?? "",
+        clientBundle,
+        clientBundleHash: hashClientBundle(clientBundle),
         requirements: manifest.requirements,
         methods: new Set(),
-        hooks: { events: [], before: [] },
+        subscriptionMethods: new Set(),
+        subscriptions: new Map(),
+        hooks: [],
         providers: [],
         usageSources: [],
         child: null,
@@ -843,9 +955,12 @@ export class PluginRuntime {
       id: pluginId,
       instanceId: randomUUID(),
       clientBundle,
+      clientBundleHash: hashClientBundle(clientBundle),
       requirements,
       methods: new Set(ready.methods),
-      hooks: ready.hooks ?? { events: [], before: [] },
+      subscriptionMethods: new Set(ready.subscriptions ?? []),
+      subscriptions: new Map(),
+      hooks: ready.hooks ?? [],
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
       child,
@@ -925,11 +1040,11 @@ export class PluginRuntime {
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
     if (message.type === "hooks.changed") {
-      const hadSessionOpen = loaded.hooks.before.includes("agent.session_open");
+      const hadSessionOpen = loaded.hooks.includes("agent.open.before");
       loaded.hooks = message.hooks;
       if (
         this.plugins.get(loaded.id) === loaded &&
-        hadSessionOpen !== loaded.hooks.before.includes("agent.session_open")
+        hadSessionOpen !== loaded.hooks.includes("agent.open.before")
       ) {
         for (const listener of this.sessionOpenListeners) listener();
       }
@@ -941,6 +1056,16 @@ export class PluginRuntime {
     }
     if (message.type.startsWith("provider.")) {
       this.handleProviderMessage(loaded, message);
+      return;
+    }
+    if (message.type === "subscription.event") {
+      loaded.subscriptions.get(message.subscriptionId)?.event(message.event);
+      return;
+    }
+    if (message.type === "subscription.closed") {
+      const subscription = loaded.subscriptions.get(message.subscriptionId);
+      loaded.subscriptions.delete(message.subscriptionId);
+      subscription?.closed(message.error);
       return;
     }
     if (message.type !== "result" && message.type !== "error") return;
@@ -1301,12 +1426,16 @@ export class PluginRuntime {
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 
+  /** Rejects in-flight requests and closes open subscriptions with the reason. */
   private rejectPending(loaded: LoadedPlugin, message: string): void {
     for (const invocation of loaded.pending.values()) {
       clearTimeout(invocation.timeout);
       invocation.reject(new Error(message));
     }
     loaded.pending.clear();
+    const subscriptions = [...loaded.subscriptions.values()];
+    loaded.subscriptions.clear();
+    for (const subscription of subscriptions) subscription.closed(message);
   }
 
   private appendLog(pluginId: string, stream: PluginLogEntry["stream"], message: string): void {

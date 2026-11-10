@@ -1,8 +1,18 @@
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
-index ee51e76..dc1bc17 100644
+index ee51e76..5fe8f75 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
-@@ -315,7 +315,9 @@ function BottomSheetModalComponent(props, ref) {
+@@ -272,6 +272,9 @@ function BottomSheetModalComponent(props, ref) {
+       });
+     }
+     if (statusRef.current === _constants.MODAL_STATUS.INITIAL) {
++      if (mountRef.current) {
++        unmount();
++      }
+       return;
+     }
+ 
+@@ -315,7 +318,9 @@ function BottomSheetModalComponent(props, ref) {
      }
      currentIndexRef.current = _index;
      nextIndexRef.current = null;
@@ -61,10 +71,20 @@ index e44ad86..96555ef 100644
  var _useGestureEventsHandlersDefault = require("./hooks/useGestureEventsHandlersDefault");
  var _useBottomSheetGestureHandlers = require("./hooks/useBottomSheetGestureHandlers");
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
-index 94fabdb..60ca66a 100644
+index 94fabdb..d870aa7 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
-@@ -308,7 +308,9 @@ function BottomSheetModalComponent(props, ref) {
+@@ -265,6 +265,9 @@ function BottomSheetModalComponent(props, ref) {
+       });
+     }
+     if (statusRef.current === MODAL_STATUS.INITIAL) {
++      if (mountRef.current) {
++        unmount();
++      }
+       return;
+     }
+ 
+@@ -308,7 +311,9 @@ function BottomSheetModalComponent(props, ref) {
      }
      currentIndexRef.current = _index;
      nextIndexRef.current = null;
@@ -122,10 +142,24 @@ index ffc6caa..550f1b3 100644
  export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
  export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
 diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
-index 2954b3f..7260656 100644
+index 2954b3f..936300b 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
 +++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
-@@ -432,8 +432,15 @@ function BottomSheetModalComponent<T = never>(
+@@ -373,7 +373,13 @@ function BottomSheetModalComponent<T = never>(
+         });
+       }
+ 
++      // A modal that unmounts after presenting but before its first animation is still INITIAL;
++      // returning would leave its portal on the host, sliding open with nothing to close it.
++      // An INITIAL status with nothing mounted is this callback running after `unmount()`.
+       if (statusRef.current === MODAL_STATUS.INITIAL) {
++        if (mountRef.current) {
++          unmount();
++        }
+         return;
+       }
+ 
+@@ -432,8 +438,15 @@ function BottomSheetModalComponent<T = never>(
        currentIndexRef.current = _index;
        nextIndexRef.current = null;
  

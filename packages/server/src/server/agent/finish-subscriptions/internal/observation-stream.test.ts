@@ -43,6 +43,7 @@ class Host implements HostObservation {
           updatedAt: "2026-01-01",
         },
         ["codex"],
+        (_provider, own) => own ?? {},
       ),
       event,
       "Last response",
@@ -133,6 +134,7 @@ test("late initial permission snapshot cannot resurrect an already resolved requ
         updatedAt: "2026-01-01",
       },
       ["codex"],
+      (_provider, own) => own ?? {},
     );
     if (requestEvent.type !== "permission_requested") throw new Error("Expected permission");
     final.pendingPermissions = [requestEvent.request];

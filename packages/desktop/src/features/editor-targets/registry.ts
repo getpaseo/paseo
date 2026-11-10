@@ -97,10 +97,16 @@ export function getEditorTarget(
 }
 
 export async function openEditorTarget(
-  input: EditorTargetLaunchInput & { editorId: string },
+  request: EditorTargetLaunchInput & { editorId: string },
   runtime: EditorTargetRuntime,
   targets: readonly EditorTarget[] = EDITOR_TARGETS,
 ): Promise<void> {
+  // Assistant replies name folders like `~/Downloads/x`; expand them before the absolute-path guard.
+  const input = {
+    ...request,
+    workspacePath: runtime.expandHomePath(request.workspacePath),
+    filePath: request.filePath === undefined ? undefined : runtime.expandHomePath(request.filePath),
+  };
   if (!runtime.isAbsolutePath(input.workspacePath)) {
     throw new Error("Editor target workspace path must be an absolute local path");
   }

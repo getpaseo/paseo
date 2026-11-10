@@ -1,15 +1,14 @@
+import { Terminal as ReplaySource } from "@xterm/xterm";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it } from "vitest";
-import type { TerminalState } from "@getpaseo/protocol/messages";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 // Regression: "streaming pino log, resized the Paseo terminal, old logs stayed
 // narrow and new logs drew on top of the old ones."
 //
-// A heavy stream overflows MAX_TERMINAL_OUTPUT_FRAME_BYTES, so the server sends a
-// SNAPSHOT mid-stream. The client restores it via renderTerminalSnapshotToAnsi.
-// When the snapshot carries per-row soft-wrap flags, restored long lines must
-// reflow on resize just like live output — not freeze at the snapshot width.
+// Backpressure triggers an ANSI replay serialized directly from xterm. Replayed
+// soft-wrapped lines must reflow on resize like live output.
 
 interface Mounted {
   host: HTMLDivElement;
@@ -57,7 +56,6 @@ function mount(width: number, height: number): Mounted {
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: 10_000,
     theme: { background: "#0b0b0b", foreground: "#e6e6e6", cursor: "#e6e6e6" },
   });
@@ -90,9 +88,18 @@ function someRowContains(term: InspectableTerminal, text: string): boolean {
   return dumpRows(term).some((r) => r.text.includes(text));
 }
 
-function renderSnapshotCommitted(runtime: TerminalEmulatorRuntime, state: TerminalState) {
+function replayCommitted(
+  runtime: TerminalEmulatorRuntime,
+  state: { rows: number; cols: number; data: Uint8Array },
+) {
   return new Promise<void>((resolve) => {
-    runtime.renderSnapshot({ state, onCommitted: resolve });
+    runtime.replay({ type: "begin", rows: state.rows, cols: state.cols });
+    runtime.replay({
+      type: "data",
+      data: state.data,
+    });
+    runtime.replay({ type: "end" });
+    runtime.write({ data: new Uint8Array([0]), onCommitted: resolve });
   });
 }
 
@@ -102,31 +109,18 @@ function writeCommitted(runtime: TerminalEmulatorRuntime, data: Uint8Array) {
   });
 }
 
-// Build a server-style snapshot of one long pino line that the SERVER soft-wrapped
-// at `cols`, represented as multiple grid rows (exactly what the daemon stores in
-// its headless xterm and ships in a snapshot).
-function buildWrappedSnapshot(cols: number): TerminalState {
-  const longLine = `[server] [15:30:00.123] TRACE: provider.claude.raw_event {"module":"agent","seq":1,"sessionId":"ed8972f4-d3be-45d0-992c-631f8f1ed04e","turnId":"foreground-turn-1","payload":"${"A".repeat(40)}"}`;
-  const grid: TerminalState["grid"] = [];
-  for (let i = 0; i < longLine.length; i += cols) {
-    const chunk = longLine.slice(i, i + cols);
-    grid.push([...chunk].map((char) => ({ char })));
+// Serialize one long pino line from a real server-width xterm buffer.
+// The replay must retain its soft-wrap boundaries for later client reflow.
+async function buildWrappedSnapshot(cols: number) {
+  const source = new ReplaySource({ rows: 24, cols, allowProposedApi: true });
+  const serializer = new SerializeAddon();
+  source.loadAddon(serializer);
+  try {
+    await new Promise<void>((resolve) => source.write(pinoLine(0), resolve));
+    return { rows: 24, cols, data: new TextEncoder().encode(serializer.serialize()) };
+  } finally {
+    source.dispose();
   }
-  // The fixed daemon ships per-row soft-wrap flags: every row of the logical line
-  // continues onto the next except the last.
-  const gridWrapped = grid.map((_, index) => index < grid.length - 1);
-  // Cursor sits just below the restored content, exactly where the daemon's
-  // headless terminal leaves it after a line break, so streamed output appends
-  // cleanly below instead of overwriting the restored rows.
-  return {
-    rows: 24,
-    cols,
-    scrollback: [],
-    scrollbackWrapped: [],
-    grid,
-    gridWrapped,
-    cursor: { row: grid.length, col: 0 },
-  };
 }
 
 function pinoLine(seq: number): string {
@@ -141,15 +135,14 @@ afterEach(() => {
 });
 
 describe("terminal resize reflow repro (Paseo terminal)", () => {
-  it("snapshot-restored rows stay frozen at the snapshot width after the terminal grows", async () => {
+  it("replayed soft-wrapped rows reflow after the terminal grows", async () => {
     await page.viewport(1600, 700);
     const m = mount(560, 360); // ~70 cols
     await waitFor(() => m.terminal.cols > 40);
     const narrowCols = m.terminal.cols;
 
-    // 1) Mid-stream snapshot arrives (server overflowed 256KB). It carries the
-    //    long line wrapped at the server width as separate grid rows.
-    await renderSnapshotCommitted(m.runtime, buildWrappedSnapshot(narrowCols));
+    // 1) A mid-stream ANSI replay arrives, preserving wraps at the captured width.
+    await replayCommitted(m.runtime, await buildWrappedSnapshot(narrowCols));
     await waitFor(() => someRowContains(m.terminal, "[15:30:00.123]"));
 
     // 2) Normal post-snapshot streaming resumes (autowrap on -> soft-wrapped).

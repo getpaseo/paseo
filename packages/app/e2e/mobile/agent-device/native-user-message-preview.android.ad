@@ -1,0 +1,14 @@
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "role=\"button\" label=\"Show more\"" 10000
+press "role=\"button\" label=\"Show more\""
+wait "role=\"button\" label=\"Show less\"" 10000
+press "role=\"button\" label=\"Show less\""
+wait "role=\"button\" label=\"Show more\"" 10000
+press "role=\"button\" label=\"Show more\""
+wait "role=\"button\" label=\"Show less\"" 10000
+press "role=\"button\" label=\"Show less\""
+wait "role=\"button\" label=\"Show more\"" 10000
+close

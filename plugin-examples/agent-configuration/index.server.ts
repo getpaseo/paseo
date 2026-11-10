@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
-  server.before("agent.create", ({ request }) => {
+  server.addHook("agent.create.before", async ({ request }) => {
     if (request.config.provider !== "codex") {
       return request;
     }
@@ -15,12 +15,22 @@ export default function contribute(server: PluginServerContext) {
           sandbox_mode: "workspace-write",
           approval_policy: "on-request",
         },
-        mcpServers: {
-          ...request.config.mcpServers,
-          company: {
-            type: "http",
-            url: "https://tools.example.com/mcp",
-          },
+      },
+    };
+  });
+
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.provider !== "codex") {
+      return;
+    }
+
+    return {
+      ...request,
+      mcpServers: {
+        ...request.mcpServers,
+        company: {
+          type: "http",
+          url: "https://tools.example.com/mcp",
         },
       },
     };

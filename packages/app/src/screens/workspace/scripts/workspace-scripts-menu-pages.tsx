@@ -18,10 +18,7 @@ import type {
 } from "@/utils/workspace-script-links";
 import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
 import { scriptToneColorMapping, summarizeScripts, type ScriptsSummary } from "./script-status";
-import {
-  useWorkspaceScriptActions,
-  type WorkspaceScriptActions,
-} from "./use-workspace-script-actions";
+import type { WorkspaceScriptActions } from "./use-workspace-script-actions";
 
 type WorkspaceScript = WorkspaceDescriptor["scripts"][number];
 
@@ -56,11 +53,9 @@ function scriptPageId(scriptName: string): string {
 }
 
 export interface UseWorkspaceScriptsMenuPagesInput {
-  serverId: string;
-  workspaceId: string;
+  actions: WorkspaceScriptActions;
   scripts: WorkspaceDescriptor["scripts"];
   liveTerminalIds: readonly string[];
-  onScriptTerminalStarted: (terminalId: string) => void;
   onViewTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
 }
@@ -80,25 +75,16 @@ export interface WorkspaceScriptsMenuPages {
  * Every script gets a page whether or not it runs, so stopping one from its own page flips that
  * page to its stopped state instead of pulling it out from under the user.
  *
- * The actions live here rather than in a page, so call this from whatever owns the menu: a restart
- * finishes after the sheet has closed.
+ * The workspace screen owns the actions so a restart finishes across menu and header changes.
  */
 export function useWorkspaceScriptsMenuPages({
-  serverId,
-  workspaceId,
+  actions,
   scripts,
   liveTerminalIds,
-  onScriptTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
 }: UseWorkspaceScriptsMenuPagesInput): WorkspaceScriptsMenuPages {
   const { t } = useTranslation();
-  const actions = useWorkspaceScriptActions({
-    serverId,
-    workspaceId,
-    scripts,
-    onScriptTerminalStarted,
-  });
   const summary = useMemo(() => summarizeScripts(scripts), [scripts]);
 
   const trigger = useMemo(

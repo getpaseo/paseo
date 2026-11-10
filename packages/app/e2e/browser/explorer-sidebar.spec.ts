@@ -13,6 +13,7 @@ import {
   ensureExplorerSidebar,
   openFilesPanel,
   waitForWorkspaceTabsVisible,
+  dragTabIntoExplorer,
 } from "../support/helpers/workspace-tabs";
 
 function explorerSidebar(page: Parameters<typeof ensureExplorerSidebar>[0]) {
@@ -193,26 +194,6 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
     await workspace.cleanup();
   }
 });
-
-async function dragTabIntoExplorer(
-  page: Parameters<typeof ensureExplorerSidebar>[0],
-  tabId: string,
-) {
-  const source = page.getByTestId("workspace-pane-main").getByTestId(`workspace-tab-${tabId}`);
-  const destination = explorerSidebar(page).getByTestId("workspace-tab-files");
-  const sourceBox = await source.boundingBox();
-  const destinationBox = await destination.boundingBox();
-  if (!sourceBox || !destinationBox)
-    throw new Error("Tab drag requires visible source and destination");
-  const start = { x: sourceBox.x + 12, y: sourceBox.y + sourceBox.height / 2 };
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x + 12, start.y + 4);
-  await page.mouse.move(destinationBox.x + 12, destinationBox.y + destinationBox.height / 2, {
-    steps: 20,
-  });
-  await page.mouse.up();
-}
 
 test("moves agents into Explorer and keeps the shared Agent launcher available", async ({
   page,

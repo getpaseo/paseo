@@ -302,6 +302,22 @@ describe("paseo worktree manager", () => {
     expect(existsSync(created.worktreePath)).toBe(false);
   });
 
+  it("deletes a worktree when Git reports its source through native and long path spellings", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "identity-delete",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "identity-delete",
+      paseoHome,
+    });
+    await deletePaseoWorktree({
+      cwd: realpathSync.native(repoDir),
+      worktreePath: created.worktreePath,
+      paseoHome,
+    });
+    expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
   it("is idempotent: deleting an already-absent worktree succeeds", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "idempotent-delete-branch",

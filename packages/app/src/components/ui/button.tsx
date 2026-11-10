@@ -20,14 +20,13 @@ import type {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
-  buttonIconSize,
+  controlIconSize,
   createControlGeometry,
-  type ButtonControlSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = ButtonControlSize;
 
 type LeftIcon =
   | ReactElement
@@ -102,15 +101,11 @@ const styles = StyleSheet.create((theme) => {
     md: {
       ...geometry.buttonMd,
     },
-    xs: {
-      ...geometry.buttonXs,
-    },
     sm: {
       ...geometry.buttonSm,
     },
-    lg: {
-      ...geometry.buttonLg,
-    },
+    iconOnlySm: geometry.buttonIconOnlySm,
+    iconOnlyMd: geometry.buttonIconOnlyMd,
     default: {
       backgroundColor: theme.colors.accent,
       borderColor: theme.colors.accent,
@@ -139,11 +134,11 @@ const styles = StyleSheet.create((theme) => {
     },
     text: {
       color: theme.colors.foreground,
-      ...geometry.buttonText,
-      fontWeight: theme.fontWeight.normal,
+      ...geometry.buttonTextMd,
+      fontWeight: theme.fontWeight.medium,
     },
-    textXs: {
-      ...geometry.buttonTextXs,
+    textSm: {
+      ...geometry.buttonTextSm,
     },
     textDefault: {
       color: theme.colors.accentForeground,
@@ -168,6 +163,7 @@ export function Button({
   trailing,
   style,
   textStyle,
+  numberOfLines,
   disabled,
   loading = false,
   accessibilityRole,
@@ -177,11 +173,12 @@ export function Button({
   Omit<PressableProps, "style"> & {
     ref?: React.Ref<View>;
     variant?: ButtonVariant;
-    size?: ButtonSize;
+    size?: ControlSize;
     leftIcon?: LeftIcon;
     trailing?: ReactNode;
     style?: StyleProp<ViewStyle>;
     textStyle?: StyleProp<TextStyle>;
+    numberOfLines?: number;
     loading?: boolean;
   }
 >) {
@@ -203,16 +200,9 @@ export function Button({
     variantStyle = styles.destructive;
   }
 
-  let sizeStyle: ViewStyle;
-  if (size === "xs") {
-    sizeStyle = styles.xs;
-  } else if (size === "sm") {
-    sizeStyle = styles.sm;
-  } else if (size === "lg") {
-    sizeStyle = styles.lg;
-  } else {
-    sizeStyle = styles.md;
-  }
+  const isIconOnly = children == null && leftIcon != null;
+  const sizeStyle = size === "sm" ? styles.sm : styles.md;
+  const iconOnlyStyle = size === "sm" ? styles.iconOnlySm : styles.iconOnlyMd;
   const isGhostHovered = hovered && variant === "ghost";
 
   const handleHoverIn = useCallback(() => setHovered(true), []);
@@ -222,18 +212,19 @@ export function Button({
     ({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> => [
       styles.base,
       sizeStyle,
+      isIconOnly ? iconOnlyStyle : null,
       variantStyle,
       pressed ? styles.pressed : null,
       isDisabled ? styles.disabled : null,
       style,
     ],
-    [sizeStyle, variantStyle, isDisabled, style],
+    [sizeStyle, isIconOnly, iconOnlyStyle, variantStyle, isDisabled, style],
   );
 
   const resolvedTextStyle = useMemo(
     () => [
       styles.text,
-      size === "xs" ? styles.textXs : null,
+      size === "sm" ? styles.textSm : null,
       variant === "default" ? styles.textDefault : null,
       variant === "destructive" ? styles.textDestructive : null,
       variant === "ghost" ? styles.textGhost : null,
@@ -274,10 +265,14 @@ export function Button({
       <ThemedButtonIcon
         loading={loading}
         leftIcon={leftIcon}
-        iconSize={buttonIconSize[size]}
+        iconSize={controlIconSize[size]}
         uniProps={resolveIconMapping()}
       />
-      {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}
+      {children != null ? (
+        <Text numberOfLines={numberOfLines} style={resolvedTextStyle}>
+          {children}
+        </Text>
+      ) : null}
       {trailing}
     </Pressable>
   );

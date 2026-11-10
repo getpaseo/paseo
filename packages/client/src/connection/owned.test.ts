@@ -83,6 +83,26 @@ test("cancellation before the ID waits for bootstrap and releases exactly that I
   expect(c.released).toEqual(["cancelled"]);
 });
 
+test("a release right after the host accepts still reports the subscription as accepted", async () => {
+  const c = connection();
+  const handle = c.observe();
+  c.requests[0]!("closing");
+  const released = handle.release();
+  await expect(handle.ready).resolves.toMatchObject({ subscriptionId: "closing" });
+  await released;
+  expect(c.released).toEqual(["closing"]);
+});
+
+test("a release before the host accepts rejects ready", async () => {
+  const c = connection();
+  const handle = c.observe();
+  const released = handle.release();
+  await expect(handle.ready).rejects.toThrow("Subscription released");
+  c.requests[0]!("late");
+  await released;
+  expect(c.released).toEqual(["late"]);
+});
+
 test("surviving handles use new remote IDs after reconnect and released handles stay gone", async () => {
   const c = connection();
   const a = c.observe();

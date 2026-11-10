@@ -3,9 +3,9 @@ import * as Clipboard from "expo-clipboard";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useSessionStore } from "@/stores/session-store";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeSnapshot } from "@/runtime/host-runtime";
-import { useToast } from "@/contexts/toast-context";
+import { useToast } from "@/contexts/toast-api-context";
 import {
   resolveWorkspaceScriptLink,
   type WorkspaceScriptLinkKind,
@@ -34,6 +34,7 @@ export interface WorkspaceScriptActions {
 }
 
 export interface UseWorkspaceScriptActionsInput {
+  client: Pick<DaemonClient, "startWorkspaceScript" | "killTerminal"> | null;
   serverId: string;
   workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
@@ -45,10 +46,11 @@ export interface UseWorkspaceScriptActionsInput {
  * lists them.
  *
  * A restart outlives the press that asked for it — the second half waits for the daemon to
- * report the script stopped — so mount this with whatever owns the menu, not inside a menu page
- * that unmounts when the menu closes.
+ * report the script stopped — so mount this once with the workspace screen and pass its actions to
+ * each menu surface. Header placement and menu lifetime must not own pending restarts.
  */
 export function useWorkspaceScriptActions({
+  client,
   serverId,
   workspaceId,
   scripts,
@@ -56,7 +58,6 @@ export function useWorkspaceScriptActions({
 }: UseWorkspaceScriptActionsInput): WorkspaceScriptActions {
   const { t } = useTranslation();
   const toast = useToast();
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
   const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
     (state) => state.byServerId[serverId] ?? null,

@@ -404,6 +404,7 @@ function WorkspaceRowTrailingActions({
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
+    showArchiveButton,
     showScrim,
     renderSlot,
     reserveSlotWidth,
@@ -430,6 +431,8 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionOverlay
             visible={kebab.showKebab}
             scrimBackdrop={showScrim ? backdrop : undefined}
+            workspaceKey={workspace.workspaceKey}
+            onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
           >
             {onArchive ? (
               <SidebarWorkspaceMenu

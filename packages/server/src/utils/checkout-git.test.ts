@@ -32,6 +32,7 @@ import {
   getCheckoutStatus,
   checkoutResolvedBranch,
   listBranchSuggestions,
+  setCheckoutBaseBranch,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
@@ -261,6 +262,56 @@ describe("checkout git utilities", () => {
     __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("rejects changing the base of a local checkout without creating metadata", async () => {
+    await expect(setCheckoutBaseBranch({ cwd: repoDir, baseRef: "main" })).rejects.toThrow();
+    expect(existsSync(await getPaseoWorktreeMetadataPath(repoDir))).toBe(false);
+  });
+
+  it("changing a managed worktree base preserves its runtime and PR identity", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      branchName: "feature/base",
+      baseBranch: "main",
+      worktreeSlug: "base",
+      paseoHome,
+      runSetup: false,
+    });
+    const original = await readPaseoWorktreeMetadata(worktree.worktreePath);
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    await setCheckoutBaseBranch({
+      cwd: worktree.worktreePath,
+      baseRef: "release",
+      context: { paseoHome },
+    });
+    expect(await readPaseoWorktreeMetadata(worktree.worktreePath)).toEqual({
+      ...original,
+      baseRefName: "release",
+      baseRef: "refs/heads/release",
+    });
+    expect(await getCheckoutSnapshotFacts(worktree.worktreePath, { paseoHome })).toMatchObject({
+      storedBaseRef: "refs/heads/release",
+    });
+  });
+
+  it("lists exact local and all remote refs separately for the base picker", async () => {
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/release", "HEAD"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "HEAD"], { cwd: repoDir });
+    const suggestions = await listBranchSuggestions(repoDir, {
+      refMode: "exact",
+      query: "release",
+    });
+    expect(suggestions.map((entry) => entry.name).sort()).toEqual([
+      "refs/heads/release",
+      "refs/remotes/origin/release",
+      "refs/remotes/upstream/release",
+    ]);
+    expect(suggestions.find((entry) => entry.name === "refs/heads/release")).toMatchObject({
+      hasLocal: true,
+      hasRemote: false,
+    });
   });
 
   it("throws NotGitRepoError for non-git directories", async () => {
@@ -1918,6 +1969,13 @@ const x = 1;
     expect(status.isPaseoOwnedWorktree).toBe(false);
     expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
     expect(status.currentBranch).toBe("feature/plain");
+  });
+
+  it("rejects merging a branch into its own same-named remote base", async () => {
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repoDir });
+    await expect(mergeToBase(repoDir, { baseRef: "refs/remotes/origin/main" })).rejects.toThrow(
+      "Cannot merge a branch into itself",
+    );
   });
 
   it("merges the current branch into base from a worktree checkout", async () => {

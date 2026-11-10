@@ -8,7 +8,11 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  openChangesPanel,
+  openChangesTreePanel,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
@@ -262,6 +266,150 @@ test.afterEach(async () => {
   }
 });
 
+test("Changes without a comparison base explains how to view pending changes", async ({ page }) => {
+  const workspace = await createWorkspaceWithManyTinyDiffs(2, "dev");
+  await openWorkspaceChangesTree(page, workspace);
+  await expect(
+    page.getByText("Comparison base is unavailable. Select Uncommitted to view pending changes."),
+  ).toBeVisible();
+  await selectChangesComparison(page, "Uncommitted");
+  await expect(changesTree(page).getByText("file-0000.ts", { exact: true })).toBeVisible();
+});
+async function openWorkspaceChangesTree(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
+}
+
+test("streamed Changes shows the tree before completion and applies a one-file refresh", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const workspace = await createLargeStreamedWorkspace();
+  await addOversizedSibling(workspace);
+  const stream = await holdDiffCompletion(page);
+  await openWorkspaceChangesSurface(page, workspace, 90_000);
+  await expectAnnouncedTreeAndLoader(page);
+  await page.screenshot({ path: testInfo.outputPath("tree-loading.png") });
+  stream.finish();
+  await expect.poll(() => stream.completed, { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  const connections = stream.connections;
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +90, -1");
+  await addOneLineToFirstFile(workspace);
+  await expect.poll(() => stream.changedBodies.at(-1), { timeout: 30_000 }).toBe(1);
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +91, -1");
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  expect(stream.connections).toBe(connections);
+  await page.screenshot({ path: testInfo.outputPath("refreshed.png") });
+});
+
+test("reopening compact Changes keeps the painted diff while it resubscribes", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  const stream = await holdDiffCompletion(page);
+  const explorer = await openCompactChanges(page, workspace);
+  stream.finish();
+  const firstFile = explorer.getByTestId("diff-file-0");
+  await expect(firstFile).toBeVisible({ timeout: 30_000 });
+  const painted = await firstFile.getAttribute("aria-label");
+
+  await explorer.getByTestId("workspace-tab-files").click();
+  stream.hold();
+  await explorer.getByTestId("workspace-tab-changes_tree").click();
+  await expect.poll(() => stream.held, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  await expect(firstFile).toHaveAccessibleName(painted ?? "");
+  stream.finish();
+});
+
+async function createLargeStreamedWorkspace(): Promise<DirtyWorkspace> {
+  const workspace = await createWorkspaceWithManyTinyDiffs(252);
+  await Promise.all(
+    Array.from({ length: 252 }, (_, file) =>
+      writeFile(
+        path.join(workspace.repoPath, `src/file-${String(file).padStart(4, "0")}.ts`),
+        Array.from(
+          { length: 90 },
+          (_unused, line) =>
+            `export const fn${line} = (param: string) => ({ key: param, value: ${file} });`,
+        ).join("\n") + "\n",
+      ),
+    ),
+  );
+  return workspace;
+}
+async function addOversizedSibling(workspace: DirtyWorkspace): Promise<void> {
+  await writeFile(path.join(workspace.repoPath, "zz-too-large.txt"), "x".repeat(1024 * 1024 + 1));
+}
+async function addOneLineToFirstFile(workspace: DirtyWorkspace): Promise<void> {
+  const file = path.join(workspace.repoPath, "src/file-0000.ts");
+  await writeFile(file, (await readFile(file, "utf8")) + "export const refreshed = true;\n");
+}
+async function holdDiffCompletion(page: Page) {
+  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
+  let holding = true;
+  let connections = 0;
+  let completed = 0;
+  const completions: Array<() => void> = [];
+  const changedBodies: number[] = [];
+  const bodyCounts = new Map<number, number>();
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    connections++;
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (
+        typeof message !== "string" &&
+        message[0] >= DiffOpcode.Begin &&
+        message[0] <= DiffOpcode.End
+      ) {
+        const frame = decodeDiffFrame(message);
+        if (frame.opcode === DiffOpcode.Begin) bodyCounts.set(frame.slot, 0);
+        else if (frame.opcode === DiffOpcode.Bodies)
+          bodyCounts.set(frame.slot, (bodyCounts.get(frame.slot) ?? 0) + frame.files.length);
+        else {
+          completed++;
+          changedBodies.push(bodyCounts.get(frame.slot) ?? 0);
+        }
+      }
+      if (holding && typeof message !== "string" && message[0] === DiffOpcode.End) {
+        completions.push(() => browserSocket.send(message));
+        return;
+      }
+      browserSocket.send(message);
+    });
+  });
+  return {
+    changedBodies,
+    get connections() {
+      return connections;
+    },
+    get completed() {
+      return completed;
+    },
+    get held() {
+      return completions.length;
+    },
+    hold: () => {
+      holding = true;
+    },
+    finish: () => {
+      holding = false;
+      completions.splice(0).forEach((send) => send());
+    },
+  };
+}
+async function expectWorkingDiffLoaded(page: Page, timeout: number): Promise<void> {
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toBeAttached({ timeout });
+}
+async function expectAnnouncedTreeAndLoader(page: Page): Promise<void> {
+  await expect(changesTree(page).first()).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "Loading..." }).first()).toBeVisible();
+}
+
 test("Changes opens All changes for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
 
@@ -321,6 +469,119 @@ test("All changes combines committed and pending edits and preserves an unfinish
     await expectNetComparisonFiles(page, ["b-committed.ts", "c-untracked.txt"]);
     await expect(mode).toContainText("All changes");
   });
+});
+
+test("Changes selects exact local and remote bases and retains the selection after reload", async ({
+  page,
+}, testInfo) => {
+  const workspace = await createWorktreeWithCommittedDiff();
+  execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
+  execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "main"], {
+    cwd: workspace.repoPath,
+  });
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace.repoPath }).toString();
+  await openWorkspaceChangesSurface(page, workspace);
+  const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
+  const picker = tree.getByTestId("workspace-base-branch-trigger");
+  await expect(picker).toBeVisible();
+  await picker.click();
+  await expect(page.getByRole("button", { name: "release", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("base-picker.png") });
+  await page.getByRole("button", { name: "release", exact: true }).click();
+  await expect(picker).toContainText("release");
+  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
+  await picker.click();
+  await page.getByRole("button", { name: "upstream/release", exact: true }).click();
+  await expect(picker).toContainText("upstream/release");
+  await expect(tree.getByText("committed-only.ts", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("base-selected.png") });
+  await page.reload();
+  await waitForWorkspaceTabsVisible(page);
+  await expect(picker).toContainText("upstream/release");
+  expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace.repoPath }).toString()).toBe(
+    head,
+  );
+});
+
+test("Changes lets a compact workspace change its base in a sheet", async ({ page }, testInfo) => {
+  const workspace = await createWorktreeWithCommittedDiff();
+  execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
+  await openCompactChanges(page, workspace);
+  const picker = page.getByRole("button", { name: "Change base" }).filter({ visible: true });
+  await picker.click();
+  await expect(page.getByText("Change base", { exact: true })).toBeVisible();
+  const release = page.getByRole("button", { name: "release", exact: true });
+  await expect(release).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("compact-base-picker.png") });
+  await release.click();
+  await expect(picker).toContainText("release");
+  await page.screenshot({ path: testInfo.outputPath("compact-base-selected.png") });
+});
+
+test("Changes shows a failed base selection and lets the user retry", async ({ page }) => {
+  const workspace = await createWorktreeWithCommittedDiff();
+  execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
+  await openWorkspaceChangesSurface(page, workspace);
+  const picker = page
+    .getByTestId("workspace-base-branch-trigger")
+    .filter({ visible: true })
+    .first();
+  await picker.click();
+  const option = page.getByRole("button", { name: "release", exact: true });
+  await expect(option).toBeVisible();
+  execFileSync("git", ["branch", "-D", "release"], { cwd: workspace.repoPath });
+  await option.click();
+  await expect(page.getByTestId("workspace-base-branch-error")).toContainText(
+    "Base branch not found",
+  );
+  await expect(picker).toContainText("main");
+  execFileSync("git", ["branch", "release"], { cwd: workspace.repoPath });
+  await option.click();
+  await expect(page.getByTestId("workspace-base-branch-error")).toHaveCount(0);
+  await expect(picker).toContainText("release");
+});
+
+test("Changes shows the base as text on a host without the base-branch capability", async ({
+  page,
+}) => {
+  let baseRequests = 0;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => {
+      if (typeof frame === "string") {
+        const envelope = JSON.parse(frame) as { message?: { type?: string } };
+        if (envelope.message?.type === "workspace.base_branch.set.request") baseRequests += 1;
+      }
+      server.send(frame);
+    });
+    server.onMessage((frame) => {
+      if (typeof frame === "string") {
+        const envelope = JSON.parse(frame) as {
+          message?: { payload?: { status?: string; features?: Record<string, unknown> } };
+        };
+        const payload = envelope.message?.payload;
+        if (payload?.status === "server_info" && payload.features) {
+          delete payload.features.workspaceBaseBranch;
+          browser.send(JSON.stringify(envelope));
+          return;
+        }
+      }
+      browser.send(frame);
+    });
+  });
+  const workspace = await createWorktreeWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+  await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
+  expect(baseRequests).toBe(0);
+});
+
+test("Changes shows no base on a checkout that is not a Paseo worktree", async ({ page }) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+  const header = page.getByTestId("changes-repository-header").filter({ visible: true });
+  await expect(header).toContainText("feature");
+  await expect(header).not.toContainText("main");
+  await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
 });
 
 test("Changes keeps a manual comparison when checkout dirtiness changes", async ({ page }) => {
@@ -385,6 +646,35 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await expect(mode).toContainText("Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
+
+test("legacy diff hosts keep All, Committed and Uncommitted comparisons", async ({ page }) => {
+  await useLegacyDiffHost(page);
+  const workspace = await createWorkspaceWithScrollableComparisons();
+  await openWorkspaceChangesSurface(page, workspace);
+  await expect(changesTree(page).getByText("committed", { exact: true })).toBeVisible();
+  await expect(changesTree(page).getByText("uncommitted", { exact: true })).toBeVisible();
+  await selectChangesComparison(page, "Committed");
+  await expectWorkingComparisonFiles(page, "committed");
+  await selectChangesComparison(page, "Uncommitted");
+  await expectWorkingComparisonFiles(page, "uncommitted");
+});
+async function useLegacyDiffHost(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (envelope.message?.payload?.status === "server_info") {
+          delete envelope.message.payload.features.diffSubscription;
+          browserSocket.send(JSON.stringify(envelope));
+          return;
+        }
+      }
+      browserSocket.send(message);
+    });
+  });
+}
 
 test("Changes comparison controls the working diff and tree selection focuses its file", async ({
   page,
@@ -928,11 +1218,11 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
     throw new Error("Compact Changes toolbar geometry could not be measured");
   }
   expect(actionsBox.width).toBe(48);
-  expect(actionsBox.height).toBe(28);
-  expect(optionsBox.width).toBe(32);
-  expect(optionsBox.height).toBe(32);
-  expect(glyphBox.width).toBe(18);
-  expect(glyphBox.height).toBe(18);
+  expect(actionsBox.height).toBe(32);
+  expect(optionsBox.width).toBe(44);
+  expect(optionsBox.height).toBe(44);
+  expect(glyphBox.width).toBe(20);
+  expect(glyphBox.height).toBe(20);
 
   await expect(actions).not.toContainText("Commit");
   await expect(actions.locator("svg")).toHaveCount(2);
@@ -1198,11 +1488,13 @@ test("canvas diff uses the overlay scrollbar and its thumb controls vertical scr
 test("canvas headers keep a many-file diff bounded while scrolling end to end", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const workspace = await createWorkspaceWithManyTinyDiffs(2_000);
   await useUnwrappedDiffLines(page);
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
+  // Measure document bounds after delivery, independently of the cold Git read.
+  await expectWorkingDiffLoaded(page, 240_000);
   const root = page.getByTestId("git-diff-canvas-root");
   const scroller = page.getByTestId("git-diff-scroll");
   await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
@@ -1657,6 +1949,28 @@ async function expectRenderedAddedLine(page: Page, contents: string): Promise<vo
   }).toPass({ timeout: 15_000 });
 }
 
+async function createWorktreeWithCommittedDiff(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-base-worktree-", {
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  const created = await client.createWorkspace({
+    source: { kind: "worktree", cwd: repo.path, worktreeSlug: "base-picker", baseBranch: "main" },
+  });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create worktree");
+  const cwd = created.workspace.workspaceDirectory;
+  await writeFile(path.join(cwd, "committed-only.ts"), "export const committed = true;\n");
+  execFileSync("git", ["add", "committed-only.ts"], { cwd });
+  execFileSync("git", ["commit", "-m", "Add committed-only file"], { cwd });
+  return { id: created.workspace.id, repoPath: cwd };
+}
+
 async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
   const repo = await createTempGitRepo("changes-committed-", {
     files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
@@ -1759,12 +2073,16 @@ async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
-async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<DirtyWorkspace> {
+async function createWorkspaceWithManyTinyDiffs(
+  fileCount: number,
+  branch = "main",
+): Promise<DirtyWorkspace> {
   const files = Array.from({ length: fileCount }, (_, index) => ({
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
     content: "export const value = 0;\n",
   }));
   const repo = await createTempGitRepo("changes-canvas-many-files-", { files });
+  if (branch !== "main") execFileSync("git", ["branch", "-m", branch], { cwd: repo.path });
   await Promise.all(
     files.map((file, index) =>
       writeFile(path.join(repo.path, file.path), `export const value = ${index + 1};\n`),

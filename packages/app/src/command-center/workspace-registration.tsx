@@ -1,3 +1,4 @@
+import { usesDesktopBindings } from "@/keyboard";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -105,7 +106,7 @@ function staticIcon(element: ReactElement | undefined): CommandCenterIcon | unde
 }
 
 function resolveWorkspaceShortcuts(overrides: ShortcutOverrides): WorkspaceCommandCenterShortcuts {
-  const platform = { isMac: getShortcutOs() === "mac", isDesktop: getIsElectron() };
+  const platform = { isMac: getShortcutOs() === "mac", usesDesktopBindings };
   return resolveWorkspaceCommandCenterShortcuts({ overrides, platform });
 }
 

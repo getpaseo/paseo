@@ -129,7 +129,7 @@ describe("loadOlderAgentHistory", () => {
 
     expect(client.calls).toEqual([]);
     expect(inFlight.values).toEqual([true]);
-    expect(started).toBe(true);
+    expect(started).toBe(false);
   });
 
   it("requests the page before the current start cursor and clears in-flight on success", async () => {
@@ -153,6 +153,7 @@ describe("loadOlderAgentHistory", () => {
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
           wholeTurns: true,
+          timeout: 10_000,
         },
       },
     ]);
@@ -169,7 +170,7 @@ describe("loadOlderAgentHistory", () => {
     const toast = createToast();
     const logger = createLogger();
 
-    await loadOlderAgentHistory(agentId, {
+    const applied = await loadOlderAgentHistory(agentId, {
       client,
       cursor: someCursor,
       hasOlder: true,
@@ -179,6 +180,7 @@ describe("loadOlderAgentHistory", () => {
       logger,
     });
 
+    expect(applied).toBe(false);
     expect(client.calls).toHaveLength(1);
     expect(toast.shown).toEqual([
       {

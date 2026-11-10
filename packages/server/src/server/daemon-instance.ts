@@ -11,6 +11,7 @@ import {
 } from "./pid-lock.js";
 import { daemonLaunchEnvironment } from "./config-environment.js";
 import { readPersistedConfig } from "./persisted-config.js";
+import { reapTerminalWorkers } from "../terminal/terminal-worker-reaper.js";
 import treeKill from "tree-kill";
 const killTree = (pid: number, signal: string): Promise<void> =>
   new Promise((resolve, reject) =>
@@ -29,6 +30,10 @@ export { resolvePaseoHome } from "./paseo-home.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
 export { readLocalCredentialForTarget } from "./local-credential.js";
+export {
+  TerminalCleanupNotConfirmedError,
+  retryUnconfirmedTerminalCleanup,
+} from "../terminal/terminal-worker-reaper.js";
 export {
   isSamePidLock as isSameDaemonInstance,
   type PidLockInfo as DaemonInstance,
@@ -97,11 +102,23 @@ async function requestInstanceStop(
   instance: PidLockInfo,
   options: {
     force?: boolean;
+    keepTerminals?: boolean;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   },
 ) {
   let forced = false;
   let usedLifecycleRpc = false;
+  if (options.keepTerminals) {
+    // SIGTERM means "stop and close terminals"; keeping them always goes over the RPC.
+    if (!instance.listen || !options.requestShutdown) {
+      throw new DaemonInstanceError(
+        "STOP_NO_GRACEFUL_CHANNEL",
+        `PID ${instance.pid} for ${home} has no listen address, so it cannot be asked to keep its terminals.`,
+      );
+    }
+    await options.requestShutdown({ ...instance, listen: instance.listen });
+    return { forced, usedLifecycleRpc: true };
+  }
   if (process.platform === "win32") {
     if (instance.listen && options.requestShutdown) {
       try {
@@ -142,6 +159,8 @@ export async function stopDaemonInstance(
   options: {
     instance?: PidLockInfo;
     force?: boolean;
+    // Leave the terminal worker running so the next daemon adopts it. Not valid with force.
+    keepTerminals?: boolean;
     timeoutMs?: number;
     killTimeoutMs?: number;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
@@ -153,6 +172,7 @@ export async function stopDaemonInstance(
   usedLifecycleRpc: boolean;
 }> {
   const { timeoutMs = 15_000, killTimeoutMs = 3_000 } = options;
+  assertStopOptions(options);
   const deadline = Date.now() + timeoutMs;
   const instance = await getPidLockInfo(home);
   if (options.instance && instance && !isSamePidLock(instance, options.instance)) {
@@ -164,6 +184,9 @@ export async function stopDaemonInstance(
   if (!instance || !isPidLockOwnerRunning(instance)) {
     if (instance)
       await releasePidLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
+    // Terminals a `stop --keep-terminals` left behind belong to no daemon now; a plain stop
+    // closes them.
+    await closeLeftoverTerminals(home, { keepTerminals: options.keepTerminals, forced: false });
     return {
       action: "not_running",
       pid: instance?.pid ?? null,
@@ -200,7 +223,27 @@ export async function stopDaemonInstance(
       `Timed out waiting for supervisor PID ${instance.pid} in ${home} to exit${options.force ? "" : "; use --force to permit forced cleanup"}.`,
     );
   await releasePidLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
+  // The supervisor already closed the terminals unless it was killed; this confirms it, and
+  // after --force (no graceful shutdown happened) does it at once.
+  await closeLeftoverTerminals(home, { keepTerminals: options.keepTerminals, forced });
   return { action: "stopped", pid: instance.pid, forced, usedLifecycleRpc };
+}
+
+function assertStopOptions(options: { force?: boolean; keepTerminals?: boolean }): void {
+  if (options.force && options.keepTerminals) {
+    throw new DaemonInstanceError(
+      "INVALID_STOP_OPTIONS",
+      "--force kills terminals; it cannot be combined with --keep-terminals.",
+    );
+  }
+}
+
+async function closeLeftoverTerminals(
+  home: string,
+  options: { keepTerminals?: boolean; forced: boolean },
+): Promise<void> {
+  if (options.keepTerminals) return;
+  await reapTerminalWorkers({ paseoHome: home, gracefulMs: options.forced ? 0 : undefined });
 }
 
 export async function startDaemonInstance(input: {

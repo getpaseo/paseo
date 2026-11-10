@@ -349,8 +349,11 @@ async function startSteeredTurn(sessionId: string): Promise<{
     expectedTurnId: start.value.turnId,
     clientMessageId: "steer-client",
   });
-  expect(steered).toEqual({ status: "accepted" });
   await waitFor(() => query?.prompts.length === 2);
+  expect(steered).toEqual({
+    status: "accepted",
+    providerMessageId: query?.prompts[1]?.uuid,
+  });
 
   return { session, query: () => query, turn };
 }
@@ -972,7 +975,10 @@ test("steers an autonomous turn through its existing query without restarting it
   const steeredTimeline = await autonomousEvents.next();
   const completion = await autonomousEvents.next();
 
-  expect(steer).toEqual({ status: "accepted" });
+  expect(steer).toEqual({
+    status: "accepted",
+    providerMessageId: queryRef?.prompts[1]?.uuid,
+  });
   expect(queryFactory).toHaveBeenCalledTimes(1);
   expect(queryRef?.interrupt).not.toHaveBeenCalled();
   expect(queryRef?.prompts.map((prompt) => prompt.text)).toEqual(["seed prompt", "steer prompt"]);

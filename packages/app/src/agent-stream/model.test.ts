@@ -47,7 +47,7 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart: 2,
     });
 
-    expect(model.history.map((item) => item.id)).toEqual(["a3", "u3", "a2", "u2"]);
+    expect(model.history.map((item) => item.id)).toEqual(["u2", "a2", "u3", "a3"]);
     expect(model.segments.historyVirtualized).toHaveLength(0);
   });
 
@@ -98,7 +98,7 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart,
     });
 
-    expect(model.history.map((item) => item.id)).toEqual(["visible-a", "visible-u"]);
+    expect(model.history.map((item) => item.id)).toEqual(["visible-u", "visible-a"]);
   });
 
   it("keeps head separate from committed history on desktop web", () => {
@@ -207,7 +207,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
   });
 
-  it("derives the same timing for native inverted rendering", () => {
+  it("derives the same timing on native", () => {
     const tail = [userMessage("u1", 1), assistantMessage("a1", 4)];
 
     const model = buildAgentStreamRenderModel({
@@ -219,7 +219,7 @@ describe("buildAgentStreamRenderModel", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
+    expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["u1", "a1"]);
     expect(model.turnTiming.byItemId.get("a1")).toEqual({
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,

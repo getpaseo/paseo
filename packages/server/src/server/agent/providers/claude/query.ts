@@ -73,8 +73,9 @@ function applyRuntimeSettingsToClaudeOptions(
         runtimeSettings,
         overlays: [launchEnv],
       });
-      // Set our identity after sanitization clears the parent session's entrypoint.
-      providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = "Paseo";
+      // Session-open hooks may explicitly supply a client identity. Keep inherited
+      // SDK/parent identities cleared while honoring this launch-only contribution.
+      providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
       const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)

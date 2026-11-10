@@ -614,6 +614,43 @@ describe("ClaudeAgentSession persisted history load", () => {
     );
   });
 
+  test("replays a message steered into a running turn as the user's message", async () => {
+    const queued = (commandMode: string, prompt: unknown, sourceUuid?: string) => ({
+      type: "attachment",
+      uuid: `attachment-${commandMode}`,
+      parentUuid: "a1",
+      attachment: {
+        type: "queued_command",
+        commandMode,
+        prompt,
+        ...(sourceUuid ? { source_uuid: sourceUuid } : {}),
+      },
+    });
+    const entries = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "working" } },
+      queued("prompt", [{ type: "text", text: "steered while working" }], "steered-1"),
+      queued("task-notification", "<task-notification><task-id>t1</task-id></task-notification>"),
+      { type: "assistant", uuid: "a2", parentUuid: "a1", message: { content: "answer" } },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+
+    const session = await resume();
+    try {
+      const users = [];
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline" && event.item.type === "user_message") users.push(event.item);
+      }
+      expect(users).toEqual([
+        { type: "user_message", text: "first", messageId: "u1" },
+        { type: "user_message", text: "steered while working", messageId: "steered-1" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("loads readable history when the temporary directory is unavailable", async () => {
     const file = transcriptPath();
     const entry = { type: "assistant", message: { content: [{ type: "text", text: "saved" }] } };

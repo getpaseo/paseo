@@ -31,7 +31,6 @@ function mount(options?: { isMac: boolean }) {
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: 1000,
     theme: { background: "#ffffff", foreground: "#111111" },
   });

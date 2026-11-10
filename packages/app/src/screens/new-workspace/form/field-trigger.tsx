@@ -135,7 +135,7 @@ export const FieldTrigger = forwardRef<View, FieldTriggerProps>(function FieldTr
 });
 
 // Height of a badge. The desktop row sizes from it.
-export const FIELD_BADGE_HEIGHT = CONTROL_HEIGHTS.tight;
+export const FIELD_BADGE_HEIGHT = CONTROL_HEIGHTS.sm;
 // Height of a compact field: label line plus value line. The compact stack reserves rows from it.
 export const FIELD_HEIGHT = 56;
 

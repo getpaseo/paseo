@@ -66,6 +66,9 @@ WebSocket message schemas. Shared configuration schemas belong in protocol leaf 
 retaining the daemon's runtime and wire-schema allocations. The server export tests guard
 these dependency trees with tree-shaking disabled to match unbundled production imports.
 
+Terminals do not live in the daemon process: their PTYs run in a detached terminal worker that
+survives daemon restarts, crashes and upgrades. See [terminal-worker.md](terminal-worker.md).
+
 Project identity is daemon-global rather than session-owned. After registry bootstrap, the daemon's
 project Git observer keeps one non-recursive watch on each lexically equivalent active project root
 and listens only for the root `.git` entry, with a slow rescan as a missed-event fallback. It runs
@@ -273,7 +276,7 @@ its teardown; reconnect creates new server IDs for surviving client handles. See
 
 **Top-level WS envelopes** are `hello`, `recording_state`, `ping`/`pong`, and `session` (which wraps the rich union of session messages).
 
-Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC or RFC6455 control ping. Current clients ping every 10 seconds, beginning one interval after connecting. The first ping claims an application-ownership lease for that physical socket, all later inbound activity renews it, and the daemon forcibly terminates the socket if the lease expires. A legacy or raw socket that never sends an application ping never enters this lease and is not closed for omitting one. Session RPC timeouts are operation failures, not proof that the socket is dead. A subscription bootstrap timeout closes its source to clear any unknown server-owned registration; the failed handle is released before other surviving handles reconnect.
+Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC or RFC6455 control ping. Current clients ping every 10 seconds, beginning one interval after connecting; a window with no validated inbound frame is a miss, and two misses in a row tear the socket down. When the app returns to the foreground the client runs a fresh cycle of two 5-second windows back to back, then reconnects without backoff, because a socket that died while the OS had JS suspended stays `OPEN` and accepts sends: only inbound frames prove it. Misses and probes from before the suspension do not count toward that cycle, and a window whose timer fires long after its deadline spanned another suspension, so it is discarded and the cycle starts over. Any complete frame inside a window keeps the connection, so a slow multi-frame transfer survives; a single frame that takes longer than the two windows to arrive after foreground does not, and the fix for that is smaller daemon-to-client frames, not a longer window. The first ping claims an application-ownership lease for that physical socket, all later inbound activity renews it, and the daemon forcibly terminates the socket if the lease expires. A legacy or raw socket that never sends an application ping never enters this lease and is not closed for omitting one. Session RPC timeouts are operation failures, not proof that the socket is dead. A subscription bootstrap timeout closes its source to clear any unknown server-owned registration; the failed handle is released before other surviving handles reconnect.
 
 Every physical send path enforces an 8 MiB outbound high-water mark, including JSON broadcasts, binary terminal frames, and the encrypted relay adapter's asynchronous queue. This sits above the terminal stream's 4 MiB soft backpressure threshold, leaving room for snapshot catch-up before the hard cutoff. JSON is serialized once per broadcast after sockets already at the limit are removed, then its exact byte length is checked for every remaining socket. A frame that would cross the limit is not sent; that physical socket is forcibly terminated without disturbing other sockets attached to the same logical session. Multiple tabs and simultaneous direct and relay paths may legitimately share a client id.
 
@@ -489,6 +492,16 @@ $PASEO_HOME/
 The supervisor alone publishes its ready worker's endpoint in `paseo.pid`, clears it before respawn, and fails if any worker exits before first readiness. CLI home selection trusts only that live record; config expresses desired state, never an endpoint fallback. POSIX home stop signals the captured supervisor without TCP. Windows graceful stop and ordinary RPCs trust the published endpoint. This metadata is not cryptographic listener ownership: edited endpoints, copied identities, PID reuse, and address takeover races remain outside that guarantee. A stale heartbeat never permits reclaiming a live lock.
 
 Worker restart retains supervisor arguments/environment and rereads the configuration file. Updating a package and observing its new worker version do not refresh the running supervisor code; the launcher owns full-process replacement. See [CLI lifecycle contracts](../public-docs/cli.md#daemon-management).
+
+## Outbound networking
+
+The daemon and its plugin processes honor `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
+(including lowercase forms, which take precedence). Fetch and relay, Hub, and connected-host WebSockets
+share this policy. Loopback (`localhost`, `127.0.0.1`, `::1`) always goes direct.
+A proxy without a scheme uses HTTP. Invalid values and unsupported proxy schemes
+are treated as unset, with one warning naming the variable in `daemon.log`.
+Agent and terminal environments are unchanged. System proxy settings and SOCKS-only
+`ALL_PROXY` configurations are not supported.
 
 ## Deployment models
 

@@ -204,6 +204,31 @@ describe("bottom sheet visibility tracker", () => {
     expect(context.sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
   });
 
+  it("lets the sheet step back through its own pages before Back dismisses it", () => {
+    const sheet = new FakeBottomSheet();
+    const backPress = new FakeBackPress();
+    let openPages = 1;
+    const tracker = createBottomSheetVisibilityTracker({
+      onClose: () => {},
+      onBack: () => {
+        if (openPages === 0) return false;
+        openPages -= 1;
+        return true;
+      },
+      backPress,
+    });
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+    tracker.handleSheetIndexChange(0);
+
+    expect(backPress.press()).toBe(true);
+    expect(openPages).toBe(0);
+    expect(sheet.events).toEqual([{ type: "present" }]);
+
+    expect(backPress.press()).toBe(true);
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  });
+
   it("leaves Back to the navigator before the sheet is on screen and after it closes", () => {
     const context = setup();
     context.tracker.attachController(context.sheet);
