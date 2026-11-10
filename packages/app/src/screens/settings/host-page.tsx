@@ -1,3 +1,4 @@
+import { DeviceCredentialsSection } from "./device-credentials-section";
 import {
   ArrowDown,
   ArrowUp,
@@ -380,6 +381,7 @@ export function HostSettingsPage({
       <HostConnectionError serverId={serverId} />
 
       <HostAppearanceSection host={host} />
+      <DeviceCredentialsSection serverId={serverId} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 

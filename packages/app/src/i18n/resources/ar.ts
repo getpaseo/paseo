@@ -1968,6 +1968,7 @@ export const ar: TranslationResources = {
       securityWarning:
         "تعامل مع رابط الاقتران هذا ككلمة مرور. يمكن لأي شخص يملكه الوصول إلى هذا البرنامج الخفي.",
       qrUnavailable: "رمز QR غير متاح.",
+      newQr: "رمز QR جديد",
       qrAccessibility: "رمز QR للإقران",
       retry: "أعد المحاولة",
       copy: "ينسخ",

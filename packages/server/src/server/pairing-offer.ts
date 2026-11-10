@@ -22,6 +22,7 @@ export async function generateLocalPairingOffer(args: {
   relayRequireProtectedSecurity?: boolean;
   appBaseUrl?: string;
   includeQr?: boolean;
+  pairingToken?: string;
   logger?: Logger;
 }): Promise<LocalPairingOffer> {
   const relayEnabled = args.relayEnabled ?? true;
@@ -42,6 +43,7 @@ export async function generateLocalPairingOffer(args: {
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(args.paseoHome, args.logger);
   const offer = await createConnectionOfferV2({
     serverId,
+    ...(args.pairingToken ? { pairingToken: args.pairingToken } : {}),
     daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
     relay: { endpoint: relayPublicEndpoint, useTls: relayPublicUseTls },
     ...(args.relayRequireProtectedSecurity === true

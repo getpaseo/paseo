@@ -1979,6 +1979,7 @@ export const ko: TranslationResources = {
       securityWarning:
         "이 페어링 링크는 비밀번호처럼 취급하세요. 링크를 가진 사람은 누구나 이 데몬에 접근할 수 있습니다.",
       qrUnavailable: "QR 코드를 사용할 수 없습니다.",
+      newQr: "새 QR",
       qrAccessibility: "페어링 QR 코드",
       retry: "다시 시도",
       copy: "복사",

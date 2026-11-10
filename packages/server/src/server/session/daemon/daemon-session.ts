@@ -31,6 +31,7 @@ export interface DaemonRuntimeConfig {
 
 export interface DaemonSessionHost {
   emit(msg: SessionOutboundMessage): void;
+  emitToSource?(msg: SessionOutboundMessage, source: object): void;
   emitLifecycleIntent(intent: {
     type: "restart";
     clientId: string;
@@ -58,6 +59,7 @@ export interface DaemonSessionOptions {
   logger: pino.Logger;
   hubRelationships?: HubRelationshipManagement;
   reloadConfig: () => Promise<DaemonConfigReloadResult>;
+  mintPairingToken?: (source: object) => string | undefined;
 }
 
 /**
@@ -84,6 +86,7 @@ export class DaemonSession {
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
+  private readonly mintPairingToken: DaemonSessionOptions["mintPairingToken"];
   private readonly reloadConfig: () => Promise<DaemonConfigReloadResult>;
 
   constructor(options: DaemonSessionOptions) {
@@ -103,6 +106,7 @@ export class DaemonSession {
     this.logger = options.logger;
     this.hubRelationships = options.hubRelationships ?? null;
     this.reloadConfig = options.reloadConfig;
+    this.mintPairingToken = options.mintPairingToken;
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
@@ -231,10 +235,14 @@ export class DaemonSession {
 
   async handleGetPairingOfferRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
+    source?: object,
   ): Promise<void> {
     try {
       const relay = this.daemonRuntimeConfig?.getRelayConfig();
+      const pairingToken =
+        msg.includePairingToken && source ? this.mintPairingToken?.(source) : undefined;
       const pairing = await generateLocalPairingOffer({
+        pairingToken,
         paseoHome: this.paseoHome,
         relayEnabled: relay?.enabled ?? false,
         relayEndpoint: relay?.endpoint,
@@ -246,7 +254,7 @@ export class DaemonSession {
         includeQr: true,
         logger: this.logger,
       });
-      this.host.emit({
+      const response: SessionOutboundMessage = {
         type: "daemon.get_pairing_offer.response",
         payload: {
           requestId: msg.requestId,
@@ -254,7 +262,9 @@ export class DaemonSession {
           qr: pairing.qr ?? null,
           relayEnabled: pairing.relayEnabled,
         },
-      });
+      };
+      if (source && this.host.emitToSource) this.host.emitToSource(response, source);
+      else this.host.emit(response);
     } catch (error) {
       this.logger.error({ err: error }, "Failed to handle daemon pairing offer request");
       this.host.emit({

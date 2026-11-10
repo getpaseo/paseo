@@ -1,3 +1,4 @@
+import { DeviceCredentials, isFullOwner, type CredentialAuthority } from "./device-credentials.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -153,6 +154,8 @@ export interface ExternalSocketMetadata {
 }
 
 export interface SessionAdmission {
+  credentialId?: string;
+  viaPairingToken?: boolean;
   principalId: string;
   permissions: readonly DaemonPermission[];
   hubExecutionAgents?: HubExecutionAgents;
@@ -562,6 +565,10 @@ function requireWebSocketServices(params: {
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
+  private readonly socketCredentials = new Map<object, string>();
+  private readonly revokedSockets = new WeakSet<WebSocketLike>();
+  private readonly pairingTokenSockets = new WeakSet<object>();
+  private readonly issuingSockets = new WeakSet<object>();
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
@@ -708,6 +715,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    private readonly deviceCredentials?: DeviceCredentials,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -1637,8 +1645,69 @@ export class VoiceAssistantWebSocketServer {
     return connection;
   }
 
+  private credentialAuthority(source: object): CredentialAuthority {
+    for (const [socket, connection] of this.sessions) {
+      if (socket === source)
+        return {
+          principalId: connection.principalId,
+          permissions: connection.session.getPermissions(),
+          // A host-link channel acts with the origin's authority; it must not mint or manage devices here.
+          routed: source instanceof VirtualHostSocket || connection.session.isRouted(),
+        };
+    }
+    throw new Error("Credential request source is no longer attached");
+  }
+
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
+      deviceAccess: this.deviceCredentials
+        ? {
+            issue: async (source, label) => {
+              // One credential per device socket and one issue in flight, so revoke leaves no spare key.
+              if (this.socketCredentials.has(source) || this.issuingSockets.has(source))
+                return { credential: null, error: "unsupported_principal" as const };
+              this.issuingSockets.add(source);
+              try {
+                const result = await this.deviceCredentials!.issue(
+                  label,
+                  this.credentialAuthority(source),
+                  !!this.passwordHash,
+                );
+                // A token-admitted socket becomes the issued device, so revoking it closes it.
+                if (result.credential && this.pairingTokenSockets.has(source))
+                  this.socketCredentials.set(source, result.credential.id);
+                return result;
+              } finally {
+                this.issuingSockets.delete(source);
+              }
+            },
+            list: (source) =>
+              isFullOwner(this.credentialAuthority(source))
+                ? this.deviceCredentials!.list(this.socketCredentials.get(source))
+                : [],
+            mintToken: (source) =>
+              this.deviceCredentials!.mintToken(
+                this.credentialAuthority(source),
+                !!this.passwordHash,
+              ),
+            revoke: async (source, id) => {
+              if (!isFullOwner(this.credentialAuthority(source))) return false;
+              const removed = await this.deviceCredentials!.revoke(id);
+              return removed.length > 0;
+            },
+            disconnectRevoked: () => {
+              for (const [socket] of this.sessions) {
+                const id = this.socketCredentials.get(socket);
+                if (!id || this.deviceCredentials!.has(id)) continue;
+                // Drop frames now; a peer can ignore the close handshake and keep sending.
+                this.revokedSockets.add(socket);
+                this.hostLinks.get(socket)?.close("permission_denied");
+                this.hostLinks.delete(socket);
+                socket.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Credential revoked");
+              }
+            },
+          }
+        : undefined,
       connectedHosts: this.connectedHosts,
       getConnectedHostBufferedAmount: () => {
         let total = 0;
@@ -1808,9 +1877,9 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    let admitted = this.attachAdmittingCredential(ws, message, pending);
+    if (!admitted) return;
     this.clearPendingConnection(ws);
-    let admitted = pending.admission;
-    if (!admitted) throw new Error("Admitted hello has no session admission");
     if (message.sessionPermissions)
       admitted = {
         ...admitted,
@@ -1885,6 +1954,26 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
+  private attachAdmittingCredential(
+    ws: WebSocketLike,
+    message: WSHelloMessage,
+    pending: PendingConnection,
+  ): SessionAdmission | null {
+    if (!pending.admission) throw new Error("Admitted hello has no session admission");
+    if (
+      pending.admission?.credentialId &&
+      !this.deviceCredentials?.has(pending.admission.credentialId)
+    ) {
+      this.clearPendingConnection(ws);
+      void this.rejectHello(ws, message, "incorrect_password");
+      return null;
+    }
+    if (pending.admission?.credentialId)
+      this.socketCredentials.set(ws, pending.admission.credentialId);
+    if (pending.admission.viaPairingToken) this.pairingTokenSockets.add(ws);
+    return pending.admission;
+  }
+
   private async admitPendingHello(
     ws: WebSocketLike,
     message: WSHelloMessage,
@@ -1893,6 +1982,7 @@ export class VoiceAssistantWebSocketServer {
     if (pending.admission) return true;
     try {
       const resolved = await resolveSessionAdmission({
+        deviceCredentials: this.deviceCredentials,
         credential: message.auth,
         passwordHash: this.passwordHash,
         localCredential: this.credentialSource?.localCredential?.() ?? null,
@@ -2024,6 +2114,7 @@ export class VoiceAssistantWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
+        deviceCredentials: this.deviceCredentials !== undefined,
         connectedHosts: true,
         hostMultiplexing: true,
         // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
@@ -2313,6 +2404,7 @@ export class VoiceAssistantWebSocketServer {
       error?: Error;
     },
   ): Promise<void> {
+    this.socketCredentials.delete(ws);
     this.hostLinks.get(ws)?.close();
     this.hostLinks.delete(ws);
 
@@ -2573,16 +2665,19 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private dropsInbound(ws: WebSocketLike): boolean {
+    return (
+      this.revokedSockets.has(ws) ||
+      this.connectionLifecycle === "stopping" ||
+      (this.connectionLifecycle === "starting" && !this.pluginSocketIds.has(ws))
+    );
+  }
+
   private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
   ): void {
-    if (
-      this.connectionLifecycle === "stopping" ||
-      (this.connectionLifecycle === "starting" && !this.pluginSocketIds.has(ws))
-    ) {
-      return;
-    }
+    if (this.dropsInbound(ws)) return;
 
     this.applicationSocketLease.renew(ws);
 

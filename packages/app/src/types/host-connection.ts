@@ -1,3 +1,4 @@
+import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import {
   normalizeHostPort,
@@ -76,6 +77,7 @@ export type HostLifecycle = Record<string, never>;
 export interface HostProfile {
   serverId: string;
   password?: string;
+  deviceCredential?: DaemonClientConfig["deviceCredential"];
   label: string;
   appearance: HostAppearance;
   lifecycle: HostLifecycle;
@@ -268,6 +270,7 @@ function hasProfileChanged(input: {
   previous: HostProfile;
   serverId: string;
   password?: string;
+  deviceCredential?: HostProfile["deviceCredential"];
   createdAt: string;
   label: string;
   preferredConnectionId: string;
@@ -279,6 +282,9 @@ function hasProfileChanged(input: {
     input.matchingCount > 1 ||
     previous.serverId !== input.serverId ||
     (input.password !== undefined && input.password !== previous.password) ||
+    (input.deviceCredential !== undefined &&
+      (input.deviceCredential.id !== previous.deviceCredential?.id ||
+        input.deviceCredential.secret !== previous.deviceCredential?.secret)) ||
     input.createdAt !== previous.createdAt ||
     input.label !== previous.label ||
     input.preferredConnectionId !== previous.preferredConnectionId ||
@@ -300,6 +306,7 @@ export function upsertHostConnectionInProfiles(input: {
   label?: string;
   connection: HostConnection;
   password?: string;
+  deviceCredential?: HostProfile["deviceCredential"];
   now?: string;
 }): HostProfile[] {
   const serverId = input.serverId.trim();
@@ -331,6 +338,7 @@ export function upsertHostConnectionInProfiles(input: {
     const profile: HostProfile = {
       serverId,
       ...(password ? { password } : {}),
+      ...(input.deviceCredential ? { deviceCredential: input.deviceCredential } : {}),
       label: derivedLabel,
       appearance: defaultHostAppearance(),
       lifecycle: defaultLifecycle(),
@@ -364,6 +372,7 @@ export function upsertHostConnectionInProfiles(input: {
     previous: prev,
     serverId,
     password,
+    deviceCredential: input.deviceCredential,
     createdAt: nextCreatedAt,
     label: nextLabel,
     preferredConnectionId: nextPreferredConnectionId,
@@ -378,6 +387,7 @@ export function upsertHostConnectionInProfiles(input: {
   const nextProfile: HostProfile = {
     ...prev,
     ...(password ? { password } : {}),
+    ...(input.deviceCredential ? { deviceCredential: input.deviceCredential } : {}),
     serverId,
     label: nextLabel,
     lifecycle: nextLifecycle,
@@ -519,6 +529,9 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
 const StoredHostProfileSchema = z.strictObject({
   serverId: z.string().trim().min(1),
   password: z.string().optional(),
+  deviceCredential: z
+    .object({ id: z.string().min(1).max(64), secret: z.string().min(1).max(128) })
+    .optional(),
   label: z.string().optional(),
   appearance: HostAppearanceSchema.optional(),
   lifecycle: z.strictObject({}).optional(),
@@ -622,6 +635,7 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   return {
     serverId,
     ...(password ? { password } : {}),
+    ...(record.deviceCredential ? { deviceCredential: record.deviceCredential } : {}),
     label,
     appearance: record.appearance ?? defaultHostAppearance(),
     lifecycle: defaultLifecycle(),

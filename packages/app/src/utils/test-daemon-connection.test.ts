@@ -357,3 +357,18 @@ describe("test-daemon-connection connectToDaemon", () => {
     });
   });
 });
+
+it("passes device credentials and a transient pairing token to the probe client", async () => {
+  const { buildClientConfig } = await import("./test-daemon-connection");
+  const probe = new FakeDaemonProbe();
+  const deviceCredential = { id: "dc_test", secret: "test-secret" };
+  const config = await buildClientConfig(
+    { id: "direct:test", type: "directTcp", endpoint: "localhost:7777" },
+    "srv_test",
+    { deviceCredential, pairingToken: "test-pairing-token", password: "test-password" },
+    probe.deps,
+  );
+  expect(config.deviceCredential).toEqual(deviceCredential);
+  expect(config.pairingToken).toBe("test-pairing-token");
+  expect(config.password).toBe("test-password");
+});

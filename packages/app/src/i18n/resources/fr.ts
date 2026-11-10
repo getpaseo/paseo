@@ -2016,6 +2016,7 @@ export const fr: TranslationResources = {
       securityWarning:
         "Traitez ce lien d’association comme un mot de passe. Toute personne qui le possède peut accéder à ce daemon.",
       qrUnavailable: "Code QR indisponible.",
+      newQr: "Nouveau QR",
       qrAccessibility: "Code QR d’association",
       retry: "Réessayer",
       copy: "Copier",

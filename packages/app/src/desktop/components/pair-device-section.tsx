@@ -56,11 +56,15 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
     queryKey: daemonPairingOfferQueryKey(serverId),
     queryFn: async () => {
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      return client.getDaemonPairingOffer();
+      return client.getDaemonPairingOffer({
+        includePairingToken: serverFeatures?.deviceCredentials === true,
+      });
     },
     enabled: supportsPairingRpc && Boolean(client && isConnected),
     dataShape: "value",
-    staleTimeMs: 5 * 60 * 1000,
+    staleTimeMs: 0,
+    gcTime: 0,
+    refetchInterval: 9 * 60 * 1000,
     retry: 1,
   });
 
@@ -265,6 +269,10 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
         </View>
         <Button variant="outline" leftIcon={props.copied ? Check : Copy} onPress={props.onCopy}>
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
+        </Button>
+        {/* Each scan consumes the pairing token; a new QR pairs the next device. */}
+        <Button variant="outline" leftIcon={RotateCw} onPress={props.onRetry}>
+          {t("pairing.device.newQr")}
         </Button>
       </View>
       <Alert size="sm" variant="warning" description={t("pairing.device.securityWarning")} />
