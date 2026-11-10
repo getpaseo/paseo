@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   intersectWindowChromeCorners,
+  resolveChildWindowChromeCorners,
   resolveHasOwnedWindowChromeObstruction,
   resolveWindowChromeObstruction,
   resolveWindowChromeSafeArea,
@@ -8,28 +9,59 @@ import {
 
 describe("window chrome", () => {
   it("has no corner obstruction outside Electron or in fullscreen", () => {
-    expect(resolveWindowChromeObstruction({ mode: null, isFullscreen: false })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({ mode: null, isFullscreen: false, topBand: null }),
+    ).toEqual({
       topLeft: null,
       topRight: null,
     });
-    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: true })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: true, topBand: null }),
+    ).toEqual({
       topLeft: null,
       topRight: null,
     });
   });
 
   it("places native controls in their physical top corner", () => {
-    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false, topBand: null }),
+    ).toEqual({
       topLeft: { width: 78, height: 45 },
       topRight: null,
     });
-    expect(resolveWindowChromeObstruction({ mode: "custom-windows", isFullscreen: false })).toEqual(
-      { topLeft: null, topRight: { width: 138, height: 36 } },
-    );
-    expect(resolveWindowChromeObstruction({ mode: "custom-linux", isFullscreen: false })).toEqual({
+    expect(
+      resolveWindowChromeObstruction({
+        mode: "custom-windows",
+        isFullscreen: false,
+        topBand: null,
+      }),
+    ).toEqual({ topLeft: null, topRight: { width: 138, height: 36 } });
+    expect(
+      resolveWindowChromeObstruction({ mode: "custom-linux", isFullscreen: false, topBand: null }),
+    ).toEqual({
       topLeft: null,
       topRight: { width: 108, height: 36 },
     });
+  });
+
+  // Measured: iPhone Duo inner screen, portrait. The top bar ends at x 525, where the status
+  // region (0..82) starts; the band starts at y 26.
+  it("treats the status region beside a native top band as top-right window controls", () => {
+    expect(
+      resolveWindowChromeObstruction({
+        mode: null,
+        isFullscreen: false,
+        topBand: { top: 26, trailingObstruction: { width: 144, height: 56 } },
+      }),
+    ).toEqual({ topLeft: null, topRight: { width: 144, height: 56 } });
+    expect(
+      resolveWindowChromeObstruction({
+        mode: null,
+        isFullscreen: false,
+        topBand: { top: 26, trailingObstruction: null },
+      }),
+    ).toEqual({ topLeft: null, topRight: null });
   });
 
   it("insets and reserves only claimed corners", () => {
@@ -86,4 +118,55 @@ describe("window chrome", () => {
       }),
     ).toBe(false);
   });
+});
+
+it("assigns window buttons only to exposed split edges", () => {
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: true,
+      isLast: false,
+    }),
+  ).toBe("top-left");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: false,
+      isLast: true,
+    }),
+  ).toBe("top-right");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "horizontal",
+      isFirst: false,
+      isLast: false,
+    }),
+  ).toBe("none");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "vertical",
+      isFirst: true,
+      isLast: false,
+    }),
+  ).toBe("both");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "both",
+      direction: "vertical",
+      isFirst: false,
+      isLast: true,
+    }),
+  ).toBe("none");
+  expect(
+    resolveChildWindowChromeCorners({
+      corners: "top-right",
+      direction: "horizontal",
+      isFirst: true,
+      isLast: true,
+    }),
+  ).toBe("top-right");
 });

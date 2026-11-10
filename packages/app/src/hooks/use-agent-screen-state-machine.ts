@@ -1,9 +1,6 @@
 import { useRef } from "react";
-import type {
-  AgentCapabilityFlags,
-  AgentFeature,
-  AgentProvider,
-} from "@getpaseo/protocol/agent-types";
+import type { AgentCapabilityFlags, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { Agent } from "@/stores/session-store";
 import type { ViewedTimelineStatus } from "@/timeline/viewed-timeline-sync";
 
 export interface AgentScreenAgent {
@@ -22,7 +19,8 @@ export interface AgentScreenAgent {
     modeId?: string | null;
     thinkingOptionId?: string | null;
   } | null;
-  features?: readonly AgentFeature[];
+  options?: Agent["options"];
+  controls?: Agent["controls"];
   lastError?: string | null;
   projectPlacement?: {
     projectKey?: string;
@@ -159,12 +157,13 @@ function resolveAgentScreenSource(args: {
 
 function resolveCatchingUpUi(args: {
   hasOptimisticCreateContinuity: boolean;
+  isFreshnessCheckPending: boolean;
   isVisibilityCatchUpPending: boolean;
   hasHydratedHistoryBefore: boolean;
   hadInitialSyncFailure: boolean;
 }): "overlay" | "status" | "silent" {
   if (args.hasOptimisticCreateContinuity) return "silent";
-  if (args.hasHydratedHistoryBefore) return "status";
+  if (args.hasHydratedHistoryBefore) return args.isFreshnessCheckPending ? "silent" : "status";
   if (args.isVisibilityCatchUpPending) return "overlay";
   if (args.hadInitialSyncFailure) return "silent";
   return "overlay";
@@ -175,10 +174,18 @@ function resolveAgentScreenSync(args: {
   hadInitialSyncFailure: boolean;
 }): AgentScreenReadySyncState {
   const { input, hadInitialSyncFailure } = args;
-  if (input.isArchived) {
+  if (
+    input.isArchived &&
+    input.visibilityCatchUpStatus !== "error" &&
+    input.visibilityCatchUpStatus !== "retrying"
+  ) {
     return { status: "idle" };
   }
-  if (!input.isConnected) {
+  // A reconnected chat is not back until the daemon answers whether it is current.
+  if (
+    (!input.isConnected || input.visibilityCatchUpStatus === "reattaching") &&
+    !input.isArchived
+  ) {
     return { status: "reconnecting" };
   }
   if (input.missingAgentState.kind === "error") {
@@ -187,16 +194,16 @@ function resolveAgentScreenSync(args: {
   if (input.visibilityCatchUpStatus === "error" || input.visibilityCatchUpStatus === "retrying") {
     return { status: "sync_error", isRetrying: input.visibilityCatchUpStatus === "retrying" };
   }
-  if (
-    input.visibilityCatchUpStatus === "pending" ||
-    input.needsAuthoritativeSync ||
-    input.isHistorySyncing
-  ) {
+  const isFreshnessCheckPending = input.visibilityCatchUpStatus === "checking";
+  const isVisibilityCatchUpPending =
+    input.visibilityCatchUpStatus === "pending" || isFreshnessCheckPending;
+  if (isVisibilityCatchUpPending || input.needsAuthoritativeSync || input.isHistorySyncing) {
     return {
       status: "catching_up",
       ui: resolveCatchingUpUi({
         hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
-        isVisibilityCatchUpPending: input.visibilityCatchUpStatus === "pending",
+        isFreshnessCheckPending,
+        isVisibilityCatchUpPending,
         hasHydratedHistoryBefore: input.hasHydratedHistoryBefore,
         hadInitialSyncFailure,
       }),

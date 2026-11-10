@@ -122,10 +122,14 @@ test.describe("New workspace entry points", () => {
       });
       const hostTrigger = page.getByTestId("host-picker-trigger");
       await expect(hostTrigger).toContainText("localhost", { timeout: 30_000 });
+      const originalUrl = page.url();
       await hostTrigger.click();
       await expect(page.getByTestId("new-workspace-host-picker-add-host")).toBeVisible();
       await page.getByTestId("new-workspace-host-picker-add-host").click();
-      await expect(page).toHaveURL(/\/settings\/general\?addHost=/);
+      await expect(
+        page.getByRole("button", { name: "Direct connection", exact: true }),
+      ).toBeVisible();
+      await expect(page).toHaveURL(originalUrl);
     } finally {
       await seeded.cleanup();
     }

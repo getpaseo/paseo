@@ -99,6 +99,7 @@ export async function startCommandCenterLayoutObservation(page: Page): Promise<v
     const observedElements = new WeakSet<Element>();
     const resizeObserver = new ResizeObserver(record);
     const mutationObserver = new MutationObserver(discover);
+    let performanceObserver: PerformanceObserver | undefined;
 
     function record(): void {
       if (!observation.active) return;
@@ -132,6 +133,7 @@ export async function startCommandCenterLayoutObservation(page: Page): Promise<v
       if (!observation.active) {
         mutationObserver.disconnect();
         resizeObserver.disconnect();
+        performanceObserver?.disconnect();
         return;
       }
       record();
@@ -141,9 +143,16 @@ export async function startCommandCenterLayoutObservation(page: Page): Promise<v
 
     if (typeof PerformanceObserver !== "undefined") {
       try {
-        const performanceObserver = new PerformanceObserver((list) => {
+        performanceObserver = new PerformanceObserver((list) => {
+          const panel = document.querySelector(selectors.panel);
           for (const entry of list.getEntries()) {
-            observation.layoutShift += (entry as PerformanceEntry & { value?: number }).value ?? 0;
+            const shift = entry as PerformanceEntry & {
+              value: number;
+              sources: Array<{ node: Node | null }>;
+            };
+            if (shift.sources.some((source) => source.node && panel?.contains(source.node))) {
+              observation.layoutShift += shift.value;
+            }
           }
         });
         performanceObserver.observe({ type: "layout-shift", buffered: false });
@@ -174,7 +183,54 @@ export async function expectStableCommandCenterLayout(page: Page): Promise<void>
       ).toBeLessThanOrEqual(1);
     }
   }
-  expect(observation.layoutShift, JSON.stringify(observation)).toBeLessThanOrEqual(0.001);
+  expect(
+    observation.layoutShift,
+    `command center layoutShift: ${JSON.stringify(observation)}`,
+  ).toBeLessThanOrEqual(0.001);
+}
+
+/** Exercise an unrelated page shift while the real search panel is being observed. */
+export async function shiftOutsideCommandCenter(page: Page): Promise<void> {
+  await shiftLayoutProbe(page.locator("body"));
+}
+
+export async function expectLayoutObservationToCatchPanelShift(page: Page): Promise<void> {
+  await startCommandCenterLayoutObservation(page);
+  await shiftLayoutProbe(page.getByTestId("command-center-panel"));
+  await expect(expectStableCommandCenterLayout(page)).rejects.toThrow("command center layoutShift");
+}
+
+async function shiftLayoutProbe(parent: Locator): Promise<void> {
+  const recordedShift = await parent.evaluate(async (container) => {
+    const sibling = document.createElement("div");
+    sibling.textContent = "Layout probe";
+    sibling.style.cssText =
+      "position:fixed;left:0;top:0;width:300px;height:100px;background:white;z-index:99999";
+    container.append(sibling);
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const value = await new Promise<number>((resolve) => {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const shift = entry as PerformanceEntry & {
+            value: number;
+            sources: Array<{ node: Node | null }>;
+          };
+          if (shift.sources.some((source) => source.node === sibling)) {
+            observer.disconnect();
+            resolve(shift.value);
+          }
+        }
+      });
+      observer.observe({ type: "layout-shift", buffered: false });
+      sibling.style.left = "400px";
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    sibling.remove();
+    return value;
+  });
+  expect(recordedShift, "the browser recorded a substantial probe shift").toBeGreaterThan(0.001);
 }
 
 export async function expectOneLineTruncatedFileResult(

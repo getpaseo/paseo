@@ -66,6 +66,7 @@ test("retries a rejected version probe after the configured binary changes", asy
   const script = join(root, "version.cjs");
   const client = new OpenCodeRuntimeClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
   });
   try {
     await writeFile(script, 'console.log("opencode v2.0.3")');
@@ -95,16 +96,17 @@ test.each([
   const script = join(root, "version.cjs");
   const client = new OpenCodeRuntimeClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
   });
   try {
     await writeFile(script, initialSource);
-    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
-      "Auto Accept",
-    );
+    expect(
+      (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label,
+    ).toBe("Auto Accept");
     await writeFile(script, 'console.log("opencode v2.0.10")');
-    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
-      "Auto-accept",
-    );
+    expect(
+      (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label,
+    ).toBe("Auto-accept");
   } finally {
     await client.shutdown();
     await rm(root, { recursive: true, force: true });
@@ -193,13 +195,14 @@ test.each([
       logger,
       {
         command: { mode: "replace", argv: [process.execPath, script] },
+        env: { XDG_STATE_HOME: root },
       },
       { serverManager: new TrackedServerManager({ logger }) },
     );
     const legacy = new OpenCodeAgentClient(logger);
     const config = { provider: "opencode", cwd: root };
     try {
-      expect(await client.listFeatures(config)).toEqual(await legacy.listFeatures(config));
+      expect(await client.listControls(config)).toEqual(await legacy.listControls(config));
     } finally {
       await client.shutdown();
       await legacy.shutdown();
@@ -209,3 +212,38 @@ test.each([
   },
   10000,
 );
+
+test("selects v2 without probing the binary when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, "-e", "process.exit(1)"] },
+    env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
+  });
+  try {
+    const { controls } = await client.listControls({ provider: "opencode", cwd: "/tmp/project" });
+    expect(controls.map((control) => control.label)).toEqual(["Auto-accept"]);
+  } finally {
+    await client.shutdown();
+  }
+});
+
+test("keeps native Paseo tools available when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const { OpenCodeBridge } = await import("./bridge.js");
+  const bridge = new OpenCodeBridge({ paseoHome: "/tmp", logger: createTestLogger() });
+  const external = new OpenCodeRuntimeClient(
+    createTestLogger(),
+    { env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" } },
+    { bridge },
+  );
+  const local = new OpenCodeRuntimeClient(createTestLogger(), undefined, { bridge });
+  try {
+    expect(external.capabilities.supportsNativePaseoTools).toBe(true);
+    expect(local.capabilities.supportsNativePaseoTools).toBe(true);
+  } finally {
+    await external.shutdown();
+    await local.shutdown();
+  }
+});

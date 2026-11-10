@@ -24,7 +24,9 @@ export default defineConfig({
       transform(source, id) {
         // The ESM package contains a CommonJS WASM factory. Metro handles the
         // interop; Vite needs an ESM export instead of the CommonJS trailer.
-        if (!id.endsWith("/lib/module/web/wasm/md4c.js")) return;
+        // Vite can request the file with a version query (`md4c.js?v=<hash>`), so match the
+        // path without it.
+        if (!id.split("?")[0].endsWith("/lib/module/web/wasm/md4c.js")) return;
         const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
         if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
         return {
@@ -34,11 +36,15 @@ export default defineConfig({
       },
     },
     {
-      name: "compile-usage-components",
+      name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
-        // These labels must react to time and language in the compiled app too.
-        if (!id.includes("/src/usage/") || !id.endsWith(".tsx") || id.includes(".test.")) return;
+        // Exercise compiler-sensitive labels, overlay lifetime and timeline row revisions in the same
+        // form as Expo.
+        const usageComponent = id.includes("/src/usage/") && id.endsWith(".tsx");
+        const overlayLayer = id.endsWith("/src/lib/overlay-root.ts");
+        const streamRow = id.endsWith("/src/agent-stream/stream-row.tsx");
+        if ((!usageComponent && !overlayLayer && !streamRow) || id.includes(".test.")) return;
         const result = transformSync(source, {
           filename: id,
           babelrc: false,
@@ -80,6 +86,7 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/**/*.{test,spec}.{ts,tsx}",
+            "modules/**/*.{test,spec}.{ts,tsx}",
             "native-release-version.test.ts",
             "app.config.test.ts",
             "vitest-environment.test.ts",
@@ -90,13 +97,27 @@ export default defineConfig({
       },
       {
         extends: true,
+        resolve: {
+          alias: [
+            // The app renders LegendList on native only, from the patched native build. Browser
+            // tests render that build too, instead of the package's separate web build. Unit tests
+            // load it outside Vite, where its react-native import would miss the web alias.
+            {
+              find: /^@legendapp\/list\/react-native$/,
+              replacement: path.resolve(rootNodeModules, "@legendapp/list/react-native.mjs"),
+            },
+          ],
+        },
         test: {
           name: "browser",
           fileParallelism: false,
           include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              // Exercise real WebGL glyph rendering on GPU-less CI runners.
+              launchOptions: { args: ["--enable-unsafe-swiftshader"] },
+            }),
             headless: true,
             connectTimeout: 180_000,
             instances: [{ browser: "chromium" }],
@@ -157,6 +178,8 @@ export default defineConfig({
       "expo-router/react-navigation",
       "@testing-library/react",
       "@tanstack/react-query",
+      "@tanstack/react-virtual",
+      "@legendapp/list/react-native",
       "react-i18next",
       "i18next",
       "@marijn/find-cluster-break",
@@ -230,12 +253,20 @@ export default defineConfig({
         find: /^react-native\/Libraries\/Renderer\/shims\/ReactFabric$/,
         replacement: path.resolve(__dirname, "test-stubs/react-native-fabric-shim.ts"),
       },
-      // Point to the ESM build so Vite can transform its imports and apply the
+      // The CJS entry requires the real react-native, whose Flow sources do not parse.
+      {
+        find: /^@floating-ui\/react-native$/,
+        replacement: path.resolve(
+          rootNodeModules,
+          "@floating-ui/react-native/dist/floating-ui.react-native.esm.js",
+        ),
+      },
+      // Point to react-native-web's ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
-      // Vite alias resolution).
+      // Vite alias resolution). The stub re-exports it and adds what web lacks.
       {
         find: "react-native",
-        replacement: path.resolve(rootNodeModules, "react-native-web/dist/index.js"),
+        replacement: path.resolve(__dirname, "test-stubs/react-native.mjs"),
       },
       { find: "react", replacement: resolvePackageEntry("react") },
       {

@@ -1,3 +1,4 @@
+import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
@@ -27,6 +28,7 @@ import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
+import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -555,6 +557,15 @@ interface AssistantTurnFooterProps {
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   container: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+  },
+  actions: {
+    height: 24,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -566,20 +577,24 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     marginTop: 0,
     marginLeft: -theme.spacing[1],
   },
-  labelWrapper: {
-    position: "relative",
+  labelButton: {
+    flex: 1,
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
   },
-  labelSizer: {
+  label: {
+    width: "100%",
+    flexShrink: 0,
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+  },
+  overlappingLabel: {
+    marginLeft: "-100%",
+  },
+  hiddenLabel: {
     opacity: 0,
-  },
-  labelOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));
 
@@ -647,31 +662,51 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
-      {getContent ? (
-        <TurnCopyButton
-          getContent={getContent}
-          containerStyle={assistantTurnFooterStylesheet.copyButton}
-        />
+      {getContent || canFork ? (
+        <View style={assistantTurnFooterStylesheet.actions}>
+          {getContent ? (
+            <TurnCopyButton
+              getContent={getContent}
+              containerStyle={assistantTurnFooterStylesheet.copyButton}
+            />
+          ) : null}
+          {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+        </View>
       ) : null}
-      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {primaryLabel ? (
         <Pressable
+          style={assistantTurnFooterStylesheet.labelButton}
           onPress={handlePress}
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
         >
-          <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
-                container width is stable across hover transitions. */}
-            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
+          {/* Both labels participate in layout at the available width. Overlapping their
+              columns reserves the taller wrapped height without measuring text or characters. */}
+          <Text
+            testID={!showTimestamp ? "turn-footer-timing-label" : undefined}
+            aria-hidden={showTimestamp}
+            style={[
+              assistantTurnFooterStylesheet.label,
+              showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+            ]}
+          >
+            {primaryLabel}
+          </Text>
+          {canSwap ? (
+            <Text
+              testID={showTimestamp ? "turn-footer-timing-label" : undefined}
+              aria-hidden={!showTimestamp}
+              style={[
+                assistantTurnFooterStylesheet.label,
+                assistantTurnFooterStylesheet.overlappingLabel,
+                !showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
+              ]}
+            >
+              {timestampLabel}
             </Text>
-            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : primaryLabel}
-            </Text>
-          </View>
+          ) : null}
         </Pressable>
       ) : null}
     </View>
@@ -1198,6 +1233,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     >
       <MarkdownRenderer
         text={revealedMessage}
+        agentCommands
         streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
         client={client}
         workspaceRoot={workspaceRoot}
@@ -1481,9 +1517,9 @@ export const TodoListCard = memo(function TodoListCard({
     };
   }, [activity, t]);
 
-  const handleToggle = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
+  const hold = useDisclosureHold();
+  const toggleExpanded = useCallback(() => setIsExpanded((prev) => !prev), []);
+  const handleToggle = useCallback(() => hold(toggleExpanded), [hold, toggleExpanded]);
 
   const renderDetails = useCallback(() => {
     return (
@@ -2241,6 +2277,9 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
+  itemId: string;
+  /** Shown as its own row rather than inside a tool call group. */
+  standalone?: boolean;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -2262,12 +2301,19 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
+  itemId,
+  standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
+  const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
+    callId: itemId,
+    defaultExpanded: defaultExpanded ?? false,
+    standalone,
+  });
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
+  const hold = useDisclosureHold();
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -2319,10 +2365,12 @@ export const ToolCall = memo(function ToolCall({
         showLoadingSkeleton: presentation.isLoadingDetails,
       });
     } else {
-      setIsExpanded((prev) => !prev);
+      hold(toggleExpanded);
     }
   }, [
+    hold,
     shouldRenderInline,
+    toggleExpanded,
     openToolCall,
     toolName,
     presentation.detail,
@@ -2428,5 +2476,7 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
+  if (previous.itemId !== next.itemId) return false;
+  if (previous.standalone !== next.standalone) return false;
   return true;
 }

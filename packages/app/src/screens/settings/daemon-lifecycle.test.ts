@@ -12,6 +12,69 @@ test("settings restart completes when a replacement worker is observed without a
   expect(pid).toBe(11);
 });
 
+test("settings restart keeps terminals by default and closes them only when asked", async () => {
+  let pid = 10;
+  const requests: Array<{ killTerminals: boolean }> = [];
+  const deps = {
+    getStatus: async () => ({ pid, version: "1.0.0", serverId: "daemon" }),
+    restartServer: async (_reason: string, options: { killTerminals: boolean }) => {
+      requests.push(options);
+      pid += 1;
+    },
+  };
+  await restartDaemonFromSettings("daemon", "settings", deps);
+  await restartDaemonFromSettings("daemon", "settings", deps, { killTerminals: true });
+  expect(requests).toEqual([{ killTerminals: false }, { killTerminals: true }]);
+});
+
+test("a close-terminals restart completes when the replacement reports every terminal closed", async () => {
+  let pid = 10;
+  await restartDaemonFromSettings(
+    "daemon",
+    "settings",
+    {
+      getStatus: async () => ({
+        pid,
+        version: "1.0.0",
+        serverId: "daemon",
+        terminalCleanupUnconfirmed: [],
+      }),
+      restartServer: async () => {
+        pid = 11;
+      },
+    },
+    { killTerminals: true },
+  );
+  expect(pid).toBe(11);
+});
+
+test("a close-terminals restart fails with the processes the replacement could not confirm closed", async () => {
+  let pid = 10;
+  const leftover = {
+    pid: 4242,
+    role: "terminal program",
+    reason: "still alive",
+    detail: "survived SIGKILL",
+  };
+  const deps = {
+    getStatus: async () => ({
+      pid,
+      version: "1.0.0",
+      serverId: "daemon",
+      terminalCleanupUnconfirmed: pid === 10 ? [] : [leftover],
+    }),
+    restartServer: async () => {
+      pid += 1;
+    },
+  };
+
+  await expect(
+    restartDaemonFromSettings("daemon", "settings", deps, { killTerminals: true }),
+  ).rejects.toThrow("pid 4242 (terminal program): still alive (survived SIGKILL)");
+  // Keeping terminals asks nothing of the cleanup, so a leftover does not fail it.
+  await restartDaemonFromSettings("daemon", "settings", deps);
+});
+
 test("a status permission failure prevents the restart request", async () => {
   let restarted = false;
   await expect(

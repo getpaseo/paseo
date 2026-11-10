@@ -1,3 +1,4 @@
+import { MAX_HOST_CHANNEL_FRAME_BYTES } from "@getpaseo/protocol/binary-frames/index";
 import { safeRandomId } from "../daemon-client-transport-utils.js";
 import { DaemonClient } from "../daemon-client.js";
 import type { DaemonTransportFactory } from "../daemon-client-transport-types.js";
@@ -25,11 +26,13 @@ export function createHostChannelTransport(
   return () => {
     const opens = new Set<() => void>();
     const closes = new Set<(event?: unknown) => void>();
-    const messages = new Set<(data: unknown, binary: boolean) => void>();
+    const messages = new Set<(data: unknown, binary: boolean) => void | Promise<void>>();
     const errors = new Set<(error: unknown) => void>();
     let routeId: string | null = null;
     let closed = false;
     const cleanups: (() => void)[] = [];
+    let flowControl = false;
+    let receivedFrames = 0;
     const close = (error?: unknown) => {
       if (closed) return;
       closed = true;
@@ -44,10 +47,28 @@ export function createHostChannelTransport(
       if (error) for (const handler of errors) handler(error);
       for (const handler of closes) handler(error);
     };
+    const deliver = (data: unknown, binary: boolean) => {
+      if (closed) return;
+      const sequence = ++receivedFrames;
+      try {
+        const deliveries = [...messages].map(async (handler) => {
+          await handler(data, binary);
+        });
+        void Promise.all(deliveries)
+          .then(async () => {
+            if (flowControl && !closed && routeId)
+              await origin.acknowledgeHostLink(routeId, sequence);
+            return undefined;
+          })
+          .catch(close);
+      } catch (error) {
+        close(error);
+      }
+    };
     cleanups.push(
       origin.subscribeRawMessages((message) => {
         if (message.type === "hosts.route.frame" && message.payload.subscriptionId === routeId) {
-          for (const handler of messages) handler(message.payload.data, false);
+          deliver(message.payload.data, false);
         }
         if (message.type === "hosts.route.closed" && message.payload.subscriptionId === routeId)
           close(
@@ -60,7 +81,7 @@ export function createHostChannelTransport(
     );
     cleanups.push(
       origin.subscribeHostFrames((frame) => {
-        if (frame.routeId === routeId) for (const handler of messages) handler(frame.payload, true);
+        if (frame.routeId === routeId) deliver(frame.payload, true);
       }),
     );
     cleanups.push(
@@ -70,7 +91,15 @@ export function createHostChannelTransport(
     );
     let opening: Promise<string>;
     if (first) opening = Promise.resolve(first);
-    else opening = link ? origin.openHostLink(scopeId) : origin.openHostRoute(serverId, scopeId);
+    else if (link) {
+      opening = origin.openHostLink(scopeId, { flowControl: true }).then((opened) => {
+        // COMPAT(hostLinkFlowControl): added after v0.15.3 (#9109); remove after
+        // 2027-05-08 once the daemon floor supports forwarding acknowledgments.
+        // Older destinations omit flowControl and receive no acknowledgment messages.
+        flowControl = opened.flowControl;
+        return opened.routeId;
+      });
+    } else opening = origin.openHostRoute(serverId, scopeId);
     first = null;
     void opening
       .then((id) => {
@@ -84,13 +113,17 @@ export function createHostChannelTransport(
       })
       .catch(close);
     return {
+      get supportsDrain() {
+        return origin.supportsDrain;
+      },
+      maxFrameBytes: MAX_HOST_CHANNEL_FRAME_BYTES,
       send(data) {
         if (closed || !routeId)
           throw Object.assign(new Error(`Host ${serverId} is offline`), {
             code: "host_offline",
             serverId,
           });
-        origin.sendHostFrame(
+        return origin.sendHostFrame(
           routeId,
           typeof data === "string" || data instanceof Uint8Array ? data : new Uint8Array(data),
         );

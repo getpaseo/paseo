@@ -2,7 +2,7 @@ import { mkdir, open, realpath, rename, stat, writeFile } from "node:fs/promises
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import pLimit from "p-limit";
-import { isAbsolute, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 import { z } from "zod";
 
 const MAX_WORKTREE_METADATA_BYTES = 64 * 1024;
@@ -14,7 +14,7 @@ const ChangeRequestLookupTargetSchema = z.object({
   localBranchName: z.string().min(1).optional(),
 });
 
-// baseRefName is the display name; baseRef is the exact ref the worktree was cut from
+// baseRefName is the display name; baseRef is the checkout's current exact base
 // ("refs/remotes/upstream/main"). baseRef is optional because worktrees written before it
 // existed only have the name — there are no migrations, so readers fall back.
 const PaseoWorktreeMetadataV1Schema = z.object({
@@ -249,6 +249,21 @@ export async function writePaseoWorktreeMetadata(
   });
 }
 
+export async function setPaseoWorktreeBaseRef(input: {
+  worktreeRoot: string;
+  baseRef: string;
+}): Promise<void> {
+  return mutateMetadata(input.worktreeRoot, async (root) => {
+    const current = await readMetadataFile(root);
+    if (!current) throw new Error("Cannot change base: missing worktree metadata");
+    await writePaseoWorktreeMetadataFile(root, {
+      ...current,
+      baseRefName: branchNameFromRef(input.baseRef),
+      baseRef: input.baseRef,
+    });
+  });
+}
+
 export async function writePaseoWorktreeRuntimeMetadata(
   worktreeRoot: string,
   options: { worktreePort: number },
@@ -327,6 +342,39 @@ export async function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
     await writePaseoWorktreeMetadataFile(root, next);
     return next;
   });
+}
+
+export async function hasPaseoWorktreeMetadata(worktreeRoot: string): Promise<boolean> {
+  try {
+    return (await readPaseoWorktreeMetadata(worktreeRoot)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filesystem-only search for a Paseo worktree root at or above cwd: the
+ * first directory containing a .git entry wins, and it only counts when
+ * its git admin dir holds the paseo/worktree.json marker. Lets callers
+ * cheaply rule out plain directories before running git ownership checks.
+ */
+export async function findPaseoWorktreeRootForCwd(cwd: string): Promise<string | null> {
+  let current = resolve(cwd);
+  for (;;) {
+    if (
+      await stat(join(current, ".git")).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      return (await hasPaseoWorktreeMetadata(current)) ? current : null;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
 }
 
 export async function readPaseoWorktreeMetadata(

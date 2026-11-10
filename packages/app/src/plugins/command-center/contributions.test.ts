@@ -13,7 +13,20 @@ import { z } from "zod";
 import type { InstalledPlugin } from "../types";
 import { buildPluginCommandCenterContributions } from "./contributions";
 
+import { entityRefs } from "../client-state/refs";
 const workspace: PluginWorkspaceSnapshot = {
+  ref: entityRefs.workspace("host-1", "workspace-1"),
+  hostId: "host-1",
+  project: entityRefs.project("host-1", "project-1"),
+  pinnedAt: null,
+  labels: [],
+  background: false,
+  branch: null,
+  createdAt: null,
+  lastPromptAt: null,
+  parentAgent: null,
+  indicator: "running",
+  indicatorLabel: "Running",
   id: "workspace-1",
   projectId: "project-1",
   projectDisplayName: "Paseo",
@@ -30,6 +43,10 @@ const workspace: PluginWorkspaceSnapshot = {
 };
 
 const agent: PluginAgentSnapshot = {
+  ref: entityRefs.agent("host-1", "agent-1"),
+  hostId: "host-1",
+  workspace: workspace.ref,
+  parentAgent: null,
   id: "agent-1",
   workspaceId: workspace.id,
   provider: "codex",
@@ -46,6 +63,7 @@ const agent: PluginAgentSnapshot = {
   attentionReason: null,
   parentAgentId: null,
   labels: {},
+  metadata: {},
 };
 
 const inspect = defineRpc({
@@ -71,6 +89,9 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         clientType: "cli",
       }),
     ),
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
     invoke: async (method: string, input: unknown) => {
       expect(method).toBe("review.inspect");
       return { value: inspect.input.parse(input).value + 1 };
@@ -79,9 +100,12 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [{ id: "main", title: "Main", Component: () => null }],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [
       {
         id: "details",
@@ -127,6 +151,15 @@ function stateSource() {
   return {
     subscribe() {
       return () => {};
+    },
+    getSnapshot() {
+      return { workspaces: [workspace], agents: [agent], projects: [], terminals: [] };
+    },
+    getProject() {
+      return null;
+    },
+    getTerminal() {
+      return null;
     },
     getWorkspace(id: string) {
       return id === workspace.id ? workspace : null;

@@ -61,10 +61,10 @@ remain durable, with ordinary history, lifecycle hooks, archive, and exact-ID ac
 sidebar offers **Show background** without dropping replicated state.
 
 `background` is creation-only. Omission defaults to false; when `callerAgentId` identifies an agent
-creating a new workspace, omission inherits its workspace's value. Explicit false or true overrides
-inheritance. Agent creation with `workspaceId` rejects explicit background creation intent; configure
-visibility when creating the workspace. SDK/RPC implicit agent creation also accepts `background`
-as workspace creation intent, never as an agent property.
+creating a new workspace, omission inherits the caller's visibility: true when the caller agent or
+its workspace is background. Explicit false or true overrides inheritance. Agent creation that
+creates its workspace applies `background` to both the workspace and the agent. To hide one agent
+in an existing workspace, see [background agents](./agents.md#run-a-helper-as-a-background-agent).
 
 Creation and inclusive discovery require `features.backgroundWorkspaces`; the client rejects an
 unsupported host with an update-host message.
@@ -135,8 +135,8 @@ do {
 
 Background workspaces are left out unless `filter.includeBackground` is true. Use
 `client.workspaces.list({ filter: { includeBackground: true } })` or
-`client.agents.list({ filter: { includeBackground: true } })`. Workspace descriptors carry
-`background`; agents derive visibility from their workspace and have no separate setting.
+`client.agents.list({ filter: { includeBackground: true } })`. Workspace and agent snapshots carry
+`background`. An agent is hidden when it or its workspace is background.
 
 ## Refresh and archive a handle
 
