@@ -2,6 +2,7 @@ import { type Dirent, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
+import { FileObservationLimitError } from "./limit-error.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
 
@@ -730,7 +731,7 @@ class NativeRecursiveBackend implements ObservationBackend {
 
   private assertWithinLimit(entryCount: number): void {
     if (entryCount <= MAX_TRACKED_ENTRIES) return;
-    throw new Error(
+    throw new FileObservationLimitError(
       `Recursive file observation exceeded ${MAX_TRACKED_ENTRIES} entries under ${this.host.root}`,
     );
   }

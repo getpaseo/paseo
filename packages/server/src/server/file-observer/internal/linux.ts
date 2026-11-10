@@ -2,6 +2,7 @@ import { type Dirent, type FSWatcher, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
+import { FileObservationLimitError } from "./limit-error.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
 
@@ -122,7 +123,7 @@ class LinuxBackend implements ObservationBackend {
     }
     if (this.watchers.size >= MAX_WATCHED_DIRECTORIES) {
       this.host.metrics.directoryLimitFailureCount += 1;
-      throw new Error(
+      throw new FileObservationLimitError(
         `Recursive file observation exceeded ${MAX_WATCHED_DIRECTORIES} directories under ${this.host.root}`,
       );
     }
@@ -276,7 +277,7 @@ class LinuxBackend implements ObservationBackend {
         directories.add(child);
         if (directories.size > MAX_WATCHED_DIRECTORIES) {
           this.host.metrics.directoryLimitFailureCount += 1;
-          throw new Error(
+          throw new FileObservationLimitError(
             `Recursive file observation exceeded ${MAX_WATCHED_DIRECTORIES} directories under ${this.host.root}`,
           );
         }
