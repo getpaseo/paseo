@@ -214,8 +214,22 @@ function upsertHostConnectionById(
     replaced = true;
   }
   if (!replaced) next.push(connection);
+  const relayKeyChanged =
+    connection.type === "relay" &&
+    connections.some(
+      (existing) =>
+        existing.type === "relay" &&
+        existing.id === connection.id &&
+        existing.daemonPublicKeyB64 !== connection.daemonPublicKeyB64,
+    );
+  const retained = relayKeyChanged
+    ? next.filter(
+        (existing) =>
+          existing.type !== "directTcp" || existing.learnedFromConnectionId !== connection.id,
+      )
+    : next;
   // A pin is never lost: the replaced record counts as much as the incoming one.
-  return shareRelaySecurityPin(next, [...connections, connection]);
+  return shareRelaySecurityPin(retained, [...connections, connection]);
 }
 
 /**
@@ -416,13 +430,14 @@ export function reconcileLearnedDirectConnections(input: {
   daemonPublicKeyB64: string;
   endpoints: readonly string[];
 }): HostProfile {
-  const isLearnedFromSameDaemon = (connection: HostConnection): boolean =>
+  const isSupersededLearnedConnection = (connection: HostConnection): boolean =>
     connection.type === "directTcp" &&
     Boolean(connection.learnedFromConnectionId) &&
-    connection.daemonPublicKeyB64 === input.daemonPublicKeyB64;
+    (connection.learnedFromConnectionId === input.sourceConnectionId ||
+      connection.daemonPublicKeyB64 === input.daemonPublicKeyB64);
   const otherEndpoints = new Set(
     input.host.connections.flatMap((connection) =>
-      connection.type === "directTcp" && !isLearnedFromSameDaemon(connection)
+      connection.type === "directTcp" && !isSupersededLearnedConnection(connection)
         ? [connection.endpoint]
         : [],
     ),
@@ -446,7 +461,7 @@ export function reconcileLearnedDirectConnections(input: {
     }
   });
   const connections = [
-    ...input.host.connections.filter((connection) => !isLearnedFromSameDaemon(connection)),
+    ...input.host.connections.filter((connection) => !isSupersededLearnedConnection(connection)),
     ...learned,
   ];
   if (JSON.stringify(connections) === JSON.stringify(input.host.connections)) return input.host;
