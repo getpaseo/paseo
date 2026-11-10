@@ -72,6 +72,8 @@ export function FilePathActions({ path, workspaceId }: { path: string; workspace
     <DropdownMenu compactMode="sheet">
       <ToolbarButton
         kind="menu"
+        compact={compact}
+        hitSlop={8}
         label={t("workspace.fileActions.moreActions")}
         disabled={pending}
         testID="file-path-actions-trigger"

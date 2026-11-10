@@ -18,6 +18,8 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
+// Platform fault injection only: real-browser success cases below use the unmodified clipboard.
+// Delay one real write to observe pending UI; release it before reading the actual clipboard.
 async function delayNextClipboardWrite(page: Page): Promise<void> {
   await page.evaluate(() => {
     const released = new Promise<void>((resolve) => {
@@ -32,6 +34,9 @@ async function delayNextClipboardWrite(page: Page): Promise<void> {
   });
 }
 
+// A denied async clipboard permission alone does not force a failure: Expo also tries the
+// synchronous execCommand fallback. Reject both once to exercise the rendered recovery UI,
+// then restore the real APIs for retry. This case proves app recovery, not OS permission handling.
 async function failNextClipboardWrite(page: Page): Promise<void> {
   await page.evaluate(() => {
     const write = navigator.clipboard.writeText.bind(navigator.clipboard);
@@ -172,6 +177,9 @@ test.describe("CodeMirror workspace file editing", () => {
         await page.getByText("report%20draft.md:2", { exact: true }).click();
         await expect(page.getByTestId("file-source-editor")).toBeVisible();
         const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+        const targetSize = width === 390 ? "32px" : "20px";
+        await expect(trigger).toHaveCSS("width", targetSize);
+        await expect(trigger).toHaveCSS("height", targetSize);
         await trigger.click();
         await page.getByTestId("file-path-actions-copy-path").click();
         await expect
