@@ -211,6 +211,32 @@ describe("local project links", () => {
     });
   });
 
+  test("uses the managed worktree when it contains the selected project", () => {
+    const descriptor = project({
+      id: "prj-managed-worktree",
+      root: "/repos/.paseo/worktrees/feature/packages/web",
+    });
+    expect(
+      resolveProjectGitIdentity({
+        project: descriptor,
+        workspaces: [
+          workspace({
+            id: "ws-managed-worktree",
+            projectId: descriptor.projectId,
+            projectRoot: descriptor.projectRootPath,
+            worktreeRoot: "/repos/.paseo/worktrees/feature",
+            mainRepoRoot: "/repos/app",
+            remote: "https://github.com/acme/app.git",
+          }),
+        ],
+      }),
+    ).toEqual({
+      repository: "github.com/acme/app",
+      remoteDisplay: "github.com/acme/app",
+      subdirectory: "packages/web",
+    });
+  });
+
   test("does not infer an identity when a project is outside its Git worktree", () => {
     expect(
       deriveProjectGitIdentity({

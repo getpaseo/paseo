@@ -1,6 +1,7 @@
 export interface BottomSheetController {
   present(): void;
   dismiss(): void;
+  snapToIndex(index: number): void;
 }
 
 export interface BottomSheetVisibilityInput {
@@ -28,7 +29,8 @@ export interface BottomSheetVisibilityTracker {
   attachController(controller: BottomSheetController | null): void;
   syncDesired(input: BottomSheetVisibilityInput): void;
   handleSheetIndexChange(index: number): void;
-  handleSheetDismiss(): void;
+  /** Whether the dismiss was accepted rather than vetoed by the owner. */
+  handleSheetDismiss(): boolean;
 }
 
 type BottomSheetPhase = "closed" | "presenting" | "presented" | "dismissing";
@@ -36,6 +38,8 @@ type BottomSheetPhase = "closed" | "presenting" | "presented" | "dismissing";
 export function createBottomSheetVisibilityTracker(opts: {
   onClose: () => void;
   backPress?: BackPressSource;
+  /** Whether a user-driven close may complete right now. */
+  canClose?: () => boolean;
   /**
    * Offered the Back press before the sheet takes it as a close. Returns true when it handled
    * the press itself, such as stepping back a page inside the sheet.
@@ -66,6 +70,7 @@ export function createBottomSheetVisibilityTracker(opts: {
     releaseBackPress =
       opts.backPress?.subscribe(() => {
         if (opts.onBack?.()) return true;
+        if (!canClose()) return true;
         dismiss();
         return true;
       }) ?? null;
@@ -82,6 +87,10 @@ export function createBottomSheetVisibilityTracker(opts: {
     if (!controller || phase === "closed" || phase === "dismissing") return;
     setPhase("dismissing");
     controller.dismiss();
+  }
+
+  function canClose(): boolean {
+    return opts.canClose?.() ?? true;
   }
 
   function notifyClose(): void {
@@ -122,6 +131,10 @@ export function createBottomSheetVisibilityTracker(opts: {
         }
         return;
       }
+      if (visible && !canClose()) {
+        controller?.snapToIndex(0);
+        return;
+      }
       if (phase === "presenting" || phase === "presented") {
         setPhase("dismissing");
       }
@@ -129,14 +142,22 @@ export function createBottomSheetVisibilityTracker(opts: {
     handleSheetDismiss() {
       // Portal cleanup reports dismissal after the sheet leaves the tree. It is
       // presentation teardown, so the owner keeps its desired state.
-      if (!controller) return;
+      if (!controller) return true;
+      if (visible && !canClose()) {
+        // A close can race with a new pending operation. Re-present instead of
+        // leaving the owner visible while the sheet tracker stays dismissed.
+        setPhase("closed");
+        present();
+        return false;
+      }
       if (visible) {
         setPhase("dismissing");
         notifyClose();
-        return;
+        return true;
       }
       setPhase("closed");
       hasNotifiedClose = false;
+      return true;
     },
   };
 }

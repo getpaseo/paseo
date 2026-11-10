@@ -6,7 +6,8 @@ import {
 } from "./visibility-tracker";
 
 interface FakeBottomSheetEvent {
-  type: "present" | "dismiss";
+  type: "present" | "dismiss" | "snapToIndex";
+  index?: number;
 }
 
 class FakeBottomSheet implements BottomSheetController {
@@ -18,6 +19,10 @@ class FakeBottomSheet implements BottomSheetController {
 
   dismiss(): void {
     this.events.push({ type: "dismiss" });
+  }
+
+  snapToIndex(index: number): void {
+    this.events.push({ type: "snapToIndex", index });
   }
 }
 
@@ -202,6 +207,58 @@ describe("bottom sheet visibility tracker", () => {
 
     expect(context.backPress.press()).toBe(true);
     expect(context.sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  });
+
+  it("keeps a sheet open while its owner vetoes a drag or Back close", () => {
+    let canClose = false;
+    const sheet = new FakeBottomSheet();
+    const backPress = new FakeBackPress();
+    const tracker = createBottomSheetVisibilityTracker({
+      onClose: () => {},
+      backPress,
+      canClose: () => canClose,
+    });
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+    tracker.handleSheetIndexChange(0);
+
+    tracker.handleSheetIndexChange(-1);
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "snapToIndex", index: 0 }]);
+    expect(backPress.press()).toBe(true);
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "snapToIndex", index: 0 }]);
+
+    canClose = true;
+    expect(backPress.press()).toBe(true);
+    expect(sheet.events).toEqual([
+      { type: "present" },
+      { type: "snapToIndex", index: 0 },
+      { type: "dismiss" },
+    ]);
+  });
+
+  it("re-presents after a physical dismiss races with a pending operation", () => {
+    const context = setup();
+    let canClose = false;
+    const tracker = createBottomSheetVisibilityTracker({
+      onClose: () => {},
+      backPress: context.backPress,
+      canClose: () => canClose,
+    });
+    tracker.attachController(context.sheet);
+    tracker.syncDesired({ visible: true });
+    tracker.handleSheetIndexChange(0);
+
+    expect(tracker.handleSheetDismiss()).toBe(false);
+    expect(context.sheet.events).toEqual([{ type: "present" }, { type: "present" }]);
+
+    tracker.handleSheetIndexChange(0);
+    canClose = true;
+    expect(context.backPress.press()).toBe(true);
+    expect(context.sheet.events).toEqual([
+      { type: "present" },
+      { type: "present" },
+      { type: "dismiss" },
+    ]);
   });
 
   it("lets the sheet step back through its own pages before Back dismisses it", () => {
