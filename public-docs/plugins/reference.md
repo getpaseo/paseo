@@ -2014,8 +2014,10 @@ closes the sheets, menus, pickers and image previews it opened over itself first
 controls sheet that holds your items on a phone. A phone opens its keyboard.
 
 `focus()` rejects when the composer cannot take focus: the agent was archived, its composer did not
-come on screen within 15 seconds, or the input refused focus. A rejected promise returned from a
-button's `onPress` or a Command Center item's `onSelect` shows the user an error toast.
+come on screen within 15 seconds, or the input refused focus, as it does on a phone while dictation
+is running. When calls overlap, the latest one decides where the cursor goes and the earlier ones
+settle with it. A rejected promise returned from a button's `onPress` or a Command Center item's
+`onSelect` shows the user an error toast.
 
 Drafts and the New workspace composer are only reachable from an item inside them, so `focus()` does
 not navigate to them. It works while the composer is on screen, and rejects with "The composer is

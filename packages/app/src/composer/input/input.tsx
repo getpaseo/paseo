@@ -225,6 +225,7 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  isFocused: () => boolean;
   getText: () => string;
   getInputSnapshot: () => ComposerInputSnapshot;
   replaceText: (text: string, selection?: { start: number; end: number }) => void;
@@ -1488,6 +1489,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       focus: () => {
         textInputRef.current?.focus();
       },
+      isFocused: () => textInputRef.current?.isFocused() ?? false,
       blur: () => {
         textInputRef.current?.blur();
       },

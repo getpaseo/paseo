@@ -4,6 +4,11 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { attachComposerTestImage, openImageLightbox } from "./composer";
+import {
+  contextWindowDetails,
+  pressContextWindowMeter,
+  seedAgentWithContextWindow,
+} from "./context-window";
 import { gotoWorkspace } from "./launcher";
 import { openCommandCenter } from "./command-center";
 import { openAgentRoute, seedMockAgentWorkspace } from "./mock-agent";
@@ -428,7 +433,9 @@ export default function contribute(client) {
 export { CHECKLIST };
 
 type HeldComposerGlobal = typeof globalThis & {
-  heldComposer?: { focus(): Promise<void> };
+  heldComposer?: {
+    focus(options?: { selection?: { start: number; end: number } }): Promise<void>;
+  };
 };
 
 export async function withPluginHoldingNewWorkspaceComposer(
@@ -439,6 +446,8 @@ export async function withPluginHoldingNewWorkspaceComposer(
     openSettings(): Promise<void>;
     openThinkingPicker(): Promise<void>;
     previewAttachedImage(): Promise<void>;
+    typeInHeldComposer(text: string): Promise<void>;
+    expectOverlappingFocusesKeepTheLatestSelection(): Promise<void>;
     expectHeldComposerFocusResult(result: string): Promise<void>;
     expectHeldComposerReadyToType(): Promise<void>;
   }) => Promise<void>,
@@ -510,6 +519,23 @@ export default function contribute(client) {
           await attachComposerTestImage(page);
           await openImageLightbox(page);
         }),
+      typeInHeldComposer: (text) =>
+        test.step(`type ${text} in the New workspace composer`, async () => {
+          await prompt(page).filter({ visible: true }).fill(text);
+        }),
+      expectOverlappingFocusesKeepTheLatestSelection: () =>
+        test.step("two overlapping focus() calls leave the later selection", async () => {
+          const selection = await page.evaluate(async () => {
+            const composer = (globalThis as HeldComposerGlobal).heldComposer!;
+            await Promise.all([
+              composer.focus({ selection: { start: 0, end: 1 } }),
+              composer.focus({ selection: { start: 2, end: 4 } }),
+            ]);
+            const input = document.activeElement as HTMLTextAreaElement;
+            return [input.selectionStart, input.selectionEnd];
+          });
+          expect(selection).toEqual([2, 4]);
+        }),
       expectHeldComposerReadyToType: () =>
         test.step("nothing covers the composer and the cursor is in it", async () => {
           await expect(page.getByText("High", { exact: true })).toHaveCount(0);
@@ -564,36 +590,11 @@ export async function withPluginFocusingASubagent(
     { client: workspace.client, repoPath: workspace.cwd, workspaceId: workspace.workspaceId },
     { parentId: workspace.agentId, title: "Focus child" },
   );
-  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-  const previous = await client.getDaemonConfig();
-  const directory = await mkdtemp(path.join(tmpdir(), "paseo-focus-subagent-"));
-  await writeFile(
-    path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({ id: "focus-subagent", requirements: pluginRequirements }),
-  );
-  await writeFile(
-    path.join(directory, "index.client.tsx"),
-    `export default function contribute(client) {
-  globalThis.focusAgent = (agentId) => client.composers({ agentId })[0].focus();
-  return () => {};
-}`,
-  );
+  const plugin = await installFocusingPlugin(page);
+  const { focusAgent } = plugin;
   try {
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await client.installDirectoryPlugin(directory);
     await page.setViewportSize(COMPACT);
     await gotoAppShell(page);
-    const focusAgent = async (agentId: string) => {
-      const result = await page.evaluate(
-        (id) =>
-          (globalThis as FocusAgentGlobal).focusAgent?.(id).then(
-            () => "focused",
-            (error: Error) => error.message,
-          ),
-        agentId,
-      );
-      expect(result).toBe("focused");
-    };
     await run({
       keepParentInExplorerOnCompactScreen: () =>
         test.step("move the parent into the Explorer, then narrow the window", async () => {
@@ -653,10 +654,79 @@ export async function withPluginFocusingASubagent(
         }),
     });
   } finally {
-    await client.removePlugin("focus-subagent");
-    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
-    await client.close();
-    await rm(directory, { recursive: true, force: true });
+    await plugin.remove();
     await workspace.cleanup();
+  }
+}
+
+/** A plugin that focuses any agent's composer, as a callback holding the agent's id would. */
+async function installFocusingPlugin(page: Page) {
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-focus-agent-"));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "focus-agent", requirements: pluginRequirements }),
+  );
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `export default function contribute(client) {
+  globalThis.focusAgent = (agentId) => client.composers({ agentId })[0].focus();
+  return () => {};
+}`,
+  );
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  await client.installDirectoryPlugin(directory);
+  return {
+    focusAgent: async (agentId: string) => {
+      const result = await page.evaluate(
+        (id) =>
+          (globalThis as FocusAgentGlobal).focusAgent?.(id).then(
+            () => "focused",
+            (error: Error) => error.message,
+          ),
+        agentId,
+      );
+      expect(result).toBe("focused");
+    },
+    remove: async () => {
+      await client.removePlugin("focus-agent");
+      await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+      await client.close();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function withPluginFocusingAnAgentWithContextUsage(
+  page: Page,
+  run: (author: {
+    openContextUsageOnPhone(): Promise<void>;
+    focusAgent(): Promise<void>;
+    expectReadyToType(): Promise<void>;
+  }) => Promise<void>,
+) {
+  const agent = await seedAgentWithContextWindow();
+  const plugin = await installFocusingPlugin(page);
+  try {
+    await page.setViewportSize(COMPACT);
+    await gotoAppShell(page);
+    await run({
+      openContextUsageOnPhone: () =>
+        test.step("open the agent's context usage on a phone", async () => {
+          await openAgentRoute(page, agent);
+          await page.waitForFunction(() => (globalThis as FocusAgentGlobal).focusAgent);
+          await pressContextWindowMeter(page);
+        }),
+      focusAgent: () => test.step("focus the agent", () => plugin.focusAgent(agent.agentId)),
+      expectReadyToType: () =>
+        test.step("the context usage is closed and the cursor is in the composer", async () => {
+          await expect(contextWindowDetails(page)).toHaveCount(0);
+          await expect(prompt(page).filter({ visible: true })).toBeFocused();
+        }),
+    });
+  } finally {
+    await plugin.remove();
+    await agent.cleanup();
   }
 }

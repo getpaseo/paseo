@@ -1469,31 +1469,39 @@ function ComposerContentImpl({
     [isInputLive],
   );
   const dismissOverlays = useDismissOverlays();
+  const latestFocusRef = useRef<Promise<void> | null>(null);
   const takeInputFocus = useCallback(
     (options?: ComposerFocusOptions) => {
+      const isFocused = () => messageInputRef.current?.isFocused() ?? false;
       const place = () => {
         messageInputRef.current?.focus();
         if (options?.selection) messageInputRef.current?.setSelection(options.selection);
       };
       // The sheets, menus and modals this composer opened would otherwise cover the cursor, or take
       // focus back as they close.
-      return closedWithin(dismissOverlays(), OVERLAY_CLOSE_TIMEOUT_MS).then(() => {
-        if (isNative) {
-          place();
-          return;
-        }
-        return new Promise<void>((resolve, reject) => {
-          focusWithRetries({
-            focus: place,
-            isFocused: () => {
-              const element = messageInputRef.current?.getNativeElement?.() ?? null;
-              return element !== null && document.activeElement === element;
-            },
-            onSuccess: resolve,
-            onTimeout: () => reject(new Error("The composer input could not take focus.")),
+      const request: Promise<void> = closedWithin(dismissOverlays(), OVERLAY_CLOSE_TIMEOUT_MS).then(
+        () => {
+          // A newer request decides where the cursor goes, and this one ends with it.
+          const latest = latestFocusRef.current;
+          if (latest && latest !== request) return latest;
+          if (isNative) {
+            place();
+            // A native input refuses focus without saying so, such as while dictation holds it.
+            if (!isFocused()) throw new Error("The composer input could not take focus.");
+            return;
+          }
+          return new Promise<void>((resolve, reject) => {
+            focusWithRetries({
+              focus: place,
+              isFocused,
+              onSuccess: resolve,
+              onTimeout: () => reject(new Error("The composer input could not take focus.")),
+            });
           });
-        });
-      });
+        },
+      );
+      latestFocusRef.current = request;
+      return request;
     },
     [dismissOverlays],
   );

@@ -16,33 +16,38 @@ interface OverlayDismissal {
 
 interface OpenOverlay {
   close: () => void;
+  /** Set once the overlay is asked to close; every caller waits on the same one. */
+  closing: { gone: Promise<void>; settle: () => void } | null;
 }
 
 function createOverlayDismissal(): OverlayDismissal {
   const open = new Set<OpenOverlay>();
-  const closing = new Map<OpenOverlay, () => void>();
+
+  function dismiss(overlay: OpenOverlay): Promise<void> {
+    if (!overlay.closing) {
+      let settle = () => {};
+      const gone = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      overlay.closing = { gone, settle };
+      overlay.close();
+    }
+    return overlay.closing.gone;
+  }
+
   return {
     register(close) {
-      const overlay = { close };
+      const overlay: OpenOverlay = { close, closing: null };
       open.add(overlay);
       return () => {
         open.delete(overlay);
-        closing.get(overlay)?.();
-        closing.delete(overlay);
+        overlay.closing?.settle();
       };
     },
     dismissAll() {
       // An overlay is gone in the commit that unregisters it. That commit can also move focus, such
       // as a web modal handing it back to the button that opened it.
-      return Promise.all(
-        [...open].map(
-          (overlay) =>
-            new Promise<void>((gone) => {
-              closing.set(overlay, gone);
-              overlay.close();
-            }),
-        ),
-      ).then(() => undefined);
+      return Promise.all([...open].map(dismiss)).then(() => undefined);
     },
   };
 }

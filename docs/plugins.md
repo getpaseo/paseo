@@ -723,9 +723,13 @@ when not revealed. Sheets, menus, pickers and modals the composer opens over its
 against `revealed`: `takeInputFocus` closes them through the `OverlayDismissalScope` in
 `components/ui/overlay-dismissal.tsx`, and places the cursor only after the commit that removes
 them. A web modal hands focus back to the button that opened it in that commit, so placing the
-cursor earlier loses it. `AdaptiveModalSheet`, `MenuRoot`, `Combobox` and `Modal` (through its
-`onRequestClose`) register while open, and their close must close; any other surface a composer
-opens must call `useDismissibleOverlay`. The agent panel opens the scope around its whole chat
+cursor earlier loses it. The overlay primitives register while open: every controlled bottom
+sheet through `useIsolatedBottomSheetVisibility`, `AdaptiveModalSheet`'s desktop dialog, `MenuRoot`,
+`Combobox`, and `Modal` through its `onRequestClose`. Their close must close; a surface built on none
+of them must call `useDismissibleOverlay`. Overlapping requests share each overlay's close, and the
+latest request places the cursor while the earlier ones settle with it. A native input reports
+focus synchronously and refuses it while not editable, such as during dictation, so the native
+branch checks `isFocused()` instead of trusting the call. The agent panel opens the scope around its whole chat
 because the tracks above the composer render outside `Composer`, and the composer's own scope
 joins it. `toPluginComposer` clears the Command Center's focus restore, which would
 otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so

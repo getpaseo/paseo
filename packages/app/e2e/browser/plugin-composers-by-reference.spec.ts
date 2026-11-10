@@ -4,6 +4,7 @@ import {
   withComposerToolsExample,
   withPluginFocusingAComposer,
   withPluginFocusingASubagent,
+  withPluginFocusingAnAgentWithContextUsage,
   withPluginHoldingNewWorkspaceComposer,
   withPluginWritingToAnotherWorkspace,
 } from "../support/helpers/plugin-composers-by-reference";
@@ -146,6 +147,27 @@ test("focus closes an image preview the composer opened over itself", async ({ p
     await author.previewAttachedImage();
     await author.expectHeldComposerFocusResult("focused");
     await author.expectHeldComposerReadyToType();
+  });
+});
+
+test("overlapping focus calls end at the later selection while a preview closes", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await withPluginHoldingNewWorkspaceComposer(page, async (author) => {
+    await author.openNewWorkspace();
+    await author.typeInHeldComposer("HELLO");
+    await author.previewAttachedImage();
+    await author.expectOverlappingFocusesKeepTheLatestSelection();
+  });
+});
+
+test("focus closes the context usage sheet on a phone", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingAnAgentWithContextUsage(page, async (author) => {
+    await author.openContextUsageOnPhone();
+    await author.focusAgent();
+    await author.expectReadyToType();
   });
 });
 

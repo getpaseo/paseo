@@ -655,7 +655,9 @@ export function AdaptiveModalSheet({
   const isMobile = useIsCompactFormFactor();
   const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
-  useDismissibleOverlay(visible, onClose);
+  const isSheet = isMobile || !isWeb;
+  // The sheet registers itself; the desktop dialog does not use it.
+  useDismissibleOverlay(visible && !isSheet, onClose);
   const footerView = useMemo(
     () => (footer ? <SheetFooter style={footerContainerStyle}>{footer}</SheetFooter> : null),
     [footer, footerContainerStyle],
@@ -670,7 +672,7 @@ export function AdaptiveModalSheet({
 
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
-    isEnabled: isMobile || !isWeb,
+    isEnabled: isSheet,
     onClose,
   });
   const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
