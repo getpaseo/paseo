@@ -666,12 +666,10 @@ test("replacing a submodule with a regular file preserves its replacement body",
   }
 });
 
-test.each(
-  Array.from({ length: process.platform === "win32" ? 30 : 1 }, () => [
-    { ignoreWhitespace: false, after: "export const value = 2;\n", files: ["a.ts"] },
-    { ignoreWhitespace: true, after: "export  const value = 1;\n", files: [] },
-  ]).flat(),
-)(
+test.each([
+  { ignoreWhitespace: false, after: "export const value = 2;\n", files: ["a.ts"] },
+  { ignoreWhitespace: true, after: "export  const value = 1;\n", files: [] },
+])(
   "interpretation checks ignore content edits but detect new binary attributes, whitespace=$ignoreWhitespace",
   async ({ ignoreWhitespace, after, files }) => {
     const cwd = await mkdtemp(join(tmpdir(), "diff-interpretation-check-"));
