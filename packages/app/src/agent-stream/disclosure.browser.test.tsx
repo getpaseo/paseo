@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
 import { PlanCard } from "@/components/plan-card";
 import { MessagePreview } from "@/components/user-message";
+import { createUserMessageExpansion } from "@/components/user-message/expansion";
+import { UserMessageExpansionContext } from "@/components/user-message/expansion-context";
 import { DisclosureRow } from "./disclosure";
 import type { DisclosureTriggerEdge, StreamViewportHandle } from "./strategy";
 
@@ -72,26 +74,19 @@ const view = () => within(container);
 
 const preLine = { whiteSpace: "pre-line" } as const;
 
-async function waitForLayout() {
-  await act(async () => {
-    for (let frame = 0; frame < 2; frame += 1) {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-  });
-}
-
 describe("timeline disclosures hold their row", () => {
-  it("routes user message show more and show less through the row's hold", async () => {
+  it("routes user message show more and show less through the row's hold", () => {
     const longText = Array.from({ length: 60 }, (_, line) => `Line ${line + 1}`).join("\n");
+    const expansion = createUserMessageExpansion();
     const holds = mountRow(
       "message-1",
       () => view().queryByRole("button", { name: "Show less" }) !== null,
-      <MessagePreview>
-        <span style={preLine}>{longText}</span>
-      </MessagePreview>,
+      <UserMessageExpansionContext.Provider value={expansion}>
+        <MessagePreview itemId="message-1">
+          <span style={preLine}>{longText}</span>
+        </MessagePreview>
+      </UserMessageExpansionContext.Provider>,
     );
-    // The preview learns it overflows from its first layout.
-    await waitForLayout();
 
     act(() => view().getByRole("button", { name: "Show more" }).click());
     expect(view().getByRole("button", { name: "Show less" })).toBeTruthy();
