@@ -17,9 +17,9 @@ export function ForgeShorthandProvider({
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
   children: ReactNode;
-  serverId: string;
+  serverId: string | undefined;
 }) {
-  const host = useClientForgeHost(serverId);
+  const host = useClientForgeHost(serverId ?? "");
   const value = useMemo(
     () => createForgeShorthand({ forge, remoteUrl }, host),
     [forge, remoteUrl, host],

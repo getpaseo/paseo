@@ -3,6 +3,7 @@ import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/util
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
 import { matchCommandLink } from "@/agent-commands";
+import { BUILTIN_CLIENT_FORGE_HOST } from "@/git/client-forge-registry";
 import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
@@ -445,10 +446,13 @@ it("lets the engine own code boundaries while classifying candidate values", asy
 });
 
 it("recognizes forge references in prose but not in code, links or paths", async () => {
-  const shorthand = createForgeShorthand({
-    forge: "gitlab",
-    remoteUrl: "git@gitlab.com:g/p.git",
-  })!;
+  const shorthand = createForgeShorthand(
+    {
+      forge: "gitlab",
+      remoteUrl: "git@gitlab.com:g/p.git",
+    },
+    BUILTIN_CLIENT_FORGE_HOST,
+  )!;
   const source = [
     "Fixed in #12 and !13, see g/sub/q#14 and https://example.com/a#15.",
     "`#16` and [#17](https://example.com) and src/app/index.ts and src/a/b/c#18",

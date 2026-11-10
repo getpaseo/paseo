@@ -1464,7 +1464,7 @@ describe("plugin command shortcuts", () => {
 
     const result = resolveShortcut({
       event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
-      context: { isMac: false, isDesktop: true },
+      context: { isMac: false, usesDesktopBindings: true },
       bindings,
     });
 
@@ -1481,7 +1481,7 @@ describe("plugin command shortcuts", () => {
 
     const result = resolveShortcut({
       event: { key: "t", code: "KeyT", ctrlKey: true, shiftKey: true },
-      context: { isMac: false, isDesktop: true },
+      context: { isMac: false, usesDesktopBindings: true },
       bindings,
     });
 
@@ -1493,7 +1493,7 @@ describe("plugin command shortcuts", () => {
 
     const result = resolveShortcut({
       event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
-      context: { isMac: false, isDesktop: true, commandCenterOpen: true },
+      context: { isMac: false, usesDesktopBindings: true, commandCenterOpen: true },
       bindings,
     });
 
@@ -1506,14 +1506,14 @@ describe("plugin command shortcuts", () => {
     expect(
       resolveShortcut({
         event: { key: "u", code: "KeyU", ctrlKey: true, shiftKey: true },
-        context: { isMac: false, isDesktop: true },
+        context: { isMac: false, usesDesktopBindings: true },
         bindings: rebound,
       }).match?.action,
     ).toBe("plugin.command");
     expect(
       resolveShortcut({
         event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
-        context: { isMac: false, isDesktop: true },
+        context: { isMac: false, usesDesktopBindings: true },
         bindings: rebound,
       }).match,
     ).toBeNull();
@@ -1523,7 +1523,7 @@ describe("plugin command shortcuts", () => {
     expect(
       resolveShortcut({
         event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
-        context: { isMac: false, isDesktop: true },
+        context: { isMac: false, usesDesktopBindings: true },
         bindings: unassigned,
       }).match,
     ).toBeNull();

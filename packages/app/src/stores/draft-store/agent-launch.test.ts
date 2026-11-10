@@ -52,7 +52,12 @@ describe("draft-store agent launch metadata", () => {
       draft: { text: "seed prompt", attachments: [] },
       metadata,
     });
+    for (const draftKey of [DRAFT_KEY, "draft:host-1:plain"]) {
+      store.updateDraftInput({ draftKey, update: () => ({ text: "", attachments: [] }) });
+    }
     const drafts = useDraftStore.getState().drafts;
+    expect(drafts[DRAFT_KEY]).toMatchObject({ lifecycle: "active", agentLaunch: metadata });
+    expect(drafts["draft:host-1:plain"]?.lifecycle).toBe("abandoned");
     expect(keepsEmptiedDraftBound(drafts[DRAFT_KEY])).toBe(true);
     expect(keepsEmptiedDraftBound(drafts["draft:host-1:plain"])).toBe(false);
     expect(keepsEmptiedDraftBound(undefined)).toBe(false);

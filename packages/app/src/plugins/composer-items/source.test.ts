@@ -47,6 +47,7 @@ function plugin(): InstalledPlugin {
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
+    forgeClientProviders: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

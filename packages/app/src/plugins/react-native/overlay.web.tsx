@@ -31,6 +31,7 @@ export function Overlay({
     [onClose],
   );
   const setScope = useOverlayRegistration({
+    keys: ["Escape"],
     active: open,
     layer,
     onKeyDown: handleKeyDown,

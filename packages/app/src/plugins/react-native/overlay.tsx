@@ -30,7 +30,7 @@ export function Overlay({
     },
     [onClose],
   );
-  useOverlayRegistration({ active: open, layer, onKeyDown: handleKeyDown });
+  useOverlayRegistration({ keys: ["Escape"], active: open, layer, onKeyDown: handleKeyDown });
   return (
     <Modal
       visible={open}

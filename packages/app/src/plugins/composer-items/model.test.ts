@@ -33,6 +33,7 @@ function installed(): InstalledPlugin {
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
+    forgeClientProviders: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
