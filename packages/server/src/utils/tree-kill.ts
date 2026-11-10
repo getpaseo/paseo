@@ -117,10 +117,7 @@ export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals)
 // its own session called setsid() to detach (daemons, `spawn({ detached: true })`),
 // so it and its subtree are left out. Process groups are not the boundary: shell
 // job control gives each pipeline its own group inside the same session.
-export function selectAttachedProcessTree(
-  table: readonly ProcessTableEntry[],
-  rootPid: number,
-): number[] {
+function selectAttachedProcessTree(table: readonly ProcessTableEntry[], rootPid: number): number[] {
   const childrenByParent = new Map<number, ProcessTableEntry[]>();
   for (const entry of table) {
     if (entry.pid === rootPid) continue;
@@ -196,18 +193,29 @@ async function readLinuxProcessTable(): Promise<ProcessTableEntry[] | null> {
     return null;
   }
 
-  const entries = await Promise.all(
-    names
-      .filter((name) => /^\d+$/.test(name))
-      .map(async (name) => {
+  const pids = names.filter((name) => /^\d+$/.test(name));
+  const table: ProcessTableEntry[] = [];
+  // Limit simultaneous file descriptors on hosts with large process tables.
+  for (let index = 0; index < pids.length; index += 32) {
+    const entries = await Promise.all(
+      pids.slice(index, index + 32).map(async (name) => {
         try {
-          return parseProcStat(await readFile(`/proc/${name}/stat`, "utf8"));
-        } catch {
-          return null;
+          const entry = parseProcStat(await readFile(`/proc/${name}/stat`, "utf8"));
+          if (!entry) throw new Error("Invalid process stat");
+          return entry;
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code === "ENOENT" ||
+            (error as NodeJS.ErrnoException).code === "ESRCH"
+          )
+            return null;
+          throw error;
         }
       }),
-  );
-  const table = entries.filter((entry): entry is ProcessTableEntry => entry !== null);
+    ).catch(() => null);
+    if (!entries) return null;
+    table.push(...entries.filter((entry): entry is ProcessTableEntry => entry !== null));
+  }
   return table.length > 0 ? table : null;
 }
 

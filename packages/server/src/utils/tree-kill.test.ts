@@ -1,18 +1,22 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createTreeKillTerminator,
   parseProcStat,
   parsePsProcessTable,
   readProcessTable,
-  selectAttachedProcessTree,
   terminateWithTreeKill,
   type ProcessTableEntry,
   type TreeKillTarget,
 } from "./tree-kill.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...original, readdir: vi.fn(original.readdir), readFile: vi.fn(original.readFile) };
+});
 
 const pollIntervalMs = 50;
 
@@ -413,20 +417,43 @@ describe("createTreeKillTerminator", () => {
   });
 });
 
-describe("selectAttachedProcessTree", () => {
-  test("prunes session leaders and their subtrees", () => {
-    expect(selectAttachedProcessTree(fakeTable, 100)).toEqual([100, 110, 111]);
-  });
-
-  test("keeps a root that leads its own session", () => {
-    const table = fakeTable.map((entry) =>
+describe("session boundaries", () => {
+  test("keeps a root that leads its own session", async () => {
+    const tree = new FakeProcessTree();
+    tree.table = fakeTable.map((entry) =>
       entry.pid === 100 ? { ...entry, sessionLeader: true } : entry,
     );
-    expect(selectAttachedProcessTree(table, 100)).toEqual([100, 110, 111]);
+    tree.exitOn = "SIGTERM";
+    await tree.terminate(tree.target, { gracefulTimeoutMs: 50 });
+    expect(tree.signalled("SIGTERM")).toEqual([100, 110, 111]);
   });
 
-  test("returns the root alone when it is missing from the table", () => {
-    expect(selectAttachedProcessTree(fakeTable, 999)).toEqual([999]);
+  test("signals the root when it is missing from the table", async () => {
+    const tree = new FakeProcessTree();
+    tree.table = fakeTable.filter((entry) => entry.ppid !== 100 && entry.pid !== 100);
+    tree.exitOn = "SIGTERM";
+    await tree.terminate(tree.target, { gracefulTimeoutMs: 50 });
+    expect(tree.signalled("SIGTERM")).toEqual([100]);
+  });
+});
+
+describe.runIf(process.platform === "linux")("Linux process table failures", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  test.each(["EMFILE", "EACCES"])("rejects a partial table on %s", async (code) => {
+    vi.mocked(readdir).mockResolvedValueOnce(["100", "101"] as never);
+    vi.mocked(readFile)
+      .mockImplementationOnce(async () => "100 (agent) S 1 100 100")
+      .mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+    expect(await readProcessTable()).toBeNull();
+  });
+
+  test.each(["ENOENT", "ESRCH"])("ignores a process that vanished with %s", async (code) => {
+    vi.mocked(readdir).mockResolvedValueOnce(["100", "101"] as never);
+    vi.mocked(readFile)
+      .mockImplementationOnce(async () => "100 (agent) S 1 100 100")
+      .mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+    expect(await readProcessTable()).toEqual([{ pid: 100, ppid: 1, sessionLeader: true }]);
   });
 });
 
