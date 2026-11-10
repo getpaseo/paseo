@@ -97,6 +97,25 @@ describe("pull request timeline message schemas", () => {
     });
   });
 
+  test("fills the whole default payload when a response has none", () => {
+    const parsed = PullRequestTimelineResponseSchema.parse({
+      type: "pull_request_timeline_response",
+    });
+
+    expect(parsed).toEqual({
+      type: "pull_request_timeline_response",
+      payload: {
+        cwd: "",
+        prNumber: null,
+        items: [],
+        truncated: false,
+        error: null,
+        requestId: "",
+        githubFeaturesEnabled: true,
+      },
+    });
+  });
+
   test("normalizes unknown timeline item kinds to comments", () => {
     const parsed = PullRequestTimelineResponseSchema.parse({
       type: "pull_request_timeline_response",

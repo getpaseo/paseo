@@ -6280,7 +6280,6 @@ export const PullRequestTimelineResponseSchema = z.object({
       // daemon floor is >= v0.2.0.
       authState: ForgeAuthStateSchema,
     })
-    .optional()
     .prefault({}),
 });
 
