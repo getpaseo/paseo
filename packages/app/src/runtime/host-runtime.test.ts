@@ -5230,3 +5230,34 @@ it.each(["directTcp"] as const)(
     }
   },
 );
+
+it("gives a re-paired client the saved device credential instead of minting", async () => {
+  const connection: HostConnection = {
+    id: "direct:fixture",
+    type: "directTcp",
+    endpoint: "localhost:7777",
+  };
+  const saved = { id: "dc_saved", secret: "saved-secret" };
+  const host = {
+    ...makeHost({ connections: [connection], preferredConnectionId: connection.id }),
+    deviceCredential: saved,
+  };
+  const clients: FakeDaemonClient[] = [];
+  const deps = makeDeps({}, clients);
+  const originalCreate = deps.createClient;
+  deps.createClient = (input) => {
+    const client = originalCreate(input);
+    const fake = clients[clients.length - 1]!;
+    fake.deviceCredentials = true;
+    fake.credentialPermissions = DAEMON_PERMISSIONS;
+    return client;
+  };
+  const controller = new HostRuntimeController({ host, deps });
+  try {
+    await controller.activateConnection({ connectionId: connection.id });
+    await vi.waitFor(() => expect(clients[0]!.savedDeviceCredential).toEqual(saved));
+    expect(clients[0]!.issuedCredentials).toBe(0);
+  } finally {
+    await controller.stop();
+  }
+});

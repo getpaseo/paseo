@@ -270,6 +270,10 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
         <Button variant="outline" leftIcon={props.copied ? Check : Copy} onPress={props.onCopy}>
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
+        {/* Each scan consumes the pairing token; a new QR pairs the next device. */}
+        <Button variant="outline" leftIcon={RotateCw} onPress={props.onRetry}>
+          {t("pairing.device.newQr")}
+        </Button>
       </View>
       <Alert size="sm" variant="warning" description={t("pairing.device.securityWarning")} />
     </View>

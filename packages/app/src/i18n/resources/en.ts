@@ -1992,6 +1992,7 @@ export const en = {
       securityWarning:
         "Treat this pairing link like a password. Anyone with it can access this daemon.",
       qrUnavailable: "QR code unavailable.",
+      newQr: "New QR",
       qrAccessibility: "Pairing QR code",
       retry: "Retry",
       copy: "Copy",

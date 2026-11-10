@@ -2000,6 +2000,7 @@ export const ru: TranslationResources = {
       securityWarning:
         "Обращайтесь с этой ссылкой для сопряжения как с паролем. Любой, у кого она есть, может получить доступ к этому демону.",
       qrUnavailable: "QR-код недоступен.",
+      newQr: "Новый QR",
       qrAccessibility: "QR-код сопряжения",
       retry: "Повторить попытку",
       copy: "Копировать",

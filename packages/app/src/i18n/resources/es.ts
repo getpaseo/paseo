@@ -2015,6 +2015,7 @@ export const es: TranslationResources = {
       securityWarning:
         "Trata este enlace de emparejamiento como una contraseña. Cualquiera que lo tenga puede acceder a este daemon.",
       qrUnavailable: "CódigoQRno disponible.",
+      newQr: "Nuevo QR",
       qrAccessibility: "Código QR de emparejamiento",
       retry: "Rever",
       copy: "Copiar",

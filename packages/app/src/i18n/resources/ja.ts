@@ -1987,6 +1987,7 @@ export const ja: TranslationResources = {
       securityWarning:
         "このペアリングリンクはパスワードと同様に扱ってください。リンクを知っている人は誰でもこのデーモンにアクセスできます。",
       qrUnavailable: "QRコードが利用できません。",
+      newQr: "新しい QR",
       qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
       copy: "コピー",

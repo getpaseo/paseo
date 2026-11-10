@@ -1943,6 +1943,7 @@ export const zhCN: TranslationResources = {
       hint: "用手机上的 Paseo 扫描此二维码，或复制下方链接。",
       securityWarning: "请像保管密码一样保管此配对链接。任何获得此链接的人都可以访问此守护进程。",
       qrUnavailable: "二维码不可用。",
+      newQr: "新二维码",
       qrAccessibility: "配对二维码",
       retry: "重试",
       copy: "复制",

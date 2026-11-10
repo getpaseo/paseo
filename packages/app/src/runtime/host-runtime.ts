@@ -1584,6 +1584,8 @@ export class HostRuntimeController {
     const canIssue =
       info?.features?.deviceCredentials &&
       DAEMON_PERMISSIONS.every((permission) => info.permissions?.includes(permission));
+    // A client adopted from a pairing-token probe was built without the saved credential.
+    if (this.host.deviceCredential) client.setDeviceCredential(this.host.deviceCredential);
     if (!canIssue || this.host.deviceCredential || this.enrollmentAttempts.has(client)) return;
     this.enrollmentAttempts.add(client);
     try {
