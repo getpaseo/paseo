@@ -292,7 +292,8 @@ export class Session {
           },
         });
         this.finishTools(turn, "completed");
-        this.retire(driver);
+        // Keep this driver. Retiring it respawns agy and replays the historical error.
+        this.state = { type: "idle", driver };
         this.emit({
           type: "session.turn",
           sessionId: this.options.id,

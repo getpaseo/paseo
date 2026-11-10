@@ -588,6 +588,23 @@ it("treats trailing trajectory errors on answered turns as notices and settles c
   });
 });
 
+it("keeps the same stream-json process after an answered trailing trajectory error", async () => {
+  const h = await harness();
+  await h.open();
+  const first = await h.completed(await h.prompt("STALE_ERROR"));
+  const second = await h.completed(await h.prompt("HELLO AGAIN"));
+  expect(first).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(second).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(
+    h.events.filter(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toHaveLength(1);
+  expect((await h.records()).filter((entry) => entry.args?.includes("stream-json"))).toHaveLength(
+    1,
+  );
+});
+
 it("fails turns when an error result arrives without an answer", async () => {
   const h = await harness();
   await h.open();
