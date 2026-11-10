@@ -977,6 +977,13 @@ export class AgentManager {
     this.mcpBaseUrl = url;
   }
 
+  beginShutdownTracking(): void {
+    this.shuttingDown = true;
+    for (const agent of this.agents.values()) {
+      this.captureRunningAgentAtShutdown(agent);
+    }
+  }
+
   prepareForShutdown(): void {
     this.shuttingDown = true;
     this.acceptingAgentRegistrations = false;

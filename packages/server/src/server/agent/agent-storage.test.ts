@@ -390,6 +390,32 @@ describe("AgentStorage", () => {
     expect(updatedRecord?.lastStatus).toBe("running");
   });
 
+  test("applySnapshot preserves resumeOnStartup during shutdown across idle transitions", async () => {
+    const agentId = "agent-shutdown-recovery";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+      }),
+    );
+
+    const record = await storage.get(agentId);
+    expect(record).not.toBeNull();
+    await storage.upsert({ ...record!, resumeOnStartup: true });
+
+    storage.prepareForShutdown();
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "idle",
+      }),
+    );
+
+    const afterShutdownSnapshot = await storage.get(agentId);
+    expect(afterShutdownSnapshot?.resumeOnStartup).toBe(true);
+    expect(afterShutdownSnapshot?.lastStatus).toBe("idle");
+  });
+
   test("applySnapshot preserves archivedAt (soft-delete) status", async () => {
     const agentId = "agent-archived";
     await storage.applySnapshot(

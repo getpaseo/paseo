@@ -136,6 +136,7 @@ export class AgentStorage {
   private readonly promptTimeByAgent = new Map<string, string>();
   private readonly promptTimes = new Map<string, string>();
   private loaded = false;
+  private shuttingDown = false;
   private baseDir: string;
   private loadPromise: Promise<void> | null = null;
   private logger: Logger;
@@ -143,6 +144,10 @@ export class AgentStorage {
   constructor(baseDir: string, logger: Logger) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+  }
+
+  prepareForShutdown(): void {
+    this.shuttingDown = true;
   }
 
   async initialize(): Promise<void> {
@@ -156,9 +161,8 @@ export class AgentStorage {
 
   async listActive(options?: { includeArchived?: boolean }): Promise<StoredAgentRecord[]> {
     await this.load();
-    return Array.from(
-      options?.includeArchived ? this.cache.keys() : this.activeIds,
-      (id) => this.cache.get(id)!,
+    return Array.from(options?.includeArchived ? this.cache.keys() : this.activeIds, (id) =>
+      this.cache.get(id)!,
     );
   }
 
@@ -409,8 +413,11 @@ export class AgentStorage {
       }
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
-      record.resumeOnStartup =
-        existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+      if (existing?.resumeOnStartup) {
+        record.resumeOnStartup = this.shuttingDown
+          ? true
+          : agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+      }
       return record;
     });
   }

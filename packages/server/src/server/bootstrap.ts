@@ -1982,11 +1982,16 @@ export async function createPaseoDaemon(
     scriptHealthMonitor.stop();
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
+    // Start shutdown tracking before draining messages so any in-flight
+    // turns or message-triggered cancellations are remembered, while
+    // keeping registrations open so message delivery can resume persisted agents.
+    agentManager.beginShutdownTracking();
+    agentStorage.prepareForShutdown();
     wsServer?.prepareForShutdown();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
+    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
