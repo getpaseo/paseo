@@ -1257,6 +1257,44 @@ test("steers a send that arrives while the previous turn is still starting", asy
   }
 });
 
+test("an aborted wait ends while the provider is still starting the turn", async () => {
+  const startHeld = deferred<void>();
+  class StalledStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      await startHeld.promise;
+      throw new Error("start released by the test");
+    }
+  }
+  const session = new StalledStartSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-wait-stalled-start-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await startAgentRun(manager, agent.id, "stalls", logger, {});
+    const controller = new AbortController();
+    const wait = manager.waitForAgentEvent(agent.id, { signal: controller.signal });
+    controller.abort(new Error("wait timeout"));
+    await expect(wait).rejects.toThrow("wait timeout");
+  } finally {
+    startHeld.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("starts its own turn when the previous turn fails to start under a steer send", async () => {
   const startHeld = deferred<void>();
   class FailingFirstStartSession extends SteeringTestSession {

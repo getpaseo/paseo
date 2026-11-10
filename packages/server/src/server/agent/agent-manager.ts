@@ -4261,6 +4261,25 @@ export class AgentManager {
     return chunks.length ? chunks.toReversed().join("") : null;
   }
 
+  /** A provider start has no deadline of its own, so the caller's abort ends the wait for it. */
+  private async waitForForegroundStartUnlessAborted(
+    agentId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    if (!signal) return await this.runs.waitForForegroundStart(agentId);
+    if (signal.aborted) throw createAbortError(signal, "wait_for_agent aborted");
+    let onAbort: () => void = () => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(createAbortError(signal, "wait_for_agent aborted"));
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([this.runs.waitForForegroundStart(agentId), aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
   async waitForAgentEvent(
     agentId: string,
     options?: WaitForAgentOptions,
@@ -4270,7 +4289,7 @@ export class AgentManager {
     }
     // A starting run publishes its running state only once its turn starts. Until then the
     // replayed state below is the idle state before the run, which would end the wait early.
-    await this.runs.waitForForegroundStart(agentId);
+    await this.waitForForegroundStartUnlessAborted(agentId, options?.signal);
     const snapshot = this.getAgent(agentId);
     if (!snapshot) {
       throw new Error(`Agent ${agentId} not found`);
