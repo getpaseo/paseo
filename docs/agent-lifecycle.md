@@ -299,15 +299,18 @@ the record afterwards and promotes to interactive resume if the agent was unarch
 Shutdown must finish before the manager releases runtime ownership; a failed close retains the
 runtime for cleanup and blocks replacement through that close operation.
 
-Authoritative timeline catch-up uses the provider's dedicated history-read operation, which
+Timeline catch-up uses the provider's dedicated history-read operation, which
 materializes history without registering an interactive runtime and must leave both Paseo's
 `archivedAt` and the provider's native archive state unchanged. For Codex, it initializes a
 temporary app-server, reads the persisted thread and child histories, and releases the process before
 returning. It never loads, resumes, or unarchives a native thread, including legacy records whose
 native archive failed. ACP providers replay through `session/load` with no MCP servers and close the
-CLI before returning. The result hydrates only the retained in-memory timeline; it does not seed or
-commit a durable timeline cache. **Unarchive** remains the only transition back to an interactive
-runtime. A provider session can also be archived outside Paseo while its Paseo agent remains active.
+CLI before returning. Existing canonical root rows retain their sequence, timestamps and message
+identities; provider replay restores children and supplies root history only when no canonical root
+exists. The read hydrates retained memory without writing the durable timeline cache. Archived
+snapshots require **Unarchive** to return to an interactive runtime. An unarchived snapshot opened
+while its working directory was missing can resume directly after the directory returns.
+A provider session can also be archived outside Paseo while its Paseo agent remains active.
 Interactive resume repairs that drift through the provider's native unarchive path; dedicated history
 reads never do.
 

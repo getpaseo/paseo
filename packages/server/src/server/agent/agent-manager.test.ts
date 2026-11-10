@@ -8913,14 +8913,29 @@ test("getTimelineRows rejects internal history snapshots", async () => {
   }
 });
 
-test("dedicated history reads use only the in-memory timeline", async () => {
+test("dedicated history preserves committed root identities and restores provider children", async () => {
   const agentId = "00000000-0000-4000-8000-000000000119";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-memory-history-"));
   const durableTimelineStore = new RecordingTimelineStore();
-  await durableTimelineStore.appendCommitted(agentId, {
-    type: "assistant_message",
-    text: "durable history",
-  });
+  await durableTimelineStore.appendCommitted(
+    agentId,
+    {
+      type: "user_message",
+      text: "original prompt",
+      clientMessageId: "original-client-message",
+      messageId: "original-provider-message",
+    },
+    { timestamp: "2026-10-01T00:00:00.000Z" },
+  );
+  await durableTimelineStore.appendCommitted(
+    agentId,
+    {
+      type: "assistant_message",
+      text: "durable history",
+    },
+    { timestamp: "2026-10-01T00:00:01.000Z" },
+  );
+  const committedRows = await durableTimelineStore.getCommittedRows(agentId);
   const client = new (class extends TestAgentClient {
     async readSessionHistory() {
       return {
@@ -8929,6 +8944,16 @@ test("dedicated history reads use only the in-memory timeline", async () => {
             type: "timeline" as const,
             provider: "codex" as const,
             item: { type: "assistant_message" as const, text: "memory-only history" },
+          },
+          {
+            type: "provider_subagent" as const,
+            provider: "codex" as const,
+            event: {
+              type: "upsert" as const,
+              id: "restored-history-child",
+              title: "History child",
+              status: "completed" as const,
+            },
           },
         ],
         coverage: { kind: "complete" as const },
@@ -8949,24 +8974,31 @@ test("dedicated history reads use only the in-memory timeline", async () => {
       {},
     );
 
-    expect(await manager.getLastAssistantMessage(agentId)).toEqual("memory-only history");
+    expect(await manager.getLastAssistantMessage(agentId)).toEqual("durable history");
     const rowsBeforeFlush = await manager.getTimelineRows(agentId);
-    expect(rowsBeforeFlush).toMatchObject([
-      { item: { type: "assistant_message", text: "memory-only history" } },
+    expect(rowsBeforeFlush).toEqual(committedRows);
+    expect(manager.listProviderSubagents(agentId)).toEqual([
+      expect.objectContaining({
+        id: "restored-history-child",
+        parentAgentId: agentId,
+        status: "completed",
+      }),
     ]);
     await manager.flush();
     expect(await manager.getTimelineRows(agentId)).toEqual(rowsBeforeFlush);
+    expect(await durableTimelineStore.getCommittedRows(agentId)).toEqual(committedRows);
+    expect(durableTimelineStore.writes).toEqual([]);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
 });
 
-test("empty dedicated history does not reuse a stale durable assistant response", async () => {
+test("empty dedicated history preserves the committed root timeline", async () => {
   const agentId = "00000000-0000-4000-8000-000000000120";
   const durableTimelineStore = new RecordingTimelineStore();
   await durableTimelineStore.appendCommitted(agentId, {
     type: "assistant_message",
-    text: "stale response",
+    text: "committed response",
   });
   const client = new (class extends TestAgentClient {
     async readSessionHistory() {
@@ -8980,8 +9012,10 @@ test("empty dedicated history does not reuse a stale durable assistant response"
     agentId,
     {},
   );
-  expect(manager.getTimeline(agentId)).toEqual([]);
-  expect(await manager.getLastAssistantMessage(agentId)).toBeNull();
+  expect(manager.getTimeline(agentId)).toEqual([
+    { type: "assistant_message", text: "committed response" },
+  ]);
+  expect(await manager.getLastAssistantMessage(agentId)).toBe("committed response");
 });
 
 test("dedicated history expands every entry of a batched agent notification", async () => {
