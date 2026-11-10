@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   buildSelfNodeCommand,
   createExternalCommandProcessEnv,
@@ -101,6 +101,17 @@ describe("paseo env contract", () => {
     expect(command.env.PASEO_DESKTOP_MANAGED).toBeUndefined();
     expect(command.env[PASEO_NODE_ENV]).toBeUndefined();
     expect(command.env.PASEO_SUPERVISED).toBeUndefined();
+  });
+
+  test("builds self node command env from the given env, not the daemon env", () => {
+    vi.stubEnv("PASEO_TEST_DAEMON_ONLY", "daemon");
+    try {
+      const command = buildSelfNodeCommand(["script.js"], { CUSTOM: "value", REMOVED: undefined });
+
+      expect(command.env).toEqual({ CUSTOM: "value", [ELECTRON_RUN_AS_NODE]: "1" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("does not add Electron node mode for non-execPath commands", () => {
