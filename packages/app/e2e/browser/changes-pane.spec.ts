@@ -306,6 +306,24 @@ test("streamed Changes shows the tree before completion and applies a one-file r
   await page.screenshot({ path: testInfo.outputPath("refreshed.png") });
 });
 
+test("reopening compact Changes keeps the painted diff while it resubscribes", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  const stream = await holdDiffCompletion(page);
+  const explorer = await openCompactChanges(page, workspace);
+  stream.finish();
+  const firstFile = explorer.getByTestId("diff-file-0");
+  await expect(firstFile).toBeVisible({ timeout: 30_000 });
+  const painted = await firstFile.getAttribute("aria-label");
+
+  await explorer.getByTestId("workspace-tab-files").click();
+  stream.hold();
+  await explorer.getByTestId("workspace-tab-changes_tree").click();
+  await expect.poll(() => stream.held, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  await expect(firstFile).toHaveAccessibleName(painted ?? "");
+  stream.finish();
+});
+
 async function createLargeStreamedWorkspace(): Promise<DirtyWorkspace> {
   const workspace = await createWorkspaceWithManyTinyDiffs(252);
   await Promise.all(
@@ -370,6 +388,12 @@ async function holdDiffCompletion(page: Page) {
     },
     get completed() {
       return completed;
+    },
+    get held() {
+      return completions.length;
+    },
+    hold: () => {
+      holding = true;
     },
     finish: () => {
       holding = false;
