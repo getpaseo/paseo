@@ -106,6 +106,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentResumeSessionOptions,
+  type AgentSessionConfigChange,
   type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
@@ -577,6 +579,24 @@ function assertClaudeThinkingOptionSupported(
   throw new Error(
     `Thinking option '${thinkingOptionId}' is not available for model '${modelId ?? "default"}'`,
   );
+}
+
+// Startup must not launch a removed saved model before the manager can apply a repair.
+// Requested thinking still goes through its setter after mode validation.
+function prepareClaudeStartupConfig(
+  config: AgentSessionConfig,
+  change?: AgentSessionConfigChange,
+): AgentSessionConfig {
+  if (!change) return config;
+  const startup = { ...config };
+  if ("model" in change) startup.model = change.model;
+  if ("thinkingOptionId" in change) {
+    startup.thinkingOptionId = undefined;
+  } else if ("model" in change && startup.thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
+    const resolution = resolveClaudeDisabledThinkingForModel(startup.model);
+    if (!resolution.supported) startup.thinkingOptionId = resolution.fallbackThinkingOptionId;
+  }
+  return startup;
 }
 
 interface ClaudeOptionsLogSummary {
@@ -1648,7 +1668,9 @@ export class ClaudeAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    const claudeConfig = this.assertConfig(config);
+    const claudeConfig = this.assertConfig(
+      prepareClaudeStartupConfig(config, options?.configChange),
+    );
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
@@ -1666,6 +1688,7 @@ export class ClaudeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = coerceSessionMetadata(handle.metadata);
     const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
@@ -1677,7 +1700,9 @@ export class ClaudeAgentClient implements AgentClient {
       provider: "claude",
       cwd: merged.cwd,
     };
-    const claudeConfig = this.assertConfig(mergedConfig);
+    const claudeConfig = this.assertConfig(
+      prepareClaudeStartupConfig(mergedConfig, options?.configChange),
+    );
     const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
@@ -2485,6 +2510,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId: this.claudeSessionId,
       model: this.lastOptionsModel ?? this.config.model ?? null,
       modeId: this.currentMode ?? null,
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
       ...(this.lastRuntimeModel
         ? {
             extra: {
@@ -2512,6 +2538,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
       modeId: this.currentMode ?? null,
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
     };
 
     if (!this.claudeSessionId) {
@@ -2860,6 +2887,7 @@ class ClaudeAgentSession implements AgentSession {
     } else {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
+    this.cachedRuntimeInfo = null;
     this.queryRestartNeeded = true;
     if (this.activeForegroundTurnId || this.autonomousTurn) {
       return THINKING_APPLIES_NEXT_TURN_NOTICE;

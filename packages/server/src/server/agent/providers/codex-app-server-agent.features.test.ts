@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -15,11 +15,13 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
-import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
+import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
 } from "./codex/test-utils/fake-app-server.js";
+import { asInternals } from "../../test-utils/class-mocks.js";
+import { ensureUnarchivedAgentLoaded } from "../agent-loading.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 const CODEX_PROVIDER = "codex";
@@ -987,4 +989,96 @@ describe("Codex app-server provider controls", () => {
       }),
     });
   });
+});
+
+describe("closed Codex startup model recovery", () => {
+  test.each([
+    { resume: false, model: "gpt-5.4" },
+    { resume: true, model: "gpt-5.4" },
+    { resume: false, model: undefined },
+    { resume: true, model: undefined },
+  ])(
+    "repairs a removed model before startup (resume=$resume, model=$model)",
+    async ({ resume, model }) => {
+      const workdir = mkdtempSync(join(tmpdir(), "codex-startup-repair-"));
+      const logger = createTestLogger();
+      const appServers: FakeCodexAppServer[] = [];
+      const provider = new CodexAppServerAgentClient(logger, undefined, {
+        appServerProcess: {
+          resolvePrefix: async () => ({ command: "codex", args: [] }),
+          spawn: () => {
+            const server = createFakeCodexAppServer({
+              "thread/start": (params) => {
+                if (params.model === "removed-model") throw new Error("removed model");
+                return { thread: { id: "repaired-thread" } };
+              },
+            });
+            appServers.push(server);
+            return server.child;
+          },
+        },
+      });
+      const internals = asInternals<{
+        goalsEnabledPromise: Promise<boolean>;
+        autoReviewEnabledPromise: Promise<boolean>;
+      }>(provider);
+      internals.goalsEnabledPromise = Promise.resolve(false);
+      internals.autoReviewEnabledPromise = Promise.resolve(false);
+      const client: AgentClient = {
+        provider: "codex",
+        capabilities: provider.capabilities,
+        isAvailable: async () => true,
+        fetchCatalog: async () => ({ models: [], modes: [] }),
+        createSession: (...args) => provider.createSession(...args),
+        resumeSession: (...args) => provider.resumeSession(...args),
+      };
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      const id = "00000000-0000-4000-8000-0000000000c7";
+      const now = new Date().toISOString();
+      await storage.upsert({
+        id,
+        provider: "codex",
+        cwd: workdir,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: null,
+        config: { model: "removed-model", thinkingOptionId: "high" },
+        ...(resume ? { persistence: { provider: "codex", sessionId: "saved-thread" } } : {}),
+      });
+      try {
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: { model },
+        });
+        await manager.flush();
+        expect(manager.getAgent(id)?.config.model).toBe(model);
+        expect((await storage.get(id))?.config?.model).toBe(model);
+        const startup = appServers
+          .flatMap((server) => server.requests())
+          .filter(
+            (request) => request.method === "thread/start" || request.method === "thread/resume",
+          );
+        expect(startup).toHaveLength(1);
+        expect(JSON.stringify(startup)).not.toContain("removed-model");
+        await manager.closeAgent(id);
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(id)?.config.model).toBe(model);
+      } finally {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        for (const server of appServers) server.assertNoErrors();
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
 });
