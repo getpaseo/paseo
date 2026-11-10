@@ -3092,6 +3092,9 @@ export const ja: TranslationResources = {
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
+        setDefault: "新しいセッションのデフォルトに設定",
+        clearDefault: "デフォルトを解除（プロバイダーのデフォルトを使用）",
+        defaultBadge: "デフォルト",
       },
       diagnostic: {
         title: "診断",

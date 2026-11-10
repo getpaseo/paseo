@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import { AlertTriangle, Copy, FileText, Plus, RotateCw, Star, Trash2 } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
@@ -49,11 +50,51 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
   return scored.map((entry) => entry.item);
 }
 
-function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
+function DiscoveredModelRow({
+  model,
+  isDefault,
+  onSetDefault,
+  onClearDefault,
+}: {
+  model: AgentModelDefinition;
+  isDefault: boolean;
+  onSetDefault?: (modelId: string) => void;
+  onClearDefault?: () => void;
+}) {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handlePress = useCallback(() => {
+    if (isDefault) {
+      onClearDefault?.();
+    } else {
+      onSetDefault?.(model.id);
+    }
+  }, [isDefault, model.id, onClearDefault, onSetDefault]);
+  const buttonStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.iconButton,
+      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
+    ],
+    [],
+  );
+  const actionVisible = Boolean(onSetDefault || onClearDefault) && (isHovered || isDefault);
   return (
-    <View style={sheetStyles.modelRow}>
+    <View
+      style={sheetStyles.modelRow}
+      onPointerEnter={isWeb ? handlePointerEnter : undefined}
+      onPointerLeave={isWeb ? handlePointerLeave : undefined}
+    >
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
         {model.label}
+        {isDefault ? (
+          <Text style={sheetStyles.defaultBadgeText}>
+            {" "}
+            {t("settings.providers.models.defaultBadge")}
+          </Text>
+        ) : null}
       </Text>
       <Text
         style={sheetStyles.monoHint}
@@ -67,6 +108,27 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
         <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
           {model.description}
         </Text>
+      ) : null}
+      <View style={sheetStyles.modelRowFiller} />
+      {actionVisible ? (
+        <Pressable
+          onPress={handlePress}
+          hitSlop={8}
+          style={buttonStyle}
+          accessibilityRole="button"
+          accessibilityLabel={
+            isDefault
+              ? t("settings.providers.models.clearDefault")
+              : t("settings.providers.models.setDefault")
+          }
+          testID={`provider-model-default-${model.id}`}
+        >
+          <Star
+            size={theme.iconSize.sm}
+            color={isDefault ? theme.colors.foreground : theme.colors.foregroundMuted}
+            fill={isDefault ? theme.colors.foregroundMuted : "none"}
+          />
+        </Pressable>
       ) : null}
     </View>
   );
@@ -405,6 +467,9 @@ interface ProviderModalBodyProps {
   deletingModelId: string | null;
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
+  defaultModelId: string | null;
+  onSetDefault: (modelId: string) => void;
+  onClearDefault: () => void;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
 
@@ -496,6 +561,9 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     deletingModelId,
     onRefresh,
     onDeleteCustom,
+    defaultModelId,
+    onSetDefault,
+    onClearDefault,
     theme,
   } = props;
 
@@ -544,7 +612,13 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
           />
           <View style={settingsStyles.card}>
             {filteredDiscovered.map((model) => (
-              <DiscoveredModelRow key={model.id} model={model} />
+              <DiscoveredModelRow
+                key={model.id}
+                model={model}
+                isDefault={model.id === defaultModelId}
+                onSetDefault={onSetDefault}
+                onClearDefault={onClearDefault}
+              />
             ))}
           </View>
         </View>
@@ -582,10 +656,45 @@ export function ProviderDiagnosticSheet({
   const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const { preferences, updatePreferences } = useFormPreferences();
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
+
+  const defaultModelId = useMemo(
+    () => preferences.providerPreferences?.[provider]?.model ?? null,
+    [preferences, provider],
+  );
+  const handleSetDefaultModel = useCallback(
+    async (modelId: string) => {
+      try {
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: provider as AgentProvider,
+            updates: { model: modelId },
+          }),
+        );
+      } catch (error) {
+        console.warn("[ProviderDiagnosticSheet] persist default model failed", error);
+      }
+    },
+    [provider, updatePreferences],
+  );
+  const handleClearDefaultModel = useCallback(async () => {
+    try {
+      await updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: provider as AgentProvider,
+          updates: { model: null },
+        }),
+      );
+    } catch (error) {
+      console.warn("[ProviderDiagnosticSheet] clear default model failed", error);
+    }
+  }, [provider, updatePreferences]);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -701,6 +810,9 @@ export function ProviderDiagnosticSheet({
           deletingModelId={deletingModelId}
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
+          defaultModelId={defaultModelId}
+          onSetDefault={handleSetDefaultModel}
+          onClearDefault={handleClearDefaultModel}
           theme={theme}
         />
       </AdaptiveModalSheet>
@@ -806,6 +918,10 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   modelRowFiller: {
     flex: 1,
+  },
+  defaultBadgeText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   emptyState: {
     paddingVertical: theme.spacing[8],
