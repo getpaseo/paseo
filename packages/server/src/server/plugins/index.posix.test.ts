@@ -1080,75 +1080,91 @@ export default function contribute(server: PluginServerContext) {
     await service.stopAllPlugins();
   }, 30_000);
 
-  it.each([false, true])(
-    "cleans a failed update when restoration also fails=%s",
-    async (failRestore) => {
-      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-recovery-"));
-      roots.push(home);
-      const repository = await createPlugin("recovery", "export default () => () => {};\n");
-      for (const args of [
-        ["init", "-b", "main"],
-        ["add", "."],
-        ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial"],
-      ])
-        await runGitCommand(args, { cwd: repository });
-      const running = new Set<string>();
-      let starts = 0;
-      const runtime: TestPluginRuntime = {
-        ...emptyUsageRuntime,
-        catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
-        invoke: async () => undefined,
-        getLogs: () => [],
-        clearLogs: () => undefined,
-        validatePlugin: async () => undefined,
-        startPlugin: async (id) => {
-          starts++;
-          if (starts === 2) throw new Error("candidate activation failed");
-          if (starts === 3 && failRestore) throw new Error("prior activation failed");
-          running.add(id);
-        },
-        stopPluginById: async (id) => running.delete(id),
-        stopAll: async () => running.clear(),
-        subscribe: () => () => undefined,
-        bindPaseoSessionHost: () => undefined,
-      };
-      const service = createService(
-        home,
-        {},
-        { runtime, managedSources: new ManagedPluginSources(home) },
-      );
-      await service.start();
-      const installed = await service.installSource({ source: pathToFileURL(repository).href });
-      await writeFile(path.join(repository, "revision.txt"), "new");
-      for (const args of [
-        ["add", "."],
-        ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "update"],
-      ])
-        await runGitCommand(args, { cwd: repository });
-      const result = await applyReviewedUpdate(service, "recovery");
-      expect(result).toMatchObject([
-        {
-          outcome: "error",
-          error: expect.stringContaining(
-            failRestore ? "restoring previous plugin also failed" : "candidate activation failed",
-          ),
-        },
-      ]);
-      expect(await service.listPlugins()).toMatchObject([
-        {
-          path: installed.path,
-          enabled: true,
-          status: failRestore ? "failed" : "running",
-          installation: installed.installation,
-        },
-      ]);
-      expect(await readdir(path.join(home, "plugins", "recovery"))).toEqual([
-        path.basename(path.dirname(installed.path)),
-      ]);
-      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
-      await service.stopAllPlugins();
+  describe.each([false, true])(
+    "failed update recovery with restoration failure=%s",
+    (failRestore) => {
+      let home: string;
+      let service: PluginService;
+      let installed: Awaited<ReturnType<PluginService["installSource"]>>;
+
+      // Installing the prior revision and publishing an update have their own fixture budget.
+      beforeEach(async () => {
+        home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-recovery-"));
+        roots.push(home);
+        const repository = await createPlugin("recovery", "export default () => () => {};\n");
+        for (const args of [
+          ["init", "-b", "main"],
+          ["add", "."],
+          ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial"],
+        ])
+          await runGitCommand(args, { cwd: repository });
+        const running = new Set<string>();
+        let starts = 0;
+        const runtime: TestPluginRuntime = {
+          ...emptyUsageRuntime,
+          catalog: () => {
+            const entries = [];
+            for (const id of running) entries.push({ id, clientBundle: "bundle" });
+            return entries;
+          },
+          invoke: async () => undefined,
+          getLogs: () => [],
+          clearLogs: () => undefined,
+          validatePlugin: async () => undefined,
+          startPlugin: async (id) => {
+            starts++;
+            if (starts === 2) throw new Error("candidate activation failed");
+            if (starts === 3 && failRestore) throw new Error("prior activation failed");
+            running.add(id);
+          },
+          stopPluginById: async (id) => running.delete(id),
+          stopAll: async () => running.clear(),
+          subscribe: () => () => undefined,
+          bindPaseoSessionHost: () => undefined,
+        };
+        service = createService(
+          home,
+          {},
+          { runtime, managedSources: new ManagedPluginSources(home) },
+        );
+        await service.start();
+        installed = await service.installSource({ source: pathToFileURL(repository).href });
+        await writeFile(path.join(repository, "revision.txt"), "new");
+        for (const args of [
+          ["add", "."],
+          ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "update"],
+        ])
+          await runGitCommand(args, { cwd: repository });
+      });
+
+      afterEach(async () => {
+        await service?.stopAllPlugins();
+      });
+
+      it("cleans the failed update and preserves the prior installation", async () => {
+        const result = await applyReviewedUpdate(service, "recovery");
+        expect(result).toMatchObject([
+          {
+            outcome: "error",
+            error: expect.stringContaining(
+              failRestore ? "restoring previous plugin also failed" : "candidate activation failed",
+            ),
+          },
+        ]);
+        expect(await service.listPlugins()).toMatchObject([
+          {
+            path: installed.path,
+            enabled: true,
+            status: failRestore ? "failed" : "running",
+            installation: installed.installation,
+          },
+        ]);
+        expect(await readdir(path.join(home, "plugins", "recovery"))).toEqual([
+          path.basename(path.dirname(installed.path)),
+        ]);
+        expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      }, 30_000);
     },
-    30_000,
   );
 
   it("disables and removes a plugin without touching its source directory", async () => {
