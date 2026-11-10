@@ -1351,6 +1351,8 @@ export const ar: TranslationResources = {
         archiveWorkspace: "أرشفة مساحة العمل",
         showTabs: "إظهار علامات التبويب",
         hideTabs: "إخفاء علامات التبويب",
+        showSubagents: "إظهار الوكلاء الفرعيين",
+        hideSubagents: "إخفاء الوكلاء الفرعيين",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         archiving: "أرشفة...",
         hiding: "إخفاء...",

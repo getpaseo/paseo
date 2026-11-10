@@ -1381,6 +1381,8 @@ export const fr: TranslationResources = {
         archiveWorkspace: "Archiver l’espace de travail",
         showTabs: "Afficher les onglets",
         hideTabs: "Masquer les onglets",
+        showSubagents: "Afficher les sous-agents",
+        hideSubagents: "Masquer les sous-agents",
         hideFromSidebar: "Masquer de la barre latérale",
         archiving: "Archivage…",
         hiding: "Masquage…",

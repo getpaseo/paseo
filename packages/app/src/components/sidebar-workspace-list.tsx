@@ -156,8 +156,7 @@ import { useSidebarRowItems } from "@/components/sidebar/display-preferences/mod
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { bySizing } from "@/components/ui/control-geometry";
 import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
-import { useSidebarWorkspaceTabCount } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
-import { hasSidebarWorkspaceTabsDisclosure } from "@/components/sidebar/workspace-tabs/model";
+import { useSidebarWorkspaceTabsDisclosureCount } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -665,8 +664,10 @@ function WorkspaceRowRightGroup({
     showShortcut,
   });
   const kebab = useOpenKebabMenuVisibility(showKebabInSlot);
-  const tabCount = useSidebarWorkspaceTabCount(workspace.serverId, workspace.workspaceId);
-  const tabsDisclosureCount = hasSidebarWorkspaceTabsDisclosure(tabCount) ? tabCount : null;
+  const tabsDisclosureCount = useSidebarWorkspaceTabsDisclosureCount(
+    workspace.serverId,
+    workspace.workspaceId,
+  );
 
   return (
     <>

@@ -208,3 +208,40 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
     return rows;
   }, [params.providerParentSubagentId, paseoRows, providerRows]);
 }
+
+/**
+ * Whether an agent has any subagent the track would list, without building the rows. Collapsed
+ * sidebar rows ask this on every store update, so it reuses its answer until the agent maps or
+ * descriptors change, and it reads only what the client already holds: provider subagents
+ * appear once something has fetched or streamed them.
+ */
+export function useHasSubagents(serverId: string, parentAgentId: string | null): boolean {
+  const pendingArchiveIds = usePendingArchiveAgentKeys();
+  const selectPaseoRows = useMemo(
+    () =>
+      parentAgentId
+        ? createSubagentsForParentSelector({ serverId, parentAgentId }, pendingArchiveIds)
+        : null,
+    [serverId, parentAgentId, pendingArchiveIds],
+  );
+  const hasPaseoRows = useSessionStore((state) =>
+    selectPaseoRows ? selectPaseoRows(state).length > 0 : false,
+  );
+  const supported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerSubagents === true,
+  );
+  const nestingSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerSubagentNesting === true,
+  );
+  const hasProviderRows = useProviderSubagentStore((state) => {
+    if (!parentAgentId || !supported) return false;
+    const prefix = `${serverId}\0${parentAgentId}\0`;
+    for (const [key, subagent] of state.descriptors) {
+      if (!key.startsWith(prefix) || state.hiddenFromTrack.has(key)) continue;
+      if (nestingSupported && subagent.parentSubagentId) continue;
+      return true;
+    }
+    return false;
+  });
+  return hasPaseoRows || hasProviderRows;
+}

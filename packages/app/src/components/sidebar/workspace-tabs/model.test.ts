@@ -4,11 +4,14 @@ import {
   EXPLORER_SIDEBAR_PANE_ID,
   normalizeLayout,
 } from "@/stores/workspace-layout-actions";
+import type { SubagentRow } from "@/subagents/select";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   hasSidebarWorkspaceTabsDisclosure,
+  selectNestedSubagentTabIds,
   selectSidebarWorkspaceTabs,
-  toggleExpandedWorkspaceKey,
+  summarizeSidebarWorkspaceTabs,
+  toggleExpandedKey,
 } from "./model";
 
 function tab(tabId: string, target: WorkspaceTabTarget) {
@@ -100,11 +103,11 @@ describe("selectSidebarWorkspaceTabs", () => {
   });
 });
 
-describe("toggleExpandedWorkspaceKey", () => {
+describe("toggleExpandedKey", () => {
   it("expands a collapsed workspace and collapses an expanded one", () => {
-    const expanded = toggleExpandedWorkspaceKey(new Set(), "server:a");
+    const expanded = toggleExpandedKey(new Set(), "server:a");
     expect([...expanded]).toEqual(["server:a"]);
-    expect([...toggleExpandedWorkspaceKey(expanded, "server:a")]).toEqual([]);
+    expect([...toggleExpandedKey(expanded, "server:a")]).toEqual([]);
   });
 });
 
@@ -113,5 +116,81 @@ describe("hasSidebarWorkspaceTabsDisclosure", () => {
     expect(hasSidebarWorkspaceTabsDisclosure(0)).toBe(false);
     expect(hasSidebarWorkspaceTabsDisclosure(1)).toBe(false);
     expect(hasSidebarWorkspaceTabsDisclosure(2)).toBe(true);
+  });
+
+  it("offers a lone agent tab when that agent has subagents to list", () => {
+    expect(hasSidebarWorkspaceTabsDisclosure(1, true)).toBe(true);
+    expect(hasSidebarWorkspaceTabsDisclosure(0, true)).toBe(false);
+  });
+});
+
+describe("summarizeSidebarWorkspaceTabs", () => {
+  const descriptor = (tabId: string, target: WorkspaceTabTarget) => ({
+    key: tabId,
+    tabId,
+    kind: target.kind,
+    target,
+  });
+
+  it("names the agent of a workspace's only tab", () => {
+    const summary = summarizeSidebarWorkspaceTabs({
+      tabs: [descriptor("agent_a", { kind: "agent", agentId: "a" })],
+      activeTabId: "agent_a",
+    });
+    expect(summary).toEqual({ tabCount: 1, soleAgentId: "a" });
+  });
+
+  it("names no agent when the only tab is something else, or there are several", () => {
+    expect(
+      summarizeSidebarWorkspaceTabs({
+        tabs: [descriptor("terminal_t", { kind: "terminal", terminalId: "t" })],
+        activeTabId: null,
+      }),
+    ).toEqual({ tabCount: 1, soleAgentId: null });
+    expect(
+      summarizeSidebarWorkspaceTabs({
+        tabs: [
+          descriptor("agent_a", { kind: "agent", agentId: "a" }),
+          descriptor("agent_b", { kind: "agent", agentId: "b" }),
+        ],
+        activeTabId: null,
+      }),
+    ).toEqual({ tabCount: 2, soleAgentId: null });
+  });
+});
+
+describe("selectNestedSubagentTabIds", () => {
+  const descriptor = (tabId: string, target: WorkspaceTabTarget) => ({
+    key: tabId,
+    tabId,
+    kind: target.kind,
+    target,
+  });
+  const paseoChild = (id: string) =>
+    ({ kind: "paseo", id, address: { serverId: "s", agentId: id } }) as SubagentRow;
+  const providerChild = (parentAgentId: string, id: string) =>
+    ({ kind: "provider", id, parentAgentId }) as SubagentRow;
+
+  const parent = descriptor("agent_p", { kind: "agent", agentId: "p" });
+  const child = descriptor("agent_c", { kind: "agent", agentId: "c" });
+  const providerTab = descriptor("ps_x", {
+    kind: "provider_subagent",
+    parentAgentId: "p",
+    subagentId: "x",
+  });
+  const terminal = descriptor("terminal_t", { kind: "terminal", terminalId: "t" });
+
+  it("nests the tabs of children their parent's list shows", () => {
+    const rows: Record<string, SubagentRow[]> = {
+      p: [paseoChild("c"), providerChild("p", "x")],
+    };
+    expect(
+      selectNestedSubagentTabIds([parent, child, providerTab, terminal], (id) => rows[id] ?? []),
+    ).toEqual(["agent_c", "ps_x"]);
+  });
+
+  it("keeps a child at the top level when its parent has no tab or does not list it", () => {
+    expect(selectNestedSubagentTabIds([child, providerTab], () => [paseoChild("c")])).toEqual([]);
+    expect(selectNestedSubagentTabIds([parent, child], () => [])).toEqual([]);
   });
 });

@@ -1359,6 +1359,8 @@ export const en = {
         archiveWorkspace: "Archive workspace",
         showTabs: "Show tabs",
         hideTabs: "Hide tabs",
+        showSubagents: "Show subagents",
+        hideSubagents: "Hide subagents",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         hiding: "Hiding...",

@@ -2,6 +2,8 @@ import { collectAllPanes, collectAllTabs } from "@/stores/workspace-layout-actio
 import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { getWorkspacePaneDescriptors } from "@/screens/workspace/workspace-pane-state";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { SubagentRow } from "@/subagents/select";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export interface SidebarWorkspaceTabs {
   tabs: WorkspaceTabDescriptor[];
@@ -44,21 +46,91 @@ export function selectSidebarWorkspaceTabs({
   return { tabs, activeTabId };
 }
 
+/** What a collapsed workspace row needs to decide on its disclosure. */
+export interface SidebarWorkspaceTabsSummary {
+  tabCount: number;
+  /** The agent of the workspace's only tab, whose subagents still earn the disclosure. */
+  soleAgentId: string | null;
+}
+
+export const EMPTY_SIDEBAR_WORKSPACE_TABS_SUMMARY: SidebarWorkspaceTabsSummary = {
+  tabCount: 0,
+  soleAgentId: null,
+};
+
+export function summarizeSidebarWorkspaceTabs({
+  tabs,
+}: SidebarWorkspaceTabs): SidebarWorkspaceTabsSummary {
+  const sole = tabs.length === 1 ? tabs[0] : undefined;
+  return {
+    tabCount: tabs.length,
+    soleAgentId: sole?.target.kind === "agent" ? sole.target.agentId : null,
+  };
+}
+
+export function sidebarWorkspaceTabsSummariesEqual(
+  left: SidebarWorkspaceTabsSummary,
+  right: SidebarWorkspaceTabsSummary,
+): boolean {
+  return left.tabCount === right.tabCount && left.soleAgentId === right.soleAgentId;
+}
+
 /**
  * A row only offers its tabs when there is a choice to make: with one tab, opening the
- * workspace already lands on it.
+ * workspace already lands on it, unless that tab is an agent with subagents to list under it.
  */
-export function hasSidebarWorkspaceTabsDisclosure(tabCount: number): boolean {
-  return tabCount > 1;
+export function hasSidebarWorkspaceTabsDisclosure(
+  tabCount: number,
+  soleTabHasSubagents = false,
+): boolean {
+  return tabCount > 1 || (tabCount === 1 && soleTabHasSubagents);
 }
 
 /** Adds the key if absent and removes it if present, returning a new set. */
-export function toggleExpandedWorkspaceKey(
-  expanded: ReadonlySet<string>,
-  workspaceKey: string,
-): ReadonlySet<string> {
+export function toggleExpandedKey(expanded: ReadonlySet<string>, key: string): ReadonlySet<string> {
   const next = new Set(expanded);
-  if (next.has(workspaceKey)) next.delete(workspaceKey);
-  else next.add(workspaceKey);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
   return next;
+}
+
+/** Keys one tab's subagent list within its workspace. */
+export function buildSidebarTabSubagentsKey(workspaceKey: string, tabId: string): string {
+  return `${workspaceKey}\0${tabId}`;
+}
+
+/** Whether a tab target is the tab a subagent row opens. */
+export function isSubagentTarget(target: WorkspaceTabTarget | null, row: SubagentRow): boolean {
+  if (!target) return false;
+  if (row.kind === "paseo") return target.kind === "agent" && target.agentId === row.id;
+  return (
+    target.kind === "provider_subagent" &&
+    target.parentAgentId === row.parentAgentId &&
+    target.subagentId === row.id
+  );
+}
+
+/**
+ * The tabs listed under another agent tab's subagents, which the top level leaves out. Only a
+ * child its parent's list actually shows is nested, so a tab whose row the list hides (an archived
+ * or hidden child) stays reachable at the top level. A tab never nests under itself.
+ */
+export function selectNestedSubagentTabIds(
+  tabs: readonly WorkspaceTabDescriptor[],
+  subagentsOf: (agentId: string) => readonly SubagentRow[],
+): string[] {
+  const nested: string[] = [];
+  const parents = tabs.flatMap((tab) =>
+    tab.target.kind === "agent"
+      ? [{ tabId: tab.tabId, rows: subagentsOf(tab.target.agentId) }]
+      : [],
+  );
+  for (const tab of tabs) {
+    const isChild = parents.some(
+      (parent) =>
+        parent.tabId !== tab.tabId && parent.rows.some((row) => isSubagentTarget(tab.target, row)),
+    );
+    if (isChild) nested.push(tab.tabId);
+  }
+  return nested;
 }

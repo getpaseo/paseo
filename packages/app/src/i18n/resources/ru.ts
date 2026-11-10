@@ -1369,6 +1369,8 @@ export const ru: TranslationResources = {
         archiveWorkspace: "Архивировать рабочее пространство",
         showTabs: "Показать вкладки",
         hideTabs: "Скрыть вкладки",
+        showSubagents: "Показать субагентов",
+        hideSubagents: "Скрыть субагентов",
         hideFromSidebar: "Скрыть на боковой панели",
         archiving: "Архивирование...",
         hiding: "Скрытие...",

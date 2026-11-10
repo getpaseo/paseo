@@ -30,10 +30,6 @@ export const TABS_DISCLOSURE_POINTER_FOOTPRINT = COUNT_WIDTH + POINTER_CHEVRON_B
 /** Touch-only: the width a reserved slot keeps for the disclosure beside the kebab. */
 export const TABS_DISCLOSURE_TOUCH_WIDTH = COUNT_WIDTH + TOUCH_CHEVRON_BOX;
 
-function disclosureStyle({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.button, hovered && styles.buttonHovered];
-}
-
 /** Shows or hides a workspace's open tabs under its sidebar row, with how many there are. */
 export function SidebarWorkspaceTabsDisclosure({
   workspaceKey,
@@ -45,33 +41,76 @@ export function SidebarWorkspaceTabsDisclosure({
   const { t } = useTranslation();
   const expanded = useIsSidebarWorkspaceTabsExpanded(workspaceKey);
   const handlePress = useCallback(() => toggleSidebarWorkspaceTabs(workspaceKey), [workspaceKey]);
+  return (
+    <SidebarCountDisclosure
+      variant="workspace"
+      count={tabCount}
+      expanded={expanded}
+      onPress={handlePress}
+      accessibilityLabel={
+        expanded ? t("sidebar.workspace.actions.hideTabs") : t("sidebar.workspace.actions.showTabs")
+      }
+      testID={`sidebar-workspace-tabs-disclosure-${workspaceKey}`}
+    />
+  );
+}
+
+function workspaceDisclosureStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.button, hovered && styles.buttonHovered];
+}
+
+function tabDisclosureStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.tabButton, hovered && styles.buttonHovered];
+}
+
+/**
+ * A count and a chevron that expand a list under a sidebar row. `workspace` lines up with the
+ * workspace row's kebab and archive button; `tab` sits at the end of a tab row in its list.
+ */
+export function SidebarCountDisclosure({
+  variant,
+  count,
+  expanded,
+  onPress,
+  accessibilityLabel,
+  testID,
+}: {
+  variant: "workspace" | "tab";
+  count: number;
+  expanded: boolean;
+  onPress: () => void;
+  accessibilityLabel: string;
+  testID: string;
+}) {
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
-  const accessibilityValue = useMemo(() => ({ text: String(tabCount) }), [tabCount]);
+  const accessibilityValue = useMemo(() => ({ text: String(count) }), [count]);
   const Chevron = expanded ? ThemedChevronDown : ThemedChevronRight;
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
       <>
         <Text numberOfLines={1} style={hovered ? styles.countHovered : styles.count}>
-          {tabCount}
+          {count}
         </Text>
         <Chevron uniProps={hovered ? iconHoveredProps : iconProps} />
       </>
     ),
-    [Chevron, tabCount],
+    [Chevron, count],
   );
   return (
     <PressHighlight
       hitSlop={4}
-      style={disclosureStyle}
-      onPress={handlePress}
+      style={variant === "workspace" ? workspaceDisclosureStyle : tabDisclosureStyle}
+      onPress={onPress}
       accessibilityRole={isWeb ? undefined : "button"}
       accessibilityState={accessibilityState}
       accessibilityValue={accessibilityValue}
       aria-expanded={expanded}
-      accessibilityLabel={
-        expanded ? t("sidebar.workspace.actions.hideTabs") : t("sidebar.workspace.actions.showTabs")
-      }
-      testID={`sidebar-workspace-tabs-disclosure-${workspaceKey}`}
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
     >
       {renderContent}
     </PressHighlight>
@@ -89,6 +128,19 @@ const styles = StyleSheet.create((theme) => ({
     height: bySizing({ touch: TOUCH_CHEVRON_BOX, pointer: POINTER_CHEVRON_BOX }),
     marginTop: bySizing({ touch: -6, pointer: 0 }),
     marginRight: bySizing({ touch: 0, pointer: POINTER_GAP }),
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: theme.spacing[0.5],
+    borderRadius: 4,
+  },
+  // A tab row has no kebab to line up with: the touch box fills the row's height instead.
+  tabButton: {
+    width: bySizing({
+      touch: TABS_DISCLOSURE_TOUCH_WIDTH,
+      pointer: COUNT_WIDTH + POINTER_CHEVRON_BOX,
+    }),
+    height: bySizing({ touch: TOUCH_CHEVRON_BOX, pointer: POINTER_CHEVRON_BOX }),
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
