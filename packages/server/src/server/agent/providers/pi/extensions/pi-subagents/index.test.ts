@@ -127,6 +127,23 @@ describe("pi-subagents adapter", () => {
   test("tracks a workflow fan-out the parent tool call reports only on disk", async () => {
     const dir = await mkdtemp(join(tmpdir(), "paseo-pi-workflow-"));
     const file = join(dir, "task-1.jsonl");
+    const writeStatus = (state: string, steps: unknown[]) =>
+      writeFile(join(dir, "status.json"), JSON.stringify({ state, steps }));
+    const launch = {
+      callId: "call-flow",
+      toolName: "subagent",
+      args: { workflow: "parallel", args: { tasks: [] } },
+      status: "completed" as const,
+      result: {
+        details: {
+          mode: "workflow",
+          runId: "run-flow",
+          asyncId: "run-flow",
+          asyncDir: dir,
+          results: [],
+        },
+      },
+    };
     const received: AgentStreamEvent[] = [];
     const host = createPiExtensionHost();
     // The store keeps the last upsert per id, so assert the same way instead of event order.
@@ -149,56 +166,43 @@ describe("pi-subagents adapter", () => {
       );
     try {
       host.follow((event) => received.push(event));
-      const launch = host.mapToolCall({
-        callId: "call-flow",
-        toolName: "subagent",
-        args: { workflow: "parallel", args: { tasks: [] } },
-        status: "completed",
-        result: {
-          details: {
-            mode: "workflow",
-            runId: "run-flow",
-            asyncId: "run-flow",
-            asyncDir: dir,
-            results: [],
-          },
-        },
-      });
-      // A workflow launch has no top-level agent/task: the launch itself owns no row.
-      expect(launch).toBeUndefined();
+      // A workflow launch has no top-level agent/task, and owns no row before children exist.
+      expect(host.mapToolCall(launch)).toBeUndefined();
       await writeFile(
         file,
         '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"BEGIN"}]}}\n',
       );
-      await writeFile(
-        join(dir, "status.json"),
-        JSON.stringify({
-          state: "running",
-          steps: [
-            { agent: "worker", label: "task-1", status: "running", sessionFile: file },
-            { agent: "worker", label: "task-2", status: "running" },
-          ],
-        }),
-      );
+      await writeStatus("running", [
+        { agent: "worker", label: "task-1", status: "running", sessionFile: file },
+        { agent: "worker", label: "task-2", status: "running" },
+      ]);
       await expect.poll(() => latest().size).toBe(2);
       expect([...latest()]).toEqual([
         ["call-flow:0", { title: "worker", description: "task-1", status: "running" }],
         ["call-flow:1", { title: "worker", description: "task-2", status: "running" }],
       ]);
       await expect.poll(() => hasChildTimeline(received)).toBe(true);
-      await writeFile(
-        join(dir, "status.json"),
-        JSON.stringify({
-          state: "complete",
-          steps: [
-            { agent: "worker", label: "task-1", status: "completed", sessionFile: file },
-            { agent: "worker", label: "task-2", status: "failed" },
-          ],
-        }),
-      );
+      // A child's own terminal status wins while the run continues: the count drops as they land.
+      await writeStatus("running", [
+        { agent: "worker", label: "task-1", status: "completed", sessionFile: file },
+        { agent: "worker", label: "task-2", status: "running" },
+      ]);
+      await expect.poll(() => latest().get("call-flow:0")?.status).toBe("completed");
+      expect(latest().get("call-flow:1")?.status).toBe("running");
+      await writeStatus("complete", [
+        { agent: "worker", label: "task-1", status: "completed", sessionFile: file },
+        { agent: "worker", label: "task-2", status: "failed" },
+      ]);
       await expect.poll(() => latest().get("call-flow:1")?.status).toBe("failed");
-      expect(latest().get("call-flow:0")?.status).toBe("completed");
+      // Replay has no follow timer, so the mapping itself has to restore what the run wrote.
+      const replay = createPiExtensionHost().mapToolCall(launch);
+      expect(replay?.subagents?.map((row) => [row.id, row.status])).toEqual([
+        ["call-flow:0", "completed"],
+        ["call-flow:1", "failed"],
+      ]);
+      expect(hasChildTimeline(await replay!.hydration)).toBe(true);
     } finally {
+      host.close();
       await rm(dir, { recursive: true, force: true });
     }
   });

@@ -53,10 +53,14 @@ const AsyncStatus = z
   })
   .passthrough();
 
+/** A child's own terminal status wins: a fan-out finishes children one by one. */
 function asyncChildStatus(runState: string, stepStatus?: string) {
+  if (stepStatus === "stopped") return "canceled";
+  if (stepStatus === "failed" || stepStatus === "error") return "failed";
+  if (stepStatus === "completed" || stepStatus === "complete") return "completed";
   if (!["complete", "failed", "stopped"].includes(runState)) return "running";
-  if (runState === "stopped" || stepStatus === "stopped") return "canceled";
-  if (runState === "failed" || stepStatus === "failed" || stepStatus === "error") return "failed";
+  if (runState === "stopped") return "canceled";
+  if (runState === "failed") return "failed";
   return "completed";
 }
 
@@ -81,6 +85,36 @@ export const piSubagents: PiExtension = {
       if (details.asyncDir && call.status !== "failed") {
         asyncRuns.set(details.asyncDir, { owner: call.callId, polling: true });
       }
+    };
+    const readStatus = (dir: string) => {
+      try {
+        return AsyncStatus.safeParse(JSON.parse(readFileSync(join(dir, "status.json"), "utf8")));
+      } catch {
+        return undefined;
+      }
+    };
+    const collectSteps = (
+      owner: string,
+      state: string,
+      steps: z.infer<typeof AsyncStatus>["steps"],
+    ) => {
+      const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
+      const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
+      for (const [index, step] of steps.entries()) {
+        const id = steps.length === 1 ? owner : `${owner}:${index}`;
+        subagents.push({
+          type: "upsert",
+          id,
+          title: step.agent,
+          description: step.label,
+          status: asyncChildStatus(state, step.status),
+        });
+        if (step.sessionFile && !readSessions.has(step.sessionFile)) {
+          readSessions.add(step.sessionFile);
+          childSessions.push({ id, file: step.sessionFile });
+        }
+      }
+      return { subagents, childSessions };
     };
     const collectRows = (
       owner: string,
@@ -138,7 +172,11 @@ export const piSubagents: PiExtension = {
       if (!details.success) return undefined;
       if (details.data.runId) callsByRun.set(details.data.runId, call.callId);
       rememberAsyncRun(details.data, call);
-      return undefined;
+      // Replay never polls: read what the run already wrote so reopening restores its children.
+      const status = details.data.asyncDir ? readStatus(details.data.asyncDir) : undefined;
+      if (!status?.success) return undefined;
+      const mapped = collectSteps(call.callId, status.data.state, status.data.steps);
+      return mapped.subagents.length ? mapped : undefined;
     };
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = Args.safeParse(call.args);
@@ -230,36 +268,18 @@ export const piSubagents: PiExtension = {
         const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
         for (const [dir, run] of asyncRuns) {
           if (!run.polling) continue;
-          let raw: unknown;
-          try {
-            raw = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
-          } catch {
-            continue;
-          }
-          const parsed = AsyncStatus.safeParse(raw);
-          if (!parsed.success) continue;
-          const terminal = ["complete", "failed", "stopped"].includes(parsed.data.state);
-          for (const [index, step] of parsed.data.steps.entries()) {
-            const id = parsed.data.steps.length === 1 ? run.owner : `${run.owner}:${index}`;
-            const status = asyncChildStatus(parsed.data.state, step.status);
-            subagents.push({
-              type: "upsert",
-              id,
-              title: step.agent,
-              description: step.label,
-              status,
-            });
-            if (step.sessionFile && !readSessions.has(step.sessionFile)) {
-              readSessions.add(step.sessionFile);
-              childSessions.push({ id, file: step.sessionFile });
-            }
-          }
-          if (terminal) {
-            if (parsed.data.steps.length === 0) {
+          const parsed = readStatus(dir);
+          if (!parsed?.success) continue;
+          const { state, steps } = parsed.data;
+          const mapped = collectSteps(run.owner, state, steps);
+          subagents.push(...mapped.subagents);
+          childSessions.push(...mapped.childSessions);
+          if (["complete", "failed", "stopped"].includes(state)) {
+            if (steps.length === 0) {
               subagents.push({
                 type: "upsert",
                 id: run.owner,
-                status: parsed.data.state === "complete" ? "completed" : "failed",
+                status: state === "complete" ? "completed" : "failed",
               });
             }
             run.polling = false;
