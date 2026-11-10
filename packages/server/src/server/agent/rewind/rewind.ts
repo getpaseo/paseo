@@ -1,8 +1,13 @@
-import type { AgentSession } from "../agent-sdk-types.js";
+import {
+  RewindNotAppliedError,
+  type AgentSession,
+  type ConversationRewindResult,
+} from "../agent-sdk-types.js";
 
 export type RewindMode = "conversation" | "files" | "both";
 
-export class RewindCapabilityError extends Error {
+/** Thrown before the provider is called, so nothing changed. */
+export class RewindCapabilityError extends RewindNotAppliedError {
   constructor(mode: RewindMode) {
     super(`Provider does not support rewinding ${mode}`);
     this.name = "RewindCapabilityError";
@@ -12,14 +17,13 @@ export class RewindCapabilityError extends Error {
 export async function invokeRewindCapability(
   session: AgentSession,
   input: { messageId: string; mode: RewindMode },
-): Promise<void> {
+): Promise<ConversationRewindResult | void> {
   switch (input.mode) {
     case "conversation":
       if (!session.capabilities.supportsRewindConversation || !session.revertConversation) {
         throw new RewindCapabilityError(input.mode);
       }
-      await session.revertConversation({ messageId: input.messageId });
-      return;
+      return session.revertConversation({ messageId: input.messageId });
     case "files":
       if (!session.capabilities.supportsRewindFiles || !session.revertFiles) {
         throw new RewindCapabilityError(input.mode);
@@ -30,7 +34,20 @@ export async function invokeRewindCapability(
       if (!session.capabilities.supportsRewindBoth || !session.revertBoth) {
         throw new RewindCapabilityError(input.mode);
       }
-      await session.revertBoth({ messageId: input.messageId });
-      return;
+      return session.revertBoth({ messageId: input.messageId });
+  }
+}
+
+/**
+ * The provider may or may not have rewound the conversation. The rewind stays open and prompts are
+ * refused until reloading the agent lets its history settle the outcome.
+ */
+export class RewindOutcomeUnknownError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super(
+      "Paseo could not confirm whether the conversation was rewound. Reload the agent to check, or fork the chat from an earlier message.",
+      options,
+    );
+    this.name = "RewindOutcomeUnknownError";
   }
 }

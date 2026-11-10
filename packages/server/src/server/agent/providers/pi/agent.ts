@@ -40,6 +40,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type ConversationRewindCut,
+  RewindNotAppliedError,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
@@ -1573,16 +1575,25 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
-    if (this.activeTurnId) {
-      throw new Error("Cannot rewind the Pi conversation while a turn is active");
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
+    let targetEntry: PiCapturedEntry;
+    try {
+      if (this.activeTurnId) {
+        throw new Error("Cannot rewind the Pi conversation while a turn is active");
+      }
+      await this.refreshState().catch(() => undefined);
+      await this.requestEntryCapture("rewind");
+      const entry = this.treeUserEntriesById.get(input.messageId);
+      if (!entry) {
+        throw new Error(
+          `Pi rewind target ${input.messageId} was not found in captured tree entries`,
+        );
+      }
+      targetEntry = entry;
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
     }
-    await this.refreshState().catch(() => undefined);
-    await this.requestEntryCapture("rewind");
-    const targetEntry = this.treeUserEntriesById.get(input.messageId);
-    if (!targetEntry) {
-      throw new Error(`Pi rewind target ${input.messageId} was not found in captured tree entries`);
-    }
+    // A failed navigation may still have moved the session, so its error is left unknown.
     await revertPiConversation({
       messageId: input.messageId,
       navigator: {
@@ -1591,6 +1602,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
     this.currentLeafOverrideId = targetEntry.parentId;
     this.activeToolCalls.clear();
+    return { kind: "at_target" };
   }
 
   private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {

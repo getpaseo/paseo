@@ -39,6 +39,8 @@ import {
   type SteerActiveTurnOptions,
   type SteerResult,
   type ToolCallDetail,
+  type ConversationRewindCut,
+  RewindNotAppliedError,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
@@ -1159,17 +1161,21 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
     if (this.activeTurnId) {
-      throw new Error("Cannot rewind the OMP conversation while a turn is active");
+      throw new RewindNotAppliedError("Cannot rewind the OMP conversation while a turn is active");
     }
     const target = input.messageId.trim();
     if (!target) {
-      throw new Error("OMP rewind requires a user message id");
+      throw new RewindNotAppliedError("OMP rewind requires a user message id");
     }
+    // A failed branch call may still have moved the session, so its error is left unknown.
     await this.runtimeSession.branch(target);
-    await this.refreshState();
     this.activeToolCalls.clear();
+    await this.refreshState().catch((error: unknown) => {
+      this.logger.warn({ err: error }, "OMP rewound the conversation but failed to refresh state");
+    });
+    return { kind: "at_target" };
   }
 
   async canStopRuntime(): Promise<boolean> {

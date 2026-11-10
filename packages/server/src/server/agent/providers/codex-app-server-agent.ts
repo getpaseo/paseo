@@ -38,6 +38,8 @@ import {
   type ProviderCatalog,
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
+  type ConversationRewindCut,
+  RewindNotAppliedError,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
@@ -4958,35 +4960,59 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
-    await this.connect();
-    if (!this.client) {
-      throw new Error("Codex client is not initialized");
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
+    let threadBefore: string | null;
+    let client: CodexAppServerClient;
+    try {
+      await this.connect();
+      if (!this.client) {
+        throw new Error("Codex client is not initialized");
+      }
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+      await this.ensureHistoryIndexed();
+      threadBefore = this.currentThreadId;
+      client = this.client;
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
     }
-    if (this.currentThreadId) {
-      await this.ensureThreadLoaded();
-    } else {
-      await this.ensureThread();
-    }
-    await this.ensureHistoryIndexed();
 
-    await revertCodexConversation({
-      client: this.client,
-      threadId: this.currentThreadId,
-      messageId: input.messageId,
-      cwd: this.config.cwd ?? null,
-      model: this.config.model ?? null,
-      serviceTier: this.serviceTier,
-      config: this.buildCodexInnerConfig(),
-      userMessageTurns: this.codexUserMessageTurns(),
-      threadRollbackAvailable: this.threadRollbackAvailable,
-      setThreadId: async (threadId) => {
-        this.currentThreadId = threadId;
-        this.cachedRuntimeInfo = null;
-        this.stagedHistory = await this.readThreadHistory(this.client);
-        this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
-      },
-    });
+    // The rewind forks; the thread it started from stays as it was. It happened once this session
+    // continues the fork.
+    let failure: unknown = null;
+    try {
+      await revertCodexConversation({
+        client,
+        threadId: threadBefore,
+        messageId: input.messageId,
+        cwd: this.config.cwd ?? null,
+        model: this.config.model ?? null,
+        serviceTier: this.serviceTier,
+        config: this.buildCodexInnerConfig(),
+        userMessageTurns: this.codexUserMessageTurns(),
+        threadRollbackAvailable: this.threadRollbackAvailable,
+        setThreadId: async (threadId) => {
+          this.currentThreadId = threadId;
+          this.cachedRuntimeInfo = null;
+          this.stagedHistory = await this.readThreadHistory(client);
+          this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    if (this.currentThreadId === threadBefore) {
+      throw RewindNotAppliedError.from(
+        failure ?? new Error("Codex did not switch to the rewound thread"),
+      );
+    }
+    if (failure) {
+      this.logger.warn({ err: failure }, "Codex rewound the conversation but failed afterwards");
+    }
+    return { kind: "at_target" };
   }
 
   async interrupt(): Promise<void> {

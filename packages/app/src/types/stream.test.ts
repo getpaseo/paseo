@@ -1009,7 +1009,7 @@ describe("stream reducer canonical tool calls", () => {
   });
 
   it("keeps the timeline position on the whole assistant message", () => {
-    const timelineCursor = { epoch: "epoch-1", seq: 42 };
+    const timelineCursor = { epoch: "epoch-1", seq: 42, anchorSeq: 42 };
     const result = applyStreamEvent({
       tail: [],
       head: [],
@@ -1890,7 +1890,7 @@ describe("turn lifecycle events", () => {
       new Date("2025-01-01T15:03:11Z"),
       {
         source: "canonical",
-        timelineCursor: { epoch: "epoch-1", seq: 42 },
+        timelineCursor: { epoch: "epoch-1", seq: 42, anchorSeq: 42 },
       },
     );
 
@@ -1902,7 +1902,11 @@ describe("turn lifecycle events", () => {
     assert.strictEqual(userMessage.messageId, "provider-owned-canonical");
     assert.strictEqual(userMessage.text, "Analyze this");
     assert.strictEqual(userMessage.timestamp.getTime(), submittedTimestamp.getTime());
-    assert.deepStrictEqual(userMessage.timelineCursor, { epoch: "epoch-1", seq: 42 });
+    assert.deepStrictEqual(userMessage.timelineCursor, {
+      epoch: "epoch-1",
+      seq: 42,
+      anchorSeq: 42,
+    });
     assert.deepStrictEqual(userMessage.images, [image]);
     assert.deepStrictEqual(userMessage.attachments, [attachment]);
   });

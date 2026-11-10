@@ -4,7 +4,11 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { FakeClaudeSdk } from "./test-rewind-claude-sdk.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession } from "../../agent-sdk-types.js";
+import {
+  RewindNotAppliedError,
+  type AgentSession,
+  type ConversationRewindCut,
+} from "../../agent-sdk-types.js";
 
 const SESSION_ID = "session-1";
 
@@ -204,14 +208,17 @@ describe("Claude rewind across a turn that produced no response", () => {
     const rewindSdk = new FakeClaudeSdk();
     const session = await createSession(conversation, rewindSdk);
 
+    let cut: ConversationRewindCut | void;
     try {
       await runTurns(session, 3);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[2] });
+      cut = await session.revertConversation?.({ messageId: conversation.userMessageIds[2] });
     } finally {
       await session.close();
     }
 
     expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
+    // The unanswered turn goes with the target, so the fork keeps only the first prompt.
+    expect(cut).toEqual({ kind: "after", retainedMessageId: conversation.userMessageIds[0] });
   });
 
   test("starts a fresh session when no earlier turn produced a response", async () => {
@@ -219,14 +226,16 @@ describe("Claude rewind across a turn that produced no response", () => {
     const rewindSdk = new FakeClaudeSdk();
     const session = await createSession(conversation, rewindSdk);
 
+    let cut: ConversationRewindCut | void;
     try {
       await runTurns(session, 2);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
+      cut = await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
     } finally {
       await session.close();
     }
 
     expect(rewindSdk.recordedForks).toEqual([]);
+    expect(cut).toEqual({ kind: "after", retainedMessageId: null });
   });
 
   test("still forks at the previous turn when every turn produced a response", async () => {
@@ -237,14 +246,52 @@ describe("Claude rewind across a turn that produced no response", () => {
     const rewindSdk = new FakeClaudeSdk();
     const session = await createSession(conversation, rewindSdk);
 
+    let cut: ConversationRewindCut | void;
     try {
       await runTurns(session, 2);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
+      cut = await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
     } finally {
       await session.close();
     }
 
     expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
+    expect(cut).toEqual({ kind: "at_target" });
+  });
+});
+
+describe("Claude rewind outcome", () => {
+  test("a failed fork leaves the session on its conversation and reports nothing applied", async () => {
+    const conversation = createConversation([
+      { assistantMessageId: "assistant-1" },
+      { assistantMessageId: "assistant-2" },
+    ]);
+    const rewindSdk = new FakeClaudeSdk();
+    rewindSdk.forkError = new Error("transcript is locked");
+    const session = await createSession(conversation, rewindSdk);
+
+    try {
+      await runTurns(session, 2);
+      const rewind = session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
+      await expect(rewind).rejects.toBeInstanceOf(RewindNotAppliedError);
+      await expect(rewind).rejects.toThrow("transcript is locked");
+      expect((await session.getRuntimeInfo()).sessionId).toBe(SESSION_ID);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("an unknown target is reported as not applied", async () => {
+    const conversation = createConversation([{ assistantMessageId: "assistant-1" }]);
+    const session = await createSession(conversation, new FakeClaudeSdk());
+
+    try {
+      await runTurns(session, 1);
+      await expect(session.revertConversation?.({ messageId: "unknown" })).rejects.toBeInstanceOf(
+        RewindNotAppliedError,
+      );
+    } finally {
+      await session.close();
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import type { ProjectedTimelineRow } from "./timeline-projection.js";
+import type { ProjectedTimelineRow, TimelineRetirement } from "./timeline-projection.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
 export interface AgentTimelineRow {
@@ -12,6 +12,11 @@ export interface AgentTimelineRow {
 export interface AgentTimelineCursor {
   epoch: string;
   seq: number;
+  /**
+   * For a reader that cannot apply retirements: the retirement count its view reflects. The
+   * cursor is stale once another retirement has happened.
+   */
+  retirementCount?: number;
 }
 
 export type AgentTimelineFetchDirection = "tail" | "before" | "after";
@@ -46,4 +51,8 @@ export interface AgentTimelineFetchResult {
   startSeq: number | null;
   endSeq: number | null;
   rows: ProjectedTimelineRow[];
+  /** Retirements whose seq lies in the page's span. A client applies them before the rows. */
+  retirements: TimelineRetirement[];
+  /** Retirements of this history so far. */
+  retirementCount: number;
 }

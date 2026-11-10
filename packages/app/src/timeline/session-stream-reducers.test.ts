@@ -396,7 +396,7 @@ describe("processTimelineResponse", () => {
       messageId: "provider-message",
       text: "local prompt",
       timestamp: new Date(1000),
-      timelineCursor: { epoch: "epoch-1", seq: 1 },
+      timelineCursor: { epoch: "epoch-1", seq: 1, anchorSeq: 1 },
       turnId: "turn-1",
     });
     const hello = createUserMessage({
@@ -404,7 +404,7 @@ describe("processTimelineResponse", () => {
       clientMessageId: "hello-client",
       text: "hello",
       timestamp: new Date(1500),
-      timelineCursor: { epoch: "epoch-1", seq: 2 },
+      timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
       turnId: "turn-1",
     });
     const currentTail = [canonical, makeAssistantItem("existing tail", "existing-tail"), hello];
@@ -454,7 +454,7 @@ describe("processTimelineResponse", () => {
           id: "stale-history",
           text: "stale history",
           timestamp: new Date(1040),
-          timelineCursor: { epoch: "epoch-1", seq: 40 },
+          timelineCursor: { epoch: "epoch-1", seq: 40, anchorSeq: 40 },
         },
       ],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
@@ -482,11 +482,11 @@ describe("processTimelineResponse", () => {
     const unresolved = makeSubmittedUserMessage("unresolved prompt", "client-unresolved");
     const coveredLive: StreamItem = {
       ...makeAssistantItem("covered live", "covered-live"),
-      timelineCursor: { epoch: "epoch-1", seq: 235 },
+      timelineCursor: { epoch: "epoch-1", seq: 235, anchorSeq: 235 },
     };
     const newerLive: StreamItem = {
       ...makeAssistantItem("newer live", "newer-live"),
-      timelineCursor: { epoch: "epoch-1", seq: 245 },
+      timelineCursor: { epoch: "epoch-1", seq: 245, anchorSeq: 245 },
     };
 
     const result = processTimelineResponse({
@@ -571,7 +571,7 @@ describe("processTimelineResponse", () => {
       expect.objectContaining({
         kind: "assistant_message",
         text: "[System Error] failed",
-        timelineCursor: { epoch: "timeline-1", seq: 42 },
+        timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 40 },
       }),
     ]);
   });
@@ -743,7 +743,7 @@ describe("processTimelineResponse", () => {
             }).item,
           } as AgentStreamEventPayload,
           timestamp: new Date(2000),
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
+          timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
         },
       ],
       { source: "canonical" },
@@ -773,7 +773,7 @@ describe("processTimelineResponse", () => {
 
     expect(getAgentToolCalls([...result.tail, ...result.head])).toEqual([
       expect.objectContaining({
-        timelineCursor: { epoch: "epoch-1", seq: 2 },
+        timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 1 },
         payload: expect.objectContaining({
           data: expect.objectContaining({ callId, status: "completed" }),
         }),
@@ -794,7 +794,7 @@ describe("processTimelineResponse", () => {
             },
           } as AgentStreamEventPayload,
           timestamp: new Date(2000),
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
+          timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
         },
       ],
       { source: "canonical" },
@@ -829,7 +829,7 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].filter((item) => item.kind === "todo_list")).toEqual([
       expect.objectContaining({
-        timelineCursor: { epoch: "epoch-1", seq: 2 },
+        timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 1 },
         items: [{ text: "Verify hydration", completed: true }],
       }),
     ]);
@@ -845,7 +845,7 @@ describe("processTimelineResponse", () => {
             item: { type: "compaction", status: "completed", trigger: "auto", preTokens: 1200 },
           } as AgentStreamEventPayload,
           timestamp: new Date(2000),
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
+          timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
         },
       ],
       { source: "canonical" },
@@ -877,7 +877,7 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].filter((item) => item.kind === "compaction")).toEqual([
       expect.objectContaining({
-        timelineCursor: { epoch: "epoch-1", seq: 2 },
+        timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 1 },
         status: "completed",
         trigger: "auto",
         preTokens: 1200,
@@ -916,7 +916,7 @@ describe("processTimelineResponse", () => {
           messageId: "assistant-live",
           text: " continuation",
           timestamp: new Date(2001),
-          timelineCursor: { epoch: "epoch-1", seq: 101 },
+          timelineCursor: { epoch: "epoch-1", seq: 101, anchorSeq: 101 },
         },
       ],
       isInitializing: true,
@@ -944,7 +944,7 @@ describe("processTimelineResponse", () => {
     );
     expect(assistants).toHaveLength(1);
     expect(assistants[0]?.text).toBe("canonical prefix continuation");
-    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
+    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101, anchorSeq: 100 });
   });
 
   it("keeps assistant segments separate when a live tool sits between them", () => {
@@ -961,12 +961,12 @@ describe("processTimelineResponse", () => {
             }).item,
           } as AgentStreamEventPayload,
           timestamp: new Date(2101),
-          timelineCursor: { epoch: "epoch-1", seq: 101 },
+          timelineCursor: { epoch: "epoch-1", seq: 101, anchorSeq: 101 },
         },
         {
           event: makeAssistantTimelineEvent("after tool", messageId),
           timestamp: new Date(2102),
-          timelineCursor: { epoch: "epoch-1", seq: 102 },
+          timelineCursor: { epoch: "epoch-1", seq: 102, anchorSeq: 102 },
         },
       ],
       { source: "canonical" },
@@ -1017,7 +1017,7 @@ describe("processTimelineResponse", () => {
           id: "assistant-live",
           text: "canonical prefix continuation",
           timestamp: new Date(2001),
-          timelineCursor: { epoch: "epoch-1", seq: 101 },
+          timelineCursor: { epoch: "epoch-1", seq: 101, anchorSeq: 101 },
         },
       ],
       isInitializing: true,
@@ -1036,7 +1036,7 @@ describe("processTimelineResponse", () => {
     );
     expect(assistants).toHaveLength(1);
     expect(assistants[0]?.text).toBe("canonical prefix continuation");
-    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101 });
+    expect(assistants[0]?.timelineCursor).toEqual({ epoch: "epoch-1", seq: 101, anchorSeq: 100 });
   });
 
   it("keeps a canonical live user row newer than the bootstrap page", () => {
@@ -1058,7 +1058,7 @@ describe("processTimelineResponse", () => {
     });
     expect(live.head[0]).toMatchObject({
       kind: "user_message",
-      timelineCursor: { epoch: "epoch-1", seq: 101 },
+      timelineCursor: { epoch: "epoch-1", seq: 101, anchorSeq: 101 },
     });
 
     const result = processTimelineResponse({
@@ -1121,7 +1121,7 @@ describe("processTimelineResponse", () => {
       kind: "user_message",
       clientMessageId: "client-message-1",
       messageId: "provider-message-1",
-      timelineCursor: { epoch: "epoch-1", seq: 51 },
+      timelineCursor: { epoch: "epoch-1", seq: 51, anchorSeq: 51 },
     });
   });
 
@@ -2806,7 +2806,7 @@ describe("processTimelineResponse", () => {
           id: "newest",
           text: "newest",
           timestamp: new Date(1000),
-          timelineCursor: { epoch: "epoch-1", seq: 100 },
+          timelineCursor: { epoch: "epoch-1", seq: 100, anchorSeq: 100 },
         },
         makeSubmittedUserMessage("pending submission", "pending-submission"),
       ],
@@ -2884,14 +2884,14 @@ describe("processTimelineResponse", () => {
         id: "oldest",
         text: "oldest",
         timestamp: new Date(1000),
-        timelineCursor: { epoch: "epoch-1", seq: 1 },
+        timelineCursor: { epoch: "epoch-1", seq: 1, anchorSeq: 1 },
       },
       {
         kind: "user_message",
         id: "newest",
         text: "newest",
         timestamp: new Date(100_000),
-        timelineCursor: { epoch: "epoch-1", seq: 100 },
+        timelineCursor: { epoch: "epoch-1", seq: 100, anchorSeq: 100 },
       },
     ];
 
@@ -2933,7 +2933,7 @@ describe("processTimelineResponse", () => {
             id: "newest",
             text: "newest",
             timestamp: new Date(100_000),
-            timelineCursor: { epoch: "epoch-1", seq: 100 },
+            timelineCursor: { epoch: "epoch-1", seq: 100, anchorSeq: 100 },
           },
           ...(lane === "tail" ? [pending] : []),
         ],
@@ -2974,9 +2974,13 @@ describe("processTimelineResponse", () => {
           {
             text: "local pending prompt",
             messageId: "canonical-message",
-            timelineCursor: { epoch: "epoch-1", seq: 1 },
+            timelineCursor: { epoch: "epoch-1", seq: 1, anchorSeq: 1 },
           },
-          { text: "newest", messageId: undefined, timelineCursor: { epoch: "epoch-1", seq: 100 } },
+          {
+            text: "newest",
+            messageId: undefined,
+            timelineCursor: { epoch: "epoch-1", seq: 100, anchorSeq: 100 },
+          },
         ],
         head: [],
         acknowledgedClientMessageIds: [clientMessageId],
@@ -2990,7 +2994,7 @@ describe("processTimelineResponse", () => {
         {
           event: makeToolCallTimelineEvent("call-1"),
           timestamp: new Date(500),
-          timelineCursor: { epoch: "epoch-1", seq: 500 },
+          timelineCursor: { epoch: "epoch-1", seq: 500, anchorSeq: 500 },
         },
       ],
       { source: "canonical" },
@@ -3036,7 +3040,7 @@ describe("processTimelineResponse", () => {
       {
         callId: "call-1",
         status: "completed",
-        timelineCursor: { epoch: "epoch-1", seq: 500 },
+        timelineCursor: { epoch: "epoch-1", seq: 500, anchorSeq: 1 },
       },
     ]);
   });
@@ -3048,7 +3052,7 @@ describe("processTimelineResponse", () => {
         ...makeAssistantItem("projected response", "loaded-assistant"),
         messageId: "assistant-message",
         timestamp,
-        timelineCursor: { epoch: "epoch-1", seq: 500 },
+        timelineCursor: { epoch: "epoch-1", seq: 500, anchorSeq: 500 },
       },
     ];
     const result = processTimelineResponse({
@@ -3098,7 +3102,7 @@ describe("processTimelineResponse", () => {
         id: "loaded-assistant",
         text: "projected response",
         messageId: "assistant-message",
-        timelineCursor: { epoch: "epoch-1", seq: 500 },
+        timelineCursor: { epoch: "epoch-1", seq: 500, anchorSeq: 1 },
       },
     ]);
   });
@@ -3110,7 +3114,7 @@ describe("processTimelineResponse", () => {
         id: "current-200",
         text: "current-200",
         timestamp: new Date(3200),
-        timelineCursor: { epoch: "epoch-1", seq: 200 },
+        timelineCursor: { epoch: "epoch-1", seq: 200, anchorSeq: 200 },
       },
     ];
     const existingCursor: TimelineCursor = {
@@ -3217,7 +3221,7 @@ describe("processTimelineResponse", () => {
     const currentTail = [
       {
         ...makeAssistantItem("newer chunk", "assistant-newer"),
-        timelineCursor: { epoch: "epoch-1", seq: 3 },
+        timelineCursor: { epoch: "epoch-1", seq: 3, anchorSeq: 3 },
       },
     ];
     const existingCursor: TimelineCursor = {
@@ -3244,7 +3248,7 @@ describe("processTimelineResponse", () => {
     expect(result.tail[0]).toEqual(
       expect.objectContaining({
         id: "assistant-newer",
-        timelineCursor: { epoch: "epoch-1", seq: 3 },
+        timelineCursor: { epoch: "epoch-1", seq: 3, anchorSeq: 3 },
       }),
     );
     expect(result.cursor).toEqual({
@@ -3683,7 +3687,7 @@ describe("processAgentStreamEvent", () => {
       expect.objectContaining({
         kind: "assistant_message",
         text: "[System Error] failed",
-        timelineCursor: { epoch: "timeline-1", seq: 42 },
+        timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
       }),
     ]);
   });
@@ -3912,7 +3916,7 @@ describe("processAgentStreamEvent", () => {
     expect(getUserTexts(result.head)).toEqual(["live before bootstrap"]);
     expect(result.head[0]).toMatchObject({
       kind: "user_message",
-      timelineCursor: { epoch: "epoch-1", seq: 51 },
+      timelineCursor: { epoch: "epoch-1", seq: 51, anchorSeq: 51 },
     });
     expect(result.cursorChanged).toBe(false);
     expect(result.cursor).toBeNull();
@@ -3947,7 +3951,7 @@ describe("processAgentStreamEvent", () => {
         clientMessageId: "client-message-1",
         messageId: "provider-message-1",
         text: "submitted before bootstrap",
-        timelineCursor: { epoch: "epoch-1", seq: 51 },
+        timelineCursor: { epoch: "epoch-1", seq: 51, anchorSeq: 51 },
       }),
     ]);
   });
@@ -4534,5 +4538,278 @@ describe("createAgentStreamReducerQueue", () => {
 
     expect(commits).toEqual(["agent-1:queued"]);
     expect(scheduler.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conversation rewind: A, B, rewind B, C
+// ---------------------------------------------------------------------------
+
+describe("conversation rewind", () => {
+  const rewindB = { seq: 5, retireFromSeq: 3 };
+
+  function loadAB(): { tail: StreamItem[]; head: StreamItem[]; cursor: TimelineCursor } {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeTimelineEntry(1, "A", "user_message"),
+          makeTimelineEntry(2, "reply A"),
+          makeTimelineEntry(3, "B", "user_message"),
+          makeTimelineEntry(4, "reply B"),
+        ],
+      },
+    });
+    if (!result.cursor) throw new Error("expected a loaded range");
+    return { tail: result.tail, head: result.head, cursor: result.cursor };
+  }
+
+  function live(
+    state: { tail: StreamItem[]; head: StreamItem[]; cursor: TimelineCursor },
+    events: AgentStreamReducerEvent[],
+  ) {
+    const result = processAgentStreamEvents({
+      events,
+      currentTail: state.tail,
+      currentHead: state.head,
+      currentCursor: state.cursor,
+      hasAuthoritativeBaseline: true,
+    });
+    return {
+      tail: result.tail,
+      head: result.head,
+      cursor: result.cursor ?? state.cursor,
+      sideEffects: result.sideEffects,
+    };
+  }
+
+  function rewindEvent(retirement: { seq: number; retireFromSeq: number }) {
+    return {
+      event: { type: "rewind" as const, retireFromSeq: retirement.retireFromSeq },
+      seq: retirement.seq,
+      epoch: "epoch-1",
+      timestamp: new Date(1000 + retirement.seq),
+    };
+  }
+
+  const promptC = [
+    makeStreamReducerEvent(makeTimelineEvent("C", "user_message"), 6),
+    makeStreamReducerEvent(makeTimelineEvent("reply C"), 7),
+  ];
+
+  function conversation(state: { tail: StreamItem[]; head: StreamItem[] }) {
+    return [...state.tail, ...state.head].map((item) =>
+      item.kind === "user_message" || item.kind === "assistant_message" ? item.text : item.kind,
+    );
+  }
+
+  it("retires B in place, keeps A mounted, and shows C once", () => {
+    const loaded = loadAB();
+    const [promptA, replyA] = loaded.tail;
+
+    const rewound = live(loaded, [rewindEvent(rewindB), ...promptC]);
+
+    expect(conversation(rewound)).toEqual(["A", "reply A", "C", "reply C"]);
+    expect(rewound.tail[0]).toBe(promptA);
+    expect(rewound.tail[1]).toBe(replyA);
+    expect(rewound.cursor).toMatchObject({ epoch: "epoch-1", startSeq: 1, endSeq: 7 });
+    expect(rewound.sideEffects).toEqual([]);
+  });
+
+  it("ignores a duplicate rewind so C is not retired", () => {
+    const rewound = live(loadAB(), [rewindEvent(rewindB), ...promptC]);
+
+    const replayed = live(rewound, [rewindEvent(rewindB)]);
+
+    expect(conversation(replayed)).toEqual(["A", "reply A", "C", "reply C"]);
+    expect(replayed.cursor.endSeq).toBe(7);
+  });
+
+  it("does not let an old page resurrect B after the rewind applied", () => {
+    const rewound = live(loadAB(), [rewindEvent(rewindB), ...promptC]);
+
+    const stale = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: rewound.tail,
+      currentHead: rewound.head,
+      currentCursor: rewound.cursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [makeTimelineEntry(3, "B", "user_message"), makeTimelineEntry(4, "reply B")],
+      },
+    });
+
+    expect(conversation(stale)).toEqual(["A", "reply A", "C", "reply C"]);
+    expect(stale.cursorChanged).toBe(false);
+  });
+
+  it("drops a late live delivery for the retired range", () => {
+    const rewound = live(loadAB(), [rewindEvent(rewindB)]);
+
+    const late = live(rewound, [makeStreamReducerEvent(makeTimelineEvent("late B"), 4)]);
+
+    expect(conversation(late)).toEqual(["A", "reply A"]);
+  });
+
+  it("catches up through a page that only carries the retirement", () => {
+    const loaded = loadAB();
+
+    const caughtUp = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: loaded.tail,
+      currentHead: loaded.head,
+      currentCursor: loaded.cursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+        startCursor: { seq: 5 },
+        endCursor: { seq: 5 },
+        entries: [],
+        retirements: [rewindB],
+      },
+    });
+    if (!caughtUp.cursor) throw new Error("expected a loaded range");
+
+    expect(conversation(caughtUp)).toEqual(["A", "reply A"]);
+    expect(caughtUp.cursor.endSeq).toBe(5);
+    expect(caughtUp.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
+
+    const continued = live({ ...caughtUp, cursor: caughtUp.cursor }, promptC);
+    expect(conversation(continued)).toEqual(["A", "reply A", "C", "reply C"]);
+  });
+
+  it("converges after reconnect from a resume page that crosses the rewind", () => {
+    const loaded = loadAB();
+
+    const resumed = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: loaded.tail,
+      currentHead: loaded.head,
+      currentCursor: loaded.cursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        window: { minSeq: 1, maxSeq: 7, nextSeq: 8 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 7 },
+        entries: [
+          makeTimelineEntry(1, "A", "user_message"),
+          makeTimelineEntry(2, "reply A"),
+          makeTimelineEntry(6, "C", "user_message"),
+          makeTimelineEntry(7, "reply C"),
+        ],
+        retirements: [rewindB],
+      },
+    });
+
+    expect(conversation(resumed)).toEqual(["A", "reply A", "C", "reply C"]);
+    expect(resumed.tail[0]).toBe(loaded.tail[0]);
+    expect(resumed.cursor).toMatchObject({ endSeq: 7 });
+  });
+
+  it("recovers a rewind that skips past the loaded end", () => {
+    const loaded = loadAB();
+
+    const gapped = live(loaded, [rewindEvent({ seq: 9, retireFromSeq: 3 })]);
+
+    expect(conversation(gapped)).toEqual(["A", "reply A", "B", "reply B"]);
+    expect(gapped.sideEffects).toEqual([
+      { type: "catch_up", cursor: { epoch: "epoch-1", endSeq: 4 } },
+    ]);
+  });
+
+  it("keeps an A row whose late update carries a seq inside B's range", () => {
+    const loaded = loadAB();
+    const [promptA, replyA, ...rest] = loaded.tail;
+    const lateTool = hydrateStreamState(
+      [
+        {
+          event: makeToolCallTimelineEvent("call-a"),
+          timestamp: new Date(1002),
+          timelineCursor: { epoch: "epoch-1", seq: 4, anchorSeq: 2 },
+        },
+      ],
+      { source: "canonical" },
+    );
+    const state = { ...loaded, tail: [promptA, replyA, ...lateTool, ...rest] };
+
+    const rewound = live(state, [rewindEvent(rewindB)]);
+
+    expect(conversation(rewound)).toEqual(["A", "reply A", "tool_call"]);
+  });
+
+  it("keeps a tool that started before B when B's prompt is not loaded and the tool updated after B", () => {
+    const toolA = {
+      ...makeToolCallTimelineEntry(2, "call-a", "completed", {
+        type: "read",
+        filePath: "/tmp/a.ts",
+      }),
+      seqEnd: 6,
+      sourceSeqRanges: [
+        { startSeq: 2, endSeq: 2 },
+        { startSeq: 6, endSeq: 6 },
+      ],
+    };
+    const loaded = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        window: { minSeq: 1, maxSeq: 6, nextSeq: 7 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 6 },
+        entries: [makeTimelineEntry(1, "A", "user_message"), toolA],
+      },
+    });
+    if (!loaded.cursor) throw new Error("expected a loaded range");
+
+    const rewound = live({ tail: loaded.tail, head: loaded.head, cursor: loaded.cursor }, [
+      rewindEvent({ seq: 7, retireFromSeq: 3 }),
+    ]);
+
+    expect(conversation(rewound)).toEqual(["A", "tool_call"]);
+  });
+
+  it("keeps C from the live overlay when the first page brings the retirement C followed", () => {
+    const overlay = processAgentStreamEvents({
+      events: [rewindEvent(rewindB), ...promptC],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    const initialized = processTimelineResponse({
+      ...baseTimelineInput,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      currentTail: overlay.tail,
+      currentHead: overlay.head,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 5 },
+        entries: [makeTimelineEntry(1, "A", "user_message"), makeTimelineEntry(2, "reply A")],
+        retirements: [rewindB],
+      },
+    });
+
+    expect(conversation(initialized)).toEqual(["A", "reply A", "C", "reply C"]);
   });
 });

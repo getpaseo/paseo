@@ -2,12 +2,22 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import type { AgentTimelineItem, ConversationRewindCut } from "../agent-sdk-types.js";
 import { limitAgentTimelineItemContent } from "../agent-timeline-content.js";
 import type { AgentTimelineFetchResult, AgentTimelineRow } from "../agent-timeline-store-types.js";
 import { DeferredTimelineBackend } from "./testing.js";
 import { selectReferenceProjectedTimelinePage } from "../test-utils/timeline-page-reference.js";
-import { AgentTimeline, type TimelineCommit, type TimelineScope } from "./index.js";
+import {
+  AgentTimeline,
+  TimelineRewindBoundaryError,
+  TimelineRewindPendingError,
+  TimelineRewindTargetError,
+  type TimelineCommit,
+  type TimelineEntry,
+  type TimelineRetirementCommit,
+  type TimelineRewindCompletion,
+  type TimelineScope,
+} from "./index.js";
 import { UnknownTimelineError } from "./internal/backend.js";
 
 const root = (agentId: string): TimelineScope => ({ agentId });
@@ -189,7 +199,12 @@ describe.each([
     ]);
     await timeline.delete(child);
     expect(await timeline.describe(child)).toBeNull();
-    expect(await timeline.describe(root("a"))).toEqual({ epoch: "parent", size: 1 });
+    expect(await timeline.describe(root("a"))).toEqual({
+      epoch: "parent",
+      size: 1,
+      retirementCount: 0,
+      rewind: null,
+    });
     await expect(timeline.readRows(child)).rejects.toBeInstanceOf(UnknownTimelineError);
   });
 
@@ -656,4 +671,366 @@ it("continues a scroll across appends and lifecycle collapse without losing sour
   expect(last.rows.map((row) => row.item)).toEqual([{ type: "assistant_message", text: "Done" }]);
   expect(last.endSeq).toBe(7);
   expect(last.hasNewer).toBe(false);
+});
+
+describe("conversation rewind", () => {
+  const scope = root("agent");
+  const createBackend = () => new DeferredTimelineBackend();
+
+  function prompt(messageId: string, turnId: string): TimelineEntry {
+    return { item: { type: "user_message", text: messageId, messageId }, turnId };
+  }
+
+  function reply(text: string, turnId: string): TimelineEntry {
+    return { item: { type: "assistant_message", text, messageId: `reply-${text}` }, turnId };
+  }
+
+  function tool(callId: string, turnId: string, status: "running" | "completed"): TimelineEntry {
+    return {
+      item: {
+        type: "tool_call",
+        callId,
+        name: "shell",
+        status,
+        error: null,
+        detail: { type: "unknown", input: null, output: null },
+      },
+      turnId,
+    };
+  }
+
+  async function conversation(): Promise<{
+    backend: DeferredTimelineBackend;
+    timeline: AgentTimeline;
+  }> {
+    const backend = createBackend();
+    const timeline = new AgentTimeline(backend);
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      prompt("a", "t1"),
+      reply("A", "t1"),
+      prompt("b", "t2"),
+      tool("call-b", "t2", "running"),
+      reply("B", "t2"),
+    ]);
+    return { backend, timeline };
+  }
+
+  async function rewind(
+    timeline: AgentTimeline,
+    messageId: string,
+    cut: ConversationRewindCut = { kind: "at_target" },
+  ): Promise<TimelineRewindCompletion> {
+    const intent = await timeline.beginRewind(scope, messageId);
+    await timeline.recordRewindCut(scope, intent.id, cut);
+    return timeline.completeRewind(scope, intent.id);
+  }
+
+  function texts(rows: readonly { item: AgentTimelineItem }[]): string[] {
+    return rows.map((row) => ("text" in row.item ? row.item.text : row.item.type));
+  }
+
+  it("retires the rewound turn from active history and keeps it stored", async () => {
+    const { backend, timeline } = await conversation();
+    const published: TimelineRetirementCommit[] = [];
+    const intent = await timeline.beginRewind(scope, "b");
+    await timeline.recordRewindCut(scope, intent.id, { kind: "at_target" });
+    const completion = await timeline.completeRewind(scope, intent.id, {
+      publish: (commit) => published.push(commit),
+    });
+    await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+
+    expect(completion).toMatchObject({
+      kind: "retired",
+      retirement: { seq: 6, retireFromSeq: 3 },
+      epoch: "e",
+      retirementCount: 1,
+    });
+    expect(published.map((commit) => texts(commit.retiredRows))).toEqual([["b", "tool_call", "B"]]);
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "c", "C"]);
+    expect(texts(backend.retiredRows(scope))).toEqual(["b", "tool_call", "B"]);
+    expect(await timeline.describe(scope)).toEqual({
+      epoch: "e",
+      size: 4,
+      retirementCount: 1,
+      rewind: null,
+    });
+    const tail = await timeline.fetch(scope);
+    expect(texts(tail.rows)).toEqual(["a", "A", "c", "C"]);
+    expect(tail).toMatchObject({
+      epoch: "e",
+      startSeq: 1,
+      endSeq: 8,
+      retirements: [{ seq: 6, retireFromSeq: 3 }],
+    });
+  });
+
+  it("advances a caught-up cursor through the retirement to the next turn", async () => {
+    const { timeline } = await conversation();
+    await rewind(timeline, "b");
+    await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+
+    const catchUp = await timeline.fetch(scope, {
+      direction: "after",
+      cursor: { epoch: "e", seq: 5 },
+    });
+    expect(texts(catchUp.rows)).toEqual(["c", "C"]);
+    expect(catchUp).toMatchObject({
+      reset: false,
+      startSeq: 6,
+      endSeq: 8,
+      hasNewer: false,
+      retirements: [{ seq: 6, retireFromSeq: 3 }],
+    });
+
+    const retirementOnly = await timeline.fetch(scope, {
+      direction: "after",
+      cursor: { epoch: "e", seq: 5 },
+      limit: 1,
+    });
+    expect(retirementOnly).toMatchObject({
+      rows: [],
+      startSeq: 6,
+      endSeq: 6,
+      hasNewer: true,
+      retirements: [{ seq: 6, retireFromSeq: 3 }],
+    });
+    const next = await timeline.fetch(scope, {
+      direction: "after",
+      cursor: { epoch: "e", seq: 6 },
+    });
+    expect(texts(next.rows)).toEqual(["c", "C"]);
+    expect(next.retirements).toEqual([]);
+  });
+
+  it("pages a tail whose last turn was rewound with nothing after it", async () => {
+    const { timeline } = await conversation();
+    await rewind(timeline, "b");
+
+    const tail = await timeline.fetch(scope);
+    expect(texts(tail.rows)).toEqual(["a", "A"]);
+    expect(tail).toMatchObject({ endSeq: 6, retirements: [{ seq: 6, retireFromSeq: 3 }] });
+    const caughtUp = await timeline.fetch(scope, {
+      direction: "after",
+      cursor: { epoch: "e", seq: 2 },
+    });
+    expect(caughtUp).toMatchObject({
+      rows: [],
+      endSeq: 6,
+      hasNewer: false,
+      retirements: [{ seq: 6, retireFromSeq: 3 }],
+    });
+  });
+
+  it("cannot retire a later turn by completing the same rewind again", async () => {
+    const { timeline } = await conversation();
+    const intent = await timeline.beginRewind(scope, "b");
+    await timeline.recordRewindCut(scope, intent.id, { kind: "at_target" });
+    await timeline.completeRewind(scope, intent.id);
+    await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+
+    expect(await timeline.completeRewind(scope, intent.id)).toEqual({ kind: "absent" });
+    expect(await timeline.recordRewindCut(scope, intent.id, { kind: "at_target" })).toBeNull();
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "c", "C"]);
+    expect((await timeline.describe(scope))?.retirementCount).toBe(1);
+  });
+
+  it("drops late output of a retired turn and still accepts updates to active items", async () => {
+    const timeline = new AgentTimeline(createBackend());
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [
+      prompt("a", "t1"),
+      tool("call-a", "t1", "running"),
+      prompt("b", "t2"),
+      tool("call-b", "t2", "running"),
+    ]);
+    await rewind(timeline, "b");
+
+    const late = await timeline.ingest(scope, tool("call-b", "t2", "completed"));
+    const lateText = await timeline.ingest(scope, reply("B again", "t2"));
+    const reusedCallId = await timeline.ingest(scope, tool("call-a", "t2", "completed"));
+    const active = await timeline.ingest(scope, tool("call-a", "t1", "completed"));
+
+    expect([late, lateText, reusedCallId].map((result) => result.kind)).toEqual([
+      "dropped",
+      "dropped",
+      "dropped",
+    ]);
+    expect(active.kind).toBe("recorded");
+    const rows = await timeline.readRows(scope);
+    expect(rows.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "a", messageId: "a" },
+      expect.objectContaining({ type: "tool_call", callId: "call-a", status: "completed" }),
+    ]);
+  });
+
+  it("allows one open rewind at a time and leaves history alone when abandoned", async () => {
+    const { timeline } = await conversation();
+    const intent = await timeline.beginRewind(scope, "b");
+
+    await expect(timeline.beginRewind(scope, "a")).rejects.toBeInstanceOf(
+      TimelineRewindPendingError,
+    );
+    await expect(timeline.completeRewind(scope, intent.id)).rejects.toThrow(
+      "Cannot complete a rewind before its provider outcome",
+    );
+    await timeline.abandonRewind(scope, intent.id);
+    expect((await timeline.describe(scope))?.rewind).toBeNull();
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "tool_call", "B"]);
+    await expect(timeline.beginRewind(scope, "missing")).rejects.toBeInstanceOf(
+      TimelineRewindTargetError,
+    );
+    expect((await timeline.beginRewind(scope, "a")).targetSeq).toBe(1);
+  });
+
+  it("retires from the boundary the provider actually kept", async () => {
+    const { timeline } = await conversation();
+    await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+
+    const completion = await rewind(timeline, "c", { kind: "after", retainedMessageId: "a" });
+
+    expect(completion).toMatchObject({ kind: "retired", retirement: { retireFromSeq: 3 } });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A"]);
+  });
+
+  it("matches the retained boundary by the provider's message id", async () => {
+    const backend = createBackend();
+    const timeline = new AgentTimeline(backend);
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.ingest(scope, {
+      item: { type: "user_message", text: "a", messageId: "a", clientMessageId: "client-a" },
+    });
+    await timeline.attachProviderMessageId(scope, "client-a", "provider-a");
+    await timeline.append(scope, [reply("A", "t1"), prompt("b", "t2"), prompt("c", "t3")]);
+
+    await rewind(timeline, "c", { kind: "after", retainedMessageId: "provider-a" });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A"]);
+
+    await rewind(timeline, "a", { kind: "after", retainedMessageId: null });
+    expect(await timeline.readRows(scope)).toEqual([]);
+  });
+
+  it("keeps the rewind open when the provider's boundary is after the target", async () => {
+    const { timeline } = await conversation();
+    const intent = await timeline.beginRewind(scope, "a");
+    await timeline.recordRewindCut(scope, intent.id, { kind: "after", retainedMessageId: "a" });
+
+    await expect(timeline.completeRewind(scope, intent.id)).rejects.toBeInstanceOf(
+      TimelineRewindBoundaryError,
+    );
+    expect((await timeline.describe(scope))?.rewind).toMatchObject({ id: intent.id });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "tool_call", "B"]);
+  });
+
+  it("keeps active history and the open rewind when the retirement fails to commit", async () => {
+    const { backend, timeline } = await conversation();
+    const intent = await timeline.beginRewind(scope, "b");
+    await timeline.recordRewindCut(scope, intent.id, { kind: "at_target" });
+    backend.failNextRetire = true;
+
+    await expect(timeline.completeRewind(scope, intent.id)).rejects.toThrow("disk full");
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "tool_call", "B"]);
+    expect(await timeline.describe(scope)).toMatchObject({ retirementCount: 0 });
+
+    expect(await timeline.completeRewind(scope, intent.id)).toMatchObject({
+      kind: "retired",
+      retirement: { seq: 6, retireFromSeq: 3 },
+    });
+  });
+
+  it("judges an unsettled rewind from the provider's own history", async () => {
+    const { timeline } = await conversation();
+    await timeline.append(scope, [prompt("c", "t3"), reply("C", "t3")]);
+    const intent = await timeline.beginRewind(scope, "b");
+
+    expect(await timeline.judgeRewind(scope, intent.id, ["a", "b", "c"])).toEqual({
+      kind: "unchanged",
+    });
+    expect(await timeline.judgeRewind(scope, intent.id, ["a"])).toEqual({
+      kind: "applied",
+      cut: { kind: "after", retainedMessageId: "a" },
+    });
+    expect(await timeline.judgeRewind(scope, intent.id, ["a", "b"])).toMatchObject({
+      kind: "unknown",
+      reason: "The provider history ends after the rewind target",
+    });
+    expect(await timeline.judgeRewind(scope, intent.id, ["a", "x"])).toMatchObject({
+      kind: "unknown",
+      reason: "The provider history differs from Paseo's",
+    });
+    expect(await timeline.judgeRewind(scope, intent.id, [])).toMatchObject({
+      kind: "unknown",
+      reason: "The provider history has no prompts",
+    });
+    expect(await timeline.judgeRewind(scope, "other", ["a"])).toEqual({ kind: "absent" });
+    expect(texts(await timeline.readRows(scope))).toEqual([
+      "a",
+      "A",
+      "b",
+      "tool_call",
+      "B",
+      "c",
+      "C",
+    ]);
+    expect((await timeline.describe(scope))?.rewind).toMatchObject({ id: intent.id });
+  });
+
+  it("judges against provider ids and skips prompts the provider never acknowledged", async () => {
+    const timeline = new AgentTimeline(createBackend());
+    await timeline.create(scope, { epoch: "e" });
+    for (const id of ["a", "b", "c"]) {
+      await timeline.ingest(scope, {
+        item: { type: "user_message", text: id, messageId: id, clientMessageId: id },
+      });
+      if (id !== "b") await timeline.attachProviderMessageId(scope, id, `provider-${id}`);
+    }
+    const intent = await timeline.beginRewind(scope, "c");
+
+    expect(await timeline.judgeRewind(scope, intent.id, ["provider-a", "provider-c"])).toEqual({
+      kind: "unchanged",
+    });
+    const verdict = await timeline.judgeRewind(scope, intent.id, ["provider-a"]);
+    expect(verdict).toEqual({
+      kind: "applied",
+      cut: { kind: "after", retainedMessageId: "provider-a" },
+    });
+    if (verdict.kind !== "applied") throw new Error("expected an applied verdict");
+    await timeline.recordRewindCut(scope, intent.id, verdict.cut);
+    await timeline.completeRewind(scope, intent.id);
+    expect(texts(await timeline.readRows(scope))).toEqual(["a"]);
+  });
+
+  it("bounds pages across a thousand rewinds", async () => {
+    const backend = createBackend();
+    const timeline = new AgentTimeline(backend);
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, [prompt("kept", "t0"), reply("kept", "t0")]);
+    for (let index = 0; index < 1000; index++) {
+      await timeline.append(scope, [prompt(`p${index}`, `t${index + 1}`)]);
+      await rewind(timeline, `p${index}`);
+    }
+
+    const tail = await timeline.fetch(scope, { limit: 50 });
+    expect(texts(tail.rows)).toEqual(["kept", "kept"]);
+    expect(tail.retirements).toEqual([{ seq: 2002, retireFromSeq: 3 }]);
+
+    let cursor = 2;
+    let pages = 0;
+    for (;;) {
+      const page = await timeline.fetch(scope, {
+        direction: "after",
+        cursor: { epoch: "e", seq: cursor },
+        limit: 50,
+      });
+      pages += 1;
+      expect(page.rows).toEqual([]);
+      expect(page.retirements.length).toBe(1);
+      if (page.endSeq === null) throw new Error("after-page lost its cursor");
+      cursor = page.endSeq;
+      if (!page.hasNewer) break;
+    }
+    expect(cursor).toBe(2002);
+    // Each page covers 50 prompts and their 50 retirements.
+    expect(pages).toBe(20);
+  });
 });

@@ -10,8 +10,11 @@ import { TimelineProjection, type ProjectedTimelineRow } from "../../timeline-pr
 import type {
   AgentTimelineBackend,
   TimelineBackendAppendResult,
+  TimelineBackendRetireResult,
   TimelineEntry,
   TimelineHead,
+  TimelinePrompt,
+  TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
 } from "./backend.js";
@@ -22,6 +25,10 @@ interface MemoryTimelineState {
   projection: TimelineProjection;
   minSeq: number;
   nextSeq: number;
+  /** Rows rewinds took out of the active conversation, in retirement order. */
+  retired: ProjectedTimelineRow[];
+  retirementCount: number;
+  rewind: TimelineRewindIntent | null;
 }
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
@@ -61,6 +68,9 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       projection,
       minSeq: projection.getRows()[0]?.seqStart ?? 0,
       nextSeq,
+      retired: [],
+      retirementCount: 0,
+      rewind: null,
     };
     this.states.set(scopeKey(scope), state);
     return this.describe(state);
@@ -85,6 +95,47 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       if (state.minSeq === 0) state.minSeq = row.seq;
     }
     return { rows: rows.map(cloneRow), head: this.describe(state) };
+  }
+
+  isRetired(scope: TimelineScope, entry: TimelineEntry): boolean {
+    return this.requireState(scope).projection.isRetired(entry);
+  }
+
+  prompts(scope: TimelineScope): TimelinePrompt[] {
+    const prompts: TimelinePrompt[] = [];
+    for (const row of this.requireState(scope).projection.getRows()) {
+      if (row.item.type !== "user_message") continue;
+      prompts.push({
+        seqStart: row.seqStart,
+        messageId: row.item.messageId,
+        providerMessageId: row.providerMessageId,
+        submitted: row.item.clientMessageId !== undefined,
+      });
+    }
+    return prompts;
+  }
+
+  setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): TimelineHead {
+    const state = this.requireState(scope);
+    state.rewind = rewind ? { ...rewind } : null;
+    return this.describe(state);
+  }
+
+  retire(scope: TimelineScope, input: { retireFromSeq: number }): TimelineBackendRetireResult {
+    const state = this.requireState(scope);
+    const retirement = { seq: state.nextSeq, retireFromSeq: input.retireFromSeq };
+    const retiredRows = state.projection.retire(retirement);
+    state.retired.push(...retiredRows);
+    state.nextSeq = retirement.seq + 1;
+    if (state.minSeq === 0) state.minSeq = retirement.seq;
+    state.retirementCount += 1;
+    state.rewind = null;
+    return { retirement, retiredRows: retiredRows.map(cloneRow), head: this.describe(state) };
+  }
+
+  /** Retired rows, oldest retirement first. Not part of the backend contract; tests read it. */
+  retiredRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.requireState(scope).retired.map(cloneRow);
   }
 
   attachProviderMessageId(
@@ -115,7 +166,10 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     const cursor = options.cursor;
     const hasRows = state.minSeq !== 0;
     const window = { minSeq: state.minSeq, maxSeq: state.nextSeq - 1, nextSeq: state.nextSeq };
-    const staleCursor = cursor !== undefined && cursor.epoch !== state.epoch;
+    const staleCursor =
+      cursor !== undefined &&
+      (cursor.epoch !== state.epoch ||
+        (cursor.retirementCount !== undefined && cursor.retirementCount !== state.retirementCount));
     const gap =
       !staleCursor &&
       direction === "after" &&
@@ -147,6 +201,8 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
           item: limitAgentTimelineItemContent(entry.item),
         }),
       ),
+      retirements: page.retirements,
+      retirementCount: state.retirementCount,
     };
   }
 
@@ -164,7 +220,12 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
   }
 
   private describe(state: MemoryTimelineState): TimelineHead {
-    return { epoch: state.epoch, size: state.projection.size };
+    return {
+      epoch: state.epoch,
+      size: state.projection.size,
+      retirementCount: state.retirementCount,
+      rewind: state.rewind ? { ...state.rewind } : null,
+    };
   }
 
   private requireState(scope: TimelineScope): MemoryTimelineState {

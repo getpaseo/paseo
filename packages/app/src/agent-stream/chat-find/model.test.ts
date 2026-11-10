@@ -18,7 +18,7 @@ function message(seq: number, text = "target"): StreamItem {
     kind: "assistant_message",
     text,
     timestamp: new Date(0),
-    timelineCursor: { epoch: "epoch", seq },
+    timelineCursor: { epoch: "epoch", seq, anchorSeq: seq },
   };
 }
 
@@ -39,7 +39,7 @@ it("loads an older location and searches a response merged across suppressed tas
     source.map((item, index) => ({
       event: { type: "timeline" as const, provider: "claude" as const, item },
       timestamp: new Date(0),
-      timelineCursor: { epoch: "epoch", seq: index + 1 },
+      timelineCursor: { epoch: "epoch", seq: index + 1, anchorSeq: index + 1 },
     })),
     { source: "canonical" },
   );

@@ -9,8 +9,11 @@ import type { ProjectedTimelineRow } from "../timeline-projection.js";
 import type {
   AgentTimelineBackend,
   TimelineBackendAppendResult,
+  TimelineBackendRetireResult,
   TimelineEntry,
   TimelineHead,
+  TimelinePrompt,
+  TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
 } from "./internal/backend.js";
@@ -27,6 +30,7 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
   readonly appends: TimelineEntry[][] = [];
   readRowsCalls = 0;
   failNextAppend = false;
+  failNextRetire = false;
 
   private async defer<T>(call: () => T): Promise<T> {
     await nextTurn();
@@ -55,6 +59,31 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
       this.appends.push([...entries]);
       return result;
     });
+  }
+  isRetired(scope: TimelineScope, entry: TimelineEntry): Promise<boolean> {
+    return this.defer(() => this.memory.isRetired(scope, entry));
+  }
+  prompts(scope: TimelineScope): Promise<TimelinePrompt[]> {
+    return this.defer(() => this.memory.prompts(scope));
+  }
+  setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): Promise<TimelineHead> {
+    return this.defer(() => this.memory.setRewind(scope, rewind));
+  }
+  retire(
+    scope: TimelineScope,
+    input: { retireFromSeq: number },
+  ): Promise<TimelineBackendRetireResult> {
+    return this.defer(() => {
+      if (this.failNextRetire) {
+        this.failNextRetire = false;
+        throw new Error("disk full");
+      }
+      return this.memory.retire(scope, input);
+    });
+  }
+  /** Rows rewinds retired; they stay stored. */
+  retiredRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.memory.retiredRows(scope);
   }
   attachProviderMessageId(
     scope: TimelineScope,

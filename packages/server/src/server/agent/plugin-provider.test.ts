@@ -16,7 +16,11 @@ import type {
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
+import {
+  RewindNotAppliedError,
+  type AgentClient,
+  type AgentStreamEvent,
+} from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
@@ -1068,6 +1072,80 @@ describe("PluginAgentClientRegistry", () => {
       const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
       expect(result).toEqual({ status: "unavailable" });
       expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+});
+
+describe("plugin conversation rewind", () => {
+  async function openRevertableSession(reply: "request.completed" | "request.failed") {
+    const harness = createProviderHarness({
+      capabilities: [...CAPABILITIES, "session.revert.conversation"],
+      openChildren: (sessionId, emit) => {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          item: { type: "user_message", id: "prompt-b", text: "B", revertToken: "before-b" },
+        });
+      },
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.revert") return false;
+        emit(
+          reply === "request.completed"
+            ? { type: "request.completed", requestId: input.requestId }
+            : { type: "request.failed", requestId: input.requestId, error: { message: "Busy" } },
+        );
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    return { harness, registry, session };
+  }
+
+  // The plugin protocol completes a revert without saying which messages it removed, so the
+  // resumed session's replay settles it.
+  test("a completed revert is unreported", async () => {
+    const { harness, registry, session } = await openRevertableSession("request.completed");
+    try {
+      await expect(session.revertConversation!({ messageId: "prompt-b" })).resolves.toEqual({
+        kind: "unreported",
+      });
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([
+        expect.objectContaining({ token: "before-b", scope: "conversation" }),
+      ]);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  // A failed request may still have removed messages.
+  test("a failed revert leaves the outcome unknown", async () => {
+    const { registry, session } = await openRevertableSession("request.failed");
+    try {
+      const rewind = session.revertConversation!({ messageId: "prompt-b" });
+      await expect(rewind).rejects.toThrow("Busy");
+      await expect(rewind).rejects.not.toBeInstanceOf(RewindNotAppliedError);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("a message without a revert token is not sent to the plugin", async () => {
+    const { harness, registry, session } = await openRevertableSession("request.completed");
+    try {
+      await expect(session.revertConversation!({ messageId: "unknown" })).rejects.toBeInstanceOf(
+        RewindNotAppliedError,
+      );
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([]);
     } finally {
       await session.close();
       registry.replace([]);

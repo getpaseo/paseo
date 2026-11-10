@@ -370,6 +370,13 @@ async function runFollowMode({
       console.log("\n[Timeline replaced; earlier output is no longer current]");
       return;
     }
+    if (message.type === "agent.timeline.rewind") {
+      writer.end();
+      console.log(
+        "\n[Conversation rewound; output since the rewound message is no longer current]",
+      );
+      return;
+    }
 
     if (message.type === "agent.timeline.error") {
       writer.end();

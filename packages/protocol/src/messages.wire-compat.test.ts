@@ -124,6 +124,64 @@ describe("wire schema compatibility", () => {
     });
   });
 
+  test("rewind operations are opt-in and older fetch responses still parse", () => {
+    expect(
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "capable-client",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: { timeline_rewind_operations: true },
+      }).capabilities,
+    ).toEqual({ timeline_rewind_operations: true });
+
+    const rewind = {
+      type: "agent.timeline.rewind",
+      payload: {
+        subscriptionId: "sub-1",
+        agentId: "agent-1",
+        epoch: "epoch-1",
+        seq: 12,
+        retireFromSeq: 7,
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(rewind)).toEqual(rewind);
+
+    const page = {
+      requestId: "fetch-1",
+      agentId: "agent-1",
+      agent: null,
+      direction: "after",
+      projection: "projected",
+      epoch: "epoch-1",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: 14, nextSeq: 15 },
+      startCursor: { epoch: "epoch-1", seq: 13 },
+      endCursor: { epoch: "epoch-1", seq: 14 },
+      hasOlder: true,
+      hasNewer: false,
+      entries: [],
+      error: null,
+    };
+    const withRetirements = { ...page, retirements: [{ seq: 12, retireFromSeq: 7 }] };
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "fetch_agent_timeline_response",
+        payload: withRetirements,
+      }),
+    ).toMatchObject({ payload: { retirements: [{ seq: 12, retireFromSeq: 7 }] } });
+    // A daemon before rewind operations sends no retirements.
+    const older = SessionOutboundMessageSchema.parse({
+      type: "fetch_agent_timeline_response",
+      payload: page,
+    });
+    expect(older.type === "fetch_agent_timeline_response" && older.payload.retirements).toBe(
+      undefined,
+    );
+  });
+
   test("server info strips unknown legacy features while accepting former turn identity", () => {
     const parsed = ServerInfoStatusPayloadSchema.parse({
       status: "server_info",

@@ -184,7 +184,7 @@ function timelineItem(text = "Cached"): StreamItem {
     id: "message-1",
     text,
     timestamp: new Date("2026-07-18T08:02:00.000Z"),
-    timelineCursor: { epoch: "epoch-1", seq: 12 },
+    timelineCursor: { epoch: "epoch-1", seq: 12, anchorSeq: 12 },
   };
 }
 
@@ -739,7 +739,7 @@ describe("ReplicaCache", () => {
       version: 1,
       data: { passed: 4, failed: 0 },
       timestamp: new Date("2026-07-18T08:02:00.000Z"),
-      timelineCursor: { epoch: "epoch-1", seq: 12 },
+      timelineCursor: { epoch: "epoch-1", seq: 12, anchorSeq: 12 },
     };
     writer.commitTimeline(SERVER_ID, "agent-1", {
       agentId: "agent-1",
@@ -776,6 +776,32 @@ describe("ReplicaCache", () => {
     const row = requireTimelineRow(storage);
     const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
     delete payload.items[0]?.pluginItemId;
+    storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
+      ...row,
+      payload: JSON.stringify(payload),
+    });
+
+    expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
+  });
+
+  it("keeps where each cached row started, and refetches a timeline cached without it", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const updatedAfterItStarted: StreamItem = {
+      ...timelineItem(),
+      timelineCursor: { epoch: "epoch-1", seq: 12, anchorSeq: 9 },
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items: [updatedAfterItStarted] });
+    await writer.flush();
+    expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      updatedAfterItStarted,
+    ]);
+
+    const row = requireTimelineRow(storage);
+    const payload = JSON.parse(row.payload) as {
+      items: Array<{ timelineCursor?: Record<string, unknown> }>;
+    };
+    delete payload.items[0]?.timelineCursor?.anchorSeq;
     storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
       ...row,
       payload: JSON.stringify(payload),
@@ -1147,7 +1173,7 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
       kind: "tool_call",
       id: "delivery",
       timestamp: new Date(1),
-      timelineCursor: { epoch: "epoch-1", seq: 12 },
+      timelineCursor: { epoch: "epoch-1", seq: 12, anchorSeq: 12 },
       payload: {
         source: "agent",
         data: {

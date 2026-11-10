@@ -56,7 +56,9 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
+  ConversationRewindResult,
 } from "./agent-sdk-types.js";
+import { RewindNotAppliedError } from "./agent-sdk-types.js";
 import {
   resolveProviderLaunch,
   checkProviderLaunchAvailable,
@@ -1357,16 +1359,21 @@ class PluginAgentSession implements AgentSession {
     });
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
+  // A plugin completes `session.revert` without saying which messages it removed, and a failed
+  // request may have removed some, so neither is a cut. Paseo settles a completed one from the
+  // history the plugin replays when the session is resumed.
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindResult> {
     await this.revert(input.messageId, "conversation");
+    return { kind: "unreported" };
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
     await this.revert(input.messageId, "files");
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindResult> {
     await this.revert(input.messageId, "both");
+    return { kind: "unreported" };
   }
 
   timelineHistory(): ImportedProviderSession["timeline"] {
@@ -1638,7 +1645,9 @@ class PluginAgentSession implements AgentSession {
 
   private async revert(messageId: string, scope: "conversation" | "files" | "both") {
     const token = this.revertTokens.get(messageId);
-    if (token === undefined) throw new Error(`No provider revert token for message ${messageId}`);
+    if (token === undefined) {
+      throw new RewindNotAppliedError(`No provider revert token for message ${messageId}`);
+    }
     await this.bridge.revert({
       type: "session.revert",
       requestId: randomUUID(),

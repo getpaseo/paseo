@@ -80,16 +80,20 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
 
 export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
+  /** Children of rewound turns. Their history stays stored; late provider events are dropped. */
+  private readonly retired = new Set<string>();
 
   constructor(private readonly timeline: AgentTimeline) {}
 
+  /** Resolves null when the event belongs to a retired child; nothing is recorded. */
   async apply(
     parentAgentId: string,
     provider: AgentProvider,
     event: ProviderSubagentInputEvent,
-  ): Promise<ProviderSubagentStoreEvent> {
+  ): Promise<ProviderSubagentStoreEvent | null> {
     const key = storeKey(parentAgentId, event.id);
     const scope = childScope(parentAgentId, event.id);
+    if (this.retired.has(key)) return null;
     if (event.type === "remove") {
       this.descriptors.delete(key);
       await this.timeline.delete(scope);
@@ -154,13 +158,52 @@ export class ProviderSubagentStore {
     return this.timeline.fetch(childScope(parentAgentId, subagentId), options);
   }
 
+  /**
+   * Retires the children spawned by retired tool calls of the parent, and their descendants. They
+   * leave the listing; their history stays stored.
+   */
+  retireSpawnedBy(
+    parentAgentId: string,
+    toolCallIds: ReadonlySet<string>,
+  ): Extract<ProviderSubagentStoreEvent, { type: "remove" }>[] {
+    const children = this.list(parentAgentId);
+    const retiredIds = new Set(
+      children
+        .filter((subagent) => subagent.toolCallId !== null && toolCallIds.has(subagent.toolCallId))
+        .map((subagent) => subagent.id),
+    );
+    let grew = retiredIds.size > 0;
+    while (grew) {
+      grew = false;
+      for (const subagent of children) {
+        if (retiredIds.has(subagent.id) || subagent.parentSubagentId === null) continue;
+        if (!retiredIds.has(subagent.parentSubagentId)) continue;
+        retiredIds.add(subagent.id);
+        grew = true;
+      }
+    }
+    return [...retiredIds].map((subagentId) => {
+      const key = storeKey(parentAgentId, subagentId);
+      this.descriptors.delete(key);
+      this.retired.add(key);
+      return { type: "remove", parentAgentId, subagentId };
+    });
+  }
+
   async deleteParent(parentAgentId: string): Promise<ProviderSubagentStoreEvent[]> {
+    const prefix = storeKey(parentAgentId, "");
+    const retired = [...this.retired]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+    for (const subagentId of retired) this.retired.delete(storeKey(parentAgentId, subagentId));
     const removed = this.list(parentAgentId).map((subagent) => subagent.id);
     for (const subagentId of removed) {
       this.descriptors.delete(storeKey(parentAgentId, subagentId));
     }
     await Promise.all(
-      removed.map((subagentId) => this.timeline.delete(childScope(parentAgentId, subagentId))),
+      [...removed, ...retired].map((subagentId) =>
+        this.timeline.delete(childScope(parentAgentId, subagentId)),
+      ),
     );
     return removed.map((subagentId) => ({ type: "remove", parentAgentId, subagentId }));
   }

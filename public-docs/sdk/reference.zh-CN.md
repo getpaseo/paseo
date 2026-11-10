@@ -113,7 +113,7 @@ nav: API 参考
 
 `agent.timeline.refetch(options?)` 获取一页时间线。选项有 `direction`、`cursor`、`limit`、`projection` 和 `requestId`。
 
-`agent.timeline.subscribe(handler)` 为该 Agent 建立网络订阅需求，并在重连后恢复它。它返回的取消订阅函数会释放这项需求；开始工作之前，请 await `unsubscribe.ready` 以等待 daemon 的初始确认。投递只包含实时内容。重连时会发出一个本地的 `subscription_restored` 事件；错过的历史请用 `refetch()` 显式请求。实时的替换会使之前的 epoch 失效。回调的形状、分页和失败行为见[时间线事件](./events.md#follow-timeline-events)。
+`agent.timeline.subscribe(handler)` 为该 Agent 建立网络订阅需求，并在重连后恢复它。它返回的取消订阅函数会释放这项需求；开始工作之前，请 await `unsubscribe.ready` 以等待 daemon 的初始确认。投递只包含实时内容。重连时会发出一个本地的 `subscription_restored` 事件；错过的历史请用 `refetch()` 显式请求。实时的替换会使之前的 epoch 失效；实时的回退会移除一段条目并保持 epoch 不变。回调的形状、分页和失败行为见[时间线事件](./events.md#follow-timeline-events)。
 
 ## `client.projects` {#clientprojects}
 

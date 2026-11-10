@@ -181,6 +181,7 @@ async function connect(input: {
   clientId: string;
   selective: boolean;
   timelineReplacementInvalidation?: boolean;
+  timelineRewindOperations?: boolean;
   timelineNotifications?: boolean;
   pluginTimelineItems?: boolean;
   workspaceSetupBlocked?: boolean;
@@ -202,6 +203,7 @@ async function connect(input: {
         ? {}
         : { [CLIENT_CAPS.timelineNotifications]: input.timelineNotifications }),
       [CLIENT_CAPS.timelineReplacementInvalidation]: input.timelineReplacementInvalidation ?? false,
+      [CLIENT_CAPS.timelineRewindOperations]: input.timelineRewindOperations ?? false,
     },
     reconnect: { enabled: false },
   });
@@ -376,7 +378,7 @@ test("plugin timeline items are sent only to clients that advertise support", as
   }
 });
 
-test("rewind routes replacement completion by source capability and subscription", async () => {
+test("a rewind reaches each client in the shape it can apply", async () => {
   await daemon.close();
   daemon = await createTestPaseoDaemon({
     isDev: true,
@@ -386,6 +388,13 @@ test("rewind routes replacement completion by source capability and subscription
     clientId: "rewind-initiating",
     selective: true,
     timelineReplacementInvalidation: true,
+    timelineRewindOperations: true,
+  });
+  const capable = await connect({
+    clientId: "rewind-capable",
+    selective: true,
+    timelineReplacementInvalidation: true,
+    timelineRewindOperations: true,
   });
   const passive = await connect({
     clientId: "rewind-passive",
@@ -407,48 +416,133 @@ test("rewind routes replacement completion by source capability and subscription
 
   await Promise.all([
     initiating.setLegacyTimelineMembership([agent.id]),
+    capable.setLegacyTimelineMembership([agent.id]),
     passive.setLegacyTimelineMembership([agent.id]),
     unrelated.setLegacyTimelineMembership([]),
   ]);
-  await initiating.client.sendMessage(agent.id, "Rewind this synthetic prompt");
+  await initiating.client.sendMessage(agent.id, "Keep this prompt");
   await initiating.client.cancelAgent(agent.id);
-  const timeline = await initiating.client.fetchAgentTimeline(agent.id, {
+  await initiating.client.sendMessage(agent.id, "Rewind this prompt");
+  await initiating.client.cancelAgent(agent.id);
+  const loaded = await initiating.client.fetchAgentTimeline(agent.id, {
     direction: "tail",
     limit: 0,
-    projection: "canonical",
   });
-  const target = timeline.entries.find(
-    (entry) =>
-      entry.item.type === "user_message" && entry.item.text === "Rewind this synthetic prompt",
+  const target = loaded.entries.find(
+    (entry) => entry.item.type === "user_message" && entry.item.text === "Rewind this prompt",
   );
   if (!target || target.item.type !== "user_message" || !target.item.messageId) {
-    throw new Error("Expected rewindable canonical user message");
+    throw new Error("Expected rewindable user message");
   }
+  const epoch = loaded.epoch;
+  const legacyEpoch = `${epoch}.r1`;
 
-  for (const connected of [initiating, passive, unrelated, legacy]) connected.clear();
+  for (const connected of [initiating, capable, passive, unrelated, legacy]) connected.clear();
   await initiating.client.rewindAgent(agent.id, target.item.messageId, "conversation");
-  await Promise.all([
-    initiating.barrier("rewind-initiator"),
-    passive.barrier("rewind-passive"),
-    unrelated.barrier("rewind-unrelated"),
-    legacy.barrier("rewind-legacy"),
-  ]);
+  await Promise.all(
+    [initiating, capable, passive, unrelated, legacy].map((connected, index) =>
+      connected.barrier(`rewind-${index}`),
+    ),
+  );
 
+  const rewind = {
+    type: "agent.timeline.rewind",
+    payload: {
+      agentId: agent.id,
+      epoch,
+      seq: loaded.window.nextSeq,
+      retireFromSeq: target.seqStart,
+    },
+  };
+  const timelineChanges = (connected: ConnectedClient) =>
+    connected.messages.filter(
+      (message) =>
+        message.type === "agent.timeline.rewind" || message.type === "agent.timeline.replacement",
+    );
   expect(
     initiating.messages.filter((message) => message.type === "agent.rewind.response"),
   ).toHaveLength(1);
-  expect(
-    initiating.messages.filter((message) => message.type === "agent.timeline.replacement"),
-  ).toHaveLength(0);
-  expect(
-    passive.messages.filter((message) => message.type === "agent.timeline.replacement"),
-  ).toHaveLength(1);
+  // A client that applies rewinds keeps its history and epoch, including the one that asked.
+  expect(timelineChanges(initiating)).toEqual([
+    expect.objectContaining({ ...rewind, payload: expect.objectContaining(rewind.payload) }),
+  ]);
+  expect(timelineChanges(capable)).toEqual([
+    expect.objectContaining({ ...rewind, payload: expect.objectContaining(rewind.payload) }),
+  ]);
+  // An older client only drops history on an epoch change, so it sees a new one.
+  expect(timelineChanges(passive)).toEqual([
+    expect.objectContaining({
+      type: "agent.timeline.replacement",
+      payload: expect.objectContaining({ agentId: agent.id, epoch: legacyEpoch }),
+    }),
+  ]);
   expect(passive.hasTimeline(agent.id)).toBe(false);
-  expect(legacy.messages.filter(isAgentStream(agent.id)).length).toBeGreaterThan(0);
-  expect(
-    unrelated.messages.filter((message) => message.type === "agent.timeline.replacement"),
-  ).toHaveLength(0);
+  expect(timelineChanges(unrelated)).toEqual([]);
   expect(unrelated.hasTimeline(agent.id)).toBe(false);
+  // A client older than replacement messages gets the remaining rows under the new epoch.
+  const legacyRows = legacy.messages.filter(isAgentStream(agent.id));
+  expect(
+    legacyRows.map((message) => message.type === "agent_stream" && message.payload.epoch),
+  ).toEqual(legacyRows.map(() => legacyEpoch));
+  expect(
+    legacyRows.flatMap((message) =>
+      message.type === "agent_stream" &&
+      message.payload.event.type === "timeline" &&
+      message.payload.event.item.type === "user_message"
+        ? [message.payload.event.item.text]
+        : [],
+    ),
+  ).toEqual(["Keep this prompt"]);
+
+  // A capable reader catches up from where it was; an older one is reset to the new epoch.
+  const capableCatchUp = await capable.client.fetchAgentTimeline(agent.id, {
+    direction: "after",
+    cursor: { epoch, seq: loaded.endCursor!.seq },
+    limit: 50,
+  });
+  expect(capableCatchUp).toMatchObject({
+    epoch,
+    reset: false,
+    retirements: [{ seq: loaded.window.nextSeq, retireFromSeq: target.seqStart }],
+    entries: [],
+  });
+  const olderCatchUp = await passive.client.fetchAgentTimeline(agent.id, {
+    direction: "after",
+    cursor: { epoch, seq: loaded.endCursor!.seq },
+    limit: 50,
+  });
+  expect(olderCatchUp).toMatchObject({ epoch: legacyEpoch, reset: true, staleCursor: true });
+  expect(olderCatchUp.retirements).toBeUndefined();
+  expect(olderCatchUp.endCursor?.epoch).toBe(legacyEpoch);
+  const texts = (page: typeof olderCatchUp) =>
+    page.entries.flatMap((entry) => (entry.item.type === "user_message" ? [entry.item.text] : []));
+  expect(texts(olderCatchUp)).toEqual(["Keep this prompt"]);
+  // Its cursor under the new epoch keeps working.
+  const olderNext = await passive.client.fetchAgentTimeline(agent.id, {
+    direction: "after",
+    cursor: olderCatchUp.endCursor!,
+    limit: 50,
+  });
+  expect(olderNext).toMatchObject({ epoch: legacyEpoch, reset: false, entries: [] });
+
+  // Live rows after the rewind carry each client's epoch.
+  for (const connected of [capable, passive]) connected.clear();
+  await initiating.client.sendMessage(agent.id, "After the rewind");
+  await initiating.client.cancelAgent(agent.id);
+  await Promise.all([capable.barrier("after-capable"), passive.barrier("after-passive")]);
+  const liveEpochs = (connected: ConnectedClient) => [
+    ...new Set(
+      connected.messages.flatMap((message) =>
+        message.type === "agent_stream" &&
+        message.payload.agentId === agent.id &&
+        message.payload.event.type === "timeline"
+          ? [message.payload.epoch]
+          : [],
+      ),
+    ),
+  ];
+  expect(liveEpochs(capable)).toEqual([epoch]);
+  expect(liveEpochs(passive)).toEqual([legacyEpoch]);
 }, 30_000);
 
 test("subscription acknowledgements stay on the requesting socket of a retained session", async () => {
@@ -753,13 +847,15 @@ test("plugin items are gated in provider child streams, child fetches, and rewin
   ]);
   expect(oldChild.window).toEqual(newChild.window);
 
+  await capable.client.sendMessage(agent.id, "Kept prompt");
+  await capable.client.cancelAgent(agent.id);
   await capable.client.sendMessage(agent.id, "Rewind target");
   await capable.client.cancelAgent(agent.id);
   const timeline = await capable.client.fetchAgentTimeline(agent.id, {
     direction: "tail",
     projection: "canonical",
   });
-  const targetMessageId = rewindMessageId(timeline);
+  const targetMessageId = rewindMessageId(timeline, "Rewind target");
   capable.clear();
   legacy.clear();
   await capable.client.rewindAgent(agent.id, targetMessageId, "conversation");
@@ -773,7 +869,12 @@ test("plugin items are gated in provider child streams, child fetches, and rewin
   }
   expect(replayItems(capable)).toContainEqual(plugin);
   expect(replayItems(legacy).some((item) => item.type === "plugin")).toBe(false);
-  expect(replayItems(legacy)).toContainEqual(expect.objectContaining({ type: "user_message" }));
+  expect(replayItems(legacy)).toContainEqual(
+    expect.objectContaining({ type: "user_message", text: "Kept prompt" }),
+  );
+  expect(replayItems(legacy)).not.toContainEqual(
+    expect.objectContaining({ type: "user_message", text: "Rewind target" }),
+  );
 });
 
 async function createAttentionWorkspace(client: DaemonClient): Promise<string> {
@@ -786,8 +887,11 @@ async function createAttentionWorkspace(client: DaemonClient): Promise<string> {
 
 function rewindMessageId(
   timeline: Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>,
+  text: string,
 ): string {
-  const target = timeline.entries.find((entry) => entry.item.type === "user_message");
+  const target = timeline.entries.find(
+    (entry) => entry.item.type === "user_message" && entry.item.text === text,
+  );
   if (target?.item.type !== "user_message" || !target.item.messageId)
     throw new Error("Expected rewind target");
   return target.item.messageId;

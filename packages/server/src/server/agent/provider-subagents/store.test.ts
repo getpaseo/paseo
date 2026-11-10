@@ -77,12 +77,52 @@ describe("ProviderSubagentStore", () => {
       },
     });
 
-    expect(update.type).toBe("timeline");
+    expect(update?.type).toBe("timeline");
     const [row] = (await subagents.fetchTimeline("parent-a", "child-1")).rows;
     expect(row?.item).toMatchObject({
       type: "tool_call",
       detail: { type: "shell", output: expect.stringMatching(/^x+…\[truncated \d+\.\d KB\]$/) },
     });
+  });
+
+  test("retires the children of rewound tool calls and drops their late events", async () => {
+    const subagents = new ProviderSubagentStore(new AgentTimeline());
+    const upsert = (id: string, fields: { toolCallId?: string; parentSubagentId?: string }) =>
+      subagents.apply("parent-a", "claude", {
+        type: "upsert",
+        id,
+        status: "running",
+        timestamp: "2026-07-12T10:00:00.000Z",
+        ...fields,
+      });
+    await upsert("kept", { toolCallId: "call-a" });
+    await upsert("rewound", { toolCallId: "call-b" });
+    await upsert("grandchild", { parentSubagentId: "rewound" });
+    await subagents.apply("parent-a", "claude", {
+      type: "timeline",
+      id: "rewound",
+      item: { type: "assistant_message", text: "Working on B." },
+    });
+
+    expect(subagents.retireSpawnedBy("parent-a", new Set(["call-b"]))).toEqual([
+      { type: "remove", parentAgentId: "parent-a", subagentId: "rewound" },
+      { type: "remove", parentAgentId: "parent-a", subagentId: "grandchild" },
+    ]);
+    expect(subagents.list("parent-a").map((subagent) => subagent.id)).toEqual(["kept"]);
+
+    // The retired child's history stays stored; a late event neither revives nor extends it.
+    expect(
+      await subagents.apply("parent-a", "claude", {
+        type: "timeline",
+        id: "rewound",
+        item: { type: "assistant_message", text: "Late output." },
+      }),
+    ).toBeNull();
+    expect(await upsert("rewound", { toolCallId: "call-b" })).toBeNull();
+    expect(subagents.list("parent-a").map((subagent) => subagent.id)).toEqual(["kept"]);
+    expect(
+      (await subagents.fetchTimeline("parent-a", "rewound")).rows.map((row) => row.item),
+    ).toEqual([{ type: "assistant_message", text: "Working on B." }]);
   });
 
   test("pages provider history on projected item boundaries", async () => {

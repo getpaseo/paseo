@@ -984,6 +984,7 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
   session.steerResult = "unavailable";
   const { manager, agentId, workdir } = await startAndSteerThroughManager(session);
   try {
+    await manager.waitForAgentRunStart(agentId);
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
     expect(await manager.getTimeline(agentId)).toContainEqual(
@@ -1470,6 +1471,7 @@ test("missing steer operation interrupts once and starts one replacement turn", 
   const session = new UnsupportedSteeringSession({ provider: "codex", cwd: process.cwd() });
   const { manager, agentId, workdir } = await startAndSteerThroughManager(session);
   try {
+    await manager.waitForAgentRunStart(agentId);
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
     expect(await manager.getTimeline(agentId)).toContainEqual(

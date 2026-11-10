@@ -7,7 +7,7 @@ import {
   waitForTimelineToolCall,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { RewindNotAppliedError, type AgentStreamEvent } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
 
 const questionItem = {
@@ -170,9 +170,10 @@ test("failed rewind preserves question state", async () => {
   const { session, events } = await setupRewind(true);
   try {
     const before = session.describePersistence();
-    await expect(session.revertConversation({ messageId: "rewind-here" })).rejects.toThrow(
-      "Rewind failed",
-    );
+    const rewind = session.revertConversation({ messageId: "rewind-here" });
+    await expect(rewind).rejects.toThrow("Rewind failed");
+    // The fork was never adopted, so the conversation is known to be unchanged.
+    await expect(rewind).rejects.toBeInstanceOf(RewindNotAppliedError);
     expect(session.describePersistence()).toEqual(before);
     expect(session.getPendingPermissions().map((p) => p.id)).toEqual([
       "permission-earlier-pending",
@@ -210,7 +211,15 @@ test("manager publishes and saves the provider state after rewind", async () => 
   const { session } = await setupRewind();
   const { manager, agent } = await manage(session);
   try {
+    // A resumed agent's conversation holds the provider history it can rewind.
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
     await manager.rewind(agent.id, "rewind-here", "conversation");
+    expect(session.describePersistence().sessionId).toBe("forked-thread");
+    expect(
+      (await manager.fetchTimeline(agent.id, { limit: 0 })).rows.flatMap((row) =>
+        row.item.type === "user_message" ? [row.item.text] : [],
+      ),
+    ).toEqual(["earlier"]);
     const snapshot = manager.getAgent(agent.id)!;
     expect(Array.from(snapshot.pendingPermissions.keys())).toEqual(["permission-earlier-pending"]);
     expect(snapshot.persistence).toEqual(session.describePersistence());

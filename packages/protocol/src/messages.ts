@@ -3753,6 +3753,9 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-size-ownership": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
+        // COMPAT(timelineRewindOperations): added in v0.14.1, remove gate after 2027-05-10.
+        // A conversation rewind arrives as `agent.timeline.rewind`, not a replacement.
+        timelineRewindOperations: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
@@ -4752,6 +4755,12 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   collapsed: z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle", "identity"])),
 });
 
+/** Active rows anchored in `[retireFromSeq, seq)` left the conversation. `seq` is the retirement's own. */
+export const AgentTimelineRetirementSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  retireFromSeq: z.number().int().nonnegative(),
+});
+
 export const FetchAgentTimelineResponseMessageSchema = z.object({
   type: z.literal("fetch_agent_timeline_response"),
   payload: z.object({
@@ -4775,6 +4784,9 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    // COMPAT(timelineRewindOperations): added in v0.14.1. Retirements whose seq lies in the page's
+    // span; apply them before the entries. Sent only to clients with the capability.
+    retirements: z.array(AgentTimelineRetirementSchema).optional(),
     error: z.string().nullable(),
   }),
 });
@@ -4785,6 +4797,18 @@ export const AgentTimelineReplacementMessageSchema = z.object({
     subscriptionId: z.string().optional(),
     agentId: z.string(),
     epoch: z.string(),
+  }),
+});
+
+/** A conversation rewind retired active rows. Apply it when `seq` follows the loaded end. */
+export const AgentTimelineRewindMessageSchema = z.object({
+  type: z.literal("agent.timeline.rewind"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    agentId: z.string(),
+    epoch: z.string(),
+    seq: z.number().int().nonnegative(),
+    retireFromSeq: z.number().int().nonnegative(),
   }),
 });
 
@@ -7090,6 +7114,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   AgentTimelineReplacementMessageSchema,
+  AgentTimelineRewindMessageSchema,
   AgentTimelineSearchResponseMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
@@ -7735,6 +7760,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineRewindOperations]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })

@@ -590,6 +590,38 @@ export interface ImportedProviderSession {
   providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
+/**
+ * What a conversation rewind removed from the provider session. `at_target`: the target prompt and
+ * everything after it. `after`: the provider kept history through the prompt `retainedMessageId`
+ * only (null: it kept nothing), which can cut earlier than the target.
+ */
+export type ConversationRewindCut =
+  | { kind: "at_target" }
+  | { kind: "after"; retainedMessageId: string | null };
+
+/**
+ * How a conversation rewind the provider finished ended: a cut, or `unreported` when the provider
+ * finished without saying what it removed. Paseo then judges it from the prompts a resumed
+ * session's `streamHistory` replays.
+ */
+export type ConversationRewindResult = ConversationRewindCut | { kind: "unreported" };
+
+/** The provider conversation is known to be unchanged; the rewind can be abandoned. */
+export class RewindNotAppliedError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "RewindNotAppliedError";
+  }
+
+  /** Marks a failure that happened before the provider conversation could change. */
+  static from(error: unknown): RewindNotAppliedError {
+    if (error instanceof RewindNotAppliedError) return error;
+    return new RewindNotAppliedError(error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+  }
+}
+
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
@@ -710,9 +742,17 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
-  revertConversation?(input: { messageId: string }): Promise<void>;
+  /**
+   * Rewinds the provider conversation to before the prompt `messageId`. Resolves with what the
+   * provider actually removed; `void` means exactly the target and everything after it. Rejects
+   * with `RewindNotAppliedError` only when the conversation is known to be unchanged; any other
+   * rejection leaves the outcome unknown, and Paseo judges it later from the prompts `streamHistory`
+   * replays once the session is resumed.
+   */
+  revertConversation?(input: { messageId: string }): Promise<ConversationRewindResult | void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
-  revertBoth?(input: { messageId: string }): Promise<void>;
+  /** `revertConversation` plus file changes, with the same outcome contract. */
+  revertBoth?(input: { messageId: string }): Promise<ConversationRewindResult | void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

@@ -1,7 +1,13 @@
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
-import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
+import {
+  advanceTimelinePosition,
+  type AssistantMessageItem,
+  type StreamItem,
+  type TimelinePosition,
+  type TodoEntry,
+} from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
@@ -69,6 +75,64 @@ type SessionTimelineSeqDecision = "accept" | "drop_stale" | "drop_epoch" | "gap"
 interface TimelineSeqRange {
   startSeq: number;
   endSeq: number;
+}
+
+/** A conversation rewind took the rows anchored in `[retireFromSeq, seq)` out of the conversation. */
+export interface TimelineRetirement {
+  seq: number;
+  retireFromSeq: number;
+}
+
+/** The live form of a retirement; it is sequenced with the stream events around it. */
+export interface TimelineRewindEvent {
+  type: "rewind";
+  retireFromSeq: number;
+}
+
+/**
+ * Drops the rows a retirement took out of the conversation: those anchored in
+ * `[retireFromSeq, seq)`. Anchors do not move on update, so an earlier row updated after the
+ * rewound prompt stays, and a row that started after the retirement stays. Items without a
+ * timeline position are local sends the daemon has not echoed and stay.
+ */
+function retireRewoundStreamItems(input: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  epoch: string;
+  retirement: TimelineRetirement;
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const { tail, head, epoch, retirement } = input;
+  const isRetired = (item: StreamItem) => {
+    const position = item.timelineCursor;
+    return (
+      position?.epoch === epoch &&
+      position.anchorSeq >= retirement.retireFromSeq &&
+      position.anchorSeq < retirement.seq
+    );
+  };
+  const nextTail = tail.filter((item) => !isRetired(item));
+  const nextHead = head.filter((item) => !isRetired(item));
+  return {
+    tail: nextTail.length === tail.length ? tail : nextTail,
+    head: nextHead.length === head.length ? head : nextHead,
+  };
+}
+
+/**
+ * Applies a page's retirements to what this client holds. The page's own entries are already
+ * active. Applying a retirement twice changes nothing, since its range is bounded.
+ */
+function retireForPage(input: {
+  payload: ProcessTimelineResponseInput["payload"];
+  tail: StreamItem[];
+  head: StreamItem[];
+}): { tail: StreamItem[]; head: StreamItem[] } {
+  const { payload } = input;
+  let held = { tail: input.tail, head: input.head };
+  for (const retirement of payload.retirements ?? []) {
+    held = retireRewoundStreamItems({ ...held, epoch: payload.epoch, retirement });
+  }
+  return held;
 }
 
 function mergeTimelineCoverage(
@@ -150,6 +214,7 @@ export interface ProcessTimelineResponseInput {
     hasNewer: boolean;
     hasOlder: boolean;
     mergeWindow?: boolean;
+    retirements?: TimelineRetirement[];
   };
   currentTail: StreamItem[];
   currentHead: StreamItem[];
@@ -391,7 +456,7 @@ function mergeTimelineWindow(args: {
   toHydratedEvents: (units: TimelineUnit[]) => Array<{
     event: AgentStreamEventPayload;
     timestamp: Date;
-    timelineCursor: { epoch: string; seq: number };
+    timelineCursor: TimelinePosition;
   }>;
 }): TimelinePathResult {
   const { timelineUnits, payload, currentTail, currentHead, currentCursor, toHydratedEvents } =
@@ -755,7 +820,7 @@ function replaceLiveAssistantWithProjectedText(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
   timestamp: Date;
-  timelineCursor: { epoch: string; seq: number };
+  timelineCursor: TimelinePosition;
 }): StreamItem[] | null {
   const { head, event, timestamp, timelineCursor } = params;
   if (event.type !== "timeline" || event.item.type !== "assistant_message") {
@@ -774,7 +839,7 @@ function replaceLiveAssistantWithProjectedText(params: {
     ...current,
     text: event.item.text,
     timestamp,
-    timelineCursor,
+    ...advanceTimelinePosition(current.timelineCursor, timelineCursor),
   };
   return next;
 }
@@ -824,7 +889,7 @@ function reconcileOverlappingProjectedAssistant(params: {
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
-    timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+    timelineCursor: { epoch: params.epoch, seq: unit.seqEnd, anchorSeq: unit.seq },
   };
   const replaceMatch = (items: StreamItem[], index: number) => {
     const next = [...items];
@@ -941,8 +1006,8 @@ function applyCanonicalForwardUnit(params: {
   unit: TimelineUnit;
   epoch: string;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
-  const { event, timestamp, seqEnd } = params.unit;
-  const timelineCursor = { epoch: params.epoch, seq: seqEnd };
+  const { event, timestamp, seq, seqEnd } = params.unit;
+  const timelineCursor: TimelinePosition = { epoch: params.epoch, seq: seqEnd, anchorSeq: seq };
   if (event.type === "timeline" && event.item.type === "user_message") {
     const applied = applyStreamEvent({
       tail: params.tail,
@@ -1141,10 +1206,10 @@ function applyAcceptedTimelinePage(input: {
     });
   }
   const olderTail = hydrateStreamState(
-    acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
+    acceptedUnits.map(({ event, timestamp, seq, seqEnd }) => ({
       event,
       timestamp,
-      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+      timelineCursor: { epoch: payload.epoch, seq: seqEnd, anchorSeq: seq },
     })),
     {
       source: "canonical",
@@ -1176,7 +1241,12 @@ function applyTimelineIncrementalPath(args: {
   let cursorChanged = false;
   const sideEffects: TimelineReducerSideEffect[] = [];
 
-  if (timelineUnits.length === 0 && payload.direction !== "before") {
+  // A forward page of retirements alone still advances the loaded end.
+  if (
+    timelineUnits.length === 0 &&
+    payload.direction !== "before" &&
+    (payload.retirements?.length ?? 0) === 0
+  ) {
     return {
       tail: currentTail,
       head: currentHead,
@@ -1234,8 +1304,6 @@ export function processTimelineResponse(
 ): ProcessTimelineResponseOutput {
   const {
     payload,
-    currentTail,
-    currentHead,
     currentCursor,
     isInitializing,
     hasActiveInitDeferred,
@@ -1249,8 +1317,8 @@ export function processTimelineResponse(
   if (payload.error) {
     return {
       commit: "apply",
-      tail: currentTail,
-      head: currentHead,
+      tail: input.currentTail,
+      head: input.currentHead,
       cursor: currentCursor,
       cursorChanged: false,
       older: "unchanged",
@@ -1261,6 +1329,13 @@ export function processTimelineResponse(
       acknowledgedClientMessageIds: [],
     };
   }
+
+  // Entries are already free of retired rows; the retirements apply to what this client holds.
+  const { tail: currentTail, head: currentHead } = retireForPage({
+    payload,
+    tail: input.currentTail,
+    head: input.currentHead,
+  });
 
   // ------------------------------------------------------------------
   // Convert entries to timeline units
@@ -1286,12 +1361,12 @@ export function processTimelineResponse(
   ): Array<{
     event: AgentStreamEventPayload;
     timestamp: Date;
-    timelineCursor: { epoch: string; seq: number };
+    timelineCursor: TimelinePosition;
   }> =>
-    units.map(({ event, timestamp, seqEnd }) => ({
+    units.map(({ event, timestamp, seq, seqEnd }) => ({
       event,
       timestamp,
-      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+      timelineCursor: { epoch: payload.epoch, seq: seqEnd, anchorSeq: seq },
     }));
 
   // ------------------------------------------------------------------
@@ -1426,7 +1501,7 @@ export function processTimelineResponse(
 // ---------------------------------------------------------------------------
 
 export interface ProcessAgentStreamEventInput {
-  event: AgentStreamEventPayload;
+  event: AgentStreamEventPayload | TimelineRewindEvent;
   seq: number | undefined;
   epoch: string | undefined;
   currentTail: StreamItem[];
@@ -1449,7 +1524,7 @@ export interface ProcessAgentStreamEventOutput {
 }
 
 export interface AgentStreamReducerEvent {
-  event: AgentStreamEventPayload;
+  event: AgentStreamEventPayload | TimelineRewindEvent;
   seq: number | undefined;
   epoch: string | undefined;
   timestamp: Date;
@@ -1567,11 +1642,70 @@ function processTimelineSequencingGate(input: {
   };
 }
 
+/**
+ * Applies a live rewind in sequence with the stream. One that does not follow the loaded end is
+ * stale (already applied, or older than a page this client took) or leaves a gap to catch up.
+ */
+function processTimelineRewind(
+  input: ProcessAgentStreamEventInput & { event: TimelineRewindEvent },
+): ProcessAgentStreamEventOutput {
+  const { event, seq, epoch, currentTail, currentHead, currentCursor } = input;
+  const unchanged: ProcessAgentStreamEventOutput = {
+    tail: currentTail,
+    head: currentHead,
+    changedTail: false,
+    changedHead: false,
+    cursor: null,
+    cursorChanged: false,
+    acknowledgedClientMessageIds: [],
+    sideEffects: [],
+  };
+  if (seq === undefined || epoch === undefined) return unchanged;
+  const decision =
+    input.hasAuthoritativeBaseline === false
+      ? "overlay"
+      : classifySessionTimelineSeq({
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : null,
+          epoch,
+          seq,
+        });
+  if (decision === "gap" && currentCursor) {
+    return {
+      ...unchanged,
+      sideEffects: [
+        { type: "catch_up", cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq } },
+      ],
+    };
+  }
+  if (decision !== "accept" && decision !== "init" && decision !== "overlay") return unchanged;
+  const retired = retireRewoundStreamItems({
+    tail: currentTail,
+    head: currentHead,
+    epoch,
+    retirement: { seq, retireFromSeq: event.retireFromSeq },
+  });
+  let cursor: TimelineCursor | null = null;
+  if (decision === "accept" && currentCursor) cursor = { ...currentCursor, endSeq: seq };
+  if (decision === "init") cursor = { epoch, startSeq: seq, endSeq: seq };
+  return {
+    ...unchanged,
+    tail: retired.tail,
+    head: retired.head,
+    changedTail: retired.tail !== currentTail,
+    changedHead: retired.head !== currentHead,
+    cursor,
+    cursorChanged: cursor !== null,
+  };
+}
+
 export function processAgentStreamEvent(
   input: ProcessAgentStreamEventInput,
 ): ProcessAgentStreamEventOutput {
+  const event = input.event;
+  if (event.type === "rewind") return processTimelineRewind({ ...input, event });
   const {
-    event,
     seq,
     epoch,
     currentTail,
@@ -1590,7 +1724,7 @@ export function processAgentStreamEvent(
   });
   const timelineCursor =
     event.type === "timeline" && seq !== undefined && epoch !== undefined
-      ? { epoch, seq }
+      ? { epoch, seq, anchorSeq: seq }
       : undefined;
   // ------------------------------------------------------------------
   // Apply stream event to tail/head

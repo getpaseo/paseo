@@ -1,10 +1,18 @@
 export {
   AgentTimeline,
+  TimelineRewindBoundaryError,
+  TimelineRewindPendingError,
+  TimelineRewindTargetError,
   type TimelineAppendResult,
   type TimelineCommit,
   type TimelineEntry,
   type TimelineHead,
   type TimelineIngestResult,
+  type TimelineRetirement,
+  type TimelineRetirementCommit,
+  type TimelineRewindCompletion,
+  type TimelineRewindIntent,
+  type TimelineRewindVerdict,
   type TimelineScope,
   type TimelineSeed,
 } from "./internal/agent-timeline.js";

@@ -2080,6 +2080,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceTerminals: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
+        // COMPAT(timelineRewindOperations): added in v0.14.1, remove gate after 2027-05-10.
+        timelineRewindOperations: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: true,
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.

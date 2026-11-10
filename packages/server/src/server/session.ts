@@ -19,6 +19,7 @@ import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
+import { legacyWireEpoch, readLegacyWireCursor } from "./session/legacy-rewind-epoch/index.js";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "path";
@@ -1381,10 +1382,17 @@ export class Session {
         },
       });
     }
-    const message: SessionOutboundMessage = {
+    const payload = this.buildAgentStreamPayload(event, serializedEvent);
+    const messageFor = (source?: object): SessionOutboundMessage => ({
       type: "agent_stream",
-      payload: this.buildAgentStreamPayload(event, serializedEvent),
-    };
+      payload:
+        payload.epoch === undefined
+          ? payload
+          : {
+              ...payload,
+              epoch: this.wireEpoch(payload.epoch, event.retirementCount ?? 0, source),
+            },
+    });
     for (const subscription of this.timelineSubscriptions.values()) {
       const source = subscription.owner.source;
       if (!subscription.agentIds.has(event.agentId)) continue;
@@ -1399,7 +1407,7 @@ export class Session {
         !this.supportsTimelineItem(serializedEvent.item, source)
       )
         continue;
-      subscription.owner.emit(message);
+      subscription.owner.emit(messageFor(source));
     }
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
@@ -1414,14 +1422,33 @@ export class Session {
         (subscription) =>
           subscription.owner.source === source && subscription.agentIds.has(event.agentId),
       );
-      if (!alreadyDelivered) this.onMessageToSource?.(source, message);
+      if (!alreadyDelivered) this.onMessageToSource?.(source, messageFor(source));
     }
     if (
       this.clientSources.size === 0 &&
       !this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
       this.timelineSubscriptions.size === 0
     )
-      this.emit(message);
+      this.emit(messageFor());
+  }
+
+  // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 with
+  // ./session/legacy-rewind-epoch. A client that cannot apply rewinds sees each one as a new epoch.
+  private appliesRewinds(source?: object): boolean {
+    return source
+      ? this.supportsForSource(CLIENT_CAPS.timelineRewindOperations, source)
+      : this.supports(CLIENT_CAPS.timelineRewindOperations);
+  }
+
+  private wireEpoch(epoch: string, retirementCount: number, source?: object): string {
+    return this.appliesRewinds(source) ? epoch : legacyWireEpoch(epoch, retirementCount);
+  }
+
+  private readWireCursor(
+    cursor: { epoch: string; seq: number },
+    source?: object,
+  ): AgentTimelineCursor {
+    return this.appliesRewinds(source) ? cursor : readLegacyWireCursor(cursor);
   }
 
   supports(capability: ClientCapability): boolean {
@@ -1988,8 +2015,15 @@ export class Session {
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
-        if (event.type === "timeline_replacement") {
-          this.deliverTimelineReplacement(event, this.rewindInitiators.get(event.agentId));
+        if (event.type === "timeline_retirement") {
+          this.deliverTimelineRetirement(event, this.rewindInitiators.get(event.agentId)).catch(
+            (error) => {
+              this.sessionLogger.error(
+                { err: error, agentId: event.agentId },
+                "Failed to deliver timeline retirement",
+              );
+            },
+          );
           return;
         }
 
@@ -4910,17 +4944,35 @@ export class Session {
     }
   }
 
-  private deliverTimelineReplacement(
-    timeline: Extract<AgentManagerEvent, { type: "timeline_replacement" }>,
+  private async deliverTimelineRetirement(
+    retirement: Extract<AgentManagerEvent, { type: "timeline_retirement" }>,
     initiatingSource?: object,
-  ): void {
-    const { agentId, epoch } = timeline;
+  ): Promise<void> {
+    const { agentId, epoch, seq, retireFromSeq, retirementCount } = retirement;
     const agent = this.agentManager.getAgent(agentId);
     if (!agent) return;
+    const rewind: SessionOutboundMessage = {
+      type: "agent.timeline.rewind",
+      payload: { agentId, epoch, seq, retireFromSeq },
+    };
+    const legacyEpoch = legacyWireEpoch(epoch, retirementCount);
+    const replacement: SessionOutboundMessage = {
+      type: "agent.timeline.replacement",
+      payload: { agentId, epoch: legacyEpoch },
+    };
+    const readActiveRows = async () =>
+      (await this.agentManager.fetchTimeline(agentId, { limit: 0 })).rows;
 
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
-      if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch);
+      if (this.appliesRewinds()) this.emit(rewind);
+      else if (this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) this.emit(replacement);
+      else {
+        this.emitReconstructedTimelineRows(
+          agentId,
+          agent.provider,
+          await readActiveRows(),
+          legacyEpoch,
+        );
       }
       return;
     }
@@ -4928,26 +4980,32 @@ export class Session {
     for (const subscription of this.timelineSubscriptions.values()) {
       const source = subscription.owner.source;
       if (!subscription.agentIds.has(agentId)) continue;
-      const modern = this.delivery.isModern(source);
+      if (this.appliesRewinds(source)) {
+        subscription.owner.emit(rewind);
+        continue;
+      }
+      // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10. An older
+      // client that started the rewind refetches its history when the rewind response arrives.
       if (
-        modern ||
+        this.delivery.isModern(source) ||
         (source !== initiatingSource &&
           this.supportsForSource(CLIENT_CAPS.timelineReplacementInvalidation, source))
       ) {
-        subscription.owner.emit({
-          type: "agent.timeline.replacement",
-          payload: { agentId, epoch },
-        });
+        subscription.owner.emit(replacement);
       }
     }
     // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove reconstructed replay after 2027-02-21.
-    for (const [source, { capabilities }] of this.clientSources) {
-      if (
-        !this.delivery.isModern(source) &&
-        !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation)
-      ) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch, source);
-      }
+    const replaySources = [...this.clientSources]
+      .filter(
+        ([source, { capabilities }]) =>
+          !this.delivery.isModern(source) &&
+          !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation),
+      )
+      .map(([source]) => source);
+    if (replaySources.length === 0) return;
+    const rows = await readActiveRows();
+    for (const source of replaySources) {
+      this.emitReconstructedTimelineRows(agentId, agent.provider, rows, legacyEpoch, source);
     }
   }
 
@@ -7830,12 +7888,7 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection = "projected" as const;
-    const cursor: AgentTimelineCursor | undefined = msg.cursor
-      ? {
-          epoch: msg.cursor.epoch,
-          seq: msg.cursor.seq,
-        }
-      : undefined;
+    const cursor = msg.cursor ? this.readWireCursor(msg.cursor, source) : undefined;
 
     try {
       const snapshot = await ensureAgentLoaded(msg.agentId, {
@@ -7859,14 +7912,15 @@ export class Session {
         hasOlder: fetchedControlTimeline.hasOlder,
         hasNewer: fetchedControlTimeline.hasNewer,
       };
+      const epoch = this.wireEpoch(
+        fetchedControlTimeline.epoch,
+        fetchedControlTimeline.retirementCount,
+        source,
+      );
       const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
+        selectedTimeline.startSeq !== null ? { epoch, seq: selectedTimeline.startSeq } : null;
       const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
+        selectedTimeline.endSeq !== null ? { epoch, seq: selectedTimeline.endSeq } : null;
       const entries = selectedTimeline.entries.filter((entry) =>
         this.supportsTimelineItem(entry.item, source),
       );
@@ -7880,7 +7934,7 @@ export class Session {
             agent: agentPayload,
             direction,
             projection,
-            epoch: selectedTimeline.timeline.epoch,
+            epoch,
             reset: fetchedControlTimeline.reset,
             staleCursor: fetchedControlTimeline.staleCursor,
             gap: fetchedControlTimeline.gap,
@@ -7890,6 +7944,9 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
+            ...(this.appliesRewinds(source)
+              ? { retirements: fetchedControlTimeline.retirements }
+              : {}),
             entries: entries.map((entry) => {
               const payloadEntry = {
                 provider: snapshot.provider,
@@ -7954,13 +8011,13 @@ export class Session {
     const pluginId = parsePluginClientId(this.clientId);
     if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
     assertPluginTimelineDataSize(msg.item.data);
-    const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
-      ...msg.item,
-      pluginId,
-    });
+    const { seq, epoch, retirementCount } = await this.agentManager.appendTimelineItem(
+      msg.agentId,
+      { ...msg.item, pluginId },
+    );
     this.emit({
       type: "agent.timeline.append.response",
-      payload: { requestId: msg.requestId, seq, epoch },
+      payload: { requestId: msg.requestId, seq, epoch: this.wireEpoch(epoch, retirementCount) },
     });
   }
 
@@ -7975,17 +8032,19 @@ export class Session {
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const { epoch } = await this.agentManager.fetchTimeline(msg.agentId, {
+      const before = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
       const result = await searchTimeline({ rows, query: msg.query, cursor: msg.cursor });
-      if (
-        (await this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }))
-          .epoch !== epoch
-      ) {
+      const after = await this.agentManager.fetchTimeline(msg.agentId, {
+        direction: "tail",
+        limit: 1,
+      });
+      if (after.epoch !== before.epoch || after.retirementCount !== before.retirementCount) {
         throw new Error("History changed; search again");
       }
+      const epoch = this.wireEpoch(before.epoch, before.retirementCount, source);
       this.emitForSource(
         {
           type: "agent.timeline.search.response",
@@ -8032,7 +8091,10 @@ export class Session {
         direction: "tail",
         limit: 1,
       });
-      const index = buildTimelinePromptIndex(timeline.epoch, rows);
+      const index = buildTimelinePromptIndex(
+        this.wireEpoch(timeline.epoch, timeline.retirementCount, source),
+        rows,
+      );
       this.emitForSource(
         {
           type: "agent.timeline.list_prompts.response",
@@ -8214,7 +8276,10 @@ export class Session {
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
-          ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
+          ? {
+              timelineEpoch: this.wireEpoch(timeline.epoch, timeline.retirementCount),
+              cursor: msg.boundaryCursor,
+            }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
         agentTitle: agentPayload.title,

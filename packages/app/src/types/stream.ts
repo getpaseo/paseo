@@ -262,7 +262,7 @@ function produceUserMessage(
     ...presentation,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
-    timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
+    ...advanceTimelinePosition(existing.timelineCursor, incoming.timelineCursor),
   });
   if (
     existing.id === merged.id &&
@@ -478,7 +478,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     const next = [...tail];
     next[tailIndex] = {
       ...existing,
-      timelineCursor: retained.timelineCursor,
+      ...advanceTimelinePosition(existing.timelineCursor, retained.timelineCursor),
       timestamp: retained.timestamp,
       items: retained.items,
     };
@@ -495,7 +495,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     const next = [...tail];
     next[tailIndex] = {
       ...existing,
-      timelineCursor: retained.timelineCursor,
+      ...advanceTimelinePosition(existing.timelineCursor, retained.timelineCursor),
       status: "completed",
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
@@ -515,7 +515,10 @@ function replaceTimelineIdentityItem(
   const existing = items[index];
   if (index < 0 || !existing || existing.kind !== "plugin") return null;
   const next = [...items];
-  next[index] = retained;
+  next[index] = {
+    ...retained,
+    ...advanceTimelinePosition(existing.timelineCursor, retained.timelineCursor),
+  };
   return next;
 }
 
@@ -606,7 +609,11 @@ function preserveReplacementHead(
       : `${tailAssistant.text}${liveAssistant.text}`;
     const head = [
       ...unreconciledHead.slice(0, liveAssistantIndex),
-      { ...liveAssistant, text },
+      {
+        ...liveAssistant,
+        text,
+        ...advanceTimelinePosition(tailAssistant.timelineCursor, liveAssistant.timelineCursor),
+      },
       ...unreconciledHead.slice(liveAssistantIndex + 1),
     ];
     return {
@@ -621,7 +628,13 @@ function preserveReplacementHead(
 
   const head = [
     ...unreconciledHead.slice(0, liveAssistantIndex),
-    { ...liveAssistant, text: tailAssistant.text },
+    {
+      ...liveAssistant,
+      text: tailAssistant.text,
+      ...(liveAssistant.timelineCursor
+        ? advanceTimelinePosition(tailAssistant.timelineCursor, liveAssistant.timelineCursor)
+        : {}),
+    },
     ...unreconciledHead.slice(liveAssistantIndex + 1),
   ];
   return {
@@ -718,7 +731,27 @@ export interface AssistantMessageItem {
 
 export interface TimelinePosition {
   epoch: string;
+  /** The latest seq that changed this row. */
   seq: number;
+  /** The seq the row started at. Updates never move it; rewinds retire rows by it. */
+  anchorSeq: number;
+}
+
+/**
+ * The position of a row after an update: it moves to the update's seq and stays anchored where it
+ * started. Without an incoming position the row keeps the one it has.
+ */
+export function advanceTimelinePosition(
+  existing: TimelinePosition | undefined,
+  incoming: TimelinePosition | undefined,
+): { timelineCursor?: TimelinePosition } {
+  if (!incoming) return existing ? { timelineCursor: existing } : {};
+  if (!existing || existing.epoch !== incoming.epoch) return { timelineCursor: incoming };
+  const anchorSeq = Math.min(existing.anchorSeq, incoming.anchorSeq);
+  if (existing.seq === incoming.seq && existing.anchorSeq === anchorSeq) {
+    return { timelineCursor: existing };
+  }
+  return { timelineCursor: { ...incoming, anchorSeq } };
 }
 
 export type ThoughtStatus = "loading" | "ready";
@@ -943,7 +976,7 @@ function appendAssistantMessage(
       ...last,
       text: `${last.text}${chunk}`,
       timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...advanceTimelinePosition(last.timelineCursor, timelineCursor),
     };
     return [...state.slice(0, -1), updated];
   }
@@ -961,7 +994,7 @@ function appendAssistantMessage(
       ...secondLast,
       text: `${secondLast.text}${chunk}`,
       timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...advanceTimelinePosition(secondLast.timelineCursor, timelineCursor),
     };
     return [...state.slice(0, -2), updated, last];
   }
@@ -999,7 +1032,7 @@ function appendThought(
   if (last && last.kind === "thought" && last.turnId === turnId) {
     const updated: ThoughtItem = {
       ...last,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...advanceTimelinePosition(last.timelineCursor, timelineCursor),
       text: `${last.text}${chunk}`,
       timestamp,
       status: "loading",
@@ -1179,7 +1212,7 @@ export function mergeAgentToolCallItem(
 
   return {
     ...existing,
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...advanceTimelinePosition(existing.timelineCursor, timelineCursor),
     timestamp,
     payload: {
       source: "agent",
@@ -1285,7 +1318,11 @@ function appendPluginTimelineItem(
   const existing = state[existingIndex];
   if (!existing || existing.kind !== "plugin") return state;
   const next = [...state];
-  next[existingIndex] = { ...nextItem, id: existing.id };
+  next[existingIndex] = {
+    ...nextItem,
+    id: existing.id,
+    ...advanceTimelinePosition(existing.timelineCursor, timelineCursor),
+  };
   return next;
 }
 
@@ -1316,7 +1353,7 @@ function appendTodoList(
     const next = [...state];
     next[previousIndex] = {
       ...previous,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...advanceTimelinePosition(previous.timelineCursor, timelineCursor),
       items: normalizedItems,
       timestamp,
     };
@@ -1335,7 +1372,7 @@ function appendTodoList(
     const next = [...state];
     next[next.length - 1] = {
       ...lastItem,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...advanceTimelinePosition(lastItem.timelineCursor, timelineCursor),
       items: normalizedItems,
       activity: { type: "created", count: normalizedItems.length },
       timestamp,
@@ -1480,7 +1517,7 @@ function reduceTimelineCompaction(
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
         ...existing,
-        ...(timelineCursor ? { timelineCursor } : {}),
+        ...advanceTimelinePosition(existing.timelineCursor, timelineCursor),
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,

@@ -318,6 +318,14 @@ export type PaseoAgentTimelineEvent =
       event: { type: "replacement"; epoch: string };
     }
   | {
+      /**
+       * A conversation rewind removed the rows anchored in `[retireFromSeq, seq)` from the active
+       * history. Rows after `seq` belong to the rewound conversation.
+       */
+      agentId: string;
+      event: { type: "rewind"; epoch: string; seq: number; retireFromSeq: number };
+    }
+  | {
       agentId: string;
       subscriptionId: string;
       event: { type: "subscription_restored" };
@@ -338,7 +346,9 @@ export interface PaseoAgentTimelineHandle {
    * Delivers live events only. After reconnect, subscription_restored precedes
    * subsequent updates. History may have been missed; use refetch() to request
    * the range you need. No history is fetched automatically. A replacement event
-   * invalidates the previous epoch. Subscription errors release this observation.
+   * invalidates the previous epoch. A rewind event removes `[retireFromSeq, seq)`
+   * from the active history without changing the epoch. Subscription errors
+   * release this observation.
    * Await the returned unsubscribe function's `ready` promise before starting
    * work that must be observed. It rejects if establishment fails.
    */
@@ -941,6 +951,16 @@ function createAgentHandleFactory(
                 return handler({
                   agentId: id,
                   event: { type: "replacement", epoch: message.payload.epoch },
+                });
+              case "agent.timeline.rewind":
+                return handler({
+                  agentId: id,
+                  event: {
+                    type: "rewind",
+                    epoch: message.payload.epoch,
+                    seq: message.payload.seq,
+                    retireFromSeq: message.payload.retireFromSeq,
+                  },
                 });
             }
           }),
