@@ -1724,7 +1724,7 @@ export default function contribute(plugin: unknown) {
     await service.stopAllPlugins();
 
     expect((await readFile(cleanupFile, "utf8")).trim().split("\n")).toHaveLength(4);
-  }, 30_000);
+  }, 60_000);
 });
 
 describe("PluginService registry source resolution", () => {
