@@ -1,7 +1,9 @@
-import { MoreVertical, Pause, Pencil, Play, RotateCw, Trash2 } from "lucide-react-native";
-import { useCallback, useState, type ReactElement } from "react";
+import * as Clipboard from "expo-clipboard";
+import { Copy, MoreVertical, Pause, Pencil, Play, RotateCw, Trash2 } from "lucide-react-native";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { useToast } from "@/contexts/toast-context";
 import { useProviderIcon } from "@/components/provider-icons";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -27,6 +30,7 @@ import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 // Themed lucide wrappers — module-scope so only the icon re-renders on theme
 // change (never call useUnistyles in render). See docs/unistyles.md.
+const ThemedCopy = withUnistyles(Copy);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedPause = withUnistyles(Pause);
 const ThemedPlay = withUnistyles(Play);
@@ -34,9 +38,15 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedKebab = withUnistyles(MoreVertical);
 
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const mutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+const destructiveColorMapping = (theme: Theme) => ({
+  color: theme.colors.destructive,
+});
 
 const MENU_ICON_SIZE = 14;
 const PROVIDER_ICON_SIZE = 16;
@@ -135,7 +145,14 @@ function ScheduleMeta({
 }) {
   const createdAgo = useTimeAgo(new Date(schedule.createdAt));
   const lastRunAgo = useTimeAgo(schedule.lastRunAt ? new Date(schedule.lastRunAt) : null);
-  const meta = buildMeta({ schedule, state, createdAgo, lastRunAgo, serverName, singleHost });
+  const meta = buildMeta({
+    schedule,
+    state,
+    createdAgo,
+    lastRunAgo,
+    serverName,
+    singleHost,
+  });
   return (
     <Text style={settingsStyles.rowHint} numberOfLines={1}>
       {meta}
@@ -206,53 +223,73 @@ export function ScheduleRow({
   );
 
   return (
-    <View
-      style={styles.rowContainer}
-      onPointerEnter={handlePointerEnter}
-      onPointerLeave={handlePointerLeave}
-    >
-      <Pressable
-        style={rowStyle}
-        onPress={onEdit}
-        accessibilityRole="button"
-        accessibilityLabel={`Edit ${productName.toLowerCase()} ${title}`}
-        testID={`schedule-row-${schedule.id}`}
+    <ContextMenu>
+      <ContextMenuTrigger
+        contextOnly
+        enabledOnMobile={false}
+        style={styles.rowContainer}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+        testID={`schedule-row-context-${schedule.id}`}
       >
-        <View style={styles.main}>
-          <View style={styles.leading}>
-            <ProviderGlyph provider={provider} serverId={serverId} />
+        <Pressable
+          style={rowStyle}
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${productName.toLowerCase()} ${title}`}
+          testID={`schedule-row-${schedule.id}`}
+        >
+          <View style={styles.main}>
+            <View style={styles.leading}>
+              <ProviderGlyph provider={provider} serverId={serverId} />
+            </View>
+            <View style={styles.textGroup}>
+              <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+                {title}
+              </Text>
+              <Text style={styles.target} numberOfLines={1}>
+                {targetLabel}
+              </Text>
+              <ScheduleMeta
+                schedule={schedule}
+                state={state}
+                serverName={serverName}
+                singleHost={singleHost ?? false}
+              />
+            </View>
           </View>
-          <View style={styles.textGroup}>
-            <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-              {title}
-            </Text>
-            <Text style={styles.target} numberOfLines={1}>
-              {targetLabel}
-            </Text>
-            <ScheduleMeta
+
+          <View style={styles.trailing}>
+            <StatusBadge label={badge.label} variant={badge.variant} />
+            <ScheduleKebabMenu
               schedule={schedule}
-              state={state}
-              serverName={serverName}
-              singleHost={singleHost ?? false}
+              title={title}
+              canRun={canRun}
+              pending={pending}
+              onEdit={onEdit}
+              onPause={onPause}
+              onResume={onResume}
+              onRunNow={onRunNow}
+              onDelete={onDelete}
             />
           </View>
-        </View>
-
-        <View style={styles.trailing}>
-          <StatusBadge label={badge.label} variant={badge.variant} />
-          <ScheduleKebabMenu
-            schedule={schedule}
-            canRun={canRun}
-            pending={pending}
-            onEdit={onEdit}
-            onPause={onPause}
-            onResume={onResume}
-            onRunNow={onRunNow}
-            onDelete={onDelete}
-          />
-        </View>
-      </Pressable>
-    </View>
+        </Pressable>
+      </ContextMenuTrigger>
+      {/* Right-click opens the same actions as the kebab, at the pointer (web/desktop). */}
+      <ContextMenuContent align="start" width={260} testID={`schedule-context-menu-${schedule.id}`}>
+        <ScheduleMenuItems
+          schedule={schedule}
+          title={title}
+          canRun={canRun}
+          pending={pending}
+          onEdit={onEdit}
+          onPause={onPause}
+          onResume={onResume}
+          onRunNow={onRunNow}
+          onDelete={onDelete}
+        />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -331,8 +368,28 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }): ReactElemen
   );
 }
 
-function ScheduleKebabMenu({
+const copyLeading = <ThemedCopy size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />;
+
+/** The schedule a menu acts on, named at its top: its title, and its id (what agents and the CLI take). */
+function ScheduleMenuHeader({ title, id }: { title: string; id: string }): ReactElement {
+  return (
+    <View style={styles.menuHeader} testID={`schedule-menu-header-${id}`}>
+      <Text style={styles.menuHeaderTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Text style={styles.menuHeaderId}>{id}</Text>
+    </View>
+  );
+}
+
+/**
+ * Every action on a schedule, in the order both its menus show them: the kebab (anchored to the
+ * trigger) and the row's right-click menu (anchored to the pointer). One list, so the two never
+ * drift apart.
+ */
+function ScheduleMenuItems({
   schedule,
+  title,
   canRun,
   pending,
   onEdit,
@@ -344,10 +401,82 @@ function ScheduleKebabMenu({
   ScheduleRowProps,
   "schedule" | "pending" | "onEdit" | "onPause" | "onResume" | "onRunNow" | "onDelete"
 > & {
+  title: string;
+  canRun: boolean;
+}): ReactElement {
+  const toast = useToast();
+  const productNameLower = scheduleProductName(schedule).toLowerCase();
+  const copyId = useCallback(() => {
+    void Clipboard.setStringAsync(schedule.id).then(
+      () => toast.copied(`${scheduleProductName(schedule)} ID`),
+      () => toast.error(`Couldn't copy ${productNameLower} ID`),
+    );
+  }, [schedule, productNameLower, toast]);
+  const copyTrailing = useMemo(
+    () => <Text style={styles.menuHeaderId}>{schedule.id}</Text>,
+    [schedule.id],
+  );
+  return (
+    <>
+      <ScheduleMenuHeader title={title} id={schedule.id} />
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        leading={copyLeading}
+        trailing={copyTrailing}
+        onSelect={copyId}
+        testID={`schedule-menu-copy-id-${schedule.id}`}
+      >
+        Copy {productNameLower} ID
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        leading={editLeading}
+        onSelect={onEdit}
+        testID={`schedule-menu-edit-${schedule.id}`}
+      >
+        Edit {productNameLower}
+      </DropdownMenuItem>
+      <ScheduleExecutionMenuItems
+        schedule={schedule}
+        canRun={canRun}
+        pending={pending}
+        onPause={onPause}
+        onResume={onResume}
+        onRunNow={onRunNow}
+      />
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        leading={deleteLeading}
+        destructive
+        status={pending?.delete ? "pending" : "idle"}
+        pendingLabel="Deleting..."
+        onSelect={onDelete}
+        testID={`schedule-menu-delete-${schedule.id}`}
+      >
+        Delete {productNameLower}
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+function ScheduleKebabMenu({
+  schedule,
+  title,
+  canRun,
+  pending,
+  onEdit,
+  onPause,
+  onResume,
+  onRunNow,
+  onDelete,
+}: Pick<
+  ScheduleRowProps,
+  "schedule" | "pending" | "onEdit" | "onPause" | "onResume" | "onRunNow" | "onDelete"
+> & {
+  title: string;
   canRun: boolean;
 }): ReactElement {
   const productName = scheduleProductName(schedule);
-  const productNameLower = productName.toLowerCase();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -359,33 +488,18 @@ function ScheduleKebabMenu({
       >
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={220}>
-        <DropdownMenuItem
-          leading={editLeading}
-          onSelect={onEdit}
-          testID={`schedule-menu-edit-${schedule.id}`}
-        >
-          Edit {productNameLower}
-        </DropdownMenuItem>
-        <ScheduleExecutionMenuItems
+      <DropdownMenuContent align="end" width={260}>
+        <ScheduleMenuItems
           schedule={schedule}
+          title={title}
           canRun={canRun}
           pending={pending}
+          onEdit={onEdit}
           onPause={onPause}
           onResume={onResume}
           onRunNow={onRunNow}
+          onDelete={onDelete}
         />
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          leading={deleteLeading}
-          destructive
-          status={pending?.delete ? "pending" : "idle"}
-          pendingLabel="Deleting..."
-          onSelect={onDelete}
-          testID={`schedule-menu-delete-${schedule.id}`}
-        >
-          Delete {productNameLower}
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -440,6 +554,26 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  menuHeader: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  menuHeaderTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+  },
+  menuHeaderId: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontFamily: theme.fontFamily.mono,
   },
   kebabTrigger: {
     padding: theme.spacing[1],
