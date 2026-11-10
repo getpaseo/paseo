@@ -662,7 +662,12 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
-function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+function isTurnTerminalEvent(
+  event: AgentStreamEvent,
+): event is Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+> {
   return (
     event.type === "turn_completed" ||
     event.type === "turn_failed" ||
