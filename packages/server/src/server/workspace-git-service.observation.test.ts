@@ -392,7 +392,8 @@ describe("WorkspaceGitService checkout observation", () => {
     });
 
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    // The initial read, then one working-tree read once the watcher covers the tree.
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(runGitCommand).toHaveBeenCalledTimes(2);
     expect(watcher.records.filter((record) => record.directory === REPO_CWD)).toHaveLength(1);
     expect(watcher.records.filter((record) => record.directory === GIT_DIR)).toHaveLength(1);
@@ -1607,7 +1608,8 @@ describe("WorkspaceGitService checkout observation", () => {
         expect.any(Function),
         expect.any(Object),
       );
-      expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+      // The initial read, then one working-tree read once the watcher covers the tree.
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
@@ -1742,7 +1744,9 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(workspaceRuntimeStore.get(REPO_CWD)).not.toBeNull();
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
+    const statusCallsBeforeError = getCheckoutStatus.mock.calls.length;
     const checkoutWatcher = watcher.records.find((record) => record.directory === REPO_CWD);
     expect(checkoutWatcher).toBeDefined();
 
@@ -1751,7 +1755,7 @@ describe("WorkspaceGitService checkout observation", () => {
     expect(service.getMetrics().watcherErrorCallbackCount).toBe(1);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(statusCallsBeforeError + 1);
     });
 
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
@@ -2757,7 +2761,9 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(workspaceRuntimeStore.get(REPO_CWD)).not.toBeNull();
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
+    const statusCallsBeforeEvent = getCheckoutStatus.mock.calls.length;
     isDirty = true;
     diffStat = { additions: 7, deletions: 3 };
 
@@ -2776,7 +2782,7 @@ describe("WorkspaceGitService checkout observation", () => {
       );
       expect(diffListener).toHaveBeenCalledTimes(1);
     });
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(statusCallsBeforeEvent + 1);
 
     diffSubscription.unsubscribe();
     subscription.unsubscribe();

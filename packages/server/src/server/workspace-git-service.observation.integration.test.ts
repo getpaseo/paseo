@@ -1,5 +1,6 @@
 import { flushGitCommandTrace } from "../utils/git-command-trace.js";
 import {
+  runWithGitCommandPriority,
   startGitCommandMetrics,
   stopGitCommandMetrics,
   waitForGitCommandMetricsIdle,
@@ -279,6 +280,8 @@ test("recursive observation updates tracked state and prunes ignored storms", as
         }),
       ).toBe(2);
       expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
+      // The working-tree read that follows full watcher coverage.
+      expect(getCheckoutWorktreeState).toHaveBeenCalled();
       expect(service.getMetrics()).toMatchObject({
         workspaceObservationSetupInFlightCount: 0,
         workspaceRefreshInFlightCount: 0,
@@ -287,6 +290,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
     },
     { timeout: 5_000 },
   );
+  getCheckoutWorktreeState.mockClear();
 
   writeFileSync(trackedPath, "base\n");
   await vi.waitFor(
@@ -916,4 +920,58 @@ test("observation-driven refreshes run their Git work in the background lane", a
   expect(new Set(demand.slice(checkoutStart).map((command) => command.priority))).toEqual(
     new Set(["background"]),
   );
+
+  startGitCommandMetrics();
+  await runWithGitCommandPriority("high", () =>
+    service.getSnapshot(repo, { force: true, reason: "test-user-action", includeForge: false }),
+  );
+  await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 10_000 });
+  const userAction = stopGitCommandMetrics().submissions;
+  expect(userAction.length).toBeGreaterThan(0);
+  expect(new Set(userAction.map((command) => command.priority))).toEqual(new Set(["high"]));
+}, 30_000);
+
+test("an edit made before the working-tree watcher starts still reaches the cached snapshot", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-coverage-gap-")));
+  const repo = path.join(root, "repo");
+  const trackedPath = path.join(repo, "src", "tracked.txt");
+  mkdirSync(path.dirname(trackedPath), { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(trackedPath, "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const observer = createFileObserver();
+  const workingTreeWatchGate = Promise.withResolvers<void>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    deps: {
+      subscribe: async (directory, callback, options) => {
+        if (directory === repo) await workingTreeWatchGate.promise;
+        return observer.subscribe(directory, callback, options);
+      },
+    },
+  });
+  const subscription = service.registerWorkspace({ cwd: repo }, () => {});
+  cleanup.push(async () => {
+    workingTreeWatchGate.resolve();
+    subscription.unsubscribe();
+    await service.dispose();
+    await observer.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  expect((await service.getSnapshot(repo, { includeForge: false })).git.isDirty).toBe(false);
+  writeFileSync(trackedPath, "edited before the watcher started\n");
+  workingTreeWatchGate.resolve();
+
+  await expect
+    .poll(async () => (await service.getSnapshot(repo, { includeForge: false })).git.isDirty, {
+      timeout: 10_000,
+    })
+    .toBe(true);
 }, 30_000);

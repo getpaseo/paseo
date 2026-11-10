@@ -1406,7 +1406,26 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     await this.ensureRepoTarget(target);
     if (this.isActiveObservedWorkspaceTarget(target)) {
       target.observationSetupComplete = true;
+      this.refreshAfterWorkingTreeCoverage(target);
     }
+  }
+
+  // Watchers report only changes made after they subscribe, and the initial
+  // snapshot is read in parallel with observation setup, so an edit in between
+  // reaches no watcher. Read the working tree once more now that every later
+  // change will. Degraded polling keeps its own cadence.
+  private refreshAfterWorkingTreeCoverage(target: WorkspaceGitTarget): void {
+    if (!target.workingTreeWatchTarget?.subscription) {
+      return;
+    }
+    void this.refreshWorkspaceTarget(
+      target,
+      this.buildScheduledRefreshRequest({
+        origin: "observation",
+        scope: "worktree",
+        reason: "observation-established",
+      }),
+    );
   }
 
   private async getFactsForObservation(target: WorkspaceGitTarget): Promise<CheckoutSnapshotFacts> {
@@ -3450,8 +3469,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         });
       }
       try {
+        // Demand refreshes keep the caller's lane, so a user action running at
+        // "high" is not demoted.
         const runRefreshGitCommand = createRunGitCommand(`workspace-refresh:${request.reason}`, {
-          priority: request.origin === "demand" ? "normal" : "background",
+          priority: request.origin === "observation" ? "background" : undefined,
         });
         const admittedSnapshot = await this.workspaceRefreshLimit(() => {
           if (

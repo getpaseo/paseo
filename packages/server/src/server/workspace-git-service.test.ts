@@ -1373,7 +1373,9 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-      expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
+      // Initial read, the working-tree read once the watcher covers the tree,
+      // then the fallback.
+      expect(getCheckoutShortstat).toHaveBeenCalledTimes(3);
     });
     expect(listener.mock.lastCall?.[0].git.diffStat).toEqual({ additions: 2, deletions: 0 });
 
