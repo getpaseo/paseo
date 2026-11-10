@@ -52,6 +52,12 @@ interface CompactModelSheetProps {
   onEditProfiles?: () => void;
   onCreateProfile?: (seed: AgentProfileSeed) => void;
   onEditProfile?: (profileId: string) => void;
+  /** Saves a model as the provider's default for new sessions. */
+  onSetDefault?: (provider: string, modelId: string) => void;
+  /** Clears the saved default so the provider's own configured default applies to new sessions. */
+  onUseProviderDefault?: (provider: string) => void;
+  /** The saved default model for the selected provider; null means the provider default applies. */
+  defaultModelId?: string | null;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
@@ -140,6 +146,9 @@ export function CompactModelSheet({
   onEditProfiles,
   onCreateProfile,
   onEditProfile,
+  onSetDefault,
+  onUseProviderDefault,
+  defaultModelId = null,
   onOpen,
   onClose,
   onRetryProvider,
@@ -174,6 +183,7 @@ export function CompactModelSheet({
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
     serverId,
+    defaultModelId,
   });
   const modelBrowser = useModelBrowser({
     providers: availableProviders,
@@ -183,6 +193,7 @@ export function CompactModelSheet({
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
     serverId,
+    defaultModelId,
   });
   const ModelIcon = useProviderIcon(selectedProvider, serverId);
   const hasSelectedProvider = selectedProvider.trim().length > 0;
@@ -352,6 +363,8 @@ export function CompactModelSheet({
             scrolling={modelBrowserScrolling}
             searchAllOnFocus={usesBottomSheet}
             rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
+            onSetDefault={onSetDefault}
+            onUseProviderDefault={onUseProviderDefault}
           />
         </View>
         {!usesBottomSheet ? (
@@ -397,6 +410,8 @@ export function CompactModelSheet({
               scrolling={modelBrowserScrolling}
               searchAllOnFocus
               showProfilesSection={false}
+              onSetDefault={onSetDefault}
+              onUseProviderDefault={onUseProviderDefault}
             />
           </View>
         </AdaptiveModalSheet>

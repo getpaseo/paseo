@@ -145,13 +145,18 @@ function mergeDefinedRecord<T>(
 
 function applyProviderPreferenceUpdates(
   existing: ProviderPreferences,
-  updates: Omit<Partial<ProviderPreferences>, "mode"> & { mode?: string | null },
+  updates: Omit<Partial<ProviderPreferences>, "mode" | "model"> & {
+    mode?: string | null;
+    model?: string | null;
+  },
 ): ProviderPreferences {
   const next: ProviderPreferences = { ...existing };
   const nextThinkingByModel = mergeDefinedRecord(existing.thinkingByModel, updates.thinkingByModel);
   const nextOptions = mergeDefinedRecord(existing.options, updates.options);
 
-  if (updates.model !== undefined) {
+  if (updates.model === null) {
+    delete next.model;
+  } else if (updates.model !== undefined) {
     next.model = updates.model;
   }
   if (updates.mode === null) {
@@ -172,7 +177,10 @@ function applyProviderPreferenceUpdates(
 export function mergeProviderPreferences(args: {
   preferences: FormPreferences;
   provider: AgentProvider;
-  updates: Omit<Partial<ProviderPreferences>, "mode"> & { mode?: string | null };
+  updates: Omit<Partial<ProviderPreferences>, "mode" | "model"> & {
+    mode?: string | null;
+    model?: string | null;
+  };
 }): FormPreferences {
   const { preferences, provider, updates } = args;
   const existingProviderPreferences = preferences.providerPreferences ?? {};
