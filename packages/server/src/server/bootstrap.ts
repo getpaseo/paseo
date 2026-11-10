@@ -1980,6 +1980,7 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    await scheduleService.stop().catch(() => undefined);
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
     // Start shutdown tracking before draining messages so any in-flight
@@ -2019,7 +2020,6 @@ export async function createPaseoDaemon(
       logger.error({ err: error }, "Terminal shutdown failed");
     }
     await speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();
