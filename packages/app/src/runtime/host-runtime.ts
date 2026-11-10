@@ -20,6 +20,7 @@ import {
   forgetUnreadableHost,
   pinRelayProtectedSecurityInProfiles,
   readHostRegistry,
+  reconcileLearnedDirectConnections,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
@@ -30,7 +31,6 @@ import {
 } from "@/types/host-connection";
 import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
 import {
-  buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
   decodeOfferFragmentPayload,
   normalizeHostPort,
@@ -39,10 +39,18 @@ import {
 } from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
+import {
+  parseServerInfoStatusPayload,
+  type ServerInfoStatusPayload,
+} from "@getpaseo/protocol/messages";
 import { HostConfirmations, type HostConfirmationRequest } from "./host-confirmation";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { isWeb } from "@/constants/platform";
-import { connectToDaemon, getConnectionAuthFailureReason } from "@/utils/test-daemon-connection";
+import {
+  connectToDaemon,
+  directTcpClientTarget,
+  getConnectionAuthFailureReason,
+} from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { z } from "zod";
 import { readValidatedString } from "@/storage/validated-storage";
@@ -200,6 +208,13 @@ function hashForLog(value: string): string {
 export interface RelaySecurityPin {
   serverId: string;
   daemonPublicKeyB64: string;
+}
+
+interface LearnedDirectEndpoints {
+  serverId: string;
+  sourceConnectionId: string;
+  daemonPublicKeyB64: string;
+  endpoints: string[];
 }
 
 export interface HostRuntimeControllerDeps {
@@ -548,15 +563,20 @@ function probeIntervalForConnection(
   firstSeenAt: number,
   isActiveOnline: boolean,
   hasActiveOnlineConnection: boolean,
+  isLearnedDirect: boolean,
   now: number,
 ): number {
   if (isActiveOnline) {
     return PROBE_STEADY_MS;
   }
+  const age = now - firstSeenAt;
   if (hasActiveOnlineConnection) {
+    // A newly discovered nearby address should get enough fresh samples to
+    // qualify for the existing three-probe switch without waiting six minutes.
+    if (isLearnedDirect && age < 10_000) return 2_000;
+    if (isLearnedDirect && age < 30_000) return 5_000;
     return PROBE_INACTIVE_WHILE_ONLINE_MS;
   }
-  const age = now - firstSeenAt;
   if (age < 10_000) return 2_000;
   if (age < 30_000) return 5_000;
   if (age < 60_000) return PROBE_STEADY_MS;
@@ -636,9 +656,7 @@ function createDefaultDeps(
         return new DaemonClient({
           ...base,
           ...webSocketConfig,
-          url: buildDaemonWebSocketUrl(connection.endpoint, {
-            useTls: connection.useTls ?? false,
-          }),
+          ...directTcpClientTarget(connection),
         });
       }
       return new DaemonClient({
@@ -721,6 +739,7 @@ export class HostRuntimeController {
   private deps: HostRuntimeControllerDeps;
   private onReconcileServerId: ((oldId: string, newId: string) => void) | null;
   private onRelayProtectedSecurityNegotiated: ((input: RelaySecurityPin) => void) | null;
+  private onLearnedDirectEndpoints: ((input: LearnedDirectEndpoints) => void) | null;
   private connectionMachineState: HostRuntimeConnectionMachineState;
   private connectionEpoch = 0;
   private snapshot: HostRuntimeSnapshot;
@@ -746,11 +765,13 @@ export class HostRuntimeController {
     deps?: HostRuntimeControllerDeps;
     onReconcileServerId?: (oldId: string, newId: string) => void;
     onRelayProtectedSecurityNegotiated?: (input: RelaySecurityPin) => void;
+    onLearnedDirectEndpoints?: (input: LearnedDirectEndpoints) => void;
   }) {
     this.host = input.host;
     this.deps = input.deps ?? createDefaultDeps();
     this.onReconcileServerId = input.onReconcileServerId ?? null;
     this.onRelayProtectedSecurityNegotiated = input.onRelayProtectedSecurityNegotiated ?? null;
+    this.onLearnedDirectEndpoints = input.onLearnedDirectEndpoints ?? null;
     this.connectionMachineState = {
       tag: "booting",
     };
@@ -980,6 +1001,7 @@ export class HostRuntimeController {
         firstSeen,
         isActiveOnline,
         hasActiveOnlineConnection,
+        connection.type === "directTcp" && !!connection.learnedFromConnectionId,
         now,
       );
       return now - lastProbed >= interval;
@@ -1538,13 +1560,28 @@ export class HostRuntimeController {
       if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
       this.unsubscribeClientHandlers =
         this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
+      const unsubscribeServerInfo = client.subscribeRawMessages?.((message) => {
+        if (message.type !== "status") return;
+        if (this.activeClient !== client) return;
+        const serverInfo = parseServerInfoStatusPayload(message.payload);
+        if (serverInfo) this.learnDirectEndpoints(serverInfo);
+      });
+      const unsubscribeMounted = this.unsubscribeClientHandlers;
+      this.unsubscribeClientHandlers = () => {
+        unsubscribeServerInfo?.();
+        unsubscribeMounted?.();
+      };
       this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
         if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
         if (client.authFailureReason) {
           void failConnection(new DaemonAuthenticationError(client.authFailureReason));
           return;
         }
-        if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
+        if (state.status === "connected") {
+          this.learnRelaySecurity(client, connection.id);
+          const serverInfo = client.getLastServerInfoMessage();
+          if (serverInfo) this.learnDirectEndpoints(serverInfo);
+        }
         // Switch evidence belongs to the socket it was measured against.
         if (state.status !== "connected") this.resetSwitchCandidate();
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
@@ -1558,6 +1595,28 @@ export class HostRuntimeController {
     } catch (error) {
       await failConnection(error);
     }
+  }
+
+  private learnDirectEndpoints(info: ServerInfoStatusPayload): void {
+    if (info.features?.learnedDirectEndpoints !== true || !info.directEndpoints) return;
+    const active = findConnectionById(this.host, this.snapshot.activeConnectionId);
+    let source: { id: string; key: string } | null = null;
+    if (active?.type === "relay") {
+      source = { id: active.id, key: active.daemonPublicKeyB64 };
+    } else if (
+      active?.type === "directTcp" &&
+      active.learnedFromConnectionId &&
+      active.daemonPublicKeyB64
+    ) {
+      source = { id: active.learnedFromConnectionId, key: active.daemonPublicKeyB64 };
+    }
+    if (!source) return;
+    this.onLearnedDirectEndpoints?.({
+      serverId: this.host.serverId,
+      sourceConnectionId: source.id,
+      daemonPublicKeyB64: source.key,
+      endpoints: info.directEndpoints,
+    });
   }
 
   // The active client is the one place every connection path meets: clients
@@ -2315,7 +2374,12 @@ export class HostRuntimeStore {
 
   async removeConnection(serverId: string, connectionId: string): Promise<void> {
     const host = this.hosts.find((candidate) => candidate.serverId === serverId);
-    if (host?.connections.length === 1 && host.connections[0]?.id === connectionId) {
+    const retainsConnection = host?.connections.some(
+      (connection) =>
+        connection.id !== connectionId &&
+        !(connection.type === "directTcp" && connection.learnedFromConnectionId === connectionId),
+    );
+    if (host && !retainsConnection) {
       await this.removeHost(serverId);
       return;
     }
@@ -2323,7 +2387,11 @@ export class HostRuntimeStore {
     const next = this.hosts
       .map((daemon) => {
         if (daemon.serverId !== serverId) return daemon;
-        const remaining = daemon.connections.filter((conn) => conn.id !== connectionId);
+        const remaining = daemon.connections.filter(
+          (conn) =>
+            conn.id !== connectionId &&
+            !(conn.type === "directTcp" && conn.learnedFromConnectionId === connectionId),
+        );
         if (remaining.length === 0) {
           return null;
         }
@@ -2341,6 +2409,21 @@ export class HostRuntimeStore {
       .filter((entry): entry is HostProfile => entry !== null);
     this.setHostsAndSync(next);
     await this.persistHosts();
+  }
+
+  private learnDirectConnections(input: LearnedDirectEndpoints): void {
+    const host = this.hosts.find((candidate) => candidate.serverId === input.serverId);
+    const source = host?.connections.find((candidate) => candidate.id === input.sourceConnectionId);
+    if (!host || source?.type !== "relay" || source.daemonPublicKeyB64 !== input.daemonPublicKeyB64)
+      return;
+    const updated = reconcileLearnedDirectConnections({ host, ...input });
+    if (updated === host) return;
+    this.setHostsAndSync(
+      this.hosts.map((candidate) => (candidate.serverId === input.serverId ? updated : candidate)),
+    );
+    void this.persistHosts().catch((error) =>
+      console.error("[HostRuntime] Failed to persist learned direct connections", error),
+    );
   }
 
   private async upsertHostConnection(input: {
@@ -2476,6 +2559,7 @@ export class HostRuntimeStore {
         deps: this.deps,
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
         onRelayProtectedSecurityNegotiated: (pin) => void this.pinRelayProtectedSecurity(pin),
+        onLearnedDirectEndpoints: (learned) => this.learnDirectConnections(learned),
       });
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);

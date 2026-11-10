@@ -71,6 +71,12 @@ paseo daemon pair
 
 Confirm when prompted. Paseo prints a QR code and pairing link. Scan the QR code with Paseo on your phone, or choose **Paste pairing link** in the phone app.
 
+### Learned direct connections
+
+After you pair through the relay, Paseo learns private IPv4 addresses on which the daemon is listening. The app saves them under the same host and tries them alongside the relay. A learned connection uses the daemon key from relay pairing to establish an encrypted session before sending a password. When the daemon changes networks, its learned addresses update. Removing the relay connection also removes the addresses learned from it.
+
+The daemon reports LAN and VPN addresses only when its TCP listener accepts connections on those interfaces. A loopback listener reports none. A listener bound to a Tailscale IP reports that IP; a listener bound to all IPv4 interfaces can report both LAN and VPN addresses. An address is shown as a direct connection because the `100.64.0.0/10` range does not identify Tailscale by itself. Browser security rules can prevent an HTTPS page from connecting to a plain WebSocket address; the relay remains available in that case.
+
 ## Tailscale
 
 Install [Tailscale](https://tailscale.com/download) on the daemon machine and your phone. Sign in to the same tailnet on both devices.
@@ -115,7 +121,7 @@ If Paseo Desktop manages the daemon, use **Settings → your host → Overview �
 
 1. Connect Tailscale on your phone.
 2. Open Paseo and go to **Settings → Add host → Direct connection**.
-3. Enter the Tailscale IP in **Host**.
+3. Enter the Tailscale IP in **Host**. If this host is already paired through the relay and the daemon reports that address, Paseo adds it automatically.
 4. Enter `6767` in **Port**.
 5. Leave **Use SSL** off and select **Connect**.
 

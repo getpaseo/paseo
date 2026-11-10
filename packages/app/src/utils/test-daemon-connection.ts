@@ -5,7 +5,7 @@ import {
   type DaemonAuthFailureReason,
 } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
-import type { HostConnection } from "@/types/host-connection";
+import type { DirectTcpHostConnection, HostConnection } from "@/types/host-connection";
 import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 import { createHostLogger } from "@/runtime/host-logger";
 import { getOrCreateClientId } from "./client-id";
@@ -133,6 +133,24 @@ function resolveConnectionCredentials(
   };
 }
 
+export function directTcpClientTarget(
+  connection: DirectTcpHostConnection,
+): Pick<DaemonClientConfig, "url" | "e2ee"> {
+  const url = new URL(
+    buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
+  );
+  if (!connection.daemonPublicKeyB64) return { url: url.toString() };
+  url.searchParams.set("secure", "1");
+  return {
+    url: url.toString(),
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: connection.daemonPublicKeyB64,
+      minimumMode: "protected",
+    },
+  };
+}
+
 export async function buildClientConfig(
   connection: HostConnection,
   serverId?: string,
@@ -194,7 +212,7 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
-      url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
+      ...directTcpClientTarget(connection),
     };
   }
 

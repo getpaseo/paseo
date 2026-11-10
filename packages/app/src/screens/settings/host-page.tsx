@@ -548,9 +548,11 @@ function ConnectionRow({
         </Text>
       </View>
       <Text style={latencyTextStyle}>{latencyText}</Text>
-      <Button variant="ghost" textStyle={destructiveTextStyle} onPress={handlePressRemove}>
-        {t("settings.host.connections.removeAction")}
-      </Button>
+      {connection.type !== "directTcp" || !connection.learnedFromConnectionId ? (
+        <Button variant="ghost" textStyle={destructiveTextStyle} onPress={handlePressRemove}>
+          {t("settings.host.connections.removeAction")}
+        </Button>
+      ) : null}
     </View>
   );
 }

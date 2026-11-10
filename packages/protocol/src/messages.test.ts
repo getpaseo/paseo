@@ -332,6 +332,19 @@ describe("agent detach RPC", () => {
     expect(parsed.features?.agentDetach).toBe(true);
   });
 
+  test("accepts optional learned direct endpoints in server info", () => {
+    const legacy = parseServerInfoStatusPayload({ status: "server_info", serverId: "srv-test" });
+    expect(legacy?.directEndpoints).toBeUndefined();
+    const current = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      directEndpoints: ["192.168.1.10:6767", "100.100.1.5:6767"],
+      features: { learnedDirectEndpoints: true },
+    });
+    expect(current?.directEndpoints).toEqual(["192.168.1.10:6767", "100.100.1.5:6767"]);
+    expect(current?.features?.learnedDirectEndpoints).toBe(true);
+  });
+
   test("parses the workspace-targeted session import feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",
