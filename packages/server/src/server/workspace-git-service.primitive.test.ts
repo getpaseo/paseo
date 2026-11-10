@@ -993,7 +993,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(2));
     // Setup itself does no snapshot read; once the watcher covers the tree, one
-    // working-tree read catches edits made since the forced read.
+    // checkout read catches changes made since the forced read.
     await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalledTimes(2));
 
     subscription.unsubscribe();

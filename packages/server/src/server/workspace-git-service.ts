@@ -1411,9 +1411,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   // Watchers report only changes made after they subscribe, and the initial
-  // snapshot is read in parallel with observation setup, so an edit in between
-  // reaches no watcher. Read the working tree once more now that every later
-  // change will. Degraded polling keeps its own cadence.
+  // snapshot is read in parallel with observation setup, so an edit or branch
+  // switch in between reaches no watcher. Read the checkout once more now that
+  // every later change will. Degraded polling keeps its own cadence.
   private refreshAfterWorkingTreeCoverage(target: WorkspaceGitTarget): void {
     if (!target.workingTreeWatchTarget?.subscription) {
       return;
@@ -1422,7 +1422,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target,
       this.buildScheduledRefreshRequest({
         origin: "observation",
-        scope: "worktree",
         reason: "observation-established",
       }),
     );
