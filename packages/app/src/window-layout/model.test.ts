@@ -162,49 +162,44 @@ describe("resolveHeaderBesideStatusBar", () => {
     verticalBar: null,
     divisions: [],
   };
+  const disabled = { ...base, verticalBarBehavior: "disabled" as const };
+  const pill = { x: 274, y: 20, width: 151, height: 56 };
 
-  it("moves the header into the top row, ending before a status pill at the top right", () => {
+  it("ends the header before the top band's status region", () => {
     expect(
-      resolveHeaderBesideStatusBar(
-        {
-          ...base,
-          verticalBarBehavior: "disabled",
-          statusBar: { x: 280, y: 25, width: 145, height: 46 },
-        },
-        44,
-      ),
-    ).toEqual({ top: 26, right: 177 });
+      resolveHeaderBesideStatusBar({
+        layout: disabled,
+        topBand: { top: 12, trailingObstruction: { width: 175, height: 60 } },
+        rowHeight: 44,
+      }),
+    ).toEqual({ top: 12, right: 183 });
   });
 
-  it("uses the occluded region at the top right when the status bar reports full width", () => {
+  it("falls back to the status pill's occlusion where iOS gives no top band", () => {
     expect(
-      resolveHeaderBesideStatusBar(
-        {
-          ...base,
-          verticalBarBehavior: "disabled",
-          statusBar: { x: 0, y: 0, width: 449, height: 54 },
-          occlusions: [{ x: 274, y: 20, width: 151, height: 56 }],
-        },
-        44,
-      ),
+      resolveHeaderBesideStatusBar({
+        layout: { ...disabled, occlusions: [pill] },
+        topBand: null,
+        rowHeight: 44,
+      }),
     ).toEqual({ top: 26, right: 183 });
   });
 
-  it("keeps the header below the inset for a full-width status bar or an active vertical bar", () => {
-    const wide = { x: 0, y: 0, width: 449, height: 54 };
-    const pill = { x: 280, y: 25, width: 145, height: 46 };
+  it("leaves the header alone with the vertical bar on, or without a status pill", () => {
     expect(
-      resolveHeaderBesideStatusBar(
-        { ...base, verticalBarBehavior: "disabled", statusBar: wide },
-        44,
-      ),
+      resolveHeaderBesideStatusBar({
+        layout: { ...base, verticalBarBehavior: "automatic", occlusions: [pill] },
+        topBand: null,
+        rowHeight: 44,
+      }),
     ).toBeNull();
     expect(
-      resolveHeaderBesideStatusBar(
-        { ...base, verticalBarBehavior: "automatic", statusBar: pill },
-        44,
-      ),
+      resolveHeaderBesideStatusBar({
+        layout: { ...disabled, occlusions: [{ x: 0, y: 0, width: 449, height: 54 }] },
+        topBand: null,
+        rowHeight: 44,
+      }),
     ).toBeNull();
-    expect(resolveHeaderBesideStatusBar(null, 44)).toBeNull();
+    expect(resolveHeaderBesideStatusBar({ layout: null, topBand: null, rowHeight: 44 })).toBeNull();
   });
 });

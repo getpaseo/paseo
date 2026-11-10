@@ -65,13 +65,18 @@ export function CompactHeader({
   strip,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
-  const inTopBand = useTopBand() !== null;
+  const topBand = useTopBand();
+  const inTopBand = topBand !== null;
   const layout = useWindowLayout();
   const verticalBarDisabled = useVerticalBarDisabled();
   // With the vertical bar off the status bar returns to the top inset, which already clears it.
   // A top band already starts at the top bar, so it takes no extra padding either.
   const topPadding = verticalBarDisabled || inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE;
-  const beside = resolveHeaderBesideStatusBar(layout, HEADER_INNER_HEIGHT_MOBILE);
+  const beside = resolveHeaderBesideStatusBar({
+    layout,
+    topBand,
+    rowHeight: HEADER_INNER_HEIGHT_MOBILE,
+  });
   const rootStyle = useMemo(
     () => [
       styles.root,

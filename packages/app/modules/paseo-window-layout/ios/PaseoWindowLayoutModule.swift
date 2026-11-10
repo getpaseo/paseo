@@ -138,12 +138,6 @@ final class WindowLayoutView: ExpoView {
     if let bottomBar = bottomBarGuide?.layoutFrame, bottomBar.height > 0 {
       bottomClearance = max(0, bounds.maxY - bottomBar.maxY)
     }
-    var statusBarPayload: Any = NSNull()
-    if let window, let frame = window.windowScene?.statusBarManager?.statusBarFrame,
-       frame.width > 0, frame.height > 0 {
-      // The scene reports the frame in its coordinate space, which a full-screen window shares.
-      statusBarPayload = rect(convert(frame, from: window))
-    }
     var topBar: Any = NSNull()
     if let frame = topBarGuide?.layoutFrame, frame.width > 0, frame.height > 0 {
       topBar = rect(frame)
@@ -153,7 +147,6 @@ final class WindowLayoutView: ExpoView {
       "verticalBarEdge": barEdge,
       "verticalBar": barPayload,
       "verticalBarBehavior": barDisabled ? "disabled" : "automatic",
-      "statusBar": statusBarPayload,
       "topBar": topBar,
       "bottomClearance": bottomClearance,
       "occlusions": occlusions.map(rect),

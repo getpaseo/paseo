@@ -9,8 +9,6 @@ export interface WindowLayout {
   bounds: WindowLayoutRect;
   verticalBarEdge: "none" | "leading" | "trailing";
   verticalBar: WindowLayoutRect | null;
-  /** The status bar's frame in window coordinates, or null where the system reports none. */
-  statusBar?: WindowLayoutRect | null;
   /** "disabled" while the app has turned the vertical bar off; absent on older builds. */
   verticalBarBehavior?: "automatic" | "disabled";
   /**
@@ -75,50 +73,40 @@ export function resolveSafeAreaInsets<Insets extends { top: number; bottom: numb
 
 /** Gap between a header beside the status bar and the status bar's leading edge. */
 const STATUS_BAR_GAP = 8;
-
-/**
- * With the vertical bar off, a status bar drawn as a pill at the top right leaves the rest of the
- * top row free: the header moves into it, ending before the pill. A full-width status bar, or none,
- * keeps the header below the top inset.
- */
-export function resolveHeaderBesideStatusBar(
-  layout: WindowLayout | null,
-  rowHeight: number,
-): { top: number; right: number } | null {
-  if (!layout || layout.verticalBarBehavior !== "disabled") return null;
-  const bar = resolveTopRightPill(layout);
-  if (!bar) return null;
-  const width = layout.bounds.width;
-  return {
-    top: Math.max(0, bar.y + (bar.height - rowHeight) / 2),
-    right: Math.max(0, width - bar.x) + STATUS_BAR_GAP,
-  };
-}
-
-/** Below this much of the window's height, an element counts as part of the top row. */
+/** Below this much of the window's height, an occlusion counts as part of the top row. */
 const TOP_ROW_LIMIT = 120;
 
-function isTopRightPill(frame: WindowLayoutRect, width: number): boolean {
-  return (
-    frame.width > 0 && frame.width < width * 0.6 && frame.x >= width / 2 && frame.y < TOP_ROW_LIMIT
-  );
-}
-
 /**
- * The status pill at the top right: the occluded region UIKit reports there, else a status bar
- * frame that is itself a pill. iOS can report the status bar as a full-width strip.
+ * With a folded iPhone's vertical bar off, the status bar draws as a pill at the top right and
+ * the header moves beside it. The top band says where; where iOS gives no top band, the
+ * occlusion UIKit reports for the pill does.
  */
-function resolveTopRightPill(layout: WindowLayout): WindowLayoutRect | null {
-  const width = layout.bounds.width;
-  const pills = (layout.occlusions ?? []).filter((frame) => isTopRightPill(frame, width));
-  if (pills.length > 0) {
-    const x = Math.min(...pills.map((frame) => frame.x));
-    const y = Math.min(...pills.map((frame) => frame.y));
-    const maxY = Math.max(...pills.map((frame) => frame.y + frame.height));
-    return { x, y, width: width - x, height: maxY - y };
+export function resolveHeaderBesideStatusBar(input: {
+  layout: WindowLayout | null;
+  topBand: TopBand | null;
+  rowHeight: number;
+}): { top: number; right: number } | null {
+  const { layout, topBand, rowHeight } = input;
+  if (!layout || layout.verticalBarBehavior !== "disabled") return null;
+  if (topBand?.trailingObstruction) {
+    return { top: topBand.top, right: topBand.trailingObstruction.width + STATUS_BAR_GAP };
   }
-  const bar = layout.statusBar;
-  return bar && isTopRightPill(bar, width) ? bar : null;
+  const width = layout.bounds.width;
+  const pills = (layout.occlusions ?? []).filter(
+    (frame) =>
+      frame.width > 0 &&
+      frame.width < width * 0.6 &&
+      frame.x >= width / 2 &&
+      frame.y < TOP_ROW_LIMIT,
+  );
+  if (pills.length === 0) return null;
+  const x = Math.min(...pills.map((frame) => frame.x));
+  const y = Math.min(...pills.map((frame) => frame.y));
+  const maxY = Math.max(...pills.map((frame) => frame.y + frame.height));
+  return {
+    top: Math.max(0, y + (maxY - y - rowHeight) / 2),
+    right: Math.max(0, width - x) + STATUS_BAR_GAP,
+  };
 }
 
 export interface DesktopDivisionLayout {
