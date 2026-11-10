@@ -38,6 +38,15 @@ const localTcpConnection: DirectTcpHostConnection = {
   endpoint: "localhost:6767",
 };
 
+const learnedTcpConnection: DirectTcpHostConnection = {
+  id: "direct:192.168.1.30:6767",
+  type: "directTcp",
+  endpoint: "192.168.1.30:6767",
+  useTls: false,
+  learnedFromConnectionId: relayConnection.id,
+  daemonPublicKeyB64: relayConnection.daemonPublicKeyB64,
+};
+
 function profileWith(connections: HostProfile["connections"]): HostProfile {
   return {
     serverId: "srv_remote",
@@ -201,6 +210,30 @@ describe("download store transport selection", () => {
     expect(download).toMatchObject({ status: "complete" });
     expect(reader.requested).toEqual([]);
     expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("downloads over the protected session when the active connection is learned", async () => {
+    const token = createTokenRequest();
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([learnedTcpConnection, relayConnection]),
+      activeConnectionId: learnedTcpConnection.id,
+      token,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(token.requested).toEqual([FILE_PATH]);
+    expect(reader.requested).toEqual([FILE_PATH]);
+    expect(saver.savedFiles).toEqual([
+      { bytes: FILE_BYTES, fileName: FILE_NAME, mimeType: MIME_TYPE },
+    ]);
   });
 
   it("fails the download and saves nothing when the session read fails", async () => {

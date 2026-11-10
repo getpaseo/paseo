@@ -2,6 +2,8 @@ import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js"
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
+import type { AddressInfo } from "node:net";
+import os, { type NetworkInterfaceInfo } from "node:os";
 import type pino from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -256,6 +258,7 @@ function createServer(options?: {
   logger?: ReturnType<typeof createLogger>;
   startPaused?: boolean;
   auth?: { password: string; localCredential: () => string | null };
+  boundAddress?: () => AddressInfo | null;
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
@@ -264,7 +267,7 @@ function createServer(options?: {
   };
   const logger = options?.logger ?? createLogger();
   return new VoiceAssistantWebSocketServer(
-    createStub<HTTPServer>({}),
+    createStub<HTTPServer>({ address: () => options?.boundAddress?.() ?? null }),
     createStub<pino.Logger>(logger),
     "srv_test",
     createStub<AgentManager>({
@@ -594,6 +597,7 @@ describe("relay external socket reconnect behavior", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   test("keeps the same session when relay reconnects within grace window", async () => {
@@ -1219,6 +1223,42 @@ describe("relay external socket reconnect behavior", () => {
     server.publishSpeechReadiness(speechReadiness);
     expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
+    await server.close();
+  });
+
+  test("publishes changed direct endpoints through the session event path", async () => {
+    const interfaceAddress = (address: string): NetworkInterfaceInfo => ({
+      address,
+      netmask: "255.255.255.0",
+      family: "IPv4",
+      mac: "00:00:00:00:00:00",
+      internal: false,
+      cidr: `${address}/24`,
+    });
+    let addresses = { ethernet: [interfaceAddress("192.168.1.30")] };
+    vi.spyOn(os, "networkInterfaces").mockImplementation(() => addresses);
+    const server = createServer({
+      boundAddress: () => ({ address: "0.0.0.0", family: "IPv4", port: 6767 }),
+    });
+    const socket = new MockSocket();
+    const initial = await attachRelayAndHello({ server, socket, clientId: "cid-direct-endpoints" });
+    expect(initial.directEndpoints).toEqual(["192.168.1.30:6767"]);
+
+    addresses = { ethernet: [interfaceAddress("100.100.1.5")] };
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(sessionMock.instances[0].publish).toHaveBeenCalledWith({
+      type: "status",
+      payload: expect.objectContaining({
+        status: "server_info",
+        directEndpoints: ["100.100.1.5:6767"],
+      }),
+    });
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
+    const refreshed = parseServerInfoStatusPayload(
+      sentServerInfoEnvelopes(socket)[1].message?.payload,
+    );
+    expect(refreshed?.directEndpoints).toEqual(["100.100.1.5:6767"]);
     await server.close();
   });
 

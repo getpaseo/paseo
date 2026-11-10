@@ -296,7 +296,7 @@ function resolveDaemonDownloadTarget(
   activeConnectionId: string | null,
 ): DownloadTarget | null {
   const connection = daemon?.connections.find((conn) => conn.id === activeConnectionId);
-  if (connection?.type !== "directTcp") {
+  if (connection?.type !== "directTcp" || connection.learnedFromConnectionId) {
     return null;
   }
 
