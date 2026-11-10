@@ -108,7 +108,6 @@ import {
   claudeConfigDir,
   claudeProjectDirSync,
   claudeTranscriptPath,
-  claudeTranscriptPathSync,
   resolveClaudeConfigDir,
 } from "./project-dir.js";
 import {

@@ -12,6 +12,7 @@ import type {
   AgentClient,
   AgentHistoryReadContext,
   AgentPersistenceHandle,
+  AgentResumeSessionOptions,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -739,6 +740,7 @@ test("timeline reads keep runnable unarchived agents interactive for the next pr
       purposes.push(options);
       return base.resumeSession(handle, overrides, context, options);
     },
+    readSessionHistory: (handle, context) => base.readSessionHistory!(handle, context),
     fetchCatalog: (options) => base.fetchCatalog(options),
     isAvailable: () => base.isAvailable(),
   };
@@ -762,11 +764,7 @@ test("timeline reads keep runnable unarchived agents interactive for the next pr
       manager.tryRunOutOfBand(agent.id, "first prompt"),
       manager.tryRunOutOfBand(agent.id, "second prompt"),
     ]);
-    expect(purposes).toEqual([
-      { purpose: "interactive" },
-      { purpose: "history" },
-      undefined, // Reload uses the provider's interactive default.
-    ]);
+    expect(purposes).toEqual([{ purpose: "interactive" }, { purpose: "interactive" }]);
   } finally {
     await ctx.cleanup();
     await rm(cwd, { recursive: true, force: true });
@@ -838,7 +836,11 @@ test.each(["mode", "thinking", "rewind"])(
       expect(
         runtime.recordedLaunches.filter((launch) => launch.session === sessionFile),
       ).toHaveLength(0);
+      await manager.markAgentUnread(agentId);
+      await manager.updateAgentMetadata(agentId, { labels: { changedAfterRead: "yes" } });
+      const latestRecord = await storage.get(agentId);
       await mkdir(cwd);
+      if (setting === "mode") await manager.setAgentMode(agentId, "full");
       if (setting === "rewind") {
         await manager.rewind(agentId, "user-1", "conversation");
         expect(runtime.latestSession().branchRequests).toEqual(["user-1"]);
@@ -848,6 +850,16 @@ test.each(["mode", "thinking", "rewind"])(
         expect(manager.getAgent(agentId)?.config.thinkingOptionId).toBe("high");
         expect(runtime.latestSession().setThinkingLevelRequests).toContain("high");
       }
+      const interactive = manager.getAgent(agentId);
+      expect(interactive?.labels).toEqual({ changedAfterRead: "yes" });
+      expect(interactive?.attention).toEqual({
+        requiresAttention: true,
+        attentionReason: latestRecord?.attentionReason,
+        attentionTimestamp: new Date(latestRecord!.attentionTimestamp!),
+      });
+      expect(interactive!.updatedAt.getTime()).toBeGreaterThanOrEqual(
+        Date.parse(latestRecord!.updatedAt),
+      );
       await sendPreparedPromptToAgent({
         agentManager: manager,
         agentStorage: storage,

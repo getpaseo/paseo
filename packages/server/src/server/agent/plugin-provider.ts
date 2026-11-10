@@ -1200,7 +1200,7 @@ class PluginAgentClient implements AgentClient {
       cwd,
       env: context?.env,
     });
-    const snapshots = new Map<string, ProviderTimelineItem>();
+    const snapshots = new Map<string, TimelineTextSnapshot>();
     const events: AgentStreamEvent[] = [];
     for (const entry of result.items) {
       const item = mapTimelineItem(entry.item, snapshots);
@@ -1218,7 +1218,7 @@ class PluginAgentClient implements AgentClient {
         provider: this.provider,
         event: historyChildUpsert(child),
       });
-      const childSnapshots = new Map<string, ProviderTimelineItem>();
+      const childSnapshots = new Map<string, TimelineTextSnapshot>();
       for (const entry of child.items) {
         const item = mapTimelineItem(entry.item, childSnapshots);
         if (!item) continue;

@@ -2741,10 +2741,9 @@ describe("PiRpcAgentClient", () => {
         JSON.stringify({
           type: "message",
           id: "entry-user-1",
-          parentId: "pi-history-session",
+          parentId: null,
           message: { role: "user", content: "first prompt" },
         }),
-        "{malformed-jsonl-entry",
         JSON.stringify({
           type: "message",
           id: "entry-stale-branch",
@@ -2785,6 +2784,7 @@ describe("PiRpcAgentClient", () => {
         JSON.stringify({
           type: "session_info",
           id: "session-info-after-history",
+          parentId: "entry-hidden-custom-1",
           name: "Archived history",
         }),
       ].join("\n") + "\n",
