@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.15.3",
+  "version": "0.15.4",
   "description": "Paseo client SDK package",
   "license": "Apache-2.0",
   "files": [
@@ -49,8 +49,8 @@
     "measure:diff-materialization": "tsx scripts/measure-diff-materialization.ts"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.15.3",
-    "@getpaseo/relay": "0.15.3",
+    "@getpaseo/protocol": "0.15.4",
+    "@getpaseo/relay": "0.15.4",
     "ws": "^8.20.0",
     "zod": "^4.4.3"
   },
