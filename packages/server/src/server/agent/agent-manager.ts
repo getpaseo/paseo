@@ -4265,6 +4265,12 @@ export class AgentManager {
     agentId: string,
     options?: WaitForAgentOptions,
   ): Promise<WaitForAgentResult> {
+    if (!this.getAgent(agentId)) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    // A starting run publishes its running state only once its turn starts. Until then the
+    // replayed state below is the idle state before the run, which would end the wait early.
+    await this.runs.waitForForegroundStart(agentId);
     const snapshot = this.getAgent(agentId);
     if (!snapshot) {
       throw new Error(`Agent ${agentId} not found`);
