@@ -77,7 +77,7 @@ test.describe("History main-agent filter", () => {
         await page.setViewportSize(viewport);
 
         await expect(historyRows(page)).toHaveCount(4, { timeout: 30_000 });
-        await page.getByTestId("sessions-agent-scope-main").click();
+        await page.getByRole("button", { name: "Main", exact: true }).click();
 
         await expect(historyRows(page)).toHaveCount(2, { timeout: 30_000 });
         await expect(page.getByText(TITLES.mainOne)).toBeVisible();
@@ -85,7 +85,7 @@ test.describe("History main-agent filter", () => {
         await expect(page.getByText(TITLES.childOne)).toHaveCount(0);
         await expect(page.getByText(TITLES.childTwo)).toHaveCount(0);
 
-        await page.getByTestId("sessions-agent-scope-all").click();
+        await page.getByRole("button", { name: "All", exact: true }).click();
         await expect(historyRows(page)).toHaveCount(4, { timeout: 30_000 });
       } finally {
         await workspace.cleanup().catch(() => undefined);
