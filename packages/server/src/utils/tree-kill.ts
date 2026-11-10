@@ -97,7 +97,11 @@ async function signalPosixTree(
   try {
     pids = await listPosixTree(pid);
   } catch (error) {
-    onTreeReadFailed?.(error);
+    try {
+      onTreeReadFailed?.(error);
+    } catch {
+      // A throwing observer must not stop the kill or reject close().
+    }
     // Without the tree, the process group is the widest reach left: it covers every descendant
     // that did not start its own group, and exists only when the child leads one.
     try {

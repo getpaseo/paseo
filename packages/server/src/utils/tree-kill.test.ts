@@ -228,4 +228,25 @@ describe("terminateWithTreeKill", () => {
       await expectOwnerAndDescendantStopped("descendant survived without a readable process tree");
     },
   );
+
+  test.runIf(process.platform !== "win32")(
+    "still terminates the child when the tree-read observer throws",
+    async () => {
+      ownerProcess = spawn("sleep", ["60"], { stdio: "ignore" });
+      const originalPath = process.env.PATH;
+      process.env.PATH = "";
+      try {
+        const result = await terminateWithTreeKill(ownerProcess, {
+          gracefulTimeoutMs: 2000,
+          forceTimeoutMs: 2000,
+          onTreeReadFailed: () => {
+            throw new Error("logger failed");
+          },
+        });
+        expect(result).toBe("terminated");
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
 });
