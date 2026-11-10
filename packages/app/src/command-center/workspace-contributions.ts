@@ -582,7 +582,16 @@ export function buildWorkspaceCommandCenterContributions(
   ];
 
   for (const [index, action] of actionsWithoutPrimary(source.gitActions).entries()) {
-    contributions.push(buildGitContribution(source, action, 100 + index, "query"));
+    // Archiving is workspace management, not an occasional Git operation. Keep it in the
+    // empty-query command center list even when another Git action is promoted to primary.
+    contributions.push(
+      buildGitContribution(
+        source,
+        action,
+        100 + index,
+        action.id === "archive-workspace" ? "always" : "query",
+      ),
+    );
   }
 
   if (source.capabilities.canPin) {

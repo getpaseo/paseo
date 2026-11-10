@@ -133,6 +133,24 @@ describe("workspace command center contributions", () => {
     expect(fixture.runGitActions).toEqual([primary]);
   });
 
+  it("keeps archive workspace visible when another Git action is primary", () => {
+    const primary = gitAction("commit", "Commit");
+    const archive = gitAction("archive-workspace", "Archive workspace");
+    const fixture = source({
+      primary,
+      secondary: [gitAction("push", "Push"), archive],
+      menu: [],
+    });
+
+    const archiveContribution = buildWorkspaceCommandCenterContributions(fixture.value).find(
+      (item) => item.id === "git:archive-workspace",
+    );
+
+    expect(archiveContribution?.visibility).toBe("always");
+    archiveContribution?.run();
+    expect(fixture.runGitActions).toEqual([archive]);
+  });
+
   it("does not duplicate a primary action retained in the secondary policy list", () => {
     const primary = gitAction("pull", "Pull");
     const fixture = source({
