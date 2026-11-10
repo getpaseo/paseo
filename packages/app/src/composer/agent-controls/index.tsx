@@ -50,10 +50,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
   TOOLBAR_CONTROL_GAP,
-  bySizing,
   toolbarGlyphColor,
   type ToolbarGlyphs,
-  TOUCH_ICON_SIZE,
   toolbarSlot,
 } from "@/components/ui/control-geometry";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
@@ -1452,18 +1450,15 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: TOOLBAR_CONTROL_GAP,
-    // Clips pickers that run out of room. Touch-sized the pickers' pills and circles reach 8 past
-    // what the row spaces, so the clip reaches as far.
+    // Clips pickers that run out of room.
     overflow: "hidden",
-    paddingHorizontal: bySizing({ touch: theme.spacing[2], pointer: 0 }),
-    marginHorizontal: bySizing({ touch: -theme.spacing[2], pointer: 0 }),
   },
   modelControl: {
     minWidth: 0,
     flexShrink: 1,
   },
   modeIconBadge: {
-    ...toolbarSlot(TOUCH_ICON_SIZE.md),
+    ...toolbarSlot(),
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,

@@ -221,12 +221,13 @@ describe("composer control layout", () => {
       caretSize: 14,
     });
     expect(TOUCH).toMatchObject({
-      controlSize: 20,
+      controlSize: 36,
       glyphs: {
         icon: { size: 20, strokeWidth: 1.5, tone: "foreground" },
         label: { size: 20, strokeWidth: 1.5, tone: "foreground" },
       },
-      controlGap: 20,
+      controlGap: 0,
+      labelPadding: 8,
     });
   });
 
@@ -249,8 +250,8 @@ describe("composer control layout", () => {
   });
 
   describe("touch toolbar on an iPad in portrait, sidebar docked", () => {
-    // Codex: model, thinking, mode and two toggle features. Touch controls lay out at what they
-    // paint, 20pt apart, so icon-only thinking, mode and features need 200.
+    // Codex: model, thinking, mode and two toggle features. Touch controls lay out at their
+    // 36pt highlight with no gap, so icon-only thinking, mode and features need 108.
     const controls = {
       hasModel: true,
       hasThinking: true,

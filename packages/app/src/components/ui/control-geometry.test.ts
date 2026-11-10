@@ -119,15 +119,10 @@ describe("control sizing gate", () => {
 });
 
 describe("toolbar glyphs and spacing", () => {
-  it("spaces touch toolbar controls by what they paint and keeps the pointer's 4px gap", () => {
-    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 20, pointer: 4 });
-    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 20, md: 4 });
-    // A 20pt glyph's disc-sized frame reaches 8 into the gap on each side.
-    expect(toolbarSlot(20)).toEqual({
-      width: TOOLBAR_DISC_SIZE,
-      height: TOOLBAR_DISC_SIZE,
-      marginHorizontal: { xs: -8, md: 0 },
-    });
+  it("lays touch toolbar controls out at their highlight with no gap and keeps the pointer's 4px gap", () => {
+    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 0, pointer: 4 });
+    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 0, md: 4 });
+    expect(toolbarSlot()).toEqual({ width: TOOLBAR_DISC_SIZE, height: TOOLBAR_DISC_SIZE });
   });
 
   it("paints touch toolbar glyphs at the header icons' 20pt and 1.5px stroke and leaves pointer unchanged", () => {
