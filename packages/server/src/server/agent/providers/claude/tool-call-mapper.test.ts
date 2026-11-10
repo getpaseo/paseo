@@ -18,36 +18,52 @@ function expectMapped<T>(item: T | null): T {
 
 describe("claude tool-call mapper", () => {
   // Claude streams a tool_use block with `input: {}` first, then the arguments as partial JSON.
+  // An optional argument can complete before the identifying one.
   it.each([
-    { name: "Bash", partial: { command: "ec" }, input: { command: "echo hi" }, title: "Shell" },
+    {
+      name: "Bash",
+      stages: [
+        { description: "Run a command" },
+        { description: "Run a command", command: "ec" },
+        { description: "Run a command", command: "echo hi" },
+      ],
+      title: "Shell",
+    },
     {
       name: "Read",
-      partial: { file_path: "/tmp/a" },
-      input: { file_path: "/tmp/a.ts" },
+      stages: [{ offset: 10 }, { offset: 10, file_path: "/tmp/a" }, { file_path: "/tmp/a.ts" }],
       title: "Read",
     },
     {
       name: "Write",
-      partial: { file_path: "/tmp/a.ts" },
-      input: { file_path: "/tmp/a.ts", content: "x" },
+      stages: [{ content: "x" }, { file_path: "/tmp/a.ts", content: "x" }],
       title: "Write",
     },
     {
       name: "MultiEdit",
-      partial: { file_path: "/tmp/a.ts" },
-      input: { file_path: "/tmp/a.ts", old_string: "a", new_string: "b" },
+      stages: [
+        { file_path: "/tmp/a.ts" },
+        { file_path: "/tmp/a.ts", old_string: "a", new_string: "b" },
+      ],
       title: "Edit",
     },
-    { name: "Grep", partial: { pattern: "fo" }, input: { pattern: "foo" }, title: "Search" },
-    { name: "Glob", partial: { pattern: "*." }, input: { pattern: "*.ts" }, title: "Search" },
+    {
+      name: "Grep",
+      stages: [{ output_mode: "content" }, { output_mode: "content", pattern: "foo" }],
+      title: "Search",
+    },
+    {
+      name: "Glob",
+      stages: [{ path: "/tmp" }, { path: "/tmp", pattern: "*.ts" }],
+      title: "Search",
+    },
     {
       name: "WebFetch",
-      partial: { url: "https://example.com" },
-      input: { url: "https://example.com", prompt: "Summarize" },
+      stages: [{ prompt: "Summarize" }, { prompt: "Summarize", url: "https://example.com" }],
       title: "Fetch",
     },
   ])("keeps the $name title and detail kind while its arguments stream in", (tool) => {
-    const stages = [{}, tool.partial, tool.input].map((input) =>
+    const stages = [{}, ...tool.stages].map((input) =>
       expectMapped(
         mapClaudeRunningToolCall({
           callId: "claude-stream-1",
@@ -58,11 +74,9 @@ describe("claude tool-call mapper", () => {
       ),
     );
 
-    expect(stages.map((item) => buildToolCallDisplayModel(item).displayName)).toEqual([
-      tool.title,
-      tool.title,
-      tool.title,
-    ]);
+    expect(stages.map((item) => buildToolCallDisplayModel(item).displayName)).toEqual(
+      stages.map(() => tool.title),
+    );
     expect(new Set(stages.map((item) => item.detail.type)).size).toBe(1);
   });
 

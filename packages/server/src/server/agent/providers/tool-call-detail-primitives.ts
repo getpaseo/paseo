@@ -13,23 +13,6 @@ export const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 type ToolDetailSchema = z.ZodType;
 
-// A tool call starts streaming before its arguments do: Claude's tool_use block opens with
-// `input: {}` and OpenCode's pending part carries `input: {}`. The branch still matches by name,
-// so the call gets its canonical detail kind (and title and icon) from its first state.
-const NoArgumentsSchema = z
-  .object({})
-  .strict()
-  .transform(() => null);
-type ToolDetailInputSchema<InputSchema extends ToolDetailSchema> = z.ZodNullable<
-  z.ZodUnion<[InputSchema, typeof NoArgumentsSchema]>
->;
-
-function toolDetailInputSchema<InputSchema extends ToolDetailSchema>(
-  inputSchema: InputSchema,
-): ToolDetailInputSchema<InputSchema> {
-  return z.nullable(z.union([inputSchema, NoArgumentsSchema]));
-}
-
 // Neither arguments nor output have arrived: the detail keeps its kind with empty fields,
 // which clients render as loading until the arguments fill it in.
 function isAwaitingArguments(input: unknown, output: unknown): boolean {
@@ -45,7 +28,7 @@ interface ToolDetailNameShape<
   OutputSchema extends ToolDetailSchema,
 > {
   name: z.ZodLiteral<Name>;
-  input: ToolDetailInputSchema<InputSchema>;
+  input: z.ZodNullable<InputSchema>;
   output: z.ZodNullable<OutputSchema>;
 }
 interface ToolDetailToolNameShape<
@@ -54,7 +37,7 @@ interface ToolDetailToolNameShape<
   OutputSchema extends ToolDetailSchema,
 > {
   toolName: z.ZodLiteral<Name>;
-  input: ToolDetailInputSchema<InputSchema>;
+  input: z.ZodNullable<InputSchema>;
   output: z.ZodNullable<OutputSchema>;
 }
 interface ToolDetailNameWithCwdShape<
@@ -1014,7 +997,7 @@ export function toolDetailBranchByName<
 ) {
   const shape: ToolDetailNameShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: toolDetailInputSchema(inputSchema),
+    input: z.nullable(inputSchema),
     output: z.nullable(outputSchema),
   };
   const schema = z.object(shape);
@@ -1040,7 +1023,7 @@ export function toolDetailBranchByToolName<
 ) {
   const shape: ToolDetailToolNameShape<Name, InputSchema, OutputSchema> = {
     toolName: z.literal(toolName),
-    input: toolDetailInputSchema(inputSchema),
+    input: z.nullable(inputSchema),
     output: z.nullable(outputSchema),
   };
   const schema = z.object(shape);
@@ -1066,7 +1049,7 @@ export function toolDetailBranchByNameWithCwd<
 ) {
   const shape: ToolDetailNameWithCwdShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: toolDetailInputSchema(inputSchema),
+    input: z.nullable(inputSchema),
     output: z.nullable(outputSchema),
     cwd: z.string().optional().nullable(),
   };
@@ -1075,4 +1058,29 @@ export function toolDetailBranchByNameWithCwd<
     const parsedValue = value as ToolDetailNameWithCwdValue<Name, InputSchema, OutputSchema>;
     return mapper(parsedValue.input, parsedValue.output, parsedValue.cwd ?? null);
   });
+}
+
+interface ToolDetailEnvelope {
+  input: unknown;
+  output: unknown;
+}
+
+// A tool call streams before its arguments are complete: Claude's tool_use block opens with
+// `input: {}` and fills in field by field, in whatever order the model writes them, and
+// OpenCode's pending part carries `input: {}`. Until the call has output, arguments that do not
+// yet satisfy the tool's schema are parsed as absent, so a known tool keeps its canonical detail
+// kind (and its title and icon) from its first state.
+export function parseKnownToolDetail<Envelope extends ToolDetailEnvelope>(
+  branches: z.ZodType<ToolCallDetail | null | undefined>,
+  envelope: Envelope,
+): ToolCallDetail | undefined {
+  const parsed = branches.safeParse(envelope);
+  if (parsed.success && parsed.data) {
+    return parsed.data;
+  }
+  if (envelope.input === null || (envelope.output !== null && envelope.output !== undefined)) {
+    return undefined;
+  }
+  const awaiting = branches.safeParse({ ...envelope, input: null });
+  return awaiting.success && awaiting.data ? awaiting.data : undefined;
 }
