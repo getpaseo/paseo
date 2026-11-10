@@ -14,14 +14,21 @@ export interface SidebarRenamableWorkspace extends RenamableWorkspace {
 }
 
 /**
+ * An inline session owns the text editing started from. The field keeps that text while it is
+ * open, so a rename arriving from elsewhere must not make an untouched field read as an edit.
+ *
  * `saving` and `saved` keep the field on screen holding the submitted text. The daemon answers
  * the request before it pushes the updated workspace, so closing on the answer would show the
  * old title for a beat. `saved` ends when the row's title moves off the one editing started from.
  */
-type RenameSession =
-  | { kind: "closed" }
-  | { kind: "modal" }
-  | { kind: "inline"; phase: "editing" | "saving" | "saved"; titleAtStart: string | null };
+interface InlineRenameSession {
+  kind: "inline";
+  phase: "editing" | "saving" | "saved";
+  initialValue: string;
+  titleAtStart: string | null;
+}
+
+type RenameSession = { kind: "closed" } | { kind: "modal" } | InlineRenameSession;
 
 const CLOSED: RenameSession = { kind: "closed" };
 
@@ -50,25 +57,26 @@ export function useSidebarWorkspaceRename(
     setSession(CLOSED);
   }
 
+  const initialValue = workspaceRenameInitialValue(workspace);
   const begin = useCallback(() => {
     setSession(
       resolveWorkspaceRenameSurface() === "inline"
-        ? { kind: "inline", phase: "editing", titleAtStart: currentTitle }
+        ? { kind: "inline", phase: "editing", initialValue, titleAtStart: currentTitle }
         : { kind: "modal" },
     );
-  }, [currentTitle]);
+  }, [currentTitle, initialValue]);
 
   const close = useCallback(() => setSession(CLOSED), []);
 
-  const initialValue = workspaceRenameInitialValue(workspace);
   const commit = useCallback(
     (text: string) => {
+      if (session.kind !== "inline") return;
       const title = text.trim();
-      if (title.length === 0 || title === initialValue) {
+      if (title.length === 0 || title === session.initialValue) {
         setSession(CLOSED);
         return;
       }
-      setSession({ kind: "inline", phase: "saving", titleAtStart: currentTitle });
+      setSession({ ...session, phase: "saving" });
       setWorkspaceTitle(title).then(
         () =>
           setSession((previous) =>
@@ -82,13 +90,13 @@ export function useSidebarWorkspaceRename(
         },
       );
     },
-    [currentTitle, initialValue, setWorkspaceTitle, toast],
+    [session, setWorkspaceTitle, toast],
   );
 
   const titleEditor =
     session.kind === "inline" ? (
       <InlineTitleField
-        initialValue={initialValue}
+        initialValue={session.initialValue}
         placeholder={workspace.name}
         readOnly={session.phase !== "editing"}
         onCommit={commit}

@@ -32,6 +32,15 @@ async function chooseRenameFromKebab(page: Page, workspaceId: string): Promise<v
   await renameItem.click();
 }
 
+/** Lets the app render a server message the gate just forwarded. */
+async function waitForTwoFrames(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
+    await nextFrame();
+  });
+}
+
 interface Box {
   x: number;
   y: number;
@@ -160,6 +169,38 @@ test.describe("Sidebar workspace rename", () => {
       gate.releaseHeldServerMessage("workspace_update");
       await expect(input).toHaveCount(0);
       await expect(row).toContainText("Held title");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("an untouched in-place rename keeps a title set elsewhere while it was open", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-external-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await expect(input).toHaveValue("main");
+
+      // Another client renames the workspace while this field is open and untouched.
+      gate.holdNextServerMessage("workspace_update");
+      await workspace.client.setWorkspaceTitle(workspace.workspaceId, "External title");
+      await gate.waitForHeldServerMessage("workspace_update");
+      gate.releaseHeldServerMessage("workspace_update");
+      await waitForTwoFrames(page);
+
+      await page.mouse.click(900, 700);
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("External title");
+      expect(gate.getClientRequestCount("workspace.title.set.request")).toBe(0);
     } finally {
       await workspace.cleanup();
     }
