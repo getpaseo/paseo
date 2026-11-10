@@ -5,6 +5,11 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { ensureUnarchivedAgentLoaded } from "../agent-loading.js";
+import { AgentConfigSession } from "../../session/agent-config/agent-config-session.js";
+import type { SessionOutboundMessage } from "../../messages.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 describe("GenericACPAgentClient request errors", () => {
@@ -91,6 +96,110 @@ describe("GenericACPAgentClient request errors", () => {
   });
 });
 
+test.each([
+  { surface: "single", modelId: "default" },
+  { surface: "single", modelId: null },
+  { surface: "bundle", modelId: "default" },
+  { surface: "bundle", modelId: null },
+] as const)(
+  "recovers a removed saved model through $surface with $modelId",
+  async ({ surface, modelId }) => {
+    await withFakeACPAgent("removed-on-load", async (command, cwd) => {
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const client = new GenericACPAgentClient({ logger, command });
+      const manager = new AgentManager({ clients: { acp: client }, registry: storage, logger });
+      const messages: SessionOutboundMessage[] = [];
+      const configSession = new AgentConfigSession({
+        host: { emit: (message) => messages.push(message) },
+        operations: {
+          ensureLoaded: async (agentId, configOverrides) => {
+            await ensureUnarchivedAgentLoaded(agentId, {
+              agentManager: manager,
+              agentStorage: storage,
+              logger,
+              configOverrides,
+            });
+          },
+          setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+          setMode: async () => null,
+          setOptions: async () => undefined,
+          setThinking: async () => null,
+        },
+        logger,
+      });
+      try {
+        const created = await manager.createAgent(
+          { provider: "acp", cwd, model: "requested" },
+          undefined,
+          { workspaceId: undefined },
+        );
+        expect((await created.session.getRuntimeInfo()).model).toBe("requested");
+        await manager.closeAgent(created.id);
+        await manager.flush();
+        await expect(
+          ensureUnarchivedAgentLoaded(created.id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          }),
+        ).rejects.toThrow("Model 'requested' is not a valid acp model config option");
+
+        const changeModel = (value: string | null) =>
+          surface === "single"
+            ? configSession.handleSetAgentModelRequest({
+                type: "set_agent_model_request",
+                agentId: created.id,
+                modelId: value,
+                requestId: "repair",
+              })
+            : configSession.handleAgentConfigApplyRequest({
+                type: "agent.config.apply.request",
+                agentId: created.id,
+                config: { modelId: value },
+                requestId: "repair",
+              });
+        await changeModel("also-removed");
+        const rejected = messages.at(-1);
+        expect(rejected).toMatchObject({
+          payload: { accepted: false, error: expect.stringContaining("also-removed") },
+        });
+        await manager.flush();
+        expect((await storage.get(created.id))?.config?.model).toBe("requested");
+        expect(manager.getAgent(created.id)).toBeNull();
+
+        messages.length = 0;
+        await changeModel(modelId);
+        expect(messages).toEqual([
+          expect.objectContaining({
+            payload: {
+              requestId: "repair",
+              agentId: created.id,
+              accepted: true,
+              error: null,
+              notice: surface === "single" ? undefined : null,
+            },
+          }),
+        ]);
+        await manager.flush();
+        expect(manager.getAgent(created.id)?.config.model).toBe(modelId ?? undefined);
+        expect((await storage.get(created.id))?.config?.model).toBe(modelId ?? undefined);
+        await manager.closeAgent(created.id);
+        await ensureUnarchivedAgentLoaded(created.id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(created.id)?.runtimeInfo?.model).toBe("default");
+      } finally {
+        await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+        await manager.flush();
+        await storage.flush();
+      }
+    });
+  },
+);
+
 async function withFakeACPAgent(
   mode:
     | "reject-set-mode"
@@ -99,7 +208,8 @@ async function withFakeACPAgent(
     | "reject-model-config"
     | "missing-model-choice"
     | "no-model-selector"
-    | "config-model-only",
+    | "config-model-only"
+    | "removed-on-load",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-request-errors-"));
@@ -157,7 +267,7 @@ rl.on("line", (line) => {
           ...(mode === "no-model-selector" ? [] : [{
             id: "model", name: "Model", category: "model", type: "select", currentValue: "default",
             options: [{ value: "default", name: "Default" },
-              ...(mode === "missing-model-choice" ? [] : [{ value: "requested", name: "Requested" }])],
+              ...((mode === "missing-model-choice" || (mode === "removed-on-load" && message.method === "session/load")) ? [] : [{ value: "requested", name: "Requested" }])],
           }]),
           {
             id: "effort",

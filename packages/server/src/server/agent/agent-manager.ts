@@ -1492,7 +1492,10 @@ export class AgentManager {
    * from the record as it is when the lane reaches it. A write queued ahead (`setMetadata`,
    * `setLabels`) is in that record; one queued behind applies to the live agent.
    */
-  createAgentFromRecord(agentId: string): Promise<ManagedAgent> {
+  createAgentFromRecord(
+    agentId: string,
+    overrides?: Pick<AgentSessionConfig, "model">,
+  ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "createAgentFromRecord");
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, async () => {
@@ -1506,7 +1509,7 @@ export class AgentManager {
             `Agent ${resolvedAgentId} references unavailable provider '${record.provider}'`,
           );
         }
-        return this.createAgentInternal(config, resolvedAgentId, {
+        return this.createAgentInternal({ ...config, ...overrides }, resolvedAgentId, {
           labels: record.labels,
           metadata: record.metadata,
           workspaceId: record.workspaceId,

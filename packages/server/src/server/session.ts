@@ -1111,11 +1111,12 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       operations: {
-        ensureLoaded: async (agentId) => {
+        ensureLoaded: async (agentId, configOverrides) => {
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
             logger: this.sessionLogger,
+            configOverrides,
           });
         },
         setMode: async (agentId, modeId) =>
