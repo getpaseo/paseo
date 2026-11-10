@@ -138,6 +138,7 @@ import { ComposerRecall } from "@/composer/recall";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { usePaneHost } from "@/panels/pane-context";
+import { OverlayDismissalScope, useDismissOverlays } from "@/components/ui/overlay-dismissal";
 import type { PaneHost } from "@/panels/panel-manifest";
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -1240,9 +1241,11 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
       isPaneFocused={isPaneFocused}
       isActiveComposer={isPaneFocused && !coveredByOverlayPanel}
     >
-      <RenderProfile id="ComposerContent">
-        <ComposerContent {...props} />
-      </RenderProfile>
+      <OverlayDismissalScope>
+        <RenderProfile id="ComposerContent">
+          <ComposerContent {...props} />
+        </RenderProfile>
+      </OverlayDismissalScope>
     </ComposerKeyboardScopeProvider>
   );
 }
@@ -1454,27 +1457,33 @@ function ComposerContentImpl({
     () => isInputLive() && isActiveComposerRef.current,
     [isInputLive],
   );
-  const takeInputFocus = useCallback((options?: ComposerFocusOptions) => {
-    const place = () => {
-      messageInputRef.current?.focus();
-      if (options?.selection) messageInputRef.current?.setSelection(options.selection);
-    };
-    if (isNative) {
-      place();
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve, reject) => {
-      focusWithRetries({
-        focus: place,
-        isFocused: () => {
-          const element = messageInputRef.current?.getNativeElement?.() ?? null;
-          return element !== null && document.activeElement === element;
-        },
-        onSuccess: resolve,
-        onTimeout: () => reject(new Error("The composer input could not take focus.")),
+  const dismissOverlays = useDismissOverlays();
+  const takeInputFocus = useCallback(
+    (options?: ComposerFocusOptions) => {
+      // The sheets and menus this composer opened would otherwise cover the cursor.
+      dismissOverlays();
+      const place = () => {
+        messageInputRef.current?.focus();
+        if (options?.selection) messageInputRef.current?.setSelection(options.selection);
+      };
+      if (isNative) {
+        place();
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        focusWithRetries({
+          focus: place,
+          isFocused: () => {
+            const element = messageInputRef.current?.getNativeElement?.() ?? null;
+            return element !== null && document.activeElement === element;
+          },
+          onSuccess: resolve,
+          onTimeout: () => reject(new Error("The composer input could not take focus.")),
+        });
       });
-    });
-  }, []);
+    },
+    [dismissOverlays],
+  );
   const isComposerLockedRef = useRef(isComposerLocked);
   isComposerLockedRef.current = isComposerLocked;
   const composerInput = useMemo<ComposerInput>(

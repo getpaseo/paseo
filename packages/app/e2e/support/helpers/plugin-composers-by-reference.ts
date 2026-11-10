@@ -16,7 +16,7 @@ import {
   sheet,
   tapSheetBackdrop,
 } from "./sheet";
-import { seedSubagent } from "./subagents";
+import { openSubagentFromCompactTrack, seedSubagent } from "./subagents";
 import { getServerId } from "./server-id";
 import {
   createAgentTabFromMenu,
@@ -65,6 +65,9 @@ export async function withComposerToolsExample(
     focusTheAgentTab(): Promise<void>;
     expectPanelFocusedAgent(focused: boolean): Promise<void>;
     expectPanelShowsReview(needsReview: boolean): Promise<void>;
+    useCompactLayout(): Promise<void>;
+    insertChecklistFromControlsSheet(): Promise<void>;
+    expectComposerReadyToType(text: string): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedWorkspace({ repoPrefix: "composer-tools-", title: "Composer tools" });
@@ -130,6 +133,23 @@ export async function withComposerToolsExample(
           expect(
             page.getByText(`Needs review: ${needsReview ? "yes" : "no"}`, { exact: true }),
           ).toBeVisible()),
+      useCompactLayout: () =>
+        test.step("narrow the window to a phone", async () => {
+          await page.setViewportSize(COMPACT);
+          await expect(prompt(page).filter({ visible: true })).toBeVisible();
+        }),
+      insertChecklistFromControlsSheet: () =>
+        test.step("press the Action in the composer's controls sheet", async () => {
+          await page.getByRole("button", { name: /^Select model/ }).click();
+          await page.getByText("Insert checklist", { exact: true }).click();
+        }),
+      expectComposerReadyToType: (text) =>
+        test.step("the sheet is closed and the cursor is in the composer", async () => {
+          await expectNoSheetOpen(page);
+          const input = prompt(page).filter({ visible: true });
+          await expect(input).toHaveValue(text);
+          await expect(input).toBeFocused();
+        }),
     });
   } finally {
     await client.removePlugin("composer-controls-example");
@@ -506,8 +526,9 @@ export async function withPluginFocusingASubagent(
     expectSubagentTabReadyToType(): Promise<void>;
     keepParentInExplorerOnCompactScreen(): Promise<void>;
     focusParent(): Promise<void>;
-    expectParentReadyToTypeInExplorer(): Promise<void>;
+    expectParentReadyToType(): Promise<void>;
     coverExplorerComposerWithFileSheet(): Promise<void>;
+    openSubagentPageInParentComposer(): Promise<void>;
   }) => Promise<void>,
 ) {
   const workspace = await seedMockAgentWorkspace({
@@ -570,10 +591,15 @@ export async function withPluginFocusingASubagent(
         }),
       focusParent: () =>
         test.step("focus the agent kept in the Explorer", () => focusAgent(workspace.agentId)),
-      expectParentReadyToTypeInExplorer: () =>
-        test.step("the cursor is in the Explorer's composer", async () => {
+      expectParentReadyToType: () =>
+        test.step("no sheet is open and the cursor is in the composer", async () => {
           await expectNoSheetOpen(page);
           await expect(prompt(page).filter({ visible: true })).toBeFocused();
+        }),
+      openSubagentPageInParentComposer: () =>
+        test.step("open the subagent's page from the parent's Subagents track", async () => {
+          await openSubagentFromCompactTrack(page, child.id);
+          await expect(sheet(page, child.title)).toBeVisible();
         }),
       coverExplorerComposerWithFileSheet: () =>
         test.step("open a file's sheet over the Explorer's composer", async () => {

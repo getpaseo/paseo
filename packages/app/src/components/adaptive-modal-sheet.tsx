@@ -28,6 +28,7 @@ import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
+import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -654,6 +655,7 @@ export function AdaptiveModalSheet({
   const isMobile = useIsCompactFormFactor();
   const isKeyboardVisible = useKeyboardVisibility(visible);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
+  useDismissibleOverlay(visible, onClose);
   const footerView = useMemo(
     () => (footer ? <SheetFooter style={footerContainerStyle}>{footer}</SheetFooter> : null),
     [footer, footerContainerStyle],

@@ -1681,7 +1681,7 @@ await composer.focus();
 
 `await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
 
-你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。手机会弹出键盘。
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板和菜单，例如手机上放置你的项的控件面板。手机会弹出键盘。
 
 composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
 

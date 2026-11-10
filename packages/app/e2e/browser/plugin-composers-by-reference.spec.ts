@@ -42,6 +42,17 @@ test("the panel follows which agent is focused", async ({ page }) => {
   });
 });
 
+test("an Action in the compact controls sheet closes the sheet and focuses the composer", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await withComposerToolsExample(page, async (author) => {
+    await author.useCompactLayout();
+    await author.insertChecklistFromControlsSheet();
+    await author.expectComposerReadyToType(CHECKLIST);
+  });
+});
+
 test("a plugin writes to an agent's composer while its workspace is not on screen", async ({
   page,
 }) => {
@@ -118,6 +129,16 @@ test("focus rejects on a New workspace composer the user has left", async ({ pag
   });
 });
 
+test("focus closes a page the composer's Subagents track opened over it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingASubagent(page, async (author) => {
+    await author.openParentAgent();
+    await author.openSubagentPageInParentComposer();
+    await author.focusParent();
+    await author.expectParentReadyToType();
+  });
+});
+
 test("focus reaches a New workspace composer opened from a compact Explorer", async ({ page }) => {
   test.setTimeout(120_000);
   await withPluginHoldingNewWorkspaceComposer(page, async (author) => {
@@ -141,9 +162,9 @@ test("focus reaches an agent kept in the Explorer on a compact screen", async ({
   await withPluginFocusingASubagent(page, async (author) => {
     await author.keepParentInExplorerOnCompactScreen();
     await author.focusParent();
-    await author.expectParentReadyToTypeInExplorer();
+    await author.expectParentReadyToType();
     await author.coverExplorerComposerWithFileSheet();
     await author.focusParent();
-    await author.expectParentReadyToTypeInExplorer();
+    await author.expectParentReadyToType();
   });
 });
