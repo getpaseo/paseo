@@ -289,7 +289,10 @@ test.describe("CodeMirror workspace file editing", () => {
     await trigger.click();
     await page.getByTestId("file-path-actions-copy-path").click();
     await expect(page.getByText("Copy failed", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await page
+      .getByTestId("app-toast-message")
+      .getByRole("button", { name: "Dismiss", exact: true })
+      .click();
     await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
   });
 
