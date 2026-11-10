@@ -816,6 +816,8 @@ export interface PluginTimelineStreamItem {
   sourceId?: string;
   /** The original row kind, retained by projection for turn folding. */
   sourceKind?: StreamItem["kind"];
+  /** Original message retained by projection for the host turn footer. */
+  turnFooterSource?: AssistantMessageItem | UserMessageItem;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;

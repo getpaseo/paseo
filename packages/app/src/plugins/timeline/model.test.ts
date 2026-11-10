@@ -7,6 +7,7 @@ import { transformTimelineItem } from "./model";
 function plugin(input: {
   id: string;
   transform: InstalledPlugin["timelineTransformers"][number]["transform"];
+  itemType?: "assistant_message" | "tool_call";
 }): InstalledPlugin {
   return {
     id: input.id,
@@ -38,12 +39,9 @@ function plugin(input: {
     timelineTransformers: [
       {
         id: "report",
-        query: { itemType: "tool_call" },
-        transform: input.transform as Extract<
-          InstalledPlugin["timelineTransformers"][number],
-          { query: { itemType: "tool_call" } }
-        >["transform"],
-      },
+        query: { itemType: input.itemType ?? "tool_call" },
+        transform: input.transform,
+      } as InstalledPlugin["timelineTransformers"][number],
     ],
     timelineRenderers: [],
   };
@@ -59,6 +57,31 @@ const toolCall = {
 };
 
 describe("plugin timeline transforms", () => {
+  it.each([1, 2])("honors native footer opt-in only for a single replacement (%s)", (count) => {
+    const installation = plugin({
+      id: "styled-messages",
+      itemType: "assistant_message",
+      transform: () => ({
+        nativeTurnFooter: true,
+        items: Array.from({ length: count }, () => ({
+          type: "plugin" as const,
+          kind: "styled-message",
+          version: 1,
+          data: null,
+        })),
+      }),
+    });
+    const transformed = transformTimelineItem({
+      item: { type: "assistant_message", text: "Original reply" },
+      phase: "complete",
+      sourceId: "reply",
+      plugins: [installation],
+    });
+    expect(transformed?.map((item) => item.nativeTurnFooter)).toEqual(
+      count === 1 ? [true] : [undefined, undefined],
+    );
+  });
+
   it("adds installation and source identity to plain transformed items", () => {
     const transformed = transformTimelineItem({
       item: toolCall,

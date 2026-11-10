@@ -1229,6 +1229,12 @@ same plugin and `id`. If its renderer is missing, Paseo shows the existing unava
 reject `data` over the limit rather than truncating it. Daemons that support this operation
 advertise `server_info.features.pluginTimelineItems`.
 
+For a single replacement of an assistant message, return `nativeTurnFooter: true`
+alongside `items` to keep the host's turn footer. The renderer receives
+`nativeTurnFooter: true` when the host owns the footer, so it can omit its own
+copy and timing controls. The host uses the original reply text and history
+position for copy and fork. Older apps omit the renderer prop.
+
 ## Theme and layout
 
 Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.
