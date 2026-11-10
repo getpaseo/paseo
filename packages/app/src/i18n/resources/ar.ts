@@ -3108,6 +3108,9 @@ export const ar: TranslationResources = {
         discovered: "اكتشف",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
+        setDefault: "تعيين كافتراضي للجلسات الجديدة",
+        clearDefault: "مسح الافتراضي (استخدام افتراضي المزود)",
+        defaultBadge: "افتراضي",
       },
       diagnostic: {
         title: "التشخيص",
