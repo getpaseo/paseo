@@ -68,6 +68,32 @@ describe("GitProcessScheduler", () => {
     expect(started).toEqual([0, 3, 2]);
   });
 
+  test("admits normal work before a queued background burst", async () => {
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 100,
+      maxProcessConcurrency: 1,
+    });
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+
+    const activeBackground = scheduler.run(createConcurrencyTask(0, started, releases), {
+      priority: "background",
+    });
+    await vi.waitFor(() => expect(started).toEqual([0]));
+    const queuedBackground = [2, 3, 4].map((index) =>
+      scheduler.run(createConcurrencyTask(index, started, releases), { priority: "background" }),
+    );
+    const normalWork = scheduler.run(createConcurrencyTask(5, started, releases));
+    const highWork = scheduler.run(createConcurrencyTask(6, started, releases), {
+      priority: "high",
+    });
+
+    releases.shift()?.();
+    await Promise.all([activeBackground, ...queuedBackground, normalWork, highWork]);
+
+    expect(started).toEqual([0, 6, 5, 2, 3, 4]);
+  });
+
   test("yields to daemon liveness work between process starts", async () => {
     const scheduler = new GitProcessScheduler({
       maxProcessesPerSecond: 100,

@@ -1,4 +1,9 @@
 import { flushGitCommandTrace } from "../utils/git-command-trace.js";
+import {
+  startGitCommandMetrics,
+  stopGitCommandMetrics,
+  waitForGitCommandMetricsIdle,
+} from "../utils/run-git-command.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -856,3 +861,59 @@ test.skipIf(process.platform !== "linux")(
   },
   60_000,
 );
+
+test("observation-driven refreshes run their Git work in the background lane", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-priority-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  const heads: Array<string | null> = [];
+  const subscription = service.registerWorkspace({ cwd: repo }, (snapshot) => {
+    heads.push(snapshot.git.currentBranch);
+  });
+  cleanup.push(async () => {
+    subscription.unsubscribe();
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  // Registration, observation setup and the first refresh settle before the
+  // measured change.
+  startGitCommandMetrics();
+  await service.getSnapshot(repo, { includeForge: false });
+  await waitForGitCommandMetricsIdle({ quietMs: 500, timeoutMs: 10_000 });
+  stopGitCommandMetrics();
+
+  startGitCommandMetrics();
+  const deliveredBefore = heads.length;
+  git("switch", "-c", "feature");
+  await expect.poll(() => heads.slice(deliveredBefore), { timeout: 10_000 }).toContain("feature");
+  await waitForGitCommandMetricsIdle({ quietMs: 300, timeoutMs: 10_000 });
+  const observed = stopGitCommandMetrics().submissions;
+  expect(observed.length).toBeGreaterThan(0);
+  expect(new Set(observed.map((command) => command.priority))).toEqual(new Set(["background"]));
+
+  startGitCommandMetrics();
+  await service.getSnapshot(repo, { force: true, reason: "test-demand", includeForge: false });
+  await service.getCheckout(repo, { priority: "background" });
+  await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 10_000 });
+  const demand = stopGitCommandMetrics().submissions;
+  const checkoutStart = demand.findIndex((command) => command.priority === "background");
+  expect(checkoutStart).toBeGreaterThan(0);
+  expect(new Set(demand.slice(0, checkoutStart).map((command) => command.priority))).toEqual(
+    new Set(["normal"]),
+  );
+  expect(new Set(demand.slice(checkoutStart).map((command) => command.priority))).toEqual(
+    new Set(["background"]),
+  );
+}, 30_000);

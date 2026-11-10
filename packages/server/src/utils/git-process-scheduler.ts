@@ -16,7 +16,10 @@ export interface ScheduledGitProcess<T> {
   exited: Promise<void>;
 }
 
-export type GitProcessPriority = "normal" | "high";
+// Lanes drain in this order. "background" is for daemon-initiated fan-out
+// (reconciliation, observation-driven refreshes, fetches) so it never sits in
+// front of work a user is waiting for.
+export type GitProcessPriority = "high" | "normal" | "background";
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
   if (value === undefined) {
@@ -46,8 +49,11 @@ export function resolveGitProcessPolicy(input: {
 
 export class GitProcessScheduler {
   private readonly startThrottled;
-  private readonly highPriorityQueue: Array<() => void> = [];
-  private readonly normalPriorityQueue: Array<() => void> = [];
+  private readonly queues: Record<GitProcessPriority, Array<() => void>> = {
+    high: [],
+    normal: [],
+    background: [],
+  };
   private admitted = 0;
   private running = 0;
   private waiting = 0;
@@ -84,9 +90,7 @@ export class GitProcessScheduler {
           this.scheduleDrain();
         });
       };
-      const queue =
-        options?.priority === "high" ? this.highPriorityQueue : this.normalPriorityQueue;
-      queue.push(admit);
+      this.queues[options?.priority ?? "normal"].push(admit);
       if (this.admitted === 0 && !this.drainScheduled) {
         this.drainOne();
       } else {
@@ -99,11 +103,19 @@ export class GitProcessScheduler {
     if (this.drainScheduled || this.admitted >= this.policy.maxProcessConcurrency) {
       return;
     }
-    if (this.highPriorityQueue.length === 0 && this.normalPriorityQueue.length === 0) {
+    if (!this.hasQueuedWork()) {
       return;
     }
     this.drainScheduled = true;
     scheduleImmediate(() => this.drainOne());
+  }
+
+  private hasQueuedWork(): boolean {
+    return (
+      this.queues.high.length > 0 ||
+      this.queues.normal.length > 0 ||
+      this.queues.background.length > 0
+    );
   }
 
   private drainOne(): void {
@@ -111,7 +123,8 @@ export class GitProcessScheduler {
     if (this.admitted >= this.policy.maxProcessConcurrency) {
       return;
     }
-    const admit = this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift();
+    const admit =
+      this.queues.high.shift() ?? this.queues.normal.shift() ?? this.queues.background.shift();
     if (!admit) {
       return;
     }
