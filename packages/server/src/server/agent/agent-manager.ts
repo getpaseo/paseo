@@ -351,6 +351,38 @@ interface ProviderEnabledFlag {
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
+type InitialConfigChangeResult =
+  | { status: "applied"; initialization: AgentConfigInitialization }
+  | { status: "partial"; error: unknown };
+
+function completeInitialConfigChange({
+  result,
+  onConfigApplied,
+}: {
+  result: InitialConfigChangeResult | undefined;
+  onConfigApplied: AgentResumeSessionOptions["onConfigApplied"] | undefined;
+}): void {
+  if (!result) return;
+  if (result.status === "partial") throw result.error;
+  onConfigApplied?.(result.initialization);
+}
+
+function normalizeConfigSelection(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function normalizeInitialConfigChange(
+  change: AgentSessionConfigChange | undefined,
+): AgentSessionConfigChange | undefined {
+  if (!change) return;
+  const normalized = { ...change };
+  if ("model" in change) normalized.model = normalizeConfigSelection(change.model) ?? undefined;
+  if ("thinkingOptionId" in change) {
+    normalized.thinkingOptionId = normalizeConfigSelection(change.thinkingOptionId) ?? undefined;
+  }
+  return normalized;
+}
+
 export interface CreateAgentOptions {
   labels?: Record<string, string>;
   metadata?: AgentMetadata;
@@ -1537,6 +1569,7 @@ export class AgentManager {
     onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"],
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    configChange = normalizeInitialConfigChange(configChange);
     config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal) {
       const sent = exposeFeatureValuesToHook(config);
@@ -1587,8 +1620,11 @@ export class AgentManager {
     const createOptions = { ...this.buildCreateSessionOptions(options), configChange };
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
-    const initialization = await this.applyInitialConfigChange(session, storedConfig, configChange);
-    if (initialization) onConfigApplied?.(initialization);
+    const initialization = await this.applyInitialConfigChange({
+      session,
+      config: storedConfig,
+      change: configChange,
+    });
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1606,6 +1642,7 @@ export class AgentManager {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
     }
+    completeInitialConfigChange({ result: initialization, onConfigApplied });
     return agent;
   }
 
@@ -1687,7 +1724,12 @@ export class AgentManager {
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
-    const currentResumeOptions = { ...resumeOptions, purpose } satisfies AgentResumeSessionOptions;
+    const configChange = normalizeInitialConfigChange(resumeOptions?.configChange);
+    const currentResumeOptions = {
+      ...resumeOptions,
+      purpose,
+      configChange,
+    } satisfies AgentResumeSessionOptions;
 
     const launchEnv = record?.launchEnv;
     const workspaceId = resolveResumeWorkspaceId({ options, record });
@@ -1727,14 +1769,13 @@ export class AgentManager {
       currentResumeOptions,
     );
     if (purpose === "history") this.historySessions.add(session);
-    const initialization = await this.applyInitialConfigChange(
+    const initialization = await this.applyInitialConfigChange({
       session,
-      storedConfig,
-      resumeOptions?.configChange,
-    );
-    if (initialization) resumeOptions?.onConfigApplied?.(initialization);
+      config: storedConfig,
+      change: configChange,
+    });
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
       ...options,
       // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
@@ -1746,42 +1787,99 @@ export class AgentManager {
       restoring: true,
       runtimeInfo: purpose === "history" ? record?.runtimeInfo : undefined,
     });
+    completeInitialConfigChange({
+      result: initialization,
+      onConfigApplied: resumeOptions?.onConfigApplied,
+    });
+    return agent;
   }
 
-  private async applyInitialConfigChange(
-    session: AgentSession,
-    config: AgentSessionConfig,
-    change?: AgentSessionConfigChange,
-  ): Promise<AgentConfigInitialization | undefined> {
+  private async applyInitialConfigChange({
+    session,
+    config,
+    change,
+  }: {
+    session: AgentSession;
+    config: AgentSessionConfig;
+    change?: AgentSessionConfigChange;
+  }): Promise<InitialConfigChangeResult | undefined> {
     if (!change) return;
     let notice: AgentProviderNotice | null = null;
+    let completedSteps = 0;
+    let phase: "setter" | "readback" = "setter";
     try {
       if ("model" in change) {
         const model = change.model ?? null;
         const selection = await session.setModel?.(model);
+        phase = "readback";
+        await this.readInitialThinking({ session, config, fallback: config.thinkingOptionId });
         let effectiveModel = model;
         if (model !== null && selection) effectiveModel = selection.model;
         config.model = effectiveModel ?? undefined;
-        // A provider may reconcile model-dependent thinking in its model setter.
-        const runtimeInfo = await session.getRuntimeInfo();
-        if (runtimeInfo.thinkingOptionId !== undefined) {
-          config.thinkingOptionId = runtimeInfo.thinkingOptionId ?? undefined;
-        }
+        completedSteps++;
       }
       if (change.modeId !== undefined) {
+        phase = "setter";
         notice = (await session.setMode?.(change.modeId)) ?? null;
+        phase = "readback";
         config.modeId = (await session.getCurrentMode()) ?? change.modeId;
+        await this.readInitialThinking({ session, config, fallback: config.thinkingOptionId });
+        completedSteps++;
       }
       if ("thinkingOptionId" in change) {
+        phase = "setter";
         const thinkingNotice = await session.setThinkingOption?.(change.thinkingOptionId ?? null);
+        phase = "readback";
+        await this.readInitialThinking({ session, config, fallback: change.thinkingOptionId });
         notice ??= thinkingNotice ?? null;
-        config.thinkingOptionId = change.thinkingOptionId;
       }
-      return { notice };
+      return { status: "applied", initialization: { notice } };
     } catch (error) {
-      await this.closeUnregisteredSession(session);
-      throw error;
+      return this.handleInitialConfigFailure({ session, error, phase, completedSteps });
     }
+  }
+
+  private async readInitialThinking({
+    session,
+    config,
+    fallback,
+  }: {
+    session: AgentSession;
+    config: AgentSessionConfig;
+    fallback: string | undefined;
+  }): Promise<void> {
+    const runtimeInfo = await session.getRuntimeInfo();
+    let thinking = fallback;
+    if (runtimeInfo.thinkingOptionId !== undefined)
+      thinking = runtimeInfo.thinkingOptionId ?? undefined;
+    config.thinkingOptionId = thinking;
+  }
+
+  private async handleInitialConfigFailure({
+    session,
+    error,
+    phase,
+    completedSteps,
+  }: {
+    session: AgentSession;
+    error: unknown;
+    phase: "setter" | "readback";
+    completedSteps: number;
+  }): Promise<InitialConfigChangeResult> {
+    // Startup preparation is not an applied step. Only a later setter rejection on
+    // a still-readable session can publish the successful, nontransactional prefix.
+    if (phase === "setter" && completedSteps > 0) {
+      try {
+        await session.getRuntimeInfo();
+        await session.getCurrentMode();
+        return { status: "partial", error };
+      } catch (readbackError) {
+        await this.closeUnregisteredSession(session);
+        throw readbackError;
+      }
+    }
+    await this.closeUnregisteredSession(session);
+    throw error;
   }
 
   importProviderSession(input: {

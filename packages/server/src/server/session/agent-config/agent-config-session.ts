@@ -195,9 +195,9 @@ export class AgentConfigSession {
    * This is not a transaction. A step that rejects aborts the rest, and steps
    * that already applied stay applied — provider setters validate against the
    * agent's live model, so a bundle that omits `modelId` can have its mode land
-   * and its feature rejected. Nothing is hidden by that: every AgentManager
-   * setter emits agent state before returning, so what applied is already
-   * streamed to the client alongside the rejected response and the error frame.
+   * and its feature rejected. Loaded setters emit state before returning. When
+   * opening a closed agent, a readable successful prefix is registered before
+   * the later setter's rejection is returned to the client.
    *
    * Rolling back would re-invoke the setters that just failed, most often
    * against a session that is already gone. Pre-flight validation would restate

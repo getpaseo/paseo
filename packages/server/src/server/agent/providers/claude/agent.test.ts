@@ -719,6 +719,7 @@ describe("ClaudeAgentSession features", () => {
       return: queryReturn,
       applyFlagSettings: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
+      setPermissionMode: vi.fn(async () => undefined),
       getContextUsage: vi.fn(async () => undefined),
       [Symbol.asyncIterator](): AsyncIterator<SDKMessage, void> {
         return {
@@ -1960,7 +1961,12 @@ describe("ClaudeAgentSession features", () => {
   async function createClosedClaudeModelChange({
     savedThinking = "off",
     resumeSaved = true,
-  }: { savedThinking?: string; resumeSaved?: boolean } = {}) {
+    prepareSession = () => {},
+  }: {
+    savedThinking?: string;
+    resumeSaved?: boolean;
+    prepareSession?: (session: AgentSession) => void;
+  } = {}) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-model-recovery-"));
     const { queryFactory, queryMock, launches } = createQueryMock();
     const launch = queryFactory.getMockImplementation();
@@ -1982,6 +1988,7 @@ describe("ClaudeAgentSession features", () => {
         thinkingChanges.push(value);
         return setThinking(value);
       };
+      prepareSession(session);
       return session;
     };
     const resume = client.resumeSession.bind(client);
@@ -2190,9 +2197,66 @@ describe("ClaudeAgentSession features", () => {
     },
   );
 
-  test.each([false, true])(
-    "a closed Claude bundle stops at mode rejection before changing thinking (resume=%s)",
-    async (resume) => {
+  describe.each([false, true])("closed Claude rejected bundle prefix (resume=%s)", (resume) => {
+    test.each([
+      { saved: "high", requested: "low", thinking: "high" },
+      { saved: "high", requested: null, thinking: "high" },
+      { saved: "off", requested: "low", thinking: "medium" },
+      { saved: "off", requested: null, thinking: "medium" },
+    ])(
+      "keeps the canonical model and reconciled $saved thinking before mode rejects ($requested)",
+      async ({ saved, requested, thinking }) => {
+        const fixture = await createClosedClaudeModelChange({
+          savedThinking: saved,
+          resumeSaved: resume,
+        });
+        const { id, manager, storage, queryMock, messages, configSession } = fixture;
+        try {
+          await configSession.handleAgentConfigApplyRequest({
+            type: "agent.config.apply.request",
+            agentId: id,
+            requestId: "mode-reject",
+            config: {
+              modelId: " claude-sonnet-5-5 ",
+              modeId: "invalid-mode",
+              thinkingOptionId: requested,
+              options: { fast_mode: true },
+            },
+          });
+          await manager.flush();
+          expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+          expect(messages.at(-1)).toMatchObject({
+            payload: { accepted: false, error: expect.stringContaining("mode") },
+          });
+          expect(fixture.thinkingChanges).toEqual([]);
+          expect(queryMock.applyFlagSettings).not.toHaveBeenCalled();
+          expect((await storage.get(id))?.config).toMatchObject({
+            model: "claude-sonnet-5-5",
+            modeId: "default",
+            thinkingOptionId: thinking,
+          });
+          expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+            model: "claude-sonnet-5-5",
+            modeId: "default",
+            thinkingOptionId: thinking,
+          });
+          await manager.closeAgent(id);
+          await ensureUnarchivedAgentLoaded(id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+          expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+            model: "claude-sonnet-5-5",
+            thinkingOptionId: thinking,
+          });
+        } finally {
+          await fixture.cleanup();
+        }
+      },
+    );
+
+    test("preserves model and mode when the later thinking setter rejects", async () => {
       const fixture = await createClosedClaudeModelChange({
         savedThinking: "high",
         resumeSaved: resume,
@@ -2202,19 +2266,136 @@ describe("ClaudeAgentSession features", () => {
         await configSession.handleAgentConfigApplyRequest({
           type: "agent.config.apply.request",
           agentId: id,
-          requestId: "mode-reject",
-          config: { modelId: "claude-sonnet-5-5", modeId: "invalid-mode", thinkingOptionId: null },
+          requestId: "thinking-reject",
+          config: {
+            modelId: "claude-sonnet-5-5",
+            modeId: "plan",
+            thinkingOptionId: "invalid-thinking",
+            options: { fast_mode: true },
+          },
         });
         await manager.flush();
-        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
         expect(messages.at(-1)).toMatchObject({
-          payload: { accepted: false, error: expect.stringContaining("mode") },
+          payload: { accepted: false, error: expect.stringContaining("thinking") },
         });
-        expect(fixture.thinkingChanges).toEqual([]);
-        expect((await storage.get(id))?.config?.thinkingOptionId).toBe("high");
-        expect(manager.getAgent(id)).toBeNull();
+        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(queryMock.setPermissionMode).toHaveBeenCalledExactlyOnceWith("plan");
+        expect(fixture.thinkingChanges).toEqual(["invalid-thinking"]);
+        expect((await storage.get(id))?.config).toMatchObject({
+          model: "claude-sonnet-5-5",
+          modeId: "plan",
+          thinkingOptionId: "high",
+        });
+        expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+          model: "claude-sonnet-5-5",
+          modeId: "plan",
+          thinkingOptionId: "high",
+        });
       } finally {
         await fixture.cleanup();
+      }
+    });
+  });
+
+  test.each([false, true])(
+    "a failed runtime readback never publishes a model prefix (resume=%s)",
+    async (resume) => {
+      const fixture = await createClosedClaudeModelChange({
+        resumeSaved: resume,
+        prepareSession: (session) => {
+          vi.spyOn(session, "getRuntimeInfo").mockRejectedValue(
+            new Error("Runtime readback unavailable"),
+          );
+        },
+      });
+      try {
+        const original = await fixture.storage.get(fixture.id);
+        await fixture.configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: fixture.id,
+          requestId: "readback",
+          config: { modelId: "claude-sonnet-5-5", modeId: "invalid-mode" },
+        });
+        expect(fixture.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Runtime readback unavailable" },
+        });
+        expect(fixture.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(fixture.manager.getAgent(fixture.id)).toBeNull();
+        expect(await fixture.storage.get(fixture.id)).toEqual(original);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.each([false, true])(
+    "a waiting mutation does not inherit another request's rejected replacement (resume=%s)",
+    async (resume) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        const record = await f.storage.get(f.id);
+        expect(record).not.toBeNull();
+        await f.storage.upsert({
+          ...record!,
+          config: { ...record.config, model: "claude-opus-5" },
+        });
+        let enter!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>((resolve) => {
+          enter = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const create = f.manager.createAgentFromRecord.bind(f.manager);
+        const resumeAgent = f.manager.resumeAgentFromPersistence.bind(f.manager);
+        f.manager.createAgentFromRecord = async (...args) => {
+          enter();
+          await gate;
+          return create(...args);
+        };
+        f.manager.resumeAgentFromPersistence = async (...args) => {
+          enter();
+          await gate;
+          return resumeAgent(...args);
+        };
+        f.queryMock.setModel.mockRejectedValueOnce(new Error("Invalid first replacement"));
+        const first = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "invalid-first",
+          modelId: "claude-sonnet-5-5",
+        });
+        await entered;
+        let markWaiting!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+          markWaiting = resolve;
+        });
+        const waitForClose = f.manager.waitForAgentClose.bind(f.manager);
+        f.manager.waitForAgentClose = async (agentId) => {
+          await waitForClose(agentId);
+          markWaiting();
+        };
+        const second = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "valid-second",
+          modelId: "claude-opus-5-5",
+        });
+        await waiting;
+        await Promise.resolve();
+        release();
+        await Promise.all([first, second]);
+        expect(
+          f.messages.find((message) => message.payload?.requestId === "valid-second"),
+        ).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel.mock.calls).toEqual([
+          ["claude-sonnet-5-5"],
+          ["claude-opus-5-5"],
+        ]);
+        expect((await f.storage.get(f.id))?.config?.model).toBe("claude-opus-5-5");
+      } finally {
+        await f.cleanup();
       }
     },
   );

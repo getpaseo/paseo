@@ -993,13 +993,15 @@ describe("Codex app-server provider controls", () => {
 
 describe("closed Codex startup model recovery", () => {
   test.each([
-    { resume: false, model: "gpt-5.4" },
-    { resume: true, model: "gpt-5.4" },
-    { resume: false, model: undefined },
-    { resume: true, model: undefined },
+    { resume: false, model: "gpt-5.4", requested: "gpt-5.4" },
+    { resume: true, model: "gpt-5.4", requested: "gpt-5.4" },
+    { resume: false, model: undefined, requested: undefined },
+    { resume: true, model: undefined, requested: undefined },
+    { resume: false, model: undefined, requested: "   " },
+    { resume: true, model: undefined, requested: "   " },
   ])(
-    "repairs a removed model before startup (resume=$resume, model=$model)",
-    async ({ resume, model }) => {
+    "repairs a removed model before startup (resume=$resume, model=$requested)",
+    async ({ resume, model, requested }) => {
       const workdir = mkdtempSync(join(tmpdir(), "codex-startup-repair-"));
       const logger = createTestLogger();
       const appServers: FakeCodexAppServer[] = [];
@@ -1053,7 +1055,7 @@ describe("closed Codex startup model recovery", () => {
           agentManager: manager,
           agentStorage: storage,
           logger,
-          configOverrides: { model },
+          configOverrides: { model: requested },
         });
         await manager.flush();
         expect(manager.getAgent(id)?.config.model).toBe(model);

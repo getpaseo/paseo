@@ -4,6 +4,7 @@ import {
   controls,
   permissionRules,
   applyResumeOverrides,
+  reconcileSavedVariant,
   requiresDedicatedV2Server,
 } from "./configuration.js";
 import { commands } from "./commands.js";
@@ -120,7 +121,16 @@ export class OpenCodeV2AgentClient implements AgentClient {
         // The manager validates the replacement before publication. Don't launch on the
         // stale model or apply the explicit thinking step ahead of the bundle's mode.
         model = undefined;
-        if (!("model" in options.configChange) && config.model) model = modelRef(config.model);
+        if (!("model" in options.configChange) && config.model) {
+          model = modelRef(config.model, config.thinkingOptionId);
+          if ("thinkingOptionId" in options.configChange) {
+            model = await reconcileSavedVariant({
+              client: connection.client,
+              location: { directory: config.cwd },
+              model,
+            });
+          }
+        }
       }
       const info = await connection.client.session.create({
         location: { directory: config.cwd },
@@ -161,7 +171,12 @@ export class OpenCodeV2AgentClient implements AgentClient {
       });
       // The manager applies explicit mutations in order before registration. Replaying
       // saved settings here could reject the very preference that mutation repairs.
-      if (!options?.configChange) await applyResumeOverrides(connection.client, info, overrides);
+      await applyResumeOverrides({
+        client: connection.client,
+        info,
+        overrides,
+        change: options?.configChange,
+      });
       return await this.attach(connection, info, config, launch, true);
     } catch (error) {
       await connection.release();

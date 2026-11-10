@@ -426,15 +426,17 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
 
 // A repair must reach startup before a removed saved model can prevent opening.
 // The manager still validates requested thinking after the model and mode steps.
-function prepareOmpStartupConfig(
-  config: AgentSessionConfig,
-  change?: AgentSessionConfigChange,
-): AgentSessionConfig {
+interface OmpStartupConfigInput {
+  config: AgentSessionConfig;
+  change?: AgentSessionConfigChange;
+}
+
+function prepareOmpStartupConfig({ config, change }: OmpStartupConfigInput): AgentSessionConfig {
   if (!change) return config;
   return {
     ...config,
     model: "model" in change ? change.model : config.model,
-    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+    thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
   };
 }
 
@@ -449,8 +451,8 @@ function buildResumeConfig(
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
   const modeId = overrideConfig.modeId ?? metadata.modeId;
-  const config = prepareOmpStartupConfig(
-    {
+  const config = prepareOmpStartupConfig({
+    config: {
       ...overrideConfig,
       provider,
       cwd,
@@ -459,8 +461,8 @@ function buildResumeConfig(
       modeId,
       systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
-    options?.purpose === "history" ? undefined : options?.configChange,
-  );
+    change: options?.purpose === "history" ? undefined : options?.configChange,
+  });
   return {
     cwd,
     model: config.model,
@@ -2383,7 +2385,7 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    config = prepareOmpStartupConfig(config, options?.configChange);
+    config = prepareOmpStartupConfig({ config, change: options?.configChange });
     const launchMode = this.resolveLaunchMode(config.modeId, config.providerOptions);
     const startInput: OmpStartSessionInput = {
       cwd: config.cwd,

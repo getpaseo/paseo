@@ -1075,12 +1075,13 @@ export class ACPAgentClient implements AgentClient {
     const changesModel = change !== undefined && "model" in change;
     const changesThinking = change !== undefined && "thinkingOptionId" in change;
     return {
-      // Explicit thinking changes run after the bundle's mode step, not during startup.
+      // Retain an advertised saved choice while deferring the requested thinking step.
+      // Custom writers own their thinking contract and cannot use ACP choices to reconcile.
       startupConfig: {
         ...(changesModel ? { model: change.model } : {}),
-        ...(changesThinking ? { thinkingOptionId: undefined } : {}),
+        ...(changesThinking && this.thinkingOptionWriter ? { thinkingOptionId: undefined } : {}),
       },
-      reconcileSavedThinking: changesModel && !changesThinking,
+      reconcileSavedThinking: changesModel || changesThinking,
     };
   }
 
@@ -3169,7 +3170,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private resolveConfiguredThinking(): string | undefined {
     const value = this.config.thinkingOptionId;
     if (!this.reconcileSavedThinking || this.thinkingOptionWriter) return value;
-    // A model-only change retains the saved preference when the new model still offers it.
+    // A repair retains the saved preference when the opening model still offers it.
     const option = findSelectConfigOption({
       configOptions: this.configOptions,
       category: "thought_level",

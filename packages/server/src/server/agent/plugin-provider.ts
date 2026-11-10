@@ -978,27 +978,27 @@ class PluginAgentClient implements AgentClient {
 
   // Plugins can validate the model/thinking pair during session.open. Reconcile only
   // advertised restrictions; native startup chooses the actual default when omitted.
-  private async prepareStartupConfig(
-    config: AgentSessionConfig,
-    change?: AgentSessionConfigChange,
-  ): Promise<AgentSessionConfig> {
+  private async prepareStartupConfig({
+    config,
+    change,
+  }: {
+    config: AgentSessionConfig;
+    change?: AgentSessionConfigChange;
+  }): Promise<AgentSessionConfig> {
     if (!change) return config;
     const startup = {
       ...config,
       model: "model" in change ? change.model : config.model,
-      thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+      thinkingOptionId: config.thinkingOptionId,
     };
     const reconcileSavedThinking =
-      "model" in change &&
-      !("thinkingOptionId" in change) &&
-      startup.thinkingOptionId !== undefined;
+      ("model" in change || "thinkingOptionId" in change) && startup.thinkingOptionId !== undefined;
     if (!reconcileSavedThinking) return startup;
     // Catalog errors abort before opening: guessing could discard a valid preference.
     // Unknown choices below preserve that preference for native validation.
     const catalog = await this.fetchCatalog({ scope: "workspace", cwd: config.cwd, force: false });
-    const target = startup.model
-      ? catalog.models.find((model) => model.id === startup.model)
-      : catalog.models.find((model) => model.isDefault);
+    let target = catalog.models.find((model) => model.isDefault);
+    if (startup.model) target = catalog.models.find((model) => model.id === startup.model);
     const options = target?.thinkingOptions;
     if (options && !options.some((option) => option.id === startup.thinkingOptionId)) {
       return { ...startup, thinkingOptionId: undefined };
@@ -1012,7 +1012,7 @@ class PluginAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     return await this.openSession({
-      config: await this.prepareStartupConfig(config, options?.configChange),
+      config: await this.prepareStartupConfig({ config, change: options?.configChange }),
       launchContext,
       history: "skip",
       persist: options?.persistSession !== false,
@@ -1029,10 +1029,10 @@ class PluginAgentClient implements AgentClient {
       throw new Error(`Plugin provider '${this.provider}' requires cwd to resume a session`);
     }
     return await this.openSession({
-      config: await this.prepareStartupConfig(
-        { ...overrides, provider: this.provider, cwd: overrides.cwd },
-        options?.purpose === "history" ? undefined : options?.configChange,
-      ),
+      config: await this.prepareStartupConfig({
+        config: { ...overrides, provider: this.provider, cwd: overrides.cwd },
+        change: options?.purpose === "history" ? undefined : options?.configChange,
+      }),
       launchContext,
       persistence: decodePersistence(handle),
       history: "replay",

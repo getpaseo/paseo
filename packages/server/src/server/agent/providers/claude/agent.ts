@@ -583,16 +583,22 @@ function assertClaudeThinkingOptionSupported(
 
 // Startup must not launch a removed saved model before the manager can apply a repair.
 // Requested thinking still goes through its setter after mode validation.
-function prepareClaudeStartupConfig(
-  config: AgentSessionConfig,
-  change?: AgentSessionConfigChange,
-): AgentSessionConfig {
+interface ClaudeStartupConfigInput {
+  config: AgentSessionConfig;
+  change?: AgentSessionConfigChange;
+}
+
+function prepareClaudeStartupConfig({
+  config,
+  change,
+}: ClaudeStartupConfigInput): AgentSessionConfig {
   if (!change) return config;
   const startup = { ...config };
   if ("model" in change) startup.model = change.model;
-  if ("thinkingOptionId" in change) {
+  if ("thinkingOptionId" in change && !isClaudeThinkingOption(startup.thinkingOptionId)) {
     startup.thinkingOptionId = undefined;
-  } else if ("model" in change && startup.thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
+  }
+  if (startup.thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
     const resolution = resolveClaudeDisabledThinkingForModel(startup.model);
     if (!resolution.supported) startup.thinkingOptionId = resolution.fallbackThinkingOptionId;
   }
@@ -1669,7 +1675,7 @@ export class ClaudeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(
-      prepareClaudeStartupConfig(config, options?.configChange),
+      prepareClaudeStartupConfig({ config, change: options?.configChange }),
     );
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -1701,7 +1707,7 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(
-      prepareClaudeStartupConfig(mergedConfig, options?.configChange),
+      prepareClaudeStartupConfig({ config: mergedConfig, change: options?.configChange }),
     );
     const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -2818,6 +2824,7 @@ class ClaudeAgentSession implements AgentSession {
       this.planResumeMode = normalized;
     }
     this.currentMode = normalized;
+    this.cachedRuntimeInfo = null;
   }
 
   async setModel(modelId: string | null): Promise<{ model: string | null }> {

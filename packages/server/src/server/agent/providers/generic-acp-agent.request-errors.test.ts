@@ -99,19 +99,192 @@ describe("GenericACPAgentClient request errors", () => {
 });
 
 test.each([
-  { surface: "single", modelId: "default", savedThinking: "high", expectedThinking: "high" },
-  { surface: "single", modelId: null, savedThinking: "high", expectedThinking: "high" },
-  { surface: "bundle", modelId: "default", savedThinking: "high", expectedThinking: undefined },
-  { surface: "bundle", modelId: null, savedThinking: "high", expectedThinking: undefined },
+  { entry: "create", persistence: undefined },
+  { entry: "resume", persistence: { provider: "acp", sessionId: "session-1" } },
+])("preserves supported thinking before a later mode failure ($entry)", async ({ persistence }) => {
+  await withFakeACPAgent("prefix-thinking", async (command, cwd) => {
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { acp: new GenericACPAgentClient({ logger, command }) },
+      registry: storage,
+      logger,
+    });
+    const id = "00000000-0000-4000-8000-000000000827";
+    const now = new Date().toISOString();
+    try {
+      await storage.upsert({
+        id,
+        provider: "acp",
+        cwd,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        archivedAt: null,
+        lastStatus: "closed",
+        config: { model: "requested", thinkingOptionId: "high" },
+        persistence,
+      });
+      await expect(
+        ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: { model: "default", modeId: "plan", thinkingOptionId: "low" },
+        }),
+      ).rejects.toThrow("Invalid mode");
+      await manager.flush();
+      expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+        model: "default",
+        thinkingOptionId: "high",
+      });
+      expect((await storage.get(id))?.config).toMatchObject({
+        model: "default",
+        thinkingOptionId: "high",
+      });
+      await manager.closeAgent(id);
+      await ensureUnarchivedAgentLoaded(id, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      });
+      expect(manager.getAgent(id)?.runtimeInfo?.thinkingOptionId).toBe("high");
+    } finally {
+      await manager.closeAgent(id);
+      await manager.flush();
+      await storage.flush();
+    }
+  });
+});
+
+test.each([
+  { entry: "create", persistence: undefined },
+  { entry: "resume", persistence: { provider: "acp", sessionId: "session-1" } },
+])(
+  "persists canonical ACP thinking rather than the requested alias ($entry)",
+  async ({ persistence }) => {
+    await withFakeACPAgent("prefix-thinking", async (command, cwd) => {
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { acp: new GenericACPAgentClient({ logger, command }) },
+        registry: storage,
+        logger,
+      });
+      const id = "00000000-0000-4000-8000-000000000828";
+      const now = new Date().toISOString();
+      try {
+        await storage.upsert({
+          id,
+          provider: "acp",
+          cwd,
+          createdAt: now,
+          updatedAt: now,
+          labels: {},
+          archivedAt: null,
+          lastStatus: "closed",
+          config: { model: "default", thinkingOptionId: "high" },
+          persistence,
+        });
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: { thinkingOptionId: "medium" },
+        });
+        await manager.flush();
+        expect(manager.getAgent(id)?.runtimeInfo?.thinkingOptionId).toBe("high");
+        expect((await storage.get(id))?.config?.thinkingOptionId).toBe("high");
+      } finally {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+      }
+    });
+  },
+);
+
+interface SelectionRepairRequest {
+  session: AgentConfigSession;
+  agentId: string;
+  value: string | null;
+}
+
+function applySingleModelRepair({ session, agentId, value }: SelectionRepairRequest) {
+  return session.handleSetAgentModelRequest({
+    type: "set_agent_model_request",
+    agentId,
+    modelId: value,
+    requestId: "repair",
+  });
+}
+
+function applyBundleModelRepair({ session, agentId, value }: SelectionRepairRequest) {
+  return session.handleAgentConfigApplyRequest({
+    type: "agent.config.apply.request",
+    agentId,
+    config: { modelId: value, thinkingOptionId: null },
+    requestId: "repair",
+  });
+}
+
+function applySingleThinkingRepair({ session, agentId, value }: SelectionRepairRequest) {
+  return session.handleSetAgentThinkingRequest({
+    type: "set_agent_thinking_request",
+    agentId,
+    thinkingOptionId: value,
+    requestId: "repair-thinking",
+  });
+}
+
+function applyBundleThinkingRepair({ session, agentId, value }: SelectionRepairRequest) {
+  return session.handleAgentConfigApplyRequest({
+    type: "agent.config.apply.request",
+    agentId,
+    config: { thinkingOptionId: value },
+    requestId: "repair-thinking",
+  });
+}
+
+test.each([
   {
     surface: "single",
+    apply: applySingleModelRepair,
+    modelId: "default",
+    savedThinking: "high",
+    expectedThinking: "high",
+  },
+  {
+    surface: "single",
+    apply: applySingleModelRepair,
+    modelId: null,
+    savedThinking: "high",
+    expectedThinking: "high",
+  },
+  {
+    surface: "bundle",
+    apply: applyBundleModelRepair,
+    modelId: "default",
+    savedThinking: "high",
+    expectedThinking: undefined,
+  },
+  {
+    surface: "bundle",
+    apply: applyBundleModelRepair,
+    modelId: null,
+    savedThinking: "high",
+    expectedThinking: undefined,
+  },
+  {
+    surface: "single",
+    apply: applySingleModelRepair,
     modelId: "default",
     savedThinking: "removed-thinking",
     expectedThinking: "low",
   },
 ] as const)(
   "recovers a removed saved model through $surface with $modelId",
-  async ({ surface, modelId, savedThinking, expectedThinking }) => {
+  async ({ apply, modelId, savedThinking, expectedThinking }) => {
     await withFakeACPAgent("removed-on-load", async (command, cwd) => {
       const logger = createTestLogger();
       const storage = new AgentStorage(path.join(cwd, "agents"), logger);
@@ -165,19 +338,7 @@ test.each([
         ).rejects.toThrow("Model 'requested' is not a valid acp model config option");
 
         const changeModel = (value: string | null) =>
-          surface === "single"
-            ? configSession.handleSetAgentModelRequest({
-                type: "set_agent_model_request",
-                agentId: created.id,
-                modelId: value,
-                requestId: "repair",
-              })
-            : configSession.handleAgentConfigApplyRequest({
-                type: "agent.config.apply.request",
-                agentId: created.id,
-                config: { modelId: value, thinkingOptionId: null },
-                requestId: "repair",
-              });
+          apply({ session: configSession, agentId: created.id, value });
         await changeModel("also-removed");
         const rejected = messages.at(-1);
         expect(rejected).toMatchObject({
@@ -221,13 +382,13 @@ test.each([
 );
 
 test.each([
-  { surface: "single", thinking: "low" },
-  { surface: "single", thinking: null },
-  { surface: "bundle", thinking: "low" },
-  { surface: "bundle", thinking: null },
+  { surface: "single", apply: applySingleThinkingRepair, thinking: "low" },
+  { surface: "single", apply: applySingleThinkingRepair, thinking: null },
+  { surface: "bundle", apply: applyBundleThinkingRepair, thinking: "low" },
+  { surface: "bundle", apply: applyBundleThinkingRepair, thinking: null },
 ] as const)(
   "thinking-only recovery through $surface with $thinking",
-  async ({ surface, thinking }) => {
+  async ({ apply, thinking }) => {
     await withFakeACPAgent("removed-thinking-on-load", async (command, cwd) => {
       const logger = createTestLogger();
       const storage = new AgentStorage(path.join(cwd, "agents"), logger);
@@ -261,19 +422,7 @@ test.each([
         },
       });
       const changeThinking = (agentId: string, value: string | null) =>
-        surface === "single"
-          ? configSession.handleSetAgentThinkingRequest({
-              type: "set_agent_thinking_request",
-              agentId,
-              thinkingOptionId: value,
-              requestId: "repair-thinking",
-            })
-          : configSession.handleAgentConfigApplyRequest({
-              type: "agent.config.apply.request",
-              agentId,
-              config: { thinkingOptionId: value },
-              requestId: "repair-thinking",
-            });
+        apply({ session: configSession, agentId, value });
       try {
         const created = await manager.createAgent(
           { provider: "acp", cwd, model: "default", thinkingOptionId: "high" },
@@ -519,6 +668,7 @@ async function withFakeACPAgent(
     | "missing-model-choice"
     | "no-model-selector"
     | "config-model-only"
+    | "prefix-thinking"
     | "removed-on-load"
     | "removed-thinking-on-load",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
@@ -544,7 +694,7 @@ function thinkingState() {
   return { configOptions: [
     { id: "model", name: "Model", category: "model", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] },
     { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: thinking,
-      options: loaded ? [{ value: "low", name: "Low" }] : [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+      options: loaded ? [{ value: "low", name: "Low" }] : [{ value: "low", name: "Low" }, { value: "high", name: "High" }, ...(mode === "prefix-thinking" ? [{ value: "medium", name: "Native canonical alias" }] : [])] },
   ] };
 }
 
@@ -634,6 +784,12 @@ rl.on("line", (line) => {
     return;
   }
 
+  if (mode === "prefix-thinking" && message.method === "session/set_config_option") {
+    if (message.params.configId === "effort") thinking = message.params.value === "medium" ? "high" : message.params.value;
+    write({ id: message.id, result: thinkingState() });
+    return;
+  }
+
   if (message.method === "session/set_config_option" && message.params.configId === "model") {
     if (mode === "reject-model-config") {
       write({ id: message.id, error: { code: -32603, message: "Internal error",
@@ -660,6 +816,10 @@ rl.on("line", (line) => {
     return;
   }
 
+  if (message.method === "session/set_mode" && mode === "prefix-thinking") {
+    write({ id: message.id, error: { code: -32603, message: "Invalid mode " + message.params.modeId } });
+    return;
+  }
   if (message.method === "session/set_mode" && mode === "reject-set-mode") {
     write({
       id: message.id,

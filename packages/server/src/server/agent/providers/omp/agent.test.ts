@@ -1973,7 +1973,7 @@ describe.each([false, true])("closed omp startup recovery (resume=%s)", (resume)
       config: { modelId: "test/replacement", thinkingOptionId: "low" },
       model: "test/replacement",
       thinking: "low",
-      startupThinking: undefined,
+      startupThinking: "high",
       thinkingCalls: ["low"],
       modelCalls: 1,
     },
@@ -1982,7 +1982,7 @@ describe.each([false, true])("closed omp startup recovery (resume=%s)", (resume)
       config: { modelId: "test/replacement", thinkingOptionId: null },
       model: "test/replacement",
       thinking: "medium",
-      startupThinking: undefined,
+      startupThinking: "high",
       thinkingCalls: ["medium"],
       modelCalls: 1,
     },
@@ -2050,10 +2050,9 @@ describe.each([false, true])("closed omp startup recovery (resume=%s)", (resume)
     }
   });
 
-  test("rejects mode before requested thinking without saving", async () => {
+  test("preserves a valid model prefix when mode rejects before requested thinking", async () => {
     const f = await fixture();
     try {
-      const original = await f.storage.get(f.id);
       await f.configSession.handleAgentConfigApplyRequest({
         type: "agent.config.apply.request",
         agentId: f.id,
@@ -2068,8 +2067,21 @@ describe.each([false, true])("closed omp startup recovery (resume=%s)", (resume)
         { provider: "test", modelId: "replacement" },
       ]);
       expect(f.runtime.latestSession().setThinkingLevelRequests).toEqual([]);
-      expect(await f.storage.get(f.id)).toEqual(original);
-      expect(f.manager.getAgent(f.id)).toBeNull();
+      expect((await f.storage.get(f.id))?.config).toMatchObject({
+        model: "test/replacement",
+        thinkingOptionId: "high",
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+        model: "test/replacement",
+        thinkingOptionId: "high",
+      });
+      await f.manager.closeAgent(f.id);
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("high");
     } finally {
       await f.cleanup();
     }

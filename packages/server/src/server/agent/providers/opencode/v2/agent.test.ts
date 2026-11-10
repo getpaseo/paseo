@@ -11,7 +11,7 @@ import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
+import type { AgentStreamEvent, AgentSessionConfig } from "../../../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
@@ -2178,4 +2178,113 @@ test("keeps a live background shell visible and stoppable after its launch is re
   } finally {
     await session.close();
   }
+});
+
+test("a model repair preserves the untouched saved OpenCode mode", async () => {
+  const harness = new V2Harness();
+  harness.info.model = { providerID: "test", id: "native" };
+  const agents: string[] = [];
+  harness.api.session.switchAgent = async ({ agent }) => {
+    agents.push(agent);
+    harness.info.agent = agent;
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.resumeSession(
+    { provider: "opencode", sessionId: harness.info.id, metadata: { cwd: "/tmp/project" } },
+    { cwd: "/tmp/project", modeId: "plan", model: "test/saved" },
+    undefined,
+    { configChange: { model: "test/target" } },
+  );
+  try {
+    expect(await session.getCurrentMode?.()).toBe("plan");
+    expect(agents).toEqual(["plan"]);
+  } finally {
+    await session.close();
+  }
+});
+
+interface OpenThinkingRepairInput {
+  client: OpenCodeV2AgentClient;
+  config: AgentSessionConfig;
+}
+
+function createThinkingRepair({ client, config }: OpenThinkingRepairInput) {
+  return client.createSession(config, undefined, { configChange: { thinkingOptionId: "low" } });
+}
+
+function resumeThinkingRepair({ client, config }: OpenThinkingRepairInput) {
+  return client.resumeSession(
+    { provider: "opencode", sessionId: "session", metadata: { cwd: config.cwd } },
+    config,
+    undefined,
+    { configChange: { thinkingOptionId: "low" } },
+  );
+}
+
+describe.each([
+  { entry: "create", open: createThinkingRepair },
+  { entry: "resume", open: resumeThinkingRepair },
+])("OpenCode deferred thinking repair ($entry)", ({ open }) => {
+  test.each([
+    { saved: "high", expected: "high" },
+    { saved: "off", expected: undefined },
+  ])(
+    "restores untouched settings and reconciles only unsupported saved $saved",
+    async ({ saved, expected }) => {
+      const harness = new V2Harness();
+      harness.info.model = { providerID: "test", id: "native", variant: "off" };
+      const target: ModelInfo = {
+        id: "saved",
+        modelID: "saved",
+        providerID: "test",
+        name: "Saved",
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: [{ id: "high" }, { id: "low" }],
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        enabled: true,
+        limit: { context: 200000, output: 10000 },
+      };
+      harness.api.model.list = async () => ({ location: harness.info.location, data: [target] });
+      harness.api.session.create = async (input = {}) => {
+        harness.info.agent = input.agent ?? "build";
+        harness.info.model = input.model;
+        return harness.info;
+      };
+      harness.api.session.switchAgent = async ({ agent }) => {
+        harness.info.agent = agent;
+      };
+      harness.api.session.switchModel = async ({ model }) => {
+        harness.info.model = model;
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await open({
+        client,
+        config: {
+          provider: "opencode",
+          cwd: "/tmp/project",
+          modeId: "plan",
+          model: "test/saved",
+          thinkingOptionId: saved,
+        },
+      });
+      try {
+        expect(await session.getCurrentMode?.()).toBe("plan");
+        expect(harness.info.model?.id).toBe("saved");
+        expect(harness.info.model?.variant).toBe(expected);
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBe(expected ?? null);
+        await session.setThinkingOption?.("low");
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBe("low");
+      } finally {
+        await session.close();
+      }
+    },
+  );
 });

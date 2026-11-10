@@ -475,15 +475,17 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
 
 // A repair must reach startup before a removed saved model can prevent opening.
 // The manager still validates requested thinking after the model and mode steps.
-function preparePiStartupConfig(
-  config: AgentSessionConfig,
-  change?: AgentSessionConfigChange,
-): AgentSessionConfig {
+interface PiStartupConfigInput {
+  config: AgentSessionConfig;
+  change?: AgentSessionConfigChange;
+}
+
+function preparePiStartupConfig({ config, change }: PiStartupConfigInput): AgentSessionConfig {
   if (!change) return config;
   return {
     ...config,
     model: "model" in change ? change.model : config.model,
-    thinkingOptionId: "thinkingOptionId" in change ? undefined : config.thinkingOptionId,
+    thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
   };
 }
 
@@ -498,8 +500,8 @@ function buildResumeConfig(
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
   const modeId = overrideConfig.modeId ?? metadata.modeId;
-  const config = preparePiStartupConfig(
-    {
+  const config = preparePiStartupConfig({
+    config: {
       ...overrideConfig,
       provider,
       cwd,
@@ -508,8 +510,8 @@ function buildResumeConfig(
       modeId,
       systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
-    options?.purpose === "history" ? undefined : options?.configChange,
-  );
+    change: options?.purpose === "history" ? undefined : options?.configChange,
+  });
   return {
     cwd,
     model: config.model,
@@ -2643,7 +2645,7 @@ export class PiRpcAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    config = preparePiStartupConfig(config, options?.configChange);
+    config = preparePiStartupConfig({ config, change: options?.configChange });
     const providerOptions = PiProviderOptionsSchema.parse(config.providerOptions ?? {});
     const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
     const mcpEnv = {

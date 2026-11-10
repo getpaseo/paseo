@@ -25,6 +25,7 @@ export class AgentNotFoundError extends Error {
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
   options: { broadcastTimeline: boolean };
+  hasConfigChange: boolean;
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -83,7 +84,7 @@ export async function ensureAgentLoaded(
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    return waitForPendingInitialization({ agentId, deps, pending: inflight });
   }
 
   const existing = deps.agentManager.getAgent(agentId);
@@ -99,7 +100,7 @@ export async function ensureAgentLoaded(
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    return waitForPendingInitialization({ agentId, deps, pending: laterInflight });
   }
 
   const pendingOptions = {
@@ -119,39 +120,56 @@ export async function ensureAgentLoaded(
     const handle = toAgentPersistenceHandle(validProviders, record.persistence);
 
     let snapshot: ManagedAgent;
-    if (handle) {
-      snapshot = await deps.agentManager.resumeAgentFromPersistence(
-        handle,
-        buildConfigOverrides(record),
-        agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
-        {
-          purpose: deps.purpose,
-          configChange: deps.configOverrides,
-          onConfigApplied: deps.onConfigApplied,
-        },
-      );
-      deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
-    } else {
-      // No provider handle to resume: this starts the agent's first session rather than
-      // bringing one back, so it stamps activity and carries no stored attention. Records
-      // without a handle never got far enough to accumulate either. The manager rereads the
-      // record inside the agent's lane, so a write that lands after this read is not lost.
-      snapshot = await deps.agentManager.createAgentFromRecord(
-        agentId,
-        deps.configOverrides,
-        deps.onConfigApplied,
-      );
-      deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
+    try {
+      if (handle) {
+        snapshot = await deps.agentManager.resumeAgentFromPersistence(
+          handle,
+          buildConfigOverrides(record),
+          agentId,
+          { ...extractTimestamps(record), attention: extractAttention(record) },
+          {
+            purpose: deps.purpose,
+            configChange: deps.configOverrides,
+            onConfigApplied: deps.onConfigApplied,
+          },
+        );
+        deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
+      } else {
+        // No provider handle to resume: this starts the agent's first session rather than
+        // bringing one back, so it stamps activity and carries no stored attention. Records
+        // without a handle never got far enough to accumulate either. The manager rereads the
+        // record inside the agent's lane, so a write that lands after this read is not lost.
+        snapshot = await deps.agentManager.createAgentFromRecord(
+          agentId,
+          deps.configOverrides,
+          deps.onConfigApplied,
+        );
+        deps.logger.info(
+          { agentId, provider: record.provider },
+          "Agent created from stored config",
+        );
+      }
+    } catch (error) {
+      // A later config setter can reject after the validated prefix was registered.
+      // Its timeline must be hydrated just like any other successfully opened session.
+      if (deps.agentManager.getAgent(agentId)) {
+        await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+          broadcast: () => pendingOptions.broadcastTimeline,
+        });
+      }
+      throw error;
     }
-
     await deps.agentManager.hydrateTimelineFromProvider(agentId, {
       broadcast: () => pendingOptions.broadcastTimeline,
     });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
-  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
+  const pending: PendingAgentInitialization = {
+    promise: initPromise,
+    options: pendingOptions,
+    hasConfigChange: deps.configOverrides !== undefined,
+  };
   pendingAgentInitializations.set(agentId, pending);
 
   try {
@@ -162,4 +180,20 @@ export async function ensureAgentLoaded(
       pendingAgentInitializations.delete(agentId);
     }
   }
+}
+
+async function waitForPendingInitialization({
+  agentId,
+  deps,
+  pending,
+}: {
+  agentId: string;
+  deps: EnsureAgentLoadedDeps;
+  pending: PendingAgentInitialization;
+}): Promise<ManagedAgent> {
+  if (!pending.hasConfigChange) return pending.promise;
+  // A mutation owns its rejection. Wait for it to settle before this caller loads
+  // or mutates the resulting session, rather than borrowing its requested selection.
+  await pending.promise.catch(() => undefined);
+  return ensureAgentLoaded(agentId, deps);
 }
