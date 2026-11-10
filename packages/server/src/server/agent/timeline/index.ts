@@ -4,6 +4,7 @@ export {
   TimelineRewindPendingError,
   TimelineRewindTargetError,
   type TimelineAppendResult,
+  type TimelineChild,
   type TimelineCommit,
   type TimelineEntry,
   type TimelineHead,

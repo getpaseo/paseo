@@ -2155,7 +2155,7 @@ describe("Codex app-server provider", () => {
       );
       expect(new Set(toolCalls.map((item) => item.callId))).toEqual(new Set(["spawn-child"]));
       expect(toolCalls.at(-1)).toMatchObject({ callId: "spawn-child", status: "completed" });
-      expect(codex.manager.getProviderSubagent(codex.agentId, "child-thread")).toMatchObject({
+      expect(await codex.manager.getProviderSubagent(codex.agentId, "child-thread")).toMatchObject({
         toolCallId: "spawn-child",
         status: "completed",
       });

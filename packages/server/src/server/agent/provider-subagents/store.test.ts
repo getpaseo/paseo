@@ -1,6 +1,18 @@
 import { describe, expect, test } from "vitest";
+import type { AgentTimelineItem } from "../agent-sdk-types.js";
 import { AgentTimeline } from "../timeline/index.js";
 import { ProviderSubagentStore } from "./store.js";
+
+function spawningCall(callId: string): AgentTimelineItem {
+  return {
+    type: "tool_call",
+    callId,
+    name: "Task",
+    status: "completed",
+    error: null,
+    detail: { type: "unknown", input: null, output: null },
+  };
+}
 
 describe("ProviderSubagentStore", () => {
   test("keeps provider children and their timelines scoped to the parent agent", async () => {
@@ -34,7 +46,7 @@ describe("ProviderSubagentStore", () => {
       timestamp: "2026-07-12T10:00:03.000Z",
     });
 
-    expect(subagents.list("parent-a")).toEqual([
+    expect(await subagents.list("parent-a")).toEqual([
       expect.objectContaining({
         id: "child-1",
         parentAgentId: "parent-a",
@@ -53,12 +65,15 @@ describe("ProviderSubagentStore", () => {
         item: { type: "assistant_message", text: "Found it." },
       },
     ]);
-    expect(subagents.list("parent-b")[0]).toMatchObject({ provider: "claude", title: "Review" });
+    expect((await subagents.list("parent-b"))[0]).toMatchObject({
+      provider: "claude",
+      title: "Review",
+    });
     expect(await subagents.deleteParent("parent-a")).toEqual([
       { type: "remove", parentAgentId: "parent-a", subagentId: "child-1" },
     ]);
-    expect(subagents.list("parent-a")).toEqual([]);
-    expect(subagents.list("parent-b")).toHaveLength(1);
+    expect(await subagents.list("parent-a")).toEqual([]);
+    expect(await subagents.list("parent-b")).toHaveLength(1);
   });
 
   test("limits oversized provider child tool output before storage", async () => {
@@ -86,7 +101,16 @@ describe("ProviderSubagentStore", () => {
   });
 
   test("retires the children of rewound tool calls and drops their late events", async () => {
-    const subagents = new ProviderSubagentStore(new AgentTimeline());
+    const timeline = new AgentTimeline();
+    const subagents = new ProviderSubagentStore(timeline);
+    const parent = { agentId: "parent-a" };
+    await timeline.create(parent, {});
+    await timeline.append(parent, [
+      { item: { type: "user_message", text: "A", messageId: "a" }, turnId: "t1" },
+      { item: spawningCall("call-a"), turnId: "t1" },
+      { item: { type: "user_message", text: "B", messageId: "b" }, turnId: "t2" },
+      { item: spawningCall("call-b"), turnId: "t2" },
+    ]);
     const upsert = (id: string, fields: { toolCallId?: string; parentSubagentId?: string }) =>
       subagents.apply("parent-a", "claude", {
         type: "upsert",
@@ -104,11 +128,13 @@ describe("ProviderSubagentStore", () => {
       item: { type: "assistant_message", text: "Working on B." },
     });
 
-    expect(subagents.retireSpawnedBy("parent-a", new Set(["call-b"]))).toEqual([
-      { type: "remove", parentAgentId: "parent-a", subagentId: "rewound" },
-      { type: "remove", parentAgentId: "parent-a", subagentId: "grandchild" },
-    ]);
-    expect(subagents.list("parent-a").map((subagent) => subagent.id)).toEqual(["kept"]);
+    const intent = await timeline.beginRewind(parent, "b");
+    await timeline.recordRewindCut(parent, intent.id, { kind: "at_target" });
+    expect(await timeline.completeRewind(parent, intent.id)).toMatchObject({
+      kind: "retired",
+      retiredChildIds: ["rewound", "grandchild"],
+    });
+    expect((await subagents.list("parent-a")).map((subagent) => subagent.id)).toEqual(["kept"]);
 
     // The retired child's history stays stored; a late event neither revives nor extends it.
     expect(
@@ -119,7 +145,10 @@ describe("ProviderSubagentStore", () => {
       }),
     ).toBeNull();
     expect(await upsert("rewound", { toolCallId: "call-b" })).toBeNull();
-    expect(subagents.list("parent-a").map((subagent) => subagent.id)).toEqual(["kept"]);
+    expect(
+      await subagents.apply("parent-a", "claude", { type: "remove", id: "rewound" }),
+    ).toBeNull();
+    expect((await subagents.list("parent-a")).map((subagent) => subagent.id)).toEqual(["kept"]);
     expect(
       (await subagents.fetchTimeline("parent-a", "rewound")).rows.map((row) => row.item),
     ).toEqual([{ type: "assistant_message", text: "Working on B." }]);

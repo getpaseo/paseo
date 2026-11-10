@@ -7,8 +7,10 @@ import type {
   AgentTimelineRow,
 } from "../../agent-timeline-store-types.js";
 import type { ProjectedTimelineRow, TimelineRetirement } from "../../timeline-projection.js";
+import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.js";
 import type {
   AgentTimelineBackend,
+  TimelineChild,
   TimelineEntry,
   TimelineHead,
   TimelinePrompt,
@@ -21,6 +23,7 @@ import { MemoryTimelineBackend } from "./memory-backend.js";
 import { planProviderHistory } from "./provider-history.js";
 
 export type {
+  TimelineChild,
   TimelineEntry,
   TimelineHead,
   TimelineRewindIntent,
@@ -40,6 +43,8 @@ export interface TimelineRetirementCommit {
   retirement: TimelineRetirement;
   /** The rows that left the active conversation. They stay stored. */
   retiredRows: ProjectedTimelineRow[];
+  /** The provider children the retired rows spawned, and their descendants. They stay stored. */
+  retiredChildIds: string[];
   epoch: string;
   retirementCount: number;
 }
@@ -211,10 +216,62 @@ export class AgentTimeline {
     });
   }
 
+  /** The agent's provider children, retired ones included. */
+  listChildren(agentId: string): Promise<TimelineChild[]> {
+    return this.run({ agentId }, () => this.backend.children(agentId));
+  }
+
+  /**
+   * Stores the descriptor `update` derives from the child's current one, creating the child when
+   * absent. A retired child is left as it is and resolves null.
+   */
+  recordChild(
+    scope: TimelineScope,
+    update: (previous: ProviderSubagentDescriptor | null) => ProviderSubagentDescriptor,
+  ): Promise<ProviderSubagentDescriptor | null> {
+    return this.run(scope, async () => {
+      const child = await this.backend.child(scope);
+      if (child?.retired) return null;
+      const descriptor = update(child?.descriptor ?? null);
+      await this.backend.setChild(scope, descriptor);
+      return descriptor;
+    });
+  }
+
+  /** Appends to a child's history, creating the child when absent. A retired child resolves null. */
+  recordChildEntries(
+    scope: TimelineScope,
+    entries: readonly TimelineEntry[],
+  ): Promise<TimelineCommit[] | null> {
+    return this.run(scope, async () => {
+      const child = await this.backend.child(scope);
+      if (child?.retired) return null;
+      if (!child) this.track(scope, await this.backend.create(scope, {}));
+      return entries.length === 0 ? [] : await this.commit(scope, entries);
+    });
+  }
+
+  /** Deletes a child's history. A retired child stays stored and resolves false. */
+  removeChild(scope: TimelineScope): Promise<boolean> {
+    return this.run(scope, async () => {
+      const child = await this.backend.child(scope);
+      if (child?.retired) return false;
+      await this.backend.delete(scope);
+      this.sizes.delete(sizeKey(scope));
+      return true;
+    });
+  }
+
+  /** Deleting an agent's root history deletes all of its children's too. */
   delete(scope: TimelineScope): Promise<void> {
     return this.run(scope, async () => {
       await this.backend.delete(scope);
       this.sizes.delete(sizeKey(scope));
+      if (scope.subagentId !== undefined) return;
+      const childPrefix = sizeKey({ agentId: scope.agentId, subagentId: "" });
+      for (const key of this.sizes.keys()) {
+        if (key.startsWith(childPrefix)) this.sizes.delete(key);
+      }
     });
   }
 
@@ -379,11 +436,15 @@ export class AgentTimeline {
       if (!intent.cut) throw new Error("Cannot complete a rewind before its provider outcome");
       const retireFromSeq = resolveRetireFromSeq(intent, await this.backend.prompts(scope));
       if (retireFromSeq === null) throw new TimelineRewindBoundaryError(intent);
-      const result = await this.backend.retire(scope, { retireFromSeq });
+      const result = await this.backend.retire(scope, {
+        retireFromSeq,
+        selectChildren: childrenSpawnedBy,
+      });
       this.track(scope, result.head);
       const commit: TimelineRetirementCommit = {
         retirement: result.retirement,
         retiredRows: result.retiredRows,
+        retiredChildIds: result.retiredChildIds,
         epoch: result.head.epoch,
         retirementCount: result.head.retirementCount,
       };
@@ -521,6 +582,35 @@ function judgeRewindEvidence(
     kind: "applied",
     cut: { kind: "after", retainedMessageId: providerPromptIds[providerPromptIds.length - 1] },
   };
+}
+
+/** The listed children that retired tool calls spawned, and their descendants. */
+function childrenSpawnedBy(
+  retiredRows: readonly ProjectedTimelineRow[],
+  children: readonly TimelineChild[],
+): string[] {
+  const toolCallIds = new Set(
+    retiredRows.flatMap((row) => (row.item.type === "tool_call" ? [row.item.callId] : [])),
+  );
+  const listed = children.flatMap((child) =>
+    !child.retired && child.descriptor ? [child.descriptor] : [],
+  );
+  const retired = new Set(
+    listed
+      .filter((child) => child.toolCallId !== null && toolCallIds.has(child.toolCallId))
+      .map((child) => child.id),
+  );
+  let grew = retired.size > 0;
+  while (grew) {
+    grew = false;
+    for (const child of listed) {
+      if (retired.has(child.id) || child.parentSubagentId === null) continue;
+      if (!retired.has(child.parentSubagentId)) continue;
+      retired.add(child.id);
+      grew = true;
+    }
+  }
+  return [...retired];
 }
 
 function sizeKey(scope: TimelineScope): string {

@@ -149,7 +149,7 @@ for (let index = 0; index < sessions.length; index++) {
     const item = items[step * 2]!;
     assert.equal(item.type === "reasoning" && item.text, expected.get(`${index}:${step}`));
   }
-  const children = manager.listProviderSubagents(agents[index]!.id);
+  const children = await manager.listProviderSubagents(agents[index]!.id);
   assert.equal(children.length, 1);
   let rootItems = 0;
   let childItems = 0;
@@ -160,17 +160,32 @@ for (let index = 0; index < sessions.length; index++) {
   assert.equal(rootItems, steps * 2);
   assert.equal(childItems, steps * 2);
   await manager.archiveAgent(agents[index]!.id);
-  assert.equal(await timeline.describe({ agentId: agents[index]!.id }), null);
   assert.equal(
     manager.listAgents().some((agent) => agent.id === agents[index]!.id),
     false,
   );
+  // An archived chat reads its history and provider children without its provider.
+  assert.equal((await timeline.readRows({ agentId: agents[index]!.id })).length, steps * 2);
+  assert.equal((await timeline.listChildren(agents[index]!.id)).length, 1);
+}
+global.gc();
+const archived = process.memoryUsage().heapUsed - before;
+for (const agent of agents) {
+  const stored = await timeline.listChildren(agent.id);
+  await manager.deleteAgentState(agent.id);
+  assert.equal(await timeline.describe({ agentId: agent.id }), null);
+  for (const child of stored) {
+    assert.equal(
+      await timeline.describe({ agentId: agent.id, subagentId: child.subagentId }),
+      null,
+    );
+  }
 }
 await plugins.shutdown();
 await manager.flushForShutdown();
 await rm(root, { recursive: true, force: true });
 global.gc();
 const closed = process.memoryUsage().heapUsed - before;
-// Keep closed session references alive, as callers can retain them after archive.
+// Keep closed session references alive, as callers can retain them after deletion.
 assert.equal(sessions.length, 3);
-process.stdout.write(JSON.stringify({ retained, closed }));
+process.stdout.write(JSON.stringify({ retained, archived, closed }));

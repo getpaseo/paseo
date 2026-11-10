@@ -31,7 +31,7 @@ import {
   StaleProviderSessionError,
 } from "./stale-provider-session-error.js";
 
-test("long concurrent plugin and child streams retain text-sized history and release it on archive", () => {
+test("long concurrent plugin and child streams retain text-sized history through archive and release it on delete", () => {
   const fixture = fileURLToPath(new URL("./test-utils/plugin-stream-memory.ts", import.meta.url));
   const output = execFileSync(
     process.execPath,
@@ -41,8 +41,12 @@ test("long concurrent plugin and child streams retain text-sized history and rel
       timeout: 20_000,
     },
   );
-  const memory = JSON.parse(output) as { retained: number; closed: number };
+  const memory = JSON.parse(output) as { retained: number; archived: number; closed: number };
   expect(memory.retained).toBeLessThan(24 * 1024 * 1024);
+  // Archiving closes the runtimes and keeps the stored history; it adds nothing.
+  expect(memory.archived).toBeLessThanOrEqual(memory.retained);
+  // Deleting the agents releases their histories and their children's.
+  expect(memory.closed).toBeLessThan(memory.archived);
   expect(memory.closed).toBeLessThan(6 * 1024 * 1024);
 });
 
@@ -642,7 +646,7 @@ describe("PluginAgentClientRegistry", () => {
           state: "completed",
         });
         await nextTurn();
-        const [child] = manager.listProviderSubagents(agent.id);
+        const [child] = await manager.listProviderSubagents(agent.id);
         expect(child).toMatchObject({
           id: "reusable-child",
           title: "Plugin child",
@@ -656,7 +660,7 @@ describe("PluginAgentClientRegistry", () => {
           state: "started",
         });
         await nextTurn();
-        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+        expect(await manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: "running" },
         ]);
 
@@ -667,7 +671,7 @@ describe("PluginAgentClientRegistry", () => {
           state: outcome,
         });
         await nextTurn();
-        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+        expect(await manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: outcome },
         ]);
       } finally {

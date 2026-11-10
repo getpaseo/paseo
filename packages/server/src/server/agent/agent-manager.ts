@@ -804,6 +804,12 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timeline: AgentTimeline;
   private readonly providerSubagents: ProviderSubagentStore;
+  /**
+   * Provider children each parent's current runtime reported running. A stored descriptor's status
+   * is only the last report, possibly from provider history or an earlier runtime, so workspace
+   * activity and idle cleanup read this instead.
+   */
+  private readonly runningProviderSubagents = new Map<string, Set<string>>();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
@@ -1359,28 +1365,30 @@ export class AgentManager {
     return await this.timeline.fetch({ agentId: id }, options);
   }
 
-  listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
+  async listProviderSubagents(parentAgentId: string): Promise<ProviderSubagentDescriptor[]> {
     this.requirePublicParent(parentAgentId);
-    return this.providerSubagents.list(parentAgentId);
+    return await this.providerSubagents.list(parentAgentId);
   }
 
-  listProviderSubagentActivity(): ProviderSubagentDescriptor[] {
-    const publicParentIds = new Set(
-      Array.from(this.agents.values())
-        .filter((agent) => !agent.internal)
-        .map((agent) => agent.id),
+  /** The children each loaded public agent's current runtime reports running. */
+  async listProviderSubagentActivity(): Promise<ProviderSubagentDescriptor[]> {
+    const publicParents = Array.from(this.agents.values()).filter((agent) => !agent.internal);
+    const children = await Promise.all(
+      publicParents.map(async (agent) => {
+        const listed = await this.providerSubagents.list(agent.id);
+        const running = this.runningProviderSubagents.get(agent.id);
+        return listed.filter((child) => running?.has(child.id));
+      }),
     );
-    return this.providerSubagents
-      .listAll()
-      .filter((subagent) => publicParentIds.has(subagent.parentAgentId));
+    return children.flat();
   }
 
-  getProviderSubagent(
+  async getProviderSubagent(
     parentAgentId: string,
     subagentId: string,
-  ): ProviderSubagentDescriptor | null {
+  ): Promise<ProviderSubagentDescriptor | null> {
     this.requirePublicParent(parentAgentId);
-    return this.providerSubagents.get(parentAgentId, subagentId);
+    return await this.providerSubagents.get(parentAgentId, subagentId);
   }
 
   async fetchProviderSubagentTimeline(
@@ -1574,13 +1582,14 @@ export class AgentManager {
       currentResumeOptions,
     );
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const registered = await this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       launchEnv,
       persistence: handle,
       restoring: true,
       importMissingHistory: true,
     });
+    return await this.settleStoredRewind(registered);
   }
 
   importProviderSession(input: {
@@ -1659,7 +1668,7 @@ export class AgentManager {
       });
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = await this.providerSubagents.apply(agent.id, event.provider, event.event);
-        if (update) this.dispatch({ type: "provider_subagent", event: update });
+        if (update) this.publishProviderSubagent(update);
       }
       return agent;
     } finally {
@@ -1772,7 +1781,7 @@ export class AgentManager {
         restoring: true,
       });
       return settleRewind
-        ? registered.then((snapshot) => this.settleRewindAfterReload(snapshot))
+        ? registered.then((snapshot) => this.settleRewindAfterResume(snapshot))
         : registered.then((agent) => ({ agent, rewind: "none" as const }));
     } catch (error) {
       if (closedExisting) {
@@ -1981,7 +1990,7 @@ export class AgentManager {
       (this.collectingRuntimes.has(agent.id) || !this.lifecycleMutationTails.has(agent.id)) &&
       !this.foregroundMutationTails.has(agent.id) &&
       !this.sessionEventTails.has(agent.id) &&
-      !this.providerSubagents.list(agent.id).some((child) => child.status === "running")
+      !this.runningProviderSubagents.has(agent.id)
     );
   }
 
@@ -2050,17 +2059,21 @@ export class AgentManager {
     return true;
   }
 
+  /**
+   * Closing a runtime stops the children it reported running. A child it never reported keeps its
+   * last reported status: nothing this daemon observed says how it ended.
+   */
   private async cancelRunningProviderSubagents(parentAgentId: string): Promise<void> {
-    for (const subagent of this.providerSubagents.list(parentAgentId)) {
-      if (subagent.status !== "running") {
-        continue;
-      }
+    const running = this.runningProviderSubagents.get(parentAgentId);
+    this.runningProviderSubagents.delete(parentAgentId);
+    for (const subagent of await this.providerSubagents.list(parentAgentId)) {
+      if (!running?.has(subagent.id)) continue;
       const event = await this.providerSubagents.apply(parentAgentId, subagent.provider, {
         type: "upsert",
         id: subagent.id,
         status: "canceled",
       });
-      if (event) this.dispatch({ type: "provider_subagent", event });
+      if (event) this.publishProviderSubagent(event);
     }
   }
 
@@ -3708,8 +3721,17 @@ export class AgentManager {
     return "open";
   }
 
-  /** The reload itself succeeded; a rewind that still cannot settle stays open and is reported. */
-  private async settleRewindAfterReload(
+  /** Stored history can hold a rewind an earlier runtime, or an earlier daemon, left open. */
+  private async settleStoredRewind(agent: ManagedAgent): Promise<ManagedAgent> {
+    if (!(await this.timeline.describe({ agentId: agent.id }))?.rewind) return agent;
+    return (await this.settleRewindAfterResume(agent)).agent;
+  }
+
+  /**
+   * Judges an open rewind from the history of a session that just resumed. The resume itself
+   * succeeded; a rewind that still cannot settle stays open and is reported.
+   */
+  private async settleRewindAfterResume(
     snapshot: ManagedAgent,
   ): Promise<{ agent: ManagedAgent; rewind: RewindSettlement }> {
     let rewind: RewindSettlement = "open";
@@ -4174,9 +4196,8 @@ export class AgentManager {
     events: readonly ProviderSubagentStreamEvent[],
     options: { dispatch: boolean },
   ): Promise<void> {
-    for (const event of events) {
-      const update = await this.providerSubagents.apply(agentId, event.provider, event.event);
-      if (update && options.dispatch) this.dispatch({ type: "provider_subagent", event: update });
+    for (const update of await this.providerSubagents.applyHistory(agentId, events)) {
+      if (options.dispatch) this.dispatch({ type: "provider_subagent", event: update });
     }
   }
 
@@ -4279,12 +4300,10 @@ export class AgentManager {
   }
 
   private async discardRetainedAgentState(agentId: string): Promise<void> {
-    await this.timeline.delete({ agentId });
+    const removed = await this.providerSubagents.deleteParent(agentId);
     this.paseoToolPolicies.delete(agentId);
     this.detachPluginTools(agentId);
-    for (const event of await this.providerSubagents.deleteParent(agentId)) {
-      this.dispatch({ type: "provider_subagent", event });
-    }
+    for (const event of removed) this.publishProviderSubagent(event);
   }
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
@@ -4391,7 +4410,11 @@ export class AgentManager {
   ): Promise<void> {
     if (event.type === "provider_subagent") {
       const update = await this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (update) this.dispatch({ type: "provider_subagent", event: update });
+      if (!update) return;
+      if (event.event.type === "upsert" && event.event.status === "running") {
+        this.markProviderSubagentRunning(agent.id, event.event.id);
+      }
+      this.publishProviderSubagent(update);
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -5092,13 +5115,31 @@ export class AgentManager {
     });
   }
 
+  /** Only the live session marks a child running; any report that ends or removes it unmarks it. */
+  private publishProviderSubagent(event: ProviderSubagentStoreEvent): void {
+    if (event.type === "remove") {
+      this.unmarkProviderSubagentRunning(event.parentAgentId, event.subagentId);
+    } else if (event.type === "upsert" && event.subagent.status !== "running") {
+      this.unmarkProviderSubagentRunning(event.subagent.parentAgentId, event.subagent.id);
+    }
+    this.dispatch({ type: "provider_subagent", event });
+  }
+
+  private markProviderSubagentRunning(parentAgentId: string, subagentId: string): void {
+    const running = this.runningProviderSubagents.get(parentAgentId) ?? new Set<string>();
+    this.runningProviderSubagents.set(parentAgentId, running.add(subagentId));
+  }
+
+  private unmarkProviderSubagentRunning(parentAgentId: string, subagentId: string): void {
+    const running = this.runningProviderSubagents.get(parentAgentId);
+    if (!running?.delete(subagentId) || running.size > 0) return;
+    this.runningProviderSubagents.delete(parentAgentId);
+  }
+
   /** Children spawned by retired tool calls leave with them, before clients learn of the retirement. */
   private publishRetirement(agentId: string, commit: TimelineRetirementCommit): void {
-    const toolCallIds = new Set(
-      commit.retiredRows.flatMap((row) => (row.item.type === "tool_call" ? [row.item.callId] : [])),
-    );
-    for (const event of this.providerSubagents.retireSpawnedBy(agentId, toolCallIds)) {
-      this.dispatch({ type: "provider_subagent", event });
+    for (const subagentId of commit.retiredChildIds) {
+      this.publishProviderSubagent({ type: "remove", parentAgentId: agentId, subagentId });
     }
     this.dispatch({
       type: "timeline_retirement",

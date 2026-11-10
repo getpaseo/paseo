@@ -38,8 +38,8 @@ An unarchived agent may be `closed` without being deleted or archived. Closing r
 processes and subscriptions while retaining its Paseo identity, persistence handle, timeline,
 workspace, labels, title, usage, attention, timestamps, and parent relationship. Opening or prompting
 the agent runs through `ensureAgentLoaded()`, which resumes the durable provider session under the
-same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
-primed.
+same Paseo agent ID. Resume does not read provider history when the agent already has a timeline;
+see [owned history](timeline-sync.md#owned-history).
 
 Reload releases the old runtime before resuming its durable session: an idle provider process can
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
@@ -213,7 +213,8 @@ lifecycle is separate from public workspace visibility and is not a public creat
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
 
 Archive sets `archivedAt`, invokes the provider's native archive hook, and cascades to managed
-children.
+children. The timeline and the provider children stay, so an archived chat reads them without its
+provider; deleting the agent removes them.
 
 `create_agent_request` can opt an agent into `autoArchive`. In that mode the daemon archives the agent after the first terminal turn event (`turn_completed`, `turn_failed`, or `turn_canceled`). When the agent owns an isolated workspace, auto-archive archives that workspace too; the managed worktree is removed when its final workspace reference is gone.
 
@@ -284,6 +285,8 @@ Agent lifecycle status stays literal: a parent agent is `idle` when its own turn
 Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
+
+Only the parent's current runtime makes a provider child running. A child's stored status is the last report about it, and that report can come from provider history or from a runtime an earlier daemon ran, so a stored `running` child does not make the workspace running or keep the parent's runtime alive. It counts again once the live session reports it running. Closing a runtime cancels the children that runtime reported running; children it never reported keep their stored status.
 
 A finished workspace can be marked unread after it has been reviewed. The daemon restores
 `finished` attention on its newest eligible workspace-root agent without sending a new completion

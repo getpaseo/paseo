@@ -60,7 +60,9 @@ test("projects Codex child history and confines old-client degradation to the ch
       );
     }
     await expect
-      .poll(() => ctx.daemon.daemon.agentManager.listProviderSubagents(agent.id).length)
+      .poll(
+        async () => (await ctx.daemon.daemon.agentManager.listProviderSubagents(agent.id)).length,
+      )
       .toBe(1);
     await expect
       .poll(

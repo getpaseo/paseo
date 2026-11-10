@@ -344,6 +344,115 @@ describe("AgentManager conversation rewind", () => {
     expect(await harness.activeTexts()).toEqual(["A", "reply to A", "C", "reply to C"]);
   });
 
+  test("a restarted daemon whose stored history holds an unknown outcome settles it on resume", async () => {
+    const registry = await createFlakyStorage();
+    const harness = await createConversationHarness({ registry });
+    const { manager, agentId, session, client, backend } = harness;
+    await harness.prompt("A");
+    await harness.prompt("B");
+    session.nextRewind = { kind: "unknown", applied: true };
+    await expect(manager.rewind(agentId, "B", "conversation")).rejects.toThrow();
+    await manager.closeAgent(agentId);
+    await manager.flush();
+
+    // The next daemon reads the same stored history; only construction differs.
+    const restarted = new AgentManager({
+      clients: { claude: client },
+      logger: createTestLogger(),
+      timeline: new AgentTimeline(backend),
+      registry,
+    });
+    await ensureAgentLoaded(agentId, {
+      agentManager: restarted,
+      agentStorage: registry,
+      logger: createTestLogger(),
+    });
+    for await (const _event of restarted.streamAgent(agentId, "C", { clientMessageId: "C" })) {
+      // Drain the turn.
+    }
+    await restarted.flush();
+
+    expect(session.recordedRewinds).toHaveLength(1);
+    const page = await restarted.fetchTimeline(agentId, { limit: 0 });
+    expect(page.rows.map((row) => ("text" in row.item ? row.item.text : row.item.type))).toEqual([
+      "A",
+      "reply to A",
+      "C",
+      "reply to C",
+    ]);
+    expect(page.retirementCount).toBe(1);
+    await restarted.closeAgent(agentId);
+    await restarted.flush();
+    await registry.flush();
+  });
+
+  test("a restarted daemon keeps the provider children it listed and the ones a rewind retired", async () => {
+    const registry = await createFlakyStorage();
+    const harness = await createConversationHarness({ registry });
+    const { manager, agentId, session, client, backend } = harness;
+    session.subagentPrompts.add("A").add("B");
+    await harness.prompt("A");
+    await harness.prompt("B");
+    await manager.rewind(agentId, "B", "conversation");
+    await manager.closeAgent(agentId);
+    await manager.flush();
+
+    // The next daemon reads the same stored history; only construction differs.
+    const restarted = new AgentManager({
+      clients: { claude: client },
+      logger: createTestLogger(),
+      timeline: new AgentTimeline(backend),
+      registry,
+    });
+    await ensureAgentLoaded(agentId, {
+      agentManager: restarted,
+      agentStorage: registry,
+      logger: createTestLogger(),
+    });
+    const listed = async () =>
+      (await restarted.listProviderSubagents(agentId)).map((child) => child.id);
+    const childTexts = async (subagentId: string) =>
+      (await restarted.fetchProviderSubagentTimeline(agentId, subagentId)).rows.map((row) =>
+        "text" in row.item ? row.item.text : row.item.type,
+      );
+
+    expect(await listed()).toEqual(["child-of-A"]);
+    expect(await childTexts("child-of-A")).toEqual(["working on A"]);
+    expect(await childTexts("child-of-B")).toEqual(["working on B"]);
+
+    // The provider's history still holds the rewound child; importing it must not bring it back.
+    session.history.push({ type: "assistant_message", text: "continued outside Paseo" });
+    session.historySubagentEvents = [
+      {
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "upsert", id: "child-of-B", toolCallId: "call-2", status: "completed" },
+      },
+      {
+        type: "provider_subagent",
+        provider: "claude",
+        event: {
+          type: "timeline",
+          id: "child-of-B",
+          item: { type: "assistant_message", text: "late output" },
+        },
+      },
+    ];
+    expect(await reloadAgent(restarted, agentId)).toEqual({ kind: "appended" });
+
+    expect(await listed()).toEqual(["child-of-A"]);
+    expect(await childTexts("child-of-B")).toEqual(["working on B"]);
+
+    await restarted.closeAgent(agentId);
+    await restarted.deleteAgentState(agentId);
+    await restarted.flush();
+    const stored = new AgentTimeline(backend);
+    expect(await stored.describe({ agentId })).toBeNull();
+    expect(await stored.describe({ agentId, subagentId: "child-of-A" })).toBeNull();
+    expect(await stored.describe({ agentId, subagentId: "child-of-B" })).toBeNull();
+    await registry.flush();
+  });
+
   test("reloading settles an unknown outcome the provider history proves unchanged", async () => {
     const harness = await createConversationHarness();
     const { manager, agentId, session } = harness;
@@ -544,14 +653,16 @@ describe("AgentManager conversation rewind", () => {
     await harness.prompt("A");
     await harness.prompt("B");
     await manager.flush();
-    expect(manager.listProviderSubagents(agentId).map((child) => child.id)).toEqual([
+    expect((await manager.listProviderSubagents(agentId)).map((child) => child.id)).toEqual([
       "child-of-A",
       "child-of-B",
     ]);
 
     await manager.rewind(agentId, "B", "conversation");
 
-    expect(manager.listProviderSubagents(agentId).map((child) => child.id)).toEqual(["child-of-A"]);
+    expect((await manager.listProviderSubagents(agentId)).map((child) => child.id)).toEqual([
+      "child-of-A",
+    ]);
     expect(
       harness.events.flatMap((event) =>
         event.type === "provider_subagent" && event.event.type === "remove" ? [event.event] : [],

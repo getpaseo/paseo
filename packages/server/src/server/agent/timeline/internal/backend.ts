@@ -6,6 +6,7 @@ import type {
 } from "../../agent-timeline-store-types.js";
 import type { ConversationRewindCut } from "../../agent-sdk-types.js";
 import type { ProjectedTimelineRow, TimelineRetirement } from "../../timeline-projection.js";
+import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.js";
 
 /** Root history uses `agentId` alone; provider-child history adds the child's id. */
 export interface TimelineScope {
@@ -63,6 +64,21 @@ export interface TimelinePrompt {
   submitted: boolean;
 }
 
+/** A provider child of an agent: its listing, stored with the child's scope. */
+export interface TimelineChild {
+  subagentId: string;
+  /** Null until the provider describes the child; such a child is not listed. */
+  descriptor: ProviderSubagentDescriptor | null;
+  /** Spawned by a rewound turn. Its rows stay stored; it is no longer listed. */
+  retired: boolean;
+}
+
+/** Picks the children a retirement takes with it, from the rows it retires. */
+export type RetiredChildSelector = (
+  retiredRows: readonly ProjectedTimelineRow[],
+  children: readonly TimelineChild[],
+) => readonly string[];
+
 export interface TimelineBackendAppendResult {
   rows: AgentTimelineRow[];
   head: TimelineHead;
@@ -72,10 +88,12 @@ export interface TimelineBackendRetireResult {
   retirement: TimelineRetirement;
   /** The rows that left the active conversation. They stay stored. */
   retiredRows: ProjectedTimelineRow[];
+  /** The children the retirement marked retired. */
+  retiredChildIds: string[];
   head: TimelineHead;
 }
 
-type MaybePromise<T> = T | Promise<T>;
+export type MaybePromise<T> = T | Promise<T>;
 
 /**
  * Storage for the timeline owner. Each mutating call is one atomic commit: it either applies
@@ -85,6 +103,7 @@ type MaybePromise<T> = T | Promise<T>;
  */
 export interface AgentTimelineBackend {
   create(scope: TimelineScope, seed: TimelineSeed): MaybePromise<TimelineHead>;
+  /** Deleting a root scope deletes every child scope of the agent too, retired ones included. */
   delete(scope: TimelineScope): MaybePromise<void>;
   head(scope: TimelineScope): MaybePromise<TimelineHead | null>;
   /** Allocates the next sequence numbers and folds the entries into the projection. */
@@ -99,12 +118,19 @@ export interface AgentTimelineBackend {
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): MaybePromise<TimelineHead>;
   /**
    * Allocates the next sequence number for a retirement of the active rows anchored at or after
-   * `retireFromSeq`, and clears the rewind intent, in one commit.
+   * `retireFromSeq`, marks the children `selectChildren` picks retired, and clears the rewind
+   * intent, in one commit. `selectChildren` is pure.
    */
   retire(
     scope: TimelineScope,
-    input: { retireFromSeq: number },
+    input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
   ): MaybePromise<TimelineBackendRetireResult>;
+  /** The agent's children, retired ones included, in no particular order. */
+  children(agentId: string): MaybePromise<TimelineChild[]>;
+  /** The child of a child scope; null when the scope does not exist. */
+  child(scope: TimelineScope): MaybePromise<TimelineChild | null>;
+  /** Stores a child's descriptor, creating its scope when absent. */
+  setChild(scope: TimelineScope, descriptor: ProviderSubagentDescriptor): MaybePromise<void>;
   attachProviderMessageId(
     scope: TimelineScope,
     clientMessageId: string,

@@ -811,6 +811,96 @@ test("Reload agent keeps the history and its identity, and adds only what the pr
   }
 });
 
+test("Reload agent adds the provider children of new turns and leaves the children Paseo shows alone", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-reload-children-"));
+  const providerHistory: AgentStreamEvent[] = [
+    {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "explore", messageId: "provider-1" },
+    },
+    {
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "explorer", title: "Explorer", status: "completed" },
+    },
+    {
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "timeline",
+        id: "explorer",
+        item: { type: "assistant_message", text: "found it" },
+      },
+    },
+    { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "done" } },
+  ];
+  class HistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* providerHistory;
+    }
+  }
+  class HistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new HistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new HistoryClient() }, logger });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    expect(await reloadAgent(manager, agent.id)).toEqual({ kind: "appended" });
+
+    // The conversation was continued outside Paseo, with a second child in the new turn.
+    providerHistory.push(
+      {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "review", messageId: "provider-2" },
+      },
+      {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "reviewer", title: "Reviewer", status: "completed" },
+      },
+      {
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "timeline",
+          id: "reviewer",
+          item: { type: "assistant_message", text: "looks good" },
+        },
+      },
+    );
+    expect(await reloadAgent(manager, agent.id)).toEqual({ kind: "appended" });
+
+    const childTexts = async (subagentId: string) =>
+      (await manager.fetchProviderSubagentTimeline(agent.id, subagentId)).rows.map((row) =>
+        row.item.type === "assistant_message" ? row.item.text : row.item.type,
+      );
+    expect((await manager.listProviderSubagents(agent.id)).map((child) => child.id)).toEqual([
+      "explorer",
+      "reviewer",
+    ]);
+    expect(await childTexts("explorer")).toEqual(["found it"]);
+    expect(await childTexts("reviewer")).toEqual(["looks good"]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("Reload agent keeps the history when the provider history differs or cannot be read", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-reload-fail-"));
   let providerHistory: AgentTimelineItem[] = [
@@ -1883,6 +1973,14 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 /** Resumes a codex agent whose history Paseo does not hold, so it imports the provider's. */
+function runtimeIsCollectable(manager: AgentManager, agentId: string): boolean {
+  const candidate = manager
+    .getRuntimeCleanupCandidates()
+    .find((runtime) => runtime.agentId === agentId);
+  if (!candidate) throw new Error(`No runtime for agent '${agentId}'`);
+  return candidate.isEligible();
+}
+
 function resumeWithProviderHistory(manager: AgentManager, cwd: string) {
   return manager.resumeAgentFromPersistence(
     { provider: "codex", sessionId: "provider-history" },
@@ -4662,7 +4760,7 @@ test("importProviderSession imports the selected session without listing and pub
       },
     }),
   ]);
-  expect(manager.listProviderSubagents(imported.id)).toEqual([
+  expect(await manager.listProviderSubagents(imported.id)).toEqual([
     expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
   ]);
   expect((await manager.fetchProviderSubagentTimeline(imported.id, "thread-child")).rows).toEqual([
@@ -4881,11 +4979,13 @@ test("Reload agent keeps provider children and ends the running ones", async () 
     provider: "codex",
     event: { type: "upsert", id: "stale-child", title: "Stale child", status: "running" },
   });
-  await vi.waitFor(() => expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(1));
+  await vi.waitFor(async () =>
+    expect(await manager.listProviderSubagents(snapshot.id)).toHaveLength(1),
+  );
 
   await reloadAgent(manager, snapshot.id);
 
-  expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+  expect(await manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({ id: "stale-child", status: "canceled" }),
   ]);
 });
@@ -4924,11 +5024,13 @@ test("reloadAgentSession terminalizes running provider children when preserving 
     provider: "codex",
     event: { type: "upsert", id: "running-child", title: "Running child", status: "running" },
   });
-  await vi.waitFor(() => expect(manager.listProviderSubagents(snapshot.id)).toHaveLength(1));
+  await vi.waitFor(async () =>
+    expect(await manager.listProviderSubagents(snapshot.id)).toHaveLength(1),
+  );
 
   await manager.reloadAgentSession(snapshot.id);
 
-  expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+  expect(await manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({ id: "running-child", status: "canceled" }),
   ]);
 });
@@ -4938,6 +5040,7 @@ test("resuming without stored history restores provider children from the provid
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   class ProviderChildHistorySession extends TestAgentSession {
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      // The history's last report on this child is that it started.
       yield {
         type: "provider_subagent",
         provider: "codex",
@@ -4945,7 +5048,7 @@ test("resuming without stored history restores provider children from the provid
           type: "upsert",
           id: "restored-child",
           title: "Restored child",
-          status: "completed",
+          status: "running",
         },
       };
     }
@@ -4967,20 +5070,24 @@ test("resuming without stored history restores provider children from the provid
 
   const snapshot = await resumeWithProviderHistory(manager, workdir);
 
-  expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+  expect(await manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({
       id: "restored-child",
       parentAgentId: snapshot.id,
       title: "Restored child",
-      status: "completed",
+      status: "running",
     }),
   ]);
-  expect(manager.listProviderSubagentActivity()).toEqual([
-    expect.objectContaining({
-      id: "restored-child",
-      parentAgentId: snapshot.id,
-    }),
-  ]);
+  // A history report is not the runtime's report: it does not keep the workspace or runtime busy.
+  expect(await manager.listProviderSubagentActivity()).toEqual([]);
+  expect(runtimeIsCollectable(manager, snapshot.id)).toBe(true);
+
+  // Closing the runtime does not invent an outcome for a child that runtime never reported.
+  await manager.closeAgent(snapshot.id);
+  expect((await manager.getProviderSubagent(snapshot.id, "restored-child"))?.status).toBe(
+    "running",
+  );
+  await storage.flush();
 });
 
 test("reloadAgentSession preserves current title when config title is unset", async () => {
@@ -8352,16 +8459,16 @@ test("subscribe hides provider subagents of internal parents from global subscri
       }),
     }),
   );
-  expect(() => manager.listProviderSubagents(internalAgentId)).toThrow(
+  await expect(manager.listProviderSubagents(internalAgentId)).rejects.toThrow(
     `Unknown agent '${internalAgentId}'`,
   );
-  expect(() => manager.getProviderSubagent(internalAgentId, "hidden-child")).toThrow(
+  await expect(manager.getProviderSubagent(internalAgentId, "hidden-child")).rejects.toThrow(
     `Unknown agent '${internalAgentId}'`,
   );
   await expect(
     manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child"),
   ).rejects.toThrow(`Unknown agent '${internalAgentId}'`);
-  expect(manager.listProviderSubagentActivity()).toEqual([]);
+  expect(await manager.listProviderSubagentActivity()).toEqual([]);
 });
 
 test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
@@ -10680,14 +10787,86 @@ test("explicit close cancels running provider subagents before resume", async ()
       logger,
     });
 
-    expect(manager.getProviderSubagent(parent.id, "provider-child-running")?.status).toBe(
+    expect((await manager.getProviderSubagent(parent.id, "provider-child-running"))?.status).toBe(
       "canceled",
     );
-    expect(manager.getProviderSubagent(parent.id, "provider-child-finishing")?.status).toBe(
+    expect((await manager.getProviderSubagent(parent.id, "provider-child-finishing"))?.status).toBe(
       "completed",
     );
   } finally {
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a child an earlier runtime reported running is live activity only once the provider reports it again", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-restarted-provider-child-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const backend = new DeferredTimelineBackend();
+  class ResumeRecordingClient extends SessionRecordingAgentClient {
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const session = new TestAgentSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+      session.describePersistence = () => handle;
+      this.sessions.push(session);
+      return session;
+    }
+  }
+  const firstClient = new ResumeRecordingClient();
+  const first = new AgentManager({
+    clients: { codex: firstClient },
+    registry: storage,
+    logger,
+    timeline: new AgentTimeline(backend),
+  });
+  const nextClient = new ResumeRecordingClient();
+  const next = new AgentManager({
+    clients: { codex: nextClient },
+    registry: storage,
+    logger,
+    timeline: new AgentTimeline(backend),
+  });
+  const childReport = (status: "running" | "completed"): AgentStreamEvent => ({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "provider-child", title: "Provider child", status },
+  });
+
+  try {
+    const parent = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    firstClient.sessions[0]!.pushEvent(childReport("running"));
+    await first.flush();
+    expect(await first.listProviderSubagentActivity()).toEqual([
+      expect.objectContaining({ id: "provider-child", status: "running" }),
+    ]);
+    await storage.flush();
+
+    // The first daemon stops without closing its agent, as a crash does; the next one resumes it.
+    await ensureAgentLoaded(parent.id, { agentManager: next, agentStorage: storage, logger });
+    expect((await next.getProviderSubagent(parent.id, "provider-child"))?.status).toBe("running");
+    expect(await next.listProviderSubagentActivity()).toEqual([]);
+    expect(runtimeIsCollectable(next, parent.id)).toBe(true);
+
+    nextClient.sessions[0]!.pushEvent(childReport("running"));
+    await next.flush();
+    expect(await next.listProviderSubagentActivity()).toEqual([
+      expect.objectContaining({ id: "provider-child", parentAgentId: parent.id }),
+    ]);
+    expect(runtimeIsCollectable(next, parent.id)).toBe(false);
+
+    nextClient.sessions[0]!.pushEvent(childReport("completed"));
+    await next.flush();
+    expect(await next.listProviderSubagentActivity()).toEqual([]);
+    expect(runtimeIsCollectable(next, parent.id)).toBe(true);
+  } finally {
+    await Promise.all(next.listAgents().map((agent) => next.closeAgent(agent.id))).catch(
       () => undefined,
     );
     await storage.flush().catch(() => undefined);

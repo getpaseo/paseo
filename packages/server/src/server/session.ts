@@ -8158,7 +8158,7 @@ export class Session {
         payload: {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
-          subagents: this.agentManager.listProviderSubagents(msg.parentAgentId),
+          subagents: await this.agentManager.listProviderSubagents(msg.parentAgentId),
           error: null,
         },
       });
@@ -8182,7 +8182,10 @@ export class Session {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
       await this.loadProviderSubagentParent(msg.parentAgentId);
-      const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
+      const descriptor = await this.agentManager.getProviderSubagent(
+        msg.parentAgentId,
+        msg.subagentId,
+      );
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }

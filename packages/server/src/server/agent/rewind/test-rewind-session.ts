@@ -58,6 +58,8 @@ export class FakeRewindSession implements AgentSession {
   nextRewind: FakeRewindOutcome = { kind: "applied" };
   /** Prompts whose turn spawns a provider subagent through a tool call. */
   readonly subagentPrompts = new Set<string>();
+  /** Provider child events the provider's history replays after its conversation. */
+  historySubagentEvents: AgentStreamEvent[] = [];
   private promptCount = 0;
 
   private subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -118,6 +120,15 @@ export class FakeRewindSession implements AgentSession {
           provider: this.provider,
           event: { type: "upsert", id: `child-of-${text}`, toolCallId: callId, status: "running" },
         });
+        this.emit({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: {
+            type: "timeline",
+            id: `child-of-${text}`,
+            item: { type: "assistant_message", text: `working on ${text}` },
+          },
+        });
       }
       this.activeTurnId = null;
       this.emit({ type: "turn_completed", provider: this.provider, turnId });
@@ -136,6 +147,7 @@ export class FakeRewindSession implements AgentSession {
     for (const item of this.history) {
       yield { type: "timeline", provider: this.provider, item };
     }
+    yield* this.historySubagentEvents;
   }
 
   async getRuntimeInfo() {

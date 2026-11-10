@@ -7,10 +7,13 @@ import type {
   AgentTimelineRow,
 } from "../../agent-timeline-store-types.js";
 import { TimelineProjection, type ProjectedTimelineRow } from "../../timeline-projection.js";
+import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.js";
 import type {
   AgentTimelineBackend,
   TimelineBackendAppendResult,
+  RetiredChildSelector,
   TimelineBackendRetireResult,
+  TimelineChild,
   TimelineEntry,
   TimelineHead,
   TimelinePrompt,
@@ -29,12 +32,21 @@ interface MemoryTimelineState {
   retired: ProjectedTimelineRow[];
   retirementCount: number;
   rewind: TimelineRewindIntent | null;
+  /** Child scopes only. */
+  descriptor: ProviderSubagentDescriptor | null;
+  childRetired: boolean;
 }
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
 function scopeKey(scope: TimelineScope): string {
-  return scope.subagentId === undefined ? scope.agentId : `${scope.agentId}\0${scope.subagentId}`;
+  return scope.subagentId === undefined
+    ? scope.agentId
+    : childKeyPrefix(scope.agentId) + scope.subagentId;
+}
+
+function childKeyPrefix(agentId: string): string {
+  return `${agentId}\0`;
 }
 
 function cloneRow<T extends AgentTimelineRow>(row: T): T {
@@ -71,6 +83,8 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
       retired: [],
       retirementCount: 0,
       rewind: null,
+      descriptor: null,
+      childRetired: false,
     };
     this.states.set(scopeKey(scope), state);
     return this.describe(state);
@@ -78,6 +92,40 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
 
   delete(scope: TimelineScope): void {
     this.states.delete(scopeKey(scope));
+    if (scope.subagentId !== undefined) return;
+    const prefix = childKeyPrefix(scope.agentId);
+    for (const key of this.states.keys()) {
+      if (key.startsWith(prefix)) this.states.delete(key);
+    }
+  }
+
+  children(agentId: string): TimelineChild[] {
+    const prefix = childKeyPrefix(agentId);
+    const children: TimelineChild[] = [];
+    for (const [key, state] of this.states) {
+      if (!key.startsWith(prefix)) continue;
+      children.push({
+        subagentId: key.slice(prefix.length),
+        descriptor: state.descriptor ? { ...state.descriptor } : null,
+        retired: state.childRetired,
+      });
+    }
+    return children;
+  }
+
+  child(scope: TimelineScope): TimelineChild | null {
+    const state = this.states.get(scopeKey(scope));
+    if (!state || scope.subagentId === undefined) return null;
+    return {
+      subagentId: scope.subagentId,
+      descriptor: state.descriptor ? { ...state.descriptor } : null,
+      retired: state.childRetired,
+    };
+  }
+
+  setChild(scope: TimelineScope, descriptor: ProviderSubagentDescriptor): void {
+    if (!this.states.has(scopeKey(scope))) this.create(scope, {});
+    this.requireState(scope).descriptor = { ...descriptor };
   }
 
   head(scope: TimelineScope): TimelineHead | null {
@@ -121,16 +169,29 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     return this.describe(state);
   }
 
-  retire(scope: TimelineScope, input: { retireFromSeq: number }): TimelineBackendRetireResult {
+  retire(
+    scope: TimelineScope,
+    input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
+  ): TimelineBackendRetireResult {
     const state = this.requireState(scope);
     const retirement = { seq: state.nextSeq, retireFromSeq: input.retireFromSeq };
     const retiredRows = state.projection.retire(retirement);
+    const retiredChildIds = [...input.selectChildren(retiredRows, this.children(scope.agentId))];
+    for (const subagentId of retiredChildIds) {
+      const child = this.states.get(scopeKey({ agentId: scope.agentId, subagentId }));
+      if (child) child.childRetired = true;
+    }
     state.retired.push(...retiredRows);
     state.nextSeq = retirement.seq + 1;
     if (state.minSeq === 0) state.minSeq = retirement.seq;
     state.retirementCount += 1;
     state.rewind = null;
-    return { retirement, retiredRows: retiredRows.map(cloneRow), head: this.describe(state) };
+    return {
+      retirement,
+      retiredRows: retiredRows.map(cloneRow),
+      retiredChildIds,
+      head: this.describe(state),
+    };
   }
 
   /** Retired rows, oldest retirement first. Not part of the backend contract; tests read it. */
