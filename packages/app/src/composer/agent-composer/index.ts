@@ -54,6 +54,8 @@ const REVEAL_TIMEOUT_MS = 15_000;
 
 /** A focus waiting for the revealed input to come on screen. */
 interface PendingFocus {
+  /** Which `focus()` call this is; a later call decides where the cursor goes. */
+  call: number;
   options: ComposerFocusOptions | undefined;
   settle: { resolve: () => void; reject: (error: Error) => void };
   timeout: ReturnType<typeof setTimeout>;
@@ -83,6 +85,8 @@ export function createAgentComposer(
   let stopWatchingStores: (() => void) | null = null;
   let mounted: MountedComposerInput | null = null;
   let pendingFocus: PendingFocus | null = null;
+  let focusCalls = 0;
+  let latestFocus: Promise<void> = Promise.resolve();
   let last: {
     agent: Agent | null;
     draft: DraftRecord | undefined;
@@ -235,11 +239,13 @@ export function createAgentComposer(
 
   function focusIfRevealed(input: MountedComposerInput) {
     if (!pendingFocus || !input.isRevealed()) return;
-    const { options, settle } = takePendingFocus()!;
+    const { call, options, settle } = takePendingFocus()!;
     // Attaching runs in a commit's effects, and a prompt set alongside this request can be applied
     // by a later effect in that commit. A selection has to see that text.
     queueMicrotask(() => {
-      input.focus(options).then(settle.resolve, settle.reject);
+      // A call made since then, such as from a mounting item, decides; this one ends with it.
+      const outcome = call === focusCalls ? input.focus(options) : latestFocus;
+      outcome.then(settle.resolve, settle.reject);
     });
   }
 
@@ -293,10 +299,15 @@ export function createAgentComposer(
       if (!agent || agent.archivedAt != null) {
         return Promise.reject(new Error("The agent is gone or archived."));
       }
-      if (mounted?.isRevealed()) return mounted.focus(options);
+      const call = ++focusCalls;
+      if (mounted?.isRevealed()) {
+        latestFocus = mounted.focus(options);
+        return latestFocus;
+      }
       const replaced = takePendingFocus();
       const request = new Promise<void>((resolve, reject) => {
         pendingFocus = {
+          call,
           options,
           settle: { resolve, reject },
           timeout: setTimeout(() => {
@@ -308,6 +319,7 @@ export function createAgentComposer(
       });
       // The latest request decides where the cursor goes, and the one it replaced ends with it.
       if (replaced) request.then(replaced.settle.resolve, replaced.settle.reject);
+      latestFocus = request;
       return request;
     },
     changeAttachments(updater) {

@@ -252,6 +252,17 @@ describe("agent composer focus", () => {
     expect(focused).toEqual([{ selection: { start: 2, end: 2 } }]);
   });
 
+  it("lets a call made while an arriving input is being focused decide the selection", async () => {
+    openSession(agent());
+    const model = composer();
+    const first = model.focus({ selection: { start: 0, end: 1 } });
+    const { input, focused } = mountedInput({ revealed: true });
+    model.attachInput(input);
+    const second = model.focus({ selection: { start: 2, end: 4 } });
+    await Promise.all([first, second]);
+    expect(focused.at(-1)).toEqual({ selection: { start: 2, end: 4 } });
+  });
+
   it("settles a replaced focus request with the request that replaced it", async () => {
     vi.useFakeTimers();
     try {
