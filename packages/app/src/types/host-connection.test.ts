@@ -252,6 +252,84 @@ describe("learned direct connections", () => {
       reconcileLearnedDirectConnections({ host: second, ...input, endpoints: [] }).connections,
     ).toEqual([relay, manual]);
   });
+
+  it("withdraws addresses learned through another relay for the same daemon key", () => {
+    const relayA: HostConnection = {
+      id: "relay:a:443",
+      type: "relay",
+      relayEndpoint: "a:443",
+      daemonPublicKeyB64: "paired-key",
+    };
+    const relayB: HostConnection = {
+      id: "relay:b:443",
+      type: "relay",
+      relayEndpoint: "b:443",
+      daemonPublicKeyB64: "paired-key",
+    };
+    const otherRelay: HostConnection = {
+      id: "relay:other:443",
+      type: "relay",
+      relayEndpoint: "other:443",
+      daemonPublicKeyB64: "other-key",
+    };
+    const manual: HostConnection = {
+      id: "direct:10.0.0.5:6767",
+      type: "directTcp",
+      endpoint: "10.0.0.5:6767",
+    };
+    const otherLearned: HostConnection = {
+      id: "direct:100.100.2.5:6767",
+      type: "directTcp",
+      endpoint: "100.100.2.5:6767",
+      learnedFromConnectionId: otherRelay.id,
+      daemonPublicKeyB64: "other-key",
+    };
+    const host = {
+      ...makeHost("srv-learned"),
+      connections: [relayA, relayB, otherRelay, manual, otherLearned],
+    };
+    const learnedThroughA = reconcileLearnedDirectConnections({
+      host,
+      sourceConnectionId: relayA.id,
+      daemonPublicKeyB64: "paired-key",
+      endpoints: ["192.168.1.8:6767"],
+    });
+    const withdrawnThroughB = reconcileLearnedDirectConnections({
+      host: learnedThroughA,
+      sourceConnectionId: relayB.id,
+      daemonPublicKeyB64: "paired-key",
+      endpoints: [],
+    });
+    expect(withdrawnThroughB.connections).toEqual([
+      relayA,
+      relayB,
+      otherRelay,
+      manual,
+      otherLearned,
+    ]);
+
+    const refreshedThroughB = reconcileLearnedDirectConnections({
+      host: withdrawnThroughB,
+      sourceConnectionId: relayB.id,
+      daemonPublicKeyB64: "paired-key",
+      endpoints: ["192.168.1.9:6767"],
+    });
+    expect(refreshedThroughB.connections).toEqual([
+      relayA,
+      relayB,
+      otherRelay,
+      manual,
+      otherLearned,
+      {
+        id: "direct:192.168.1.9:6767",
+        type: "directTcp",
+        endpoint: "192.168.1.9:6767",
+        useTls: false,
+        learnedFromConnectionId: relayB.id,
+        daemonPublicKeyB64: "paired-key",
+      },
+    ]);
+  });
 });
 
 describe("createRemoteSshHostConnection", () => {
