@@ -330,6 +330,58 @@ describe("learned direct connections", () => {
       },
     ]);
   });
+
+  it("replaces routes learned through a relay that was re-paired with a new key", () => {
+    const oldRelay: HostConnection = {
+      id: "relay:example:443",
+      type: "relay",
+      relayEndpoint: "example:443",
+      daemonPublicKeyB64: "old-key",
+    };
+    const newRelay: HostConnection = { ...oldRelay, daemonPublicKeyB64: "new-key" };
+    const oldLearned: HostConnection = {
+      id: "direct:192.168.1.8:6767",
+      type: "directTcp",
+      endpoint: "192.168.1.8:6767",
+      learnedFromConnectionId: oldRelay.id,
+      daemonPublicKeyB64: "old-key",
+    };
+    const manual: HostConnection = {
+      id: "direct:10.0.0.5:6767",
+      type: "directTcp",
+      endpoint: "10.0.0.5:6767",
+    };
+    const [rePaired] = upsertHostConnectionInProfiles({
+      profiles: [{ ...makeHost("srv-learned"), connections: [oldRelay, oldLearned, manual] }],
+      serverId: "srv-learned",
+      connection: newRelay,
+    });
+    expect(rePaired.connections).toEqual([newRelay, manual]);
+    const input = {
+      host: { ...rePaired, connections: [newRelay, oldLearned, manual] },
+      sourceConnectionId: newRelay.id,
+      daemonPublicKeyB64: "new-key",
+    };
+
+    expect(reconcileLearnedDirectConnections({ ...input, endpoints: [] }).connections).toEqual([
+      newRelay,
+      manual,
+    ]);
+    expect(
+      reconcileLearnedDirectConnections({ ...input, endpoints: [oldLearned.endpoint] }).connections,
+    ).toEqual([
+      newRelay,
+      manual,
+      {
+        id: oldLearned.id,
+        type: "directTcp",
+        endpoint: oldLearned.endpoint,
+        useTls: false,
+        learnedFromConnectionId: newRelay.id,
+        daemonPublicKeyB64: "new-key",
+      },
+    ]);
+  });
 });
 
 describe("createRemoteSshHostConnection", () => {
