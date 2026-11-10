@@ -577,6 +577,7 @@ export async function withPluginFocusingASubagent(
     focusParent(): Promise<void>;
     expectParentReadyToType(): Promise<void>;
     coverExplorerComposerWithFileSheet(): Promise<void>;
+    focusParentAsAFileSheetOpens(): Promise<void>;
     openSubagentPageInParentComposer(): Promise<void>;
   }) => Promise<void>,
 ) {
@@ -612,6 +613,8 @@ export async function withPluginFocusingASubagent(
             explorer.getByTestId(`workspace-tab-agent_${workspace.agentId}`),
           ).toBeVisible();
           await page.setViewportSize(COMPACT);
+          // The phone layout hides the Explorer; focus must find it there, not in the wide layout.
+          await expect(explorer).toBeHidden();
         }),
       focusParent: () =>
         test.step("focus the agent kept in the Explorer", () => focusAgent(workspace.agentId)),
@@ -629,6 +632,32 @@ export async function withPluginFocusingASubagent(
         test.step("open a file's sheet over the Explorer's composer", async () => {
           await page.getByText(FILE_LINK, { exact: true }).filter({ visible: true }).click();
           await expect(sheet(page, "linked.ts")).toBeVisible();
+        }),
+      focusParentAsAFileSheetOpens: () =>
+        test.step("focus the agent while a file's sheet is opening over it", async () => {
+          // The click looks the file up first. Focus in the commit that mounts the sheet, before
+          // its opening animation has started.
+          await page.evaluate((id) => {
+            const global = globalThis as FocusAgentGlobal & {
+              focusedAsSheetOpens?: Promise<string>;
+            };
+            global.focusedAsSheetOpens = new Promise((resolve) => {
+              const observer = new MutationObserver(() => {
+                if (!document.querySelector('[aria-label="Bottom sheet backdrop"]')) return;
+                observer.disconnect();
+                void global.focusAgent?.(id).then(
+                  () => resolve("focused"),
+                  (error: Error) => resolve(error.message),
+                );
+              });
+              observer.observe(document.body, { childList: true, subtree: true });
+            });
+          }, workspace.agentId);
+          await page.getByText(FILE_LINK, { exact: true }).filter({ visible: true }).click();
+          const outcome = await page.evaluate(
+            () => (globalThis as { focusedAsSheetOpens?: Promise<string> }).focusedAsSheetOpens,
+          );
+          expect(outcome).toBe("focused");
         }),
       openParentAgent: () =>
         test.step("open the parent agent on a phone", async () => {

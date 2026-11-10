@@ -199,6 +199,17 @@ test("focus opens a compact subagent as a tab with its composer", async ({ page 
   });
 });
 
+test("focus closes a file sheet still opening over an Explorer composer", async ({ page }) => {
+  test.setTimeout(120_000);
+  await withPluginFocusingASubagent(page, async (author) => {
+    await author.keepParentInExplorerOnCompactScreen();
+    await author.focusParent();
+    await author.expectParentReadyToType();
+    await author.focusParentAsAFileSheetOpens();
+    await author.expectParentReadyToType();
+  });
+});
+
 test("focus reaches an agent kept in the Explorer on a compact screen", async ({ page }) => {
   test.setTimeout(120_000);
   await withPluginFocusingASubagent(page, async (author) => {
