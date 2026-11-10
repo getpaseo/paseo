@@ -2,7 +2,7 @@ import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
-import type { AgentProviderNotice, AgentSessionConfig } from "../../agent/agent-sdk-types.js";
+import type { AgentProviderNotice, AgentSessionConfigChange } from "../../agent/agent-sdk-types.js";
 import type { ProviderOptionsPatch } from "../../agent/option-controls.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
@@ -26,7 +26,7 @@ export interface AgentConfigSessionHost {
  * thinking yield a provider notice; model and options do not.
  */
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string, overrides?: Pick<AgentSessionConfig, "model">): Promise<void>;
+  ensureLoaded(agentId: string, overrides?: AgentSessionConfigChange): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
@@ -43,7 +43,7 @@ export interface AgentConfigSessionOptions {
 }
 
 interface ConfigChange {
-  configOverrides?: Pick<AgentSessionConfig, "model">;
+  configOverrides?: AgentSessionConfigChange;
   agentId: string;
   requestId: string;
   logLabel: string;
@@ -150,7 +150,14 @@ export class AgentConfigSession {
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
       configOverrides:
-        config.modelId === undefined ? undefined : { model: config.modelId ?? undefined },
+        config.modelId === undefined
+          ? undefined
+          : {
+              model: config.modelId ?? undefined,
+              ...(config.thinkingOptionId !== undefined
+                ? { thinkingOptionId: config.thinkingOptionId ?? undefined }
+                : {}),
+            },
       run: () => this.applyBundle(agentId, config),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });

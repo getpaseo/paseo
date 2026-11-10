@@ -10,6 +10,7 @@ import { AgentStorage } from "../agent-storage.js";
 import { ensureUnarchivedAgentLoaded } from "../agent-loading.js";
 import { AgentConfigSession } from "../../session/agent-config/agent-config-session.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 describe("GenericACPAgentClient request errors", () => {
@@ -124,7 +125,7 @@ test.each([
           setModel: (agentId, value) => manager.setAgentModel(agentId, value),
           setMode: async () => null,
           setOptions: async () => undefined,
-          setThinking: async () => null,
+          setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
         },
         logger,
       });
@@ -137,6 +138,9 @@ test.each([
         expect((await created.session.getRuntimeInfo()).model).toBe("requested");
         await manager.closeAgent(created.id);
         await manager.flush();
+        const saved = await storage.get(created.id);
+        if (!saved) throw new Error("Expected stored agent");
+        await storage.upsert({ ...saved, config: { ...saved.config, thinkingOptionId: "high" } });
         await expect(
           ensureUnarchivedAgentLoaded(created.id, {
             agentManager: manager,
@@ -156,7 +160,7 @@ test.each([
             : configSession.handleAgentConfigApplyRequest({
                 type: "agent.config.apply.request",
                 agentId: created.id,
-                config: { modelId: value },
+                config: { modelId: value, thinkingOptionId: null },
                 requestId: "repair",
               });
         await changeModel("also-removed");
@@ -183,6 +187,9 @@ test.each([
         ]);
         await manager.flush();
         expect(manager.getAgent(created.id)?.config.model).toBe(modelId ?? undefined);
+        expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(
+          surface === "bundle" ? undefined : "low",
+        );
         expect((await storage.get(created.id))?.config?.model).toBe(modelId ?? undefined);
         await manager.closeAgent(created.id);
         await ensureUnarchivedAgentLoaded(created.id, {
@@ -199,6 +206,68 @@ test.each([
     });
   },
 );
+
+test("a lazy provider rejecting a replacement leaves its durable config intact", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "lazy-model-rejection-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const client = createTestAgentClients().codex;
+  if (!client) throw new Error("Expected Codex test client");
+  const resume = client.resumeSession.bind(client);
+  client.resumeSession = async (handle, overrides, context, options) => {
+    const session = await resume(handle, overrides, context, options);
+    session.setModel = async () => {
+      throw new Error("Provider rejected replacement");
+    };
+    return session;
+  };
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const messages: SessionOutboundMessage[] = [];
+  const configSession = new AgentConfigSession({
+    host: { emit: (message) => messages.push(message) },
+    logger,
+    operations: {
+      ensureLoaded: async (agentId, configOverrides) => {
+        await ensureUnarchivedAgentLoaded(agentId, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides,
+        });
+      },
+      setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+      setMode: async () => null,
+      setThinking: async () => null,
+      setOptions: async () => undefined,
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: root, model: "original" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    const before = await storage.get(agent.id);
+    await configSession.handleSetAgentModelRequest({
+      type: "set_agent_model_request",
+      agentId: agent.id,
+      modelId: "rejected",
+      requestId: "reject-model",
+    });
+    expect(messages.at(-1)).toMatchObject({
+      payload: { accepted: false, error: "Provider rejected replacement" },
+    });
+    await manager.flush();
+    expect(await storage.get(agent.id)).toEqual(before);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 async function withFakeACPAgent(
   mode:

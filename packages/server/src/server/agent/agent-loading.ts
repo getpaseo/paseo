@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfigChange } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import {
@@ -42,7 +42,7 @@ export interface EnsureAgentLoadedDeps {
   broadcastTimeline?: boolean;
   purpose?: "history" | "interactive";
   /** Explicit model mutation: validate this selection while opening, before persisting it. */
-  configOverrides?: Pick<AgentSessionConfig, "model">;
+  configOverrides?: AgentSessionConfigChange;
   logger: Logger;
 }
 
@@ -117,10 +117,10 @@ export async function ensureAgentLoaded(
     if (handle) {
       snapshot = await deps.agentManager.resumeAgentFromPersistence(
         handle,
-        { ...buildConfigOverrides(record), ...deps.configOverrides },
+        buildConfigOverrides(record),
         agentId,
         { ...extractTimestamps(record), attention: extractAttention(record) },
-        deps.purpose ? { purpose: deps.purpose } : undefined,
+        { purpose: deps.purpose, configChange: deps.configOverrides },
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {

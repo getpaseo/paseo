@@ -1083,6 +1083,8 @@ export class ACPAgentClient implements AgentClient {
     const mergedConfig: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,
+      // A model mutation must not replay an incompatible saved thinking setting first.
+      ...(options?.configChange ? { thinkingOptionId: undefined, ...options.configChange } : {}),
       provider: this.provider,
       cwd,
     };

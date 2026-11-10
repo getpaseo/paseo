@@ -6,9 +6,63 @@ import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { ensureAgentLoaded } from "../agent-loading.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 describe("GenericACPAgentClient archived history", () => {
+  test("history registration preserves the last interactive runtime metadata", async () => {
+    await withFakeACPAgent(async ({ command, removedCwd }) => {
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(path.dirname(removedCwd), "agents"), logger);
+      const manager = new AgentManager({
+        clients: { acp: new GenericACPAgentClient({ logger, command }) },
+        registry: storage,
+        logger,
+      });
+      const id = "00000000-0000-4000-8000-000000000811";
+      const now = new Date().toISOString();
+      const runtimeInfo = {
+        provider: "acp" as const,
+        sessionId: "archived-session",
+        model: "last-interactive-model",
+        thinkingOptionId: "high",
+        modeId: "plan",
+      };
+      try {
+        await storage.upsert({
+          id,
+          provider: "acp",
+          cwd: removedCwd,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: now,
+          labels: {},
+          lastStatus: "closed",
+          config: { model: "last-interactive-model", thinkingOptionId: "high", modeId: "plan" },
+          runtimeInfo,
+          persistence: {
+            provider: "acp",
+            sessionId: "archived-session",
+            metadata: { cwd: removedCwd },
+          },
+        });
+        await ensureAgentLoaded(id, { agentManager: manager, agentStorage: storage, logger });
+        expect(manager.getAgent(id)?.runtimeInfo).toEqual(runtimeInfo);
+        await manager.flush();
+        expect((await storage.get(id))?.runtimeInfo).toEqual(runtimeInfo);
+        await manager.closeAgent(id);
+        await manager.flush();
+        expect((await storage.get(id))?.runtimeInfo).toEqual(runtimeInfo);
+      } finally {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+      }
+    });
+  });
+
   test("replays an archived session whose working directory was removed", async () => {
     await withFakeACPAgent(async ({ command, removedCwd, loadRequestsPath }) => {
       const client = new GenericACPAgentClient({ logger: createTestLogger(), command });
@@ -223,7 +277,7 @@ rl.on("line", (line) => {
     fs.writeFileSync(loadRequestsPath, JSON.stringify(loadRequests));
     replay(sessionId, "user_message_chunk", "What is in the README?");
     replay(sessionId, "agent_message_chunk", "It describes the project.");
-    write({ id: message.id, result: {} });
+    write({ id: message.id, result: { models: { currentModelId: "reader-default", availableModels: [{ modelId: "reader-default", name: "Reader default" }] } } });
     return;
   }
 
