@@ -75,9 +75,9 @@ describe("AgentManager rewind", () => {
 
     expect(session.recordedRewinds).toEqual([{ mode: "conversation", messageId: "message-1" }]);
     expect(session.historyReadCount).toBe(1);
-    expect(manager.fetchTimeline(agentId, { limit: 0 }).rows.map((row) => row.item)).toEqual([
-      { type: "user_message", text: "before", messageId: "message-1" },
-    ]);
+    expect(
+      (await manager.fetchTimeline(agentId, { limit: 0 })).rows.map((row) => row.item),
+    ).toEqual([{ type: "user_message", text: "before", messageId: "message-1" }]);
   });
 
   test("replaces the canonical epoch without replaying reconstructed parent rows", async () => {
@@ -87,7 +87,7 @@ describe("AgentManager rewind", () => {
       text: `rewound ${index}`,
     }));
     session.history = history;
-    const epochBefore = manager.fetchTimeline(agentId, { limit: 0 }).epoch;
+    const epochBefore = (await manager.fetchTimeline(agentId, { limit: 0 })).epoch;
     const events: string[] = [];
     const unsubscribe = manager.subscribe((event) => events.push(event.type), {
       replayState: false,
@@ -96,7 +96,7 @@ describe("AgentManager rewind", () => {
     await manager.rewind(agentId, "message-1", "conversation");
     unsubscribe();
 
-    const replacement = manager.fetchTimeline(agentId, { limit: 0 });
+    const replacement = await manager.fetchTimeline(agentId, { limit: 0 });
     expect(replacement.epoch).not.toBe(epochBefore);
     expect(replacement.rows).toEqual([
       expect.objectContaining({

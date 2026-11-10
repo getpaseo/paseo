@@ -1,11 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { AgentTimeline } from "../timeline/index.js";
 import { ProviderSubagentStore } from "./store.js";
 
 describe("ProviderSubagentStore", () => {
-  test("keeps provider children and their timelines scoped to the parent agent", () => {
-    const subagents = new ProviderSubagentStore();
+  test("keeps provider children and their timelines scoped to the parent agent", async () => {
+    const subagents = new ProviderSubagentStore(new AgentTimeline());
 
-    subagents.apply("parent-a", "codex", {
+    await subagents.apply("parent-a", "codex", {
       type: "upsert",
       id: "child-1",
       title: "Explore",
@@ -13,19 +14,19 @@ describe("ProviderSubagentStore", () => {
       status: "running",
       timestamp: "2026-07-12T10:00:00.000Z",
     });
-    subagents.apply("parent-a", "codex", {
+    await subagents.apply("parent-a", "codex", {
       type: "timeline",
       id: "child-1",
       item: { type: "assistant_message", text: "Found it." },
       timestamp: "2026-07-12T10:00:01.000Z",
     });
-    subagents.apply("parent-a", "codex", {
+    await subagents.apply("parent-a", "codex", {
       type: "upsert",
       id: "child-1",
       status: "completed",
       timestamp: "2026-07-12T10:00:02.000Z",
     });
-    subagents.apply("parent-b", "claude", {
+    await subagents.apply("parent-b", "claude", {
       type: "upsert",
       id: "child-1",
       title: "Review",
@@ -45,7 +46,7 @@ describe("ProviderSubagentStore", () => {
         updatedAt: "2026-07-12T10:00:02.000Z",
       }),
     ]);
-    expect(subagents.fetchTimeline("parent-a", "child-1").rows).toMatchObject([
+    expect((await subagents.fetchTimeline("parent-a", "child-1")).rows).toMatchObject([
       {
         seq: 1,
         timestamp: "2026-07-12T10:00:01.000Z",
@@ -53,17 +54,17 @@ describe("ProviderSubagentStore", () => {
       },
     ]);
     expect(subagents.list("parent-b")[0]).toMatchObject({ provider: "claude", title: "Review" });
-    expect(subagents.deleteParent("parent-a")).toEqual([
+    expect(await subagents.deleteParent("parent-a")).toEqual([
       { type: "remove", parentAgentId: "parent-a", subagentId: "child-1" },
     ]);
     expect(subagents.list("parent-a")).toEqual([]);
     expect(subagents.list("parent-b")).toHaveLength(1);
   });
 
-  test("limits oversized provider child tool output before storage", () => {
-    const subagents = new ProviderSubagentStore();
+  test("limits oversized provider child tool output before storage", async () => {
+    const subagents = new ProviderSubagentStore(new AgentTimeline());
     const output = "x".repeat(70 * 1024);
-    const update = subagents.apply("parent-a", "opencode", {
+    const update = await subagents.apply("parent-a", "opencode", {
       type: "timeline",
       id: "child-1",
       item: {
@@ -77,24 +78,24 @@ describe("ProviderSubagentStore", () => {
     });
 
     expect(update.type).toBe("timeline");
-    const [row] = subagents.fetchTimeline("parent-a", "child-1").rows;
+    const [row] = (await subagents.fetchTimeline("parent-a", "child-1")).rows;
     expect(row?.item).toMatchObject({
       type: "tool_call",
       detail: { type: "shell", output: expect.stringMatching(/^x+…\[truncated \d+\.\d KB\]$/) },
     });
   });
 
-  test("pages provider history on projected item boundaries", () => {
-    const subagents = new ProviderSubagentStore();
+  test("pages provider history on projected item boundaries", async () => {
+    const subagents = new ProviderSubagentStore(new AgentTimeline());
     for (let index = 0; index < 101; index += 1) {
-      subagents.apply("parent-a", "opencode", {
+      await subagents.apply("parent-a", "opencode", {
         type: "timeline",
         id: "child-1",
         item: { type: "assistant_message", text: String(index) },
       });
     }
 
-    const page = subagents.fetchTimeline("parent-a", "child-1", {
+    const page = await subagents.fetchTimeline("parent-a", "child-1", {
       direction: "tail",
       limit: 1,
     });

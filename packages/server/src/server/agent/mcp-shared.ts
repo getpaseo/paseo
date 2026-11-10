@@ -142,7 +142,7 @@ export async function waitForAgentWithTimeout(
   } catch (error) {
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
-      const timeline = agentManager.getTimeline(agentId);
+      const timeline = await agentManager.getTimeline(agentId);
       const recent = selectItemsByProjectedLimit({
         items: timeline,
         direction: "tail",

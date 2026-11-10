@@ -185,9 +185,9 @@ test("loads an archived agent's history after its working directory is removed",
     expect(loaded.id).toBe(agentId);
     // The transcript is replayed from the provider's persisted history, so the reply the
     // agent gave before the worktree went away is still readable.
-    const replies = manager
-      .getTimeline(agentId)
-      .filter((item) => item.type === "assistant_message");
+    const replies = (await manager.getTimeline(agentId)).filter(
+      (item) => item.type === "assistant_message",
+    );
     expect(replies.length).toBeGreaterThan(0);
     expect(replies.every((item) => item.type === "assistant_message" && item.text.length > 0)).toBe(
       true,

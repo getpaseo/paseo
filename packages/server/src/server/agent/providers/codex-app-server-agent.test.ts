@@ -625,7 +625,7 @@ function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
     // Cold-loads the agent, closes its runtime, and reopens it while Paseo keeps its timeline.
     async loadCloseAndReopen(): Promise<AgentTimelineItem[]> {
       await open();
-      const projected = manager.getTimeline(agentId);
+      const projected = await manager.getTimeline(agentId);
       await manager.closeAgent(agentId);
       await open();
       return projected;
@@ -2072,7 +2072,7 @@ describe("Codex app-server provider", () => {
         "thread/read",
       ]);
       expect(codex.threadMethods(1)).toEqual(["thread/loaded/list", "thread/resume"]);
-      expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
+      expect(await codex.manager.getTimeline(codex.agentId)).toEqual(projected);
     } finally {
       await codex.close();
     }
@@ -2098,7 +2098,7 @@ describe("Codex app-server provider", () => {
       expect(codex.latestAppServer().recordedRollbacks).toEqual([
         { threadId: "forked-thread", numTurns: 1 },
       ]);
-      expect(codex.manager.getTimeline(codex.agentId)).toEqual([
+      expect(await codex.manager.getTimeline(codex.agentId)).toEqual([
         expect.objectContaining({ type: "user_message", messageId: "user-1", text: "First" }),
         expect.objectContaining({ type: "assistant_message", text: "First answer." }),
       ]);
@@ -2151,9 +2151,9 @@ describe("Codex app-server provider", () => {
       appServer.completeTurn({ threadId: "saved-thread" });
       await run;
 
-      const toolCalls = codex.manager
-        .getTimeline(codex.agentId)
-        .filter((item) => item.type === "tool_call");
+      const toolCalls = (await codex.manager.getTimeline(codex.agentId)).filter(
+        (item) => item.type === "tool_call",
+      );
       expect(new Set(toolCalls.map((item) => item.callId))).toEqual(new Set(["spawn-child"]));
       expect(toolCalls.at(-1)).toMatchObject({ callId: "spawn-child", status: "completed" });
       expect(codex.manager.getProviderSubagent(codex.agentId, "child-thread")).toMatchObject({
@@ -2161,9 +2161,9 @@ describe("Codex app-server provider", () => {
         status: "completed",
       });
       expect(
-        codex.manager
-          .fetchProviderSubagentTimeline(codex.agentId, "child-thread")
-          .rows.map((row) => row.item),
+        (await codex.manager.fetchProviderSubagentTimeline(codex.agentId, "child-thread")).rows.map(
+          (row) => row.item,
+        ),
       ).toEqual([
         expect.objectContaining({ type: "assistant_message", text: "Child started." }),
         expect.objectContaining({ type: "assistant_message", text: "Child replied." }),

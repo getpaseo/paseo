@@ -239,7 +239,7 @@ async function importProviderSessionNow(
       });
       return {
         snapshot,
-        timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+        timelineSize: (await input.agentManager.getTimeline(snapshot.id)).length,
       };
     } catch (error) {
       await rollbackArchivedImport(input, archivedRecord, archivedRecord.archivedAt);
@@ -258,7 +258,7 @@ async function importProviderSessionNow(
 
   return {
     snapshot,
-    timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+    timelineSize: (await input.agentManager.getTimeline(snapshot.id)).length,
   };
 }
 

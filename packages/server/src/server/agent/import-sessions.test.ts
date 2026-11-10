@@ -679,7 +679,7 @@ class ProviderImportHarness {
         return this.snapshot;
       },
       hydrateTimelineFromProvider: async () => {},
-      getTimeline: () => this.timeline,
+      getTimeline: async () => this.timeline,
       closeAgent: async (agentId: string) => {
         this.closedAgentIds.push(agentId);
         this.activeAgent = null;

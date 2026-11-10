@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../timeline/index.js";
 import { foldSubagentObservations } from "./observation.js";
 import {
   observeReplayWorkflows,
@@ -82,9 +83,9 @@ describe("Claude workflow replay", () => {
       ],
       parentEntries: parentEntries(),
     });
-    const store = new ProviderSubagentStore();
+    const store = new ProviderSubagentStore(new AgentTimeline());
     for (const event of foldSubagentObservations(observations)) {
-      store.apply("parent", "claude", event);
+      await store.apply("parent", "claude", event);
     }
 
     expect(store.get("parent", TOOL_CALL_ID)).toMatchObject({
@@ -107,9 +108,9 @@ describe("Claude workflow replay", () => {
         },
       ]),
     });
-    const store = new ProviderSubagentStore();
+    const store = new ProviderSubagentStore(new AgentTimeline());
     for (const event of foldSubagentObservations(observations)) {
-      store.apply("parent", "claude", event);
+      await store.apply("parent", "claude", event);
     }
 
     expect(store.get("parent", TOOL_CALL_ID)).toMatchObject({

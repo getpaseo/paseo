@@ -47,22 +47,3 @@ export interface AgentTimelineFetchResult {
   endSeq: number | null;
   rows: ProjectedTimelineRow[];
 }
-
-export interface AgentTimelineStore {
-  appendCommitted(
-    agentId: string,
-    item: AgentTimelineItem,
-    options?: { timestamp?: string; turnId?: string },
-  ): Promise<AgentTimelineRow>;
-  fetchCommitted(
-    agentId: string,
-    options?: AgentTimelineFetchOptions,
-  ): Promise<AgentTimelineFetchResult>;
-  getLatestCommittedSeq(agentId: string): Promise<number>;
-  getCommittedRows(agentId: string): Promise<AgentTimelineRow[]>;
-  getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
-  getLastAssistantMessage(agentId: string): Promise<string | null>;
-  deleteAgent(agentId: string): Promise<void>;
-  bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
-  updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
-}

@@ -308,7 +308,6 @@ interface ProjectedTimelinePageOptions {
 export class TimelineProjection {
   private readonly rows: ProjectedTimelineRow[] = [];
   private readonly identities = new Map<string, number>();
-  private lastAssistantRowIndex: number | null = null;
   // Disjoint source-coverage spans in display order. A tail starting inside a
   // span must include its first anchor to cover interleaved lifecycle updates.
   private readonly spans: { start: number; endSeq: number }[] = [];
@@ -356,7 +355,6 @@ export class TimelineProjection {
       return this.rows.length - 1;
     }
     if (identity !== null) this.identities.set(identity, this.rows.length);
-    if (entry.item.type === "assistant_message") this.lastAssistantRowIndex = this.rows.length;
     this.rows.push({ ...entry, seq: entry.seqEnd });
     const last = this.spans.at(-1);
     if (last && last.endSeq >= entry.seqStart) {
@@ -392,6 +390,10 @@ export class TimelineProjection {
 
   getRows(): ProjectedTimelineRow[] {
     return this.rows.map((row) => ({ ...row }));
+  }
+
+  get size(): number {
+    return this.rows.length;
   }
 
   selectPage(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
@@ -522,9 +524,20 @@ export class TimelineProjection {
     return last?.endSeq === seq ? this.rows[last.rowIndex].item : null;
   }
 
+  /**
+   * The text of the trailing run of assistant rows, joined in order. Rows after the run are
+   * skipped; the first non-assistant row before it ends the run.
+   */
   getLastAssistantMessage(): string | null {
-    const row = this.lastAssistantRowIndex === null ? null : this.rows[this.lastAssistantRowIndex];
-    return row?.item.type === "assistant_message" ? row.item.text : null;
+    let end = this.rows.length;
+    while (end > 0 && this.rows[end - 1].item.type !== "assistant_message") end -= 1;
+    let start = end;
+    while (start > 0 && this.rows[start - 1].item.type === "assistant_message") start -= 1;
+    if (start === end) return null;
+    return this.rows
+      .slice(start, end)
+      .map((row) => (row.item.type === "assistant_message" ? row.item.text : ""))
+      .join("");
   }
 
   enrichSubmittedUserMessage(

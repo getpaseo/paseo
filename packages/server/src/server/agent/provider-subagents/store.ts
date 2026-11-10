@@ -1,11 +1,10 @@
 import type { AgentProvider, AgentTimelineItem } from "../agent-sdk-types.js";
-import { limitAgentTimelineItemContent } from "../agent-timeline-content.js";
-import { InMemoryAgentTimelineStore } from "../agent-timeline-store.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
   AgentTimelineRow,
 } from "../agent-timeline-store-types.js";
+import type { AgentTimeline, TimelineScope } from "../timeline/index.js";
 
 export type ProviderSubagentStatus = "running" | "completed" | "failed" | "canceled";
 
@@ -66,6 +65,10 @@ function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
 }
 
+function childScope(parentAgentId: string, subagentId: string): TimelineScope {
+  return { agentId: parentAgentId, subagentId };
+}
+
 /**
  * Sticky upsert semantics for a descriptor field: an omitted value preserves what is stored, an
  * explicit `null` clears it. Providers observe these fields incrementally, so a partial upsert
@@ -77,41 +80,38 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
 
 export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
-  private readonly timelines = new InMemoryAgentTimelineStore();
 
-  apply(
+  constructor(private readonly timeline: AgentTimeline) {}
+
+  async apply(
     parentAgentId: string,
     provider: AgentProvider,
     event: ProviderSubagentInputEvent,
-  ): ProviderSubagentStoreEvent {
+  ): Promise<ProviderSubagentStoreEvent> {
     const key = storeKey(parentAgentId, event.id);
+    const scope = childScope(parentAgentId, event.id);
     if (event.type === "remove") {
       this.descriptors.delete(key);
-      this.timelines.delete(key);
+      await this.timeline.delete(scope);
       return { type: "remove", parentAgentId, subagentId: event.id };
     }
 
     if (event.type === "timeline") {
-      if (!this.timelines.has(key)) {
-        this.timelines.initialize(key);
-      }
-      const row = this.timelines.append(key, limitAgentTimelineItemContent(event.item), {
-        timestamp: event.timestamp,
-      });
+      await this.timeline.open(scope);
+      const {
+        commits: [{ row, epoch }],
+      } = await this.timeline.append(scope, [{ item: event.item, timestamp: event.timestamp }]);
       return {
         type: "timeline",
         parentAgentId,
         subagentId: event.id,
         provider,
         row,
-        epoch: this.timelines.getEpoch(key),
+        epoch,
       };
     }
 
     const previous = this.descriptors.get(key);
-    if (!this.timelines.has(key)) {
-      this.timelines.initialize(key);
-    }
     const timestamp = event.timestamp ?? new Date().toISOString();
     const subagent: ProviderSubagentDescriptor = {
       id: event.id,
@@ -128,6 +128,7 @@ export class ProviderSubagentStore {
       parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
     };
     this.descriptors.set(key, subagent);
+    await this.timeline.open(scope);
     return { type: "upsert", subagent };
   }
 
@@ -149,18 +150,18 @@ export class ProviderSubagentStore {
     parentAgentId: string,
     subagentId: string,
     options?: AgentTimelineFetchOptions,
-  ): AgentTimelineFetchResult {
-    return this.timelines.fetch(storeKey(parentAgentId, subagentId), options);
+  ): Promise<AgentTimelineFetchResult> {
+    return this.timeline.fetch(childScope(parentAgentId, subagentId), options);
   }
 
-  deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
-    const events: ProviderSubagentStoreEvent[] = [];
-    for (const subagent of this.list(parentAgentId)) {
-      const key = storeKey(parentAgentId, subagent.id);
-      this.descriptors.delete(key);
-      this.timelines.delete(key);
-      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
+  async deleteParent(parentAgentId: string): Promise<ProviderSubagentStoreEvent[]> {
+    const removed = this.list(parentAgentId).map((subagent) => subagent.id);
+    for (const subagentId of removed) {
+      this.descriptors.delete(storeKey(parentAgentId, subagentId));
     }
-    return events;
+    await Promise.all(
+      removed.map((subagentId) => this.timeline.delete(childScope(parentAgentId, subagentId))),
+    );
+    return removed.map((subagentId) => ({ type: "remove", parentAgentId, subagentId }));
   }
 }

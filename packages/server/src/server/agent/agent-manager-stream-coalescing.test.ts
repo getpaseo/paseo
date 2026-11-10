@@ -3,12 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import pino, { type Logger } from "pino";
+
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "./agent-manager.js";
 import { AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { projectTimelineRows } from "./timeline-projection.js";
+import { AgentTimeline } from "./timeline/index.js";
+import { DeferredTimelineBackend } from "./timeline/testing.js";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -243,13 +247,18 @@ interface Harness {
   cleanup: () => void;
 }
 
-function createHarness(options?: { provider?: AgentProvider }): Harness {
+function createHarness(options?: {
+  provider?: AgentProvider;
+  timeline?: AgentTimeline;
+  logger?: Logger;
+}): Harness {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stream-coalescing-"));
   const client = new TestAgentClient(options?.provider ?? "codex");
   const manager = new AgentManager({
     clients: { [client.provider]: client },
     idFactory: createIdFactory(),
-    logger: createTestLogger(),
+    logger: options?.logger ?? createTestLogger(),
+    timeline: options?.timeline,
   });
   const events: AgentManagerEvent[] = [];
   manager.subscribe((event) => events.push(event), { replayState: false });
@@ -1034,6 +1043,81 @@ describe("target coalesced behavior", () => {
       } finally {
         harness.cleanup();
       }
+    }
+  });
+
+  test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
+    "%s waits for the final chunk an asynchronous timeline is still committing",
+    async (terminalType) => {
+      const harness = createHarness({ timeline: new AgentTimeline(new DeferredTimelineBackend()) });
+      try {
+        const { agentId, session } = await createManagedSession(harness);
+
+        session.pushEvent(assistant("final chunk", "codex", "turn"));
+        session.pushEvent(terminalEvent(terminalType, "turn"));
+
+        const streamTypes = () =>
+          getStreamEvents(harness.events, agentId).map((event) =>
+            event.type === "agent_stream" ? event.event.type : event.type,
+          );
+        await expect.poll(streamTypes).toContain(terminalType);
+        const streamEvents = getStreamEvents(harness.events, agentId);
+        expect(streamEvents[0]).toMatchObject({
+          event: { type: "timeline", item: { type: "assistant_message", text: "final chunk" } },
+          seq: 1,
+        });
+        expect(streamTypes().indexOf(terminalType)).toBeGreaterThan(0);
+      } finally {
+        await harness.manager.flush();
+        harness.cleanup();
+      }
+    },
+  );
+
+  test("a final chunk the timeline fails to commit surfaces a history error after the turn", async () => {
+    const backend = new DeferredTimelineBackend();
+    const logs: Array<Record<string, unknown>> = [];
+    const harness = createHarness({
+      timeline: new AgentTimeline(backend),
+      logger: pino({ level: "error" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+    });
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent(assistant("earlier chunk", "codex", "earlier"));
+      session.pushEvent(terminalEvent("turn_completed", "earlier"));
+      await expect.poll(() => getTimelineStreamEvents(harness.events, agentId)).toHaveLength(1);
+      await harness.manager.flush();
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn" });
+      await expect.poll(() => harness.manager.getAgent(agentId)?.lifecycle).toBe("running");
+      backend.failNextAppend = true;
+      session.pushEvent(assistant("final chunk", "codex", "turn"));
+      session.pushEvent(terminalEvent("turn_completed", "turn"));
+
+      const completions = () =>
+        getStreamEvents(harness.events, agentId).filter(
+          (event) => event.type === "agent_stream" && event.event.type === "turn_completed",
+        );
+      await expect.poll(completions).toHaveLength(2);
+      await harness.manager.flush();
+      expect(harness.manager.getAgent(agentId)).toMatchObject({
+        lifecycle: "error",
+        lastError: "Conversation history could not be saved: disk full",
+        attention: { requiresAttention: true, attentionReason: "error" },
+      });
+      const earlier = { type: "assistant_message", text: "earlier chunk" };
+      expect(getTimelineStreamEvents(harness.events, agentId)).toEqual([
+        expect.objectContaining({ event: expect.objectContaining({ item: earlier }) }),
+      ]);
+      expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([earlier]);
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          msg: "Failed to record timeline item",
+          agentId,
+          err: expect.objectContaining({ message: "disk full" }),
+        }),
+      );
+    } finally {
+      harness.cleanup();
     }
   });
 

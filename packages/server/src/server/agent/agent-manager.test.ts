@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
+import pino from "pino";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
@@ -20,7 +21,8 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { AgentTimeline } from "./timeline/index.js";
+import { DeferredTimelineBackend } from "./timeline/testing.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
@@ -29,12 +31,6 @@ import { startAgentRun } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
-import type {
-  AgentTimelineFetchOptions,
-  AgentTimelineFetchResult,
-  AgentTimelineRow,
-  AgentTimelineStore,
-} from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -114,73 +110,6 @@ const TEST_CAPABILITIES = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 } as const;
-
-class RecordingTimelineStore implements AgentTimelineStore {
-  readonly writes: AgentTimelineRow[][] = [];
-  private readonly memory = new InMemoryAgentTimelineStore();
-
-  private ensure(agentId: string): void {
-    if (!this.memory.has(agentId)) this.memory.initialize(agentId);
-  }
-
-  async appendCommitted(
-    agentId: string,
-    item: AgentTimelineItem,
-    options?: { timestamp?: string; turnId?: string },
-  ): Promise<AgentTimelineRow> {
-    this.ensure(agentId);
-    return this.memory.append(agentId, item, options);
-  }
-
-  async fetchCommitted(
-    agentId: string,
-    options?: AgentTimelineFetchOptions,
-  ): Promise<AgentTimelineFetchResult> {
-    this.ensure(agentId);
-    return this.memory.fetch(agentId, options);
-  }
-
-  async getLatestCommittedSeq(agentId: string): Promise<number> {
-    return this.memory.has(agentId) ? (this.memory.getRows(agentId).at(-1)?.seq ?? 0) : 0;
-  }
-
-  async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
-    return this.memory.has(agentId) ? this.memory.getRows(agentId) : [];
-  }
-
-  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
-    return this.memory.has(agentId) ? this.memory.getLastItem(agentId) : null;
-  }
-
-  async getLastAssistantMessage(agentId: string): Promise<string | null> {
-    return this.memory.has(agentId) ? this.memory.getLastAssistantMessage(agentId) : null;
-  }
-
-  async deleteAgent(agentId: string): Promise<void> {
-    this.memory.delete(agentId);
-  }
-
-  async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
-    this.writes.push(rows.map((row) => ({ ...row })));
-    this.ensure(agentId);
-    for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
-    }
-  }
-
-  async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
-    this.ensure(agentId);
-    const rows = this.memory.getRows(agentId);
-    const index = rows.findIndex((candidate) => candidate.seq === row.seq);
-    if (index >= 0) {
-      rows[index] = row;
-      this.memory.initialize(agentId, { rows });
-    }
-  }
-}
 
 function createFeature(args: { id: string; label: string; value: boolean }): AgentFeature {
   return {
@@ -670,12 +599,12 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
-test("uses an injected timeline store without making it a production requirement", async () => {
+test("commits timeline items through an injected asynchronous backend", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
-  const store = new RecordingTimelineStore();
+  const backend = new DeferredTimelineBackend();
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
-    durableTimelineStore: store,
+    timeline: new AgentTimeline(backend),
     logger,
   });
   let agentId: string | null = null;
@@ -687,7 +616,7 @@ test("uses an injected timeline store without making it a production requirement
     await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "stored" });
     await manager.flush();
 
-    expect(store.writes.flat()).toContainEqual(
+    expect(backend.appends.flat()).toContainEqual(
       expect.objectContaining({ item: { type: "assistant_message", text: "stored" } }),
     );
     await expect(manager.getTimelineRows(agent.id)).resolves.toContainEqual(
@@ -699,9 +628,113 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
-test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
+test("a subscriber that throws on publication leaves the committed item in history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-publish-failure-"));
+  const logs: Array<Record<string, unknown>> = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    timeline: new AgentTimeline(new DeferredTimelineBackend()),
+    logger: pino({ level: "error" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+  });
+  let throwOnTimeline = true;
+  manager.subscribe(
+    (event) => {
+      if (throwOnTimeline && event.type === "agent_stream" && event.event.type === "timeline") {
+        throwOnTimeline = false;
+        throw new Error("subscriber failed");
+      }
+    },
+    { replayState: false },
+  );
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await expect(
+      manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "kept" }),
+    ).resolves.toMatchObject({ seq: 1 });
+    await expect(
+      manager.appendTimelineItem(agent.id, { type: "assistant_message", text: " and next" }),
+    ).resolves.toMatchObject({ seq: 2 });
+    expect(await manager.getLastAssistantMessage(agent.id)).toBe("kept and next");
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        msg: "Failed to publish committed timeline item",
+        agentId: agent.id,
+        err: expect.objectContaining({ message: "subscriber failed" }),
+      }),
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an accepted prompt the timeline fails to commit surfaces a history error", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-failure-"));
+  const backend = new DeferredTimelineBackend();
+  const logs: Array<Record<string, unknown>> = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    timeline: new AgentTimeline(backend),
+    logger: pino({ level: "error" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+  });
+  const published: AgentTimelineItem[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream" && event.event.type === "timeline") {
+        published.push(event.event.item);
+      }
+    },
+    { replayState: false },
+  );
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const earlier: AgentTimelineItem = { type: "assistant_message", text: "Earlier reply" };
+    await manager.appendTimelineItem(agent.id, earlier);
+    await manager.flush();
+    backend.failNextAppend = true;
+    await manager.runAgent(agent.id, "hello", { clientMessageId: "hello-client" });
+    await manager.flush();
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: "Conversation history could not be saved: disk full",
+      attention: { requiresAttention: true, attentionReason: "error" },
+    });
+    expect(await manager.getTimeline(agent.id)).toEqual([earlier]);
+    expect(published).toEqual([earlier]);
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        msg: "Failed to record timeline item",
+        agentId: agent.id,
+        err: expect.objectContaining({ message: "disk full" }),
+      }),
+    );
+
+    // The next run clears the error and records normally.
+    await manager.runAgent(agent.id, "again", { clientMessageId: "again-client" });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    expect(manager.getAgent(agent.id)?.lastError).toBeUndefined();
+    expect(await manager.getTimeline(agent.id)).toEqual([
+      earlier,
+      expect.objectContaining({ type: "user_message", clientMessageId: "again-client" }),
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("refreshing an agent replaces its timeline instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
-  const store = new RecordingTimelineStore();
   class HistorySession extends TestAgentSession {
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
@@ -730,7 +763,7 @@ test("refreshing an agent replaces the injected timeline store instead of append
   }
   const manager = new AgentManager({
     clients: { codex: new HistoryClient() },
-    durableTimelineStore: store,
+    timeline: new AgentTimeline(new DeferredTimelineBackend()),
     logger,
   });
   let agentId: string | null = null;
@@ -758,9 +791,8 @@ test("refreshing an agent replaces the injected timeline store instead of append
   }
 });
 
-test("a failed history replay leaves the committed timeline intact", async () => {
+test("a failed history replay commits none of the replay", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-replay-fail-"));
-  const store = new RecordingTimelineStore();
   let failReplay = false;
   class FlakyHistorySession extends TestAgentSession {
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -793,7 +825,7 @@ test("a failed history replay leaves the committed timeline intact", async () =>
   }
   const manager = new AgentManager({
     clients: { codex: new FlakyHistoryClient() },
-    durableTimelineStore: store,
+    timeline: new AgentTimeline(new DeferredTimelineBackend()),
     logger,
   });
   let agentId: string | null = null;
@@ -814,7 +846,13 @@ test("a failed history replay leaves the committed timeline intact", async () =>
     ).rejects.toThrow("history stream closed");
     await manager.flush();
 
-    expect(await manager.getTimelineRows(agent.id)).toEqual(committed);
+    // Reload with rehydration discards the active history before the replay (phase 1 keeps
+    // that); the failed replay must not leave the rows it streamed before failing.
+    expect(committed.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "continue" },
+      { type: "assistant_message", text: "done" },
+    ]);
+    expect(await manager.getTimelineRows(agent.id)).toEqual([]);
 
     // A retry once the provider recovers replaces that history rather than stacking on it.
     failReplay = false;
@@ -871,7 +909,7 @@ test("retries provider history hydration after a stream failure", async () => {
 
     await manager.hydrateTimelineFromProvider(agent.id);
     expect(attempts).toBe(2);
-    expect(manager.getTimeline(agent.id)).toContainEqual({
+    expect(await manager.getTimeline(agent.id)).toContainEqual({
       type: "assistant_message",
       text: "provider history",
     });
@@ -924,7 +962,7 @@ test("notification batches share the run they start or join", async () => {
     session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-2" });
     await second;
     expect(
-      manager.fetchTimeline(agent.id, { limit: 0 }).rows.map((row) => ({
+      (await manager.fetchTimeline(agent.id, { limit: 0 })).rows.map((row) => ({
         turnId: row.turnId,
         id: row.item.type === "tool_call" ? row.item.callId : row.item.type,
       })),
@@ -948,7 +986,7 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
   try {
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
-    expect(manager.getTimeline(agentId)).toContainEqual(
+    expect(await manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "replacement-client" }),
     );
   } finally {
@@ -1006,9 +1044,8 @@ test("steers a send that arrives while the previous turn is still starting", asy
     expect(session.startPrompts).toEqual(["FIRST"]);
     expect(session.interruptCount).toBe(0);
     expect(
-      manager
-        .fetchTimeline(agent.id, { limit: 0 })
-        .rows.filter((row) => row.item.type === "user_message")
+      (await manager.fetchTimeline(agent.id, { limit: 0 })).rows
+        .filter((row) => row.item.type === "user_message")
         .map((row) => ({
           text: row.item.type === "user_message" ? row.item.text : null,
           turnId: row.turnId,
@@ -1137,14 +1174,14 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
       provider: "codex",
       turnId: "active-turn-1",
     });
-    expect(manager.getTimeline(agent.id)).not.toContainEqual(
+    expect(await manager.getTimeline(agent.id)).not.toContainEqual(
       expect.objectContaining({ type: "assistant_message", text: "terminal output" }),
     );
 
     release.resolve();
     await expect(steer).resolves.toEqual({ status: "accepted" });
     await consume;
-    const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows.filter((row) => {
+    const rows = (await manager.fetchTimeline(agent.id, { limit: 0 })).rows.filter((row) => {
       return (
         (row.item.type === "user_message" && row.item.text === "hello") ||
         (row.item.type === "assistant_message" && row.item.text === "terminal output")
@@ -1201,7 +1238,7 @@ test("orders buffered pre-steer output before an immediately accepted steer", as
       manager.steerAgentRun(agent.id, "hello", { clientMessageId: "hello-client" }),
     ).resolves.toEqual({ status: "accepted" });
 
-    const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows.filter((row) => {
+    const rows = (await manager.fetchTimeline(agent.id, { limit: 0 })).rows.filter((row) => {
       return (
         (row.item.type === "assistant_message" && row.item.text === "pre-steer output") ||
         (row.item.type === "user_message" && row.item.text === "hello")
@@ -1281,9 +1318,8 @@ test("orders a concurrent replacement after a pending accepted steer", async () 
 
     expect(session.interruptCount).toBe(1);
     expect(
-      manager
-        .fetchTimeline(agent.id, { limit: 0 })
-        .rows.filter((row) => row.item.type === "user_message")
+      (await manager.fetchTimeline(agent.id, { limit: 0 })).rows
+        .filter((row) => row.item.type === "user_message")
         .map((row) => row.item),
     ).toMatchObject([
       { text: "hello", clientMessageId: "hello-client" },
@@ -1351,9 +1387,9 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
     expect(session.interruptCount).toBe(0);
     expect(session.startPrompts).not.toContain("hello");
     expect(
-      manager
-        .getTimeline(agent.id)
-        .some((item) => item.type === "user_message" && item.clientMessageId === "hello-client"),
+      (await manager.getTimeline(agent.id)).some(
+        (item) => item.type === "user_message" && item.clientMessageId === "hello-client",
+      ),
     ).toBe(false);
   } finally {
     release.resolve();
@@ -1395,7 +1431,7 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
     expect(session.interruptCount).toBe(0);
     expect(manager.getAgent(agent.id)?.activeTurnId).toBe("active-turn-0");
     expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBeNull();
-    expect(manager.getTimeline(agent.id)).toContainEqual(
+    expect(await manager.getTimeline(agent.id)).toContainEqual(
       expect.objectContaining({
         type: "user_message",
         text: "autonomous follow-up",
@@ -1421,7 +1457,7 @@ test("isolated rewind falls back from steering to the normal replacement path", 
     await manager.waitForAgentRunStart(agentId);
     expect(session.interruptCount).toBe(2);
     expect(session.startPrompts).toContain("/rewind submitted-message-id");
-    expect(manager.getTimeline(agentId)).toContainEqual(
+    expect(await manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "rewind-client" }),
     );
   } finally {
@@ -1436,7 +1472,7 @@ test("missing steer operation interrupts once and starts one replacement turn", 
   try {
     expect(session.interruptCount).toBe(1);
     expect(session.startCount).toBe(2);
-    expect(manager.getTimeline(agentId)).toContainEqual(
+    expect(await manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "replacement-client" }),
     );
   } finally {
@@ -1476,7 +1512,7 @@ test("ambiguous steer failure leaves the active turn untouched", async () => {
     ).rejects.toThrow("connection lost after delivery");
     expect(session.interruptCount).toBe(0);
     expect(session.startCount).toBe(1);
-    expect(manager.getTimeline(agent.id)).not.toContainEqual(
+    expect(await manager.getTimeline(agent.id)).not.toContainEqual(
       expect.objectContaining({ clientMessageId: "ambiguous-client" }),
     );
   } finally {
@@ -1510,7 +1546,9 @@ test("steering records concurrent early echoes as canonical submitted prompts", 
       manager.steerAgentRun(agent.id, "one", { clientMessageId: "client-one" }),
       manager.steerAgentRun(agent.id, "two", { clientMessageId: "client-two" }),
     ]);
-    const rows = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+    const rows = (await manager.getTimeline(agent.id)).filter(
+      (item) => item.type === "user_message",
+    );
     expect(rows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ messageId: "client-one", clientMessageId: "client-one" }),
@@ -4235,7 +4273,7 @@ test("a prompt after provider replacement reopens the stale session", async () =
     const result = await manager.waitForAgentEvent(created.id);
     expect(result.status).toBe("idle");
     expect(replacement.resumeOverrides).toHaveLength(1);
-    const timeline = manager.getTimeline(created.id);
+    const timeline = await manager.getTimeline(created.id);
     expect(timeline.filter((item) => item.type === "user_message")).toMatchObject([
       { text: "continue after reload", clientMessageId: "stale-session-retry" },
     ]);
@@ -4590,7 +4628,7 @@ test("importProviderSession imports the selected session without listing and pub
   });
   expect(imported.lifecycle).toBe("idle");
   expect(imported.historyPrimed).toBe(true);
-  expect(manager.getTimeline(imported.id)).toEqual([
+  expect(await manager.getTimeline(imported.id)).toEqual([
     { type: "user_message", text: "Trace provider imports" },
     { type: "assistant_message", text: "Done" },
     limitAgentTimelineItemContent({
@@ -4610,7 +4648,7 @@ test("importProviderSession imports the selected session without listing and pub
   expect(manager.listProviderSubagents(imported.id)).toEqual([
     expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
   ]);
-  expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
+  expect((await manager.fetchProviderSubagentTimeline(imported.id, "thread-child")).rows).toEqual([
     expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
   ]);
   expect(events).toHaveLength(3);
@@ -4780,18 +4818,18 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
     text: "keep this timeline in memory",
   });
   await manager.hydrateTimelineFromProvider(snapshot.id);
-  const beforeReload = manager.getTimeline(snapshot.id);
+  const beforeReload = await manager.getTimeline(snapshot.id);
   expect(beforeReload).toHaveLength(1);
 
   await manager.reloadAgentSession(snapshot.id, {
     systemPrompt: "reloaded prompt",
   });
-  const afterReload = manager.getTimeline(snapshot.id);
+  const afterReload = await manager.getTimeline(snapshot.id);
   expect(afterReload).toEqual(beforeReload);
 
   // If reload resets historyPrimed, this would replay provider history and append another item.
   await manager.hydrateTimelineFromProvider(snapshot.id);
-  const afterHydrate = manager.getTimeline(snapshot.id);
+  const afterHydrate = await manager.getTimeline(snapshot.id);
   expect(afterHydrate).toEqual(beforeReload);
 });
 
@@ -5961,13 +5999,13 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
     text: "three",
   });
 
-  const baseline = manager.fetchTimeline(snapshot.id, {
+  const baseline = await manager.fetchTimeline(snapshot.id, {
     direction: "tail",
     limit: 2,
   });
   expect(baseline.rows).toHaveLength(2);
 
-  const result = manager.fetchTimeline(snapshot.id, {
+  const result = await manager.fetchTimeline(snapshot.id, {
     direction: "after",
     cursor: {
       epoch: "stale-epoch",
@@ -5984,7 +6022,7 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(result.rows[result.rows.length - 1]?.seq).toBe(3);
   expect(result.hasOlder).toBe(true);
 
-  const older = manager.fetchTimeline(snapshot.id, {
+  const older = await manager.fetchTimeline(snapshot.id, {
     direction: "before",
     cursor: {
       epoch: result.epoch,
@@ -6081,7 +6119,7 @@ test("getAgent does not expose committed history internals once manager owns the
   expect("timelineRows" in live).toBe(false);
   expect("timelineNextSeq" in live).toBe(false);
 
-  expect(manager.getTimeline(snapshot.id)).toEqual([
+  expect(await manager.getTimeline(snapshot.id)).toEqual([
     {
       type: "user_message",
       text: "hello boundary",
@@ -6178,7 +6216,7 @@ test("streams coalesced assistant chunks and retains the projected message", asy
     epoch: expect.any(String),
   });
 
-  expect(manager.getTimeline(snapshot.id)).toEqual([
+  expect(await manager.getTimeline(snapshot.id)).toEqual([
     {
       type: "assistant_message",
       text: "final reply",
@@ -6252,7 +6290,7 @@ test("fetchTimeline supports older-history pagination with before seq", async ()
   const result = await manager.fetchTimeline(snapshot.id, {
     direction: "before",
     cursor: {
-      epoch: manager.fetchTimeline(snapshot.id).epoch,
+      epoch: (await manager.fetchTimeline(snapshot.id)).epoch,
       seq: 5,
     },
     limit: 2,
@@ -6396,7 +6434,7 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
 
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
-  expect(manager.getTimeline(snapshot.id)).toEqual([
+  expect(await manager.getTimeline(snapshot.id)).toEqual([
     { type: "assistant_message", text: "chunk one chunk two" },
     { type: "reasoning", text: "internal" },
     {
@@ -6478,7 +6516,7 @@ test("hydrateTimeline preserves reasoning between assistant chunks", async () =>
 
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
-  expect(manager.getTimeline(snapshot.id)).toEqual([
+  expect(await manager.getTimeline(snapshot.id)).toEqual([
     {
       type: "assistant_message",
       text: "before reasoning ",
@@ -7084,13 +7122,11 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(
-    manager
-      .fetchTimeline(snapshot.id, { direction: "tail", limit: 0 })
-      .rows.find(
-        (row) =>
-          row.item.type === "user_message" &&
-          row.item.clientMessageId === "replacement-client-message",
-      )?.item,
+    (await manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 })).rows.find(
+      (row) =>
+        row.item.type === "user_message" &&
+        row.item.clientMessageId === "replacement-client-message",
+    )?.item,
   ).toMatchObject({ messageId: "replacement-client-message" });
   allowSecondTurnToComplete.resolve();
   await firstRunDrain;
@@ -7196,7 +7232,7 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 175,
   });
-  expect(manager.getTimeline(snapshot.id)).toContainEqual({
+  expect(await manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",
   });
@@ -7258,7 +7294,7 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
     name: "Current turn permission",
     kind: "tool",
   });
-  const timelineBeforeStaleTerminals = manager.getTimeline(snapshot.id);
+  const timelineBeforeStaleTerminals = await manager.getTimeline(snapshot.id);
 
   const staleTerminals: AgentStreamEvent[] = [
     {
@@ -7294,7 +7330,7 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
     expect(stillRunning?.lastError).toBe("turn-b marker");
     expect(stillRunning?.lastUsage).toEqual({ inputTokens: 7 });
     expect(stillRunning?.pendingPermissions.has("turn-b-permission")).toBe(true);
-    expect(manager.getTimeline(snapshot.id)).toEqual(timelineBeforeStaleTerminals);
+    expect(await manager.getTimeline(snapshot.id)).toEqual(timelineBeforeStaleTerminals);
   }
 
   capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-b" });
@@ -7339,7 +7375,7 @@ test("preserves terminal fallback when no active turn identity was observed", as
     expect(failed?.lifecycle).toBe("error");
     expect(failed?.lastError).toBe("untracked failure");
   });
-  expect(manager.getTimeline(snapshot.id)).toContainEqual(
+  expect(await manager.getTimeline(snapshot.id)).toContainEqual(
     expect.objectContaining({
       type: "assistant_message",
       text: expect.stringContaining("untracked failure"),
@@ -7643,8 +7679,8 @@ test("autonomous events arriving during foreground run are processed via subscri
     turnId: autonomousTurnId,
   });
 
-  await vi.waitFor(() =>
-    expect(manager.getTimeline(snapshot.id)).toContainEqual({
+  await vi.waitFor(async () =>
+    expect(await manager.getTimeline(snapshot.id)).toContainEqual({
       type: "assistant_message",
       text: "AUTONOMOUS_DURING_FOREGROUND",
     }),
@@ -7670,7 +7706,7 @@ test("autonomous events arriving during foreground run are processed via subscri
   ).toBe(false);
 
   // Autonomous timeline item should still be recorded in the agent timeline
-  expect(manager.getTimeline(snapshot.id)).toContainEqual({
+  expect(await manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_DURING_FOREGROUND",
   });
@@ -7751,7 +7787,7 @@ test("subscribe error isolation: throwing subscriber does not break event flow",
   expect(receivedEvents).toContain("turn_started");
   expect(receivedEvents).toContain("timeline");
   expect(receivedEvents).toContain("turn_completed");
-  expect(manager.getTimeline(snapshot.id)).toContainEqual({
+  expect(await manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "EVENT_AFTER_ERROR",
   });
@@ -8371,9 +8407,9 @@ test("subscribe hides provider subagents of internal parents from global subscri
   expect(() => manager.getProviderSubagent(internalAgentId, "hidden-child")).toThrow(
     `Unknown agent '${internalAgentId}'`,
   );
-  expect(() => manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child")).toThrow(
-    `Unknown agent '${internalAgentId}'`,
-  );
+  await expect(
+    manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child"),
+  ).rejects.toThrow(`Unknown agent '${internalAgentId}'`);
   expect(manager.listProviderSubagentActivity()).toEqual([]);
 });
 
@@ -8677,7 +8713,7 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
       clientMessageId: "rejected-prompt",
     }),
   ).rejects.toThrow("Invalid request: missing field `text`");
-  expect(manager.getTimeline(agent.id)).toEqual([
+  expect(await manager.getTimeline(agent.id)).toEqual([
     {
       type: "user_message",
       text: "fail before turn id",
@@ -9577,12 +9613,10 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
   expect(snapshot?.lifecycle).toBe("error");
   expect(snapshot?.lastError).toBe("invalid model id");
 
-  const systemErrors = manager
-    .getTimeline(agent.id)
-    .filter(
-      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
-        item.type === "assistant_message" && item.text.includes("[System Error]"),
-    );
+  const systemErrors = (await manager.getTimeline(agent.id)).filter(
+    (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+      item.type === "assistant_message" && item.text.includes("[System Error]"),
+  );
   expect(systemErrors).toHaveLength(1);
   expect(systemErrors[0]?.text).toContain("invalid model id");
 });
@@ -9653,12 +9687,10 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
 
   expect(manager.getAgent(agent.id)?.lastError).toBe("Provider execution failed");
 
-  const systemError = manager
-    .getTimeline(agent.id)
-    .find(
-      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
-        item.type === "assistant_message" && item.text.includes("[System Error]"),
-    );
+  const systemError = (await manager.getTimeline(agent.id)).find(
+    (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+      item.type === "assistant_message" && item.text.includes("[System Error]"),
+  );
   expect(systemError?.text).toContain("Provider execution failed");
   expect(systemError?.text).toContain("code: 126");
   expect(systemError?.text).toContain("No preset version installed for command claude");
@@ -10913,7 +10945,7 @@ test("hydrateTimeline keeps provider user_message items when no canonical user h
 
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
-  const timeline = manager.getTimeline(snapshot.id);
+  const timeline = await manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
   const assistantMessages = timeline.filter((item) => item.type === "assistant_message");
   expect(userMessages).toHaveLength(2);
@@ -10977,7 +11009,7 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
   );
 
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
-  const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 }).rows;
+  const timeline = (await manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 })).rows;
 
   expect(timeline).toHaveLength(2);
   expect(timeline[0]).toMatchObject({
@@ -11042,7 +11074,7 @@ test("provider user_message is recorded from the live stream", async () => {
 
   await manager.runAgent(snapshot.id, { text: "do something" });
 
-  const timeline = manager.getTimeline(snapshot.id);
+  const timeline = await manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
 
   // Provider's user_message should be recorded (no canonical to dedup against)
@@ -11178,7 +11210,8 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       { type: "turn_completed" },
     ]);
 
-    const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
+    const timeline = (await manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }))
+      .rows;
     expect(timeline).toMatchObject([
       {
         seq: 1,
@@ -11267,6 +11300,8 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       runOptions: { clientMessageId: "msg-client-daemon-handled" },
     });
     await commandCompleted.promise;
+    // The command's output publishes once the timeline commits it.
+    await manager.flush();
 
     expect(
       events.flatMap((event) =>
@@ -11281,7 +11316,8 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
 
-    const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
+    const timeline = (await manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }))
+      .rows;
     expect(timeline.map((row) => row.item)).toEqual([
       {
         type: "user_message",
@@ -11695,7 +11731,7 @@ test("system-injected prompts appear as trigger tools in the live timeline", asy
 
   await manager.runAgent(snapshot.id, { text: "do something" });
 
-  const timeline = manager.getTimeline(snapshot.id);
+  const timeline = await manager.getTimeline(snapshot.id);
   expect(timeline).toContainEqual(
     expect.objectContaining({ type: "tool_call", name: "heartbeat", status: "completed" }),
   );
@@ -11739,7 +11775,7 @@ test("system-injected prompts appear as trigger tools during history replay", as
 
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
-  const timeline = manager.getTimeline(snapshot.id);
+  const timeline = await manager.getTimeline(snapshot.id);
   expect(timeline).toContainEqual(
     expect.objectContaining({ type: "tool_call", name: "heartbeat", status: "completed" }),
   );
@@ -11985,10 +12021,10 @@ test("commits startup notices once on create and after restored history", async 
       return new NotifyingSession({ provider: "codex", cwd: workdir });
     }
   })();
-  const store = new RecordingTimelineStore();
+  const backend = new DeferredTimelineBackend();
   const manager = new AgentManager({
     clients: { codex: client },
-    durableTimelineStore: store,
+    timeline: new AgentTimeline(backend),
     logger,
   });
   const ids: string[] = [];
@@ -12015,7 +12051,7 @@ test("commits startup notices once on create and after restored history", async 
       notice,
     ]);
     await manager.flush();
-    expect(store.writes.flat()).toContainEqual(expect.objectContaining({ item: notice }));
+    expect(backend.appends.flat()).toContainEqual(expect.objectContaining({ item: notice }));
   } finally {
     for (const id of ids) await manager.closeAgent(id);
     rmSync(workdir, { recursive: true, force: true });
@@ -12113,7 +12149,7 @@ test.each(["live", "history"])(
     });
     if (path === "live") await manager.runAgent(agent.id, { text: "start" });
     else await manager.hydrateTimelineFromProvider(agent.id, { force: true });
-    expect(manager.getTimeline(agent.id)).toContainEqual(
+    expect(await manager.getTimeline(agent.id)).toContainEqual(
       expect.objectContaining({
         type: "tool_call",
         callId: "paseo-agent-message:delivery-1",
@@ -12131,9 +12167,9 @@ test.each(["live", "history"])(
         },
       }),
     );
-    expect(manager.getTimeline(agent.id).filter((entry) => entry.type === "user_message")).toEqual(
-      [],
-    );
+    expect(
+      (await manager.getTimeline(agent.id)).filter((entry) => entry.type === "user_message"),
+    ).toEqual([]);
     expect(manager.getAgent(agent.id)?.lastUserMessageAt).toBeNull();
   },
 );
@@ -12168,15 +12204,17 @@ test.each([false, true])(
         clientMessageId: delivery.messageId,
       })) {
       }
-      expect(manager.getTimeline(agent.id).filter((item) => item.type === "tool_call")).toEqual([
+      expect(
+        (await manager.getTimeline(agent.id)).filter((item) => item.type === "tool_call"),
+      ).toEqual([
         expect.objectContaining({
           callId: "paseo-agent-message:accepted-delivery",
           status: "completed",
         }),
       ]);
-      expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual(
-        [],
-      );
+      expect(
+        (await manager.getTimeline(agent.id)).filter((item) => item.type === "user_message"),
+      ).toEqual([]);
       expect(manager.getAgent(agent.id)?.lastUserMessageAt).toBeNull();
     } finally {
       await manager.closeAgent(agent.id);
@@ -12211,7 +12249,9 @@ test("a rejected agent prompt never becomes a delivered notification", async () 
       clientMessageId: delivery.messageId,
     });
     await expect(run.next()).rejects.toThrow("provider rejected delivery");
-    expect(manager.getTimeline(agent.id).filter((item) => item.type === "tool_call")).toEqual([]);
+    expect(
+      (await manager.getTimeline(agent.id)).filter((item) => item.type === "tool_call"),
+    ).toEqual([]);
     expect(manager.getAgent(agent.id)?.lastUserMessageAt).toBeNull();
   } finally {
     await manager.closeAgent(agent.id);
@@ -12248,7 +12288,7 @@ test.each([false, true])(
         clientMessageId: delivery.messageId,
       })) {
       }
-      expect(manager.getTimeline(agent.id)).toEqual([
+      expect(await manager.getTimeline(agent.id)).toEqual([
         {
           type: "user_message",
           text: example,
@@ -12295,22 +12335,15 @@ test.each([
 ])(
   "lifecycle hooks receive no conversation for $event.type and stream dispatch never reads timeline items",
   async ({ event: terminalEvent, outcome }) => {
-    class CountingTimelineStore extends InMemoryAgentTimelineStore {
-      itemReads = 0;
-      override getItems(agentId: string): AgentTimelineItem[] {
-        this.itemReads += 1;
-        return super.getItems(agentId);
-      }
-    }
     const workdir = mkdtempSync(join(tmpdir(), "agent-hook-payload-"));
     const client = new SessionRecordingAgentClient();
-    const timelineStore = new CountingTimelineStore();
+    const timelineStore = new DeferredTimelineBackend();
     const events: Array<{ name: string; event: unknown }> = [];
     const manager = new AgentManager({
       clients: { codex: client },
       registry: new AgentStorage(join(workdir, "agents"), logger),
       logger,
-      timelineStore,
+      timeline: new AgentTimeline(timelineStore),
       pluginLifecycle: {
         before: async (_name, request) => request,
         emit: (name, event) => {
@@ -12330,14 +12363,14 @@ test.each([
       type: "assistant_message",
       text: "A long conversation".repeat(10_000),
     });
-    expect(manager.getTimeline(agent.id)).toHaveLength(1);
-    const readsBeforeDispatch = timelineStore.itemReads;
+    expect(await manager.getTimeline(agent.id)).toHaveLength(1);
+    const readsBeforeDispatch = timelineStore.readRowsCalls;
     const session = client.sessions[0]!;
     session.pushEvent({ type: "turn_started", provider: "codex", turnId: "hook-turn" });
     await expect
       .poll(() => events.filter(({ name }) => name === "agent.turn.before").length)
       .toBe(1);
-    expect(timelineStore.itemReads).toBe(readsBeforeDispatch);
+    expect(timelineStore.readRowsCalls).toBe(readsBeforeDispatch);
     session.pushEvent(terminalEvent);
     await expect
       .poll(() => events.filter(({ name }) => name === "agent.turn.after"))
@@ -12359,7 +12392,7 @@ test.each([
           },
         },
       ]);
-    expect(timelineStore.itemReads).toBe(readsBeforeDispatch);
+    expect(timelineStore.readRowsCalls).toBe(readsBeforeDispatch);
   },
 );
 
@@ -12408,8 +12441,7 @@ test.each(["live", "history", "accepted"] as const)(
         }
       } else await manager.runAgent(agent.id, { text: "start" });
       expect(
-        manager
-          .getTimeline(agent.id)
+        (await manager.getTimeline(agent.id))
           .filter((row) => row.type === "tool_call")
           .map((row) => ({ callId: row.callId, agentMessage: row.agentMessage })),
       ).toEqual([
@@ -12430,9 +12462,9 @@ test.each(["live", "history", "accepted"] as const)(
           },
         },
       ]);
-      expect(manager.getTimeline(agent.id).filter((row) => row.type === "user_message")).toEqual(
-        [],
-      );
+      expect(
+        (await manager.getTimeline(agent.id)).filter((row) => row.type === "user_message"),
+      ).toEqual([]);
       expect(manager.getAgent(agent.id)?.lastUserMessageAt).toBeNull();
     } finally {
       await manager.closeAgent(agent.id);
@@ -12442,17 +12474,21 @@ test.each(["live", "history", "accepted"] as const)(
 );
 
 test("reads the last durable assistant response without loading a stored-only child", async () => {
-  const store = new RecordingTimelineStore();
-  await store.appendCommitted("stored-child", {
-    type: "assistant_message",
-    text: "Partial work saved before restart",
-  });
-  const manager = new AgentManager({ clients: {}, durableTimelineStore: store, logger });
+  const backend = new DeferredTimelineBackend();
+  // History a previous daemon process committed.
+  await backend.create(
+    { agentId: "stored-child" },
+    {
+      entries: [{ item: { type: "assistant_message", text: "Partial work saved before restart" } }],
+    },
+  );
+  const manager = new AgentManager({ clients: {}, timeline: new AgentTimeline(backend), logger });
   expect(manager.getAgent("stored-child")).toBeNull();
   expect(await manager.getLastAssistantMessage("stored-child")).toBe(
     "Partial work saved before restart",
   );
   expect(manager.getAgent("stored-child")).toBeNull();
+  expect(backend.readRowsCalls).toBe(0);
 });
 
 function runtimeCleanup(manager: AgentManager) {

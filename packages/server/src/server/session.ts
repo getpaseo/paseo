@@ -1989,7 +1989,7 @@ export class Session {
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
         if (event.type === "timeline_replacement") {
-          this.deliverTimelineReplacement(event.agentId, this.rewindInitiators.get(event.agentId));
+          this.deliverTimelineReplacement(event, this.rewindInitiators.get(event.agentId));
           return;
         }
 
@@ -4642,7 +4642,7 @@ export class Session {
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
+      const timelineSize = (await this.agentManager.getTimeline(snapshot.id)).length;
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(snapshot);
         this.emit({
@@ -4791,7 +4791,7 @@ export class Session {
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      const timelineSize = this.agentManager.getTimeline(agentId).length;
+      const timelineSize = (await this.agentManager.getTimeline(agentId)).length;
       if (requestId) {
         this.emit({
           type: "status",
@@ -4910,11 +4910,13 @@ export class Session {
     }
   }
 
-  private deliverTimelineReplacement(agentId: string, initiatingSource?: object): void {
+  private deliverTimelineReplacement(
+    timeline: Extract<AgentManagerEvent, { type: "timeline_replacement" }>,
+    initiatingSource?: object,
+  ): void {
+    const { agentId, epoch } = timeline;
     const agent = this.agentManager.getAgent(agentId);
     if (!agent) return;
-    const timeline = this.agentManager.fetchTimeline(agentId, { limit: 0 });
-    const epoch = timeline.epoch;
 
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
       if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
@@ -7843,7 +7845,7 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
         limit: msg.limit,
@@ -7973,14 +7975,14 @@ export class Session {
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
+      const { epoch } = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
       const result = await searchTimeline({ rows, query: msg.query, cursor: msg.cursor });
       if (
-        this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }).epoch !==
-        epoch
+        (await this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }))
+          .epoch !== epoch
       ) {
         throw new Error("History changed; search again");
       }
@@ -8026,7 +8028,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
@@ -8114,7 +8116,7 @@ export class Session {
       const supportsProjection = source
         ? this.supportsForSource(CLIENT_CAPS.projectedSubagentTimeline, source)
         : this.supports(CLIENT_CAPS.projectedSubagentTimeline);
-      const timeline = this.agentManager.fetchProviderSubagentTimeline(
+      const timeline = await this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
         {
@@ -8205,7 +8207,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
       });
