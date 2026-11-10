@@ -1084,3 +1084,184 @@ describe("closed Codex startup model recovery", () => {
     },
   );
 });
+
+interface CodexFeatureFlags {
+  goalsEnabledPromise: Promise<boolean>;
+  autoReviewEnabledPromise: Promise<boolean>;
+}
+
+async function acceptInitialTierChange(load: () => Promise<unknown>): Promise<void> {
+  await load();
+}
+
+async function rejectLaterModeChange(load: () => Promise<unknown>): Promise<void> {
+  await expect(load()).rejects.toThrow(/mode/i);
+}
+
+describe.each([
+  { entry: "create", persistence: undefined },
+  { entry: "resume", persistence: { provider: "codex", sessionId: "saved-thread" } },
+])("closed Codex initial service tier ($entry)", ({ persistence }) => {
+  test.each([
+    {
+      label: "unsupported tier",
+      change: { model: "target-plain" },
+      tier: "default",
+      assertLoad: acceptInitialTierChange,
+    },
+    {
+      label: "supported tier",
+      change: { model: "target-fast" },
+      tier: "priority",
+      assertLoad: acceptInitialTierChange,
+    },
+    {
+      label: "mode rejection after accepted model",
+      change: { model: "target-plain", modeId: "invalid-mode", thinkingOptionId: "low" },
+      tier: "default",
+      assertLoad: rejectLaterModeChange,
+    },
+  ])("persists $label through registration and reopening", async ({ change, tier, assertLoad }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-initial-tier-"));
+    const logger = createTestLogger();
+    const appServers: FakeCodexAppServer[] = [];
+    const sessions: AgentSession[] = [];
+    const provider = new CodexAppServerAgentClient(logger, undefined, {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "codex", args: [] }),
+        spawn: () => {
+          const server = createFakeCodexAppServer({
+            "model/list": () => ({
+              data: [
+                {
+                  id: "saved-fast",
+                  isDefault: false,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+                },
+                {
+                  id: "target-fast",
+                  isDefault: false,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+                },
+                {
+                  id: "target-plain",
+                  isDefault: true,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [],
+                },
+              ],
+            }),
+            "thread/start": () => ({ thread: { id: "tier-thread" } }),
+          });
+          appServers.push(server);
+          return server.child;
+        },
+      },
+    });
+    const internals = asInternals<CodexFeatureFlags>(provider);
+    internals.goalsEnabledPromise = Promise.resolve(false);
+    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    const client: AgentClient = {
+      provider: "codex",
+      capabilities: provider.capabilities,
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({ models: [], modes: [] }),
+      createSession: async (...args) => {
+        const session = await provider.createSession(...args);
+        sessions.push(session);
+        return session;
+      },
+      resumeSession: async (...args) => {
+        const session = await provider.resumeSession(...args);
+        sessions.push(session);
+        return session;
+      },
+    };
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const publishedTiers: unknown[] = [];
+    manager.subscribe((event) => {
+      if (event.type === "agent_state")
+        publishedTiers.push(event.agent.effectiveOptions?.service_tier);
+    });
+    const id = "00000000-0000-4000-8000-000000000c12";
+    const now = new Date().toISOString();
+    try {
+      await storage.upsert({
+        id,
+        provider: "codex",
+        cwd: workdir,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: null,
+        persistence,
+        config: {
+          model: "saved-fast",
+          thinkingOptionId: "high",
+          providerOptions: { service_tier: "priority", plan_mode: false },
+        },
+      });
+      await assertLoad(() =>
+        ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: change,
+        }),
+      );
+      await manager.flush();
+      expect((await storage.get(id))?.config).toMatchObject({
+        model: change.model,
+        thinkingOptionId: "high",
+        providerOptions: { service_tier: tier, plan_mode: false },
+      });
+      expect(manager.getAgent(id)?.config.providerOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(manager.getAgent(id)?.effectiveOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(new Set(publishedTiers)).toEqual(new Set([tier]));
+      expect(manager.getAgent(id)?.runtimeInfo?.model).toBe(change.model);
+      await sessions.at(-1)!.startTurn("check native tier");
+      await expect(appServers.at(-1)!.waitForTurnStart()).resolves.toMatchObject({
+        model: change.model,
+        serviceTier: tier,
+      });
+      await manager.setAgentModel(id, "saved-fast");
+      await manager.closeAgent(id);
+      await manager.flush();
+      await ensureUnarchivedAgentLoaded(id, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      });
+      await manager.flush();
+      expect((await storage.get(id))?.config?.providerOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(manager.getAgent(id)?.effectiveOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      await sessions.at(-1)!.startTurn("check reopened tier");
+      await expect(appServers.at(-1)!.waitForTurnStart()).resolves.toMatchObject({
+        model: "saved-fast",
+        serviceTier: tier,
+      });
+    } finally {
+      await manager.closeAgent(id);
+      await manager.flush();
+      await storage.flush();
+      for (const server of appServers) server.assertNoErrors();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+});
