@@ -1209,6 +1209,7 @@ export const ko: TranslationResources = {
     },
     display: {
       showBackground: "백그라운드 표시",
+      nestSubagentWorkspaces: "하위 에이전트 워크스페이스 묶기",
       trigger: "표시 설정",
       heading: "표시",
       sort: {

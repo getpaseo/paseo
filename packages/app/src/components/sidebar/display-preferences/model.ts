@@ -18,6 +18,8 @@ export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 
 export interface SidebarDisplayPreferences {
   showBackground: boolean;
+  nestSubagentWorkspaces: boolean;
+  toggleNestSubagentWorkspaces: () => void;
   toggleBackground: () => void;
   grouping: SidebarGroupMode;
   workspaceSort: WorkspaceSort;
@@ -55,6 +57,10 @@ export interface SidebarDisplayPreferences {
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const showBackground = useSidebarViewStore((state) => state.showBackground);
   const toggleBackground = useSidebarViewStore((state) => state.toggleBackground);
+  const nestSubagentWorkspaces = useSidebarViewStore((state) => state.nestSubagentWorkspaces);
+  const toggleNestSubagentWorkspaces = useSidebarViewStore(
+    (state) => state.toggleNestSubagentWorkspaces,
+  );
   const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
   const setWorkspaceSort = useSidebarViewStore((state) => state.setWorkspaceSort);
   const grouping = useSidebarViewStore((state) => state.groupMode);
@@ -115,6 +121,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     () => ({
       showBackground,
       toggleBackground,
+      nestSubagentWorkspaces,
+      toggleNestSubagentWorkspaces,
       grouping,
       workspaceSort,
       setWorkspaceSort,
@@ -140,6 +148,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [
       showBackground,
       toggleBackground,
+      nestSubagentWorkspaces,
+      toggleNestSubagentWorkspaces,
       grouping,
       workspaceSort,
       setWorkspaceSort,

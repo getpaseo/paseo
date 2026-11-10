@@ -21,7 +21,10 @@ import { buildWorkspaceTabActionEntries } from "@/screens/workspace/workspace-ta
 import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { density, densityIconBox } from "@/styles/density";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  navigateToWorkspace,
+  useActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import {
@@ -35,6 +38,9 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHasSubagents, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
+import { useArchiveSubagent } from "@/subagents/use-archive-subagent";
+import { useDetachSubagent } from "@/subagents/use-detach-subagent";
+import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-menu";
 import { useSubagentRowPresentation } from "@/subagents/track";
 import { useAgentFactsLine } from "@/panels/agent-facts-line";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
@@ -378,6 +384,7 @@ function SidebarAgentTabEntry({
               workspaceKey={workspaceKey}
               parentTabId={tab.tabId}
               openInSidePane={openInSidePane}
+              menuActions={menuActions}
             />
           ))}
         </View>
@@ -437,6 +444,7 @@ function SidebarSubagentRow({
   workspaceKey,
   parentTabId,
   openInSidePane,
+  menuActions,
 }: {
   row: SubagentRow;
   active: boolean;
@@ -445,6 +453,7 @@ function SidebarSubagentRow({
   workspaceKey: string;
   parentTabId: string;
   openInSidePane: OpenInSidePanePreferences;
+  menuActions: SidebarWorkspaceTabMenuActions;
 }) {
   const { t } = useTranslation();
   const rowServerId = row.kind === "paseo" ? row.address.serverId : serverId;
@@ -455,11 +464,19 @@ function SidebarSubagentRow({
     () => openSidebarSubagent({ serverId, workspaceId, parentTabId, row, openInSidePane }),
     [serverId, workspaceId, parentTabId, row, openInSidePane],
   );
-  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
   const ownWorkspace = useSubagentOwnWorkspace(row, serverId, workspaceId);
+  // A child in its own workspace opens there, and that workspace's row nests under this one, so
+  // the row is where the sidebar shows you are in it.
+  const activeWorkspace = useActiveWorkspaceSelection();
+  const inOwnWorkspace =
+    ownWorkspace !== null &&
+    activeWorkspace?.serverId === rowServerId &&
+    activeWorkspace.workspaceId === ownWorkspace.id;
+  const highlighted = active || inOwnWorkspace;
+  const accessibilityState = useMemo(() => ({ selected: highlighted }), [highlighted]);
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
-      const emphasized = active || hovered;
+      const emphasized = highlighted || hovered;
       return (
         <>
           <View style={styles.subagentIconSlot}>
@@ -488,21 +505,129 @@ function SidebarSubagentRow({
         </>
       );
     },
-    [active, label, presentation, row.kind, row.id, rowServerId, ownWorkspace],
+    [highlighted, label, presentation, row.kind, row.id, rowServerId, ownWorkspace],
   );
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  // Same rule as a tab row's menu: hover-revealed on pointer, always there on touch.
+  const showMenu = isHovered || isNative || isCompact;
+  const menu =
+    row.kind === "paseo" && rowServerId === serverId ? (
+      <SidebarSubagentMenu
+        agentId={row.id}
+        serverId={serverId}
+        label={label}
+        menuTestIDBase={`sidebar-workspace-subagent-menu-${workspaceKey}-${row.id}`}
+        menuActions={menuActions}
+        visible={showMenu}
+      />
+    ) : null;
   return (
-    <PressHighlight
-      style={subagentRowStyle}
-      highlightStyle={styles.rowPressed}
-      onPress={handlePress}
-      accessibilityRole={isWeb ? undefined : "button"}
-      accessibilityState={accessibilityState}
-      aria-selected={active}
-      accessibilityLabel={label}
-      testID={`sidebar-workspace-subagent-${workspaceKey}-${row.id}`}
+    <View
+      style={styles.subagentRowWithMenu}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
-      {renderContent}
-    </PressHighlight>
+      <PressHighlight
+        style={subagentRowStyle}
+        highlightStyle={styles.rowPressed}
+        onPress={handlePress}
+        accessibilityRole={isWeb ? undefined : "button"}
+        accessibilityState={accessibilityState}
+        aria-selected={highlighted}
+        accessibilityLabel={label}
+        testID={`sidebar-workspace-subagent-${workspaceKey}-${row.id}`}
+      >
+        {renderContent}
+      </PressHighlight>
+      {menu}
+    </View>
+  );
+}
+
+/**
+ * The subagent's own actions, which its workspace row's kebab no longer offers once the
+ * workspace nests: the agent tab's copy, rename and reload rows, then the subagents track's
+ * detach and archive. Each asks for confirmation through the same dialog the track uses.
+ */
+function SidebarSubagentMenu({
+  agentId,
+  serverId,
+  label,
+  menuTestIDBase,
+  menuActions,
+  visible,
+}: {
+  agentId: string;
+  serverId: string;
+  label: string;
+  menuTestIDBase: string;
+  menuActions: SidebarWorkspaceTabMenuActions;
+  /** Hides by opacity, so an open menu keeps its trigger when the pointer leaves. */
+  visible: boolean;
+}) {
+  const { t } = useTranslation();
+  const archiveSubagent = useArchiveSubagent();
+  const detachSubagent = useDetachSubagent();
+  const canDetach = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
+  );
+  const entries = useMemo<WorkspaceTabMenuEntry[]>(() => {
+    const tab: WorkspaceTabDescriptor = {
+      key: `agent_${agentId}`,
+      tabId: `agent_${agentId}`,
+      kind: "agent",
+      target: { kind: "agent", agentId },
+    };
+    const address = { serverId, agentId };
+    const lifecycle: WorkspaceTabMenuEntry[] = [];
+    if (canDetach) {
+      lifecycle.push({
+        kind: "item",
+        key: "detach-subagent",
+        label: t("subagents.detachTooltip"),
+        icon: "unlink",
+        testID: `${menuTestIDBase}-detach`,
+        onSelect: () => detachSubagent(address),
+      });
+    }
+    lifecycle.push({
+      kind: "item",
+      key: "archive-subagent",
+      label: t("subagents.archiveTooltip"),
+      icon: "archive",
+      destructive: true,
+      testID: `${menuTestIDBase}-archive`,
+      onSelect: () => archiveSubagent(address),
+    });
+    return [
+      ...buildWorkspaceTabActionEntries({ ...menuActions, tab, menuTestIDBase }),
+      { kind: "separator", key: "subagent-lifecycle-separator" },
+      ...lifecycle,
+    ];
+  }, [
+    agentId,
+    archiveSubagent,
+    canDetach,
+    detachSubagent,
+    menuActions,
+    menuTestIDBase,
+    serverId,
+    t,
+  ]);
+  return (
+    <View
+      style={visible ? styles.subagentMenuSlot : styles.subagentMenuSlotHidden}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <MobileTabTrailingAccessory
+        menuTestIDBase={menuTestIDBase}
+        presentationLabel={label}
+        menuEntries={entries}
+      />
+    </View>
   );
 }
 
@@ -660,8 +785,25 @@ const styles = StyleSheet.create((theme) => {
     // Title over facts over the workspace line, like a workspace row; the icon stays on the
     // title line.
     subagentRow: {
+      flex: 1,
+      minWidth: 0,
       alignItems: "flex-start",
       paddingVertical: theme.spacing[1],
+    },
+    subagentRowWithMenu: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: theme.spacing[1],
+    },
+    // The kebab sits on the title line, like the workspace row's.
+    subagentMenuSlot: {
+      paddingTop: theme.spacing[1],
+      paddingRight: theme.spacing[1],
+    },
+    subagentMenuSlotHidden: {
+      paddingTop: theme.spacing[1],
+      paddingRight: theme.spacing[1],
+      opacity: 0,
     },
     subagentIconSlot: {
       width: ICON_SIZE,
