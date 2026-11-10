@@ -121,6 +121,26 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+describe("assistant selection copy of math", () => {
+  it("copies rendered formulas as their TeX source", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `
+      <div data-testid="assistant-message">
+        <div data-paseo-markdown-tag="p">Pixel <span role="math" aria-label="p_{ij}"><span class="katex"><math><semantics><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><annotation encoding="application/x-tex">p_{ij}</annotation></semantics></math></span></span> of corner j.</div>
+        <span role="math" aria-label="K=\\begin{bmatrix}f_x&amp;0\\\\0&amp;f_y\\end{bmatrix}" style="display: block"><span class="katex"><math display="block"><mi>K</mi></math></span></span>
+      </div>
+    `;
+    document.body.append(host);
+    const message = fixtureElement(host, '[data-testid="assistant-message"]');
+
+    expect(copiedMarkdown(selectNodeContents(message))).toBe(
+      String.raw`Pixel $p_{ij}$ of corner j.
+
+$$K=\begin{bmatrix}f_x&0\\0&f_y\end{bmatrix}$$`,
+    );
+  });
+});
+
 describe("assistant selection copy ranges", () => {
   it("does not handle absent, collapsed, or non-assistant selections", () => {
     expect(createAssistantSelectionClipboardContent(null)).toBeNull();
