@@ -367,6 +367,16 @@ function completeInitialConfigChange({
   onConfigApplied?.(result.initialization);
 }
 
+interface StoredConfigChange {
+  agentId: string;
+  record: StoredAgentRecord | null;
+  change: AgentSessionConfigChange | undefined;
+}
+
+function assertUnarchivedConfigChange({ agentId, record, change }: StoredConfigChange): void {
+  if (change && record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+}
+
 function normalizeConfigSelection(value: string | null | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -1535,6 +1545,7 @@ export class AgentManager {
       this.runLifecycleMutation(resolvedAgentId, async () => {
         const record = await this.requireRegistry().get(resolvedAgentId);
         if (!record) throw new AgentNotFoundError(resolvedAgentId);
+        assertUnarchivedConfigChange({ agentId: resolvedAgentId, record, change: overrides });
         const config = buildSessionConfig(record, {
           validProviders: this.getRegisteredProviderIds(),
         });
@@ -1723,6 +1734,11 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    assertUnarchivedConfigChange({
+      agentId: resolvedAgentId,
+      record,
+      change: resumeOptions?.configChange,
+    });
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
     const configChange = normalizeInitialConfigChange(resumeOptions?.configChange);
     const currentResumeOptions = {

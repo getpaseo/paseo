@@ -191,9 +191,9 @@ async function waitForPendingInitialization({
   deps: EnsureAgentLoadedDeps;
   pending: PendingAgentInitialization;
 }): Promise<ManagedAgent> {
-  if (!pending.hasConfigChange) return pending.promise;
-  // A mutation owns its rejection. Wait for it to settle before this caller loads
-  // or mutates the resulting session, rather than borrowing its requested selection.
+  if (!pending.hasConfigChange && deps.configOverrides === undefined) return pending.promise;
+  // A mutation owns its selection and rejection. An ordinary load may fail on the
+  // saved preference that this caller repairs; it must still try its own selection.
   await pending.promise.catch(() => undefined);
   return ensureAgentLoaded(agentId, deps);
 }

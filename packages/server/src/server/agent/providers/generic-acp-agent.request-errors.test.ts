@@ -1,3 +1,4 @@
+import { pauseAgentInitialization } from "../../test-utils/agent-initialization.js";
 import type { AgentConfigInitialization } from "../agent-sdk-types.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -203,6 +204,102 @@ test.each([
     });
   },
 );
+
+async function acceptsPendingRepair(repair: Promise<unknown>): Promise<void> {
+  await expect(repair).resolves.toMatchObject({ provider: "acp", config: { model: "default" } });
+}
+
+async function rejectsInvalidPendingRepair(repair: Promise<unknown>): Promise<void> {
+  await expect(repair).rejects.toThrow("invalid-replacement");
+}
+
+describe.each([
+  { entry: "create", persistence: undefined },
+  { entry: "resume", persistence: { provider: "acp", sessionId: "session-1" } },
+])("repair waiting for ordinary ACP startup ($entry)", ({ persistence }) => {
+  test.each([
+    {
+      model: "default",
+      assertRepair: acceptsPendingRepair,
+      expectedConfig: { modeId: "agent", model: "default", thinkingOptionId: "high" },
+      expectedAgent: expect.objectContaining({
+        config: expect.objectContaining({ model: "default" }),
+      }),
+    },
+    {
+      model: "invalid-replacement",
+      assertRepair: rejectsInvalidPendingRepair,
+      expectedConfig: { model: "missing-saved-model", thinkingOptionId: "high" },
+      expectedAgent: null,
+    },
+  ])(
+    "validates its own $model after the ordinary load fails",
+    async ({ model, assertRepair, expectedConfig, expectedAgent }) => {
+      await withFakeACPAgent("removed-on-load", async (command, cwd) => {
+        const logger = createTestLogger();
+        const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+        const client = new GenericACPAgentClient({ logger, command });
+        const selections: Array<string | undefined> = [];
+        const create = client.createSession.bind(client);
+        client.createSession = async (...args) => {
+          selections.push(args[2]?.configChange?.model);
+          return create(...args);
+        };
+        const resume = client.resumeSession.bind(client);
+        client.resumeSession = async (...args) => {
+          selections.push(args[3]?.configChange?.model);
+          return resume(...args);
+        };
+        const manager = new AgentManager({ clients: { acp: client }, registry: storage, logger });
+        const initialization = pauseAgentInitialization(manager);
+        const id = "00000000-0000-4000-8000-000000000831";
+        const now = new Date().toISOString();
+        try {
+          await storage.upsert({
+            id,
+            provider: "acp",
+            cwd,
+            createdAt: now,
+            updatedAt: now,
+            labels: {},
+            archivedAt: null,
+            lastStatus: "closed",
+            persistence,
+            config: { model: "missing-saved-model", thinkingOptionId: "high" },
+          });
+          const ordinary = ensureUnarchivedAgentLoaded(id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+          const ordinaryFailure = expect(ordinary).rejects.toThrow("missing-saved-model");
+          await initialization.entered;
+          const waiting = initialization.waitForNextLoad();
+          const repair = ensureUnarchivedAgentLoaded(id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+            configOverrides: { model },
+          });
+          const repairResult = assertRepair(repair);
+          await waiting;
+          initialization.release();
+          await ordinaryFailure;
+          await repairResult;
+          await manager.flush();
+          expect(selections).toEqual([undefined, model]);
+          expect((await storage.get(id))?.config).toEqual(expectedConfig);
+          expect(manager.getAgent(id)).toEqual(expectedAgent);
+        } finally {
+          initialization.release();
+          await manager.closeAgent(id);
+          await manager.flush();
+          await storage.flush();
+        }
+      });
+    },
+  );
+});
 
 interface SelectionRepairRequest {
   session: AgentConfigSession;

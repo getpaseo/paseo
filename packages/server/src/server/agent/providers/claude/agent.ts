@@ -2808,7 +2808,7 @@ class ClaudeAgentSession implements AgentSession {
     assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
     const previousQuery = this.query;
-    const activeQuery = await this.ensureQuery(normalized);
+    const activeQuery = await this.ensureQuery({ launchMode: normalized });
     try {
       await activeQuery.setPermissionMode(normalized);
     } catch (error) {
@@ -2830,8 +2830,36 @@ class ClaudeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<{ model: string | null }> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId.trim() : null;
-    const activeQuery = await this.ensureQuery();
-    await activeQuery.setModel(normalizedModelId ?? undefined);
+    // A lazy registered session must launch the requested model, not a removed saved one.
+    // Keep accepted configuration separate until the SDK validates the replacement.
+    const lazyLaunch = this.query === null;
+    const previous = {
+      lastOptionsModel: this.lastOptionsModel,
+      lastRuntimeModel: this.lastRuntimeModel,
+      cachedRuntimeInfo: this.cachedRuntimeInfo,
+      persistence: this.persistence,
+      queryRestartNeeded: this.queryRestartNeeded,
+    };
+    const startup: ClaudeAgentConfig = { ...this.config, model: normalizedModelId ?? undefined };
+    if (startup.thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
+      const resolution = resolveClaudeDisabledThinkingForModel(startup.model);
+      if (!resolution.supported) startup.thinkingOptionId = resolution.fallbackThinkingOptionId;
+    }
+    let activeQuery: Query;
+    try {
+      activeQuery = await this.ensureQuery({ launchConfig: lazyLaunch ? startup : this.config });
+      await activeQuery.setModel(normalizedModelId ?? undefined);
+    } catch (error) {
+      if (lazyLaunch) {
+        await this.retireQuery();
+        this.lastOptionsModel = previous.lastOptionsModel;
+        this.lastRuntimeModel = previous.lastRuntimeModel;
+        this.cachedRuntimeInfo = previous.cachedRuntimeInfo;
+        this.persistence = previous.persistence;
+        this.queryRestartNeeded = previous.queryRestartNeeded;
+      }
+      throw error;
+    }
     this.config.model = normalizedModelId ?? undefined;
     this.reconcileThinkingOptionForModel(normalizedModelId);
     if (this.config.providerOptions.fast_mode) {
@@ -2852,7 +2880,8 @@ class ClaudeAgentSession implements AgentSession {
     this.contextUsage.setInitialContextWindowMaxTokens(
       getClaudeContextWindowMaxTokens(this.config.model),
     );
-    this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
+    if (lazyLaunch) this.lastOptionsModel = normalizedModelId;
+    else this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
     this.cachedRuntimeInfo = null;
     // Model change affects persistence metadata, so invalidate cached handle.
@@ -3575,7 +3604,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private async retireQuery(): Promise<void> {
     const oldQuery = this.query;
-    if (!oldQuery) return;
+    if (!oldQuery && !this.input && !this.childProcess) return;
     const oldInput = this.input;
     for (const finish of this.backgroundStops.values()) finish("connection lost");
     // Null out query/input BEFORE awaiting the old iterator's return so the
@@ -3590,9 +3619,9 @@ class ClaudeAgentSession implements AgentSession {
     this.childProcess = null;
     if (retiredChild) this.failRunningRuntimeTasks();
     oldInput?.end();
-    oldQuery.close?.();
+    oldQuery?.close?.();
     try {
-      await oldQuery.return?.();
+      await oldQuery?.return?.();
     } catch {
       /* ignore */
     }
@@ -3609,7 +3638,13 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
+  private async ensureQuery({
+    launchMode = this.currentMode,
+    launchConfig = this.config,
+  }: {
+    launchMode?: PermissionMode;
+    launchConfig?: ClaudeAgentConfig;
+  } = {}): Promise<Query> {
     await this.ensureHistoryReady();
     // Controls use the running turn's query. Pending launch settings take effect
     // after that turn finishes, when its active query handle has been cleared.
@@ -3630,7 +3665,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryStarting = true;
     let options: ClaudeOptions;
     try {
-      options = await this.buildOptions(launchMode);
+      options = await this.buildOptions({ permissionMode: launchMode, config: launchConfig });
       // Closure can finish while launch options are being prepared.
       if (this.closed) throw new Error("Claude session is closed");
     } catch (error) {
@@ -3643,20 +3678,24 @@ class ClaudeAgentSession implements AgentSession {
     this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
-    this.query = claudeQuery(
-      { prompt: input.iterable, options },
-      {
-        runtimeSettings: this.runtimeSettings,
-        launchEnv: this.launchEnv,
-        queryFactory: this.queryFactory,
-        onChildProcess: (child) => {
-          this.childProcess = child;
-          child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+    try {
+      this.query = claudeQuery(
+        { prompt: input.iterable, options },
+        {
+          runtimeSettings: this.runtimeSettings,
+          launchEnv: this.launchEnv,
+          queryFactory: this.queryFactory,
+          onChildProcess: (child) => {
+            this.childProcess = child;
+            child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+          },
         },
-      },
-    );
-    this.queryStarting = false;
-    const fastMode = this.resolveFastModeSetting();
+      );
+    } finally {
+      this.queryStarting = false;
+    }
+    if (launchConfig === this.config) this.lastOptionsModel = options.model ?? null;
+    const fastMode = this.resolveFastModeSetting(launchConfig);
     if (fastMode !== null) {
       await this.query.applyFlagSettings({ fastMode });
     }
@@ -3713,16 +3752,16 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private resolveThinkingConfig(): {
+  private resolveThinkingConfig(config: ClaudeAgentConfig = this.config): {
     thinking: ClaudeOptions["thinking"];
     effort: ClaudeOptions["effort"];
     ultracode: boolean;
   } {
     const thinkingOptionId =
-      this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
-        ? this.config.thinkingOptionId
+      config.thinkingOptionId && config.thinkingOptionId !== "default"
+        ? config.thinkingOptionId
         : undefined;
-    assertClaudeThinkingOptionSupported(this.config.model, thinkingOptionId);
+    assertClaudeThinkingOptionSupported(config.model, thinkingOptionId);
     if (thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
       return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
     }
@@ -3772,13 +3811,19 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  private async buildOptions(permissionMode: PermissionMode): Promise<ClaudeOptions> {
-    const { thinking, effort, ultracode } = this.resolveThinkingConfig();
+  private async buildOptions({
+    permissionMode,
+    config,
+  }: {
+    permissionMode: PermissionMode;
+    config: ClaudeAgentConfig;
+  }): Promise<ClaudeOptions> {
+    const { thinking, effort, ultracode } = this.resolveThinkingConfig(config);
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
     // `fast_mode` is a composer control the provider applies through flag settings.
-    const { fast_mode: _fastMode, ...sdkProviderOptions } = this.config.providerOptions;
-    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
-    const settingsOptions = await this.buildSettingsOptions(providerOptions, { ultracode });
+    const { fast_mode: _fastMode, ...sdkProviderOptions } = config.providerOptions;
+    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, config.toolPolicy);
+    const settingsOptions = await this.buildSettingsOptions({ providerOptions, ultracode, config });
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
 
@@ -3801,7 +3846,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const base: ClaudeOptions = {
-      cwd: this.config.cwd,
+      cwd: config.cwd,
       includePartialMessages: true,
       permissionMode,
       // Dynamic mode switching can recreate the underlying Claude query. Keep the
@@ -3843,14 +3888,14 @@ class ClaudeAgentSession implements AgentSession {
       env: sdkEnv,
     };
 
-    if (this.config.mcpServers) {
-      base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
+    if (config.mcpServers) {
+      base.mcpServers = this.normalizeMcpServers(config.mcpServers);
     }
 
-    if (this.config.model) {
-      base.model = this.config.model;
+    if (config.model) {
+      base.model = config.model;
     }
-    this.lastOptionsModel = base.model ?? null;
+
     if (this.claudeSessionId && !this.pendingFreshSessionId) {
       base.resume = this.claudeSessionId;
     }
@@ -3863,20 +3908,25 @@ class ClaudeAgentSession implements AgentSession {
     return base;
   }
 
-  private async buildSettingsOptions(
-    providerOptions: ClaudeProviderOptions,
-    input: { ultracode: boolean },
-  ): Promise<Pick<ClaudeOptions, "settings" | "extraArgs"> | Record<string, never>> {
-    const fastMode = this.resolveFastModeSetting();
+  private async buildSettingsOptions({
+    providerOptions,
+    ultracode,
+    config,
+  }: {
+    providerOptions: ClaudeProviderOptions;
+    ultracode: boolean;
+    config: ClaudeAgentConfig;
+  }): Promise<Pick<ClaudeOptions, "settings" | "extraArgs"> | Record<string, never>> {
+    const fastMode = this.resolveFastModeSetting(config);
     // Internal agents do daemon work such as naming a branch, so the user's and
     // project's hooks must not run for them.
-    const disableAllHooks = this.config.internal === true;
-    if (fastMode === null && !input.ultracode && !disableAllHooks) {
+    const disableAllHooks = config.internal === true;
+    if (fastMode === null && !ultracode && !disableAllHooks) {
       return {};
     }
     const updates = {
       ...(fastMode === null ? {} : { fastMode }),
-      ...(input.ultracode ? { ultracode: true } : {}),
+      ...(ultracode ? { ultracode: true } : {}),
       ...(disableAllHooks ? { disableAllHooks: true } : {}),
     };
     // The SDK replaces extraArgs.settings with Options.settings, so a user's
@@ -3885,18 +3935,18 @@ class ClaudeAgentSession implements AgentSession {
     if (typeof extraArgsSettings !== "string") {
       return { settings: mergeClaudeSettings(providerOptions.settings, updates) };
     }
-    const cliSettings = await readClaudeCliSettings(extraArgsSettings, this.config.cwd);
+    const cliSettings = await readClaudeCliSettings(extraArgsSettings, config.cwd);
     return {
       extraArgs,
       settings: { ...cliSettings, ...providerOptions.settings, ...updates },
     };
   }
 
-  private resolveFastModeSetting(): boolean | null {
-    if (!claudeModelSupportsFastMode(this.config.model)) {
+  private resolveFastModeSetting(config: ClaudeAgentConfig = this.config): boolean | null {
+    if (!claudeModelSupportsFastMode(config.model)) {
       return null;
     }
-    return this.config.providerOptions.fast_mode === true;
+    return config.providerOptions.fast_mode === true;
   }
 
   private normalizeMcpServers(

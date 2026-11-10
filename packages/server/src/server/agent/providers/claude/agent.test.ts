@@ -1,3 +1,7 @@
+import {
+  pauseAgentInitialization,
+  pauseArchiveWrite,
+} from "../../../test-utils/agent-initialization.js";
 import type { AgentConfigInitialization } from "../../agent-sdk-types.js";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -736,6 +740,14 @@ describe("ClaudeAgentSession features", () => {
       return queryMock;
     });
     return { queryFactory, queryMock, launches };
+  }
+
+  function launchedModel(launch: { options: Record<string, unknown> }): unknown {
+    return launch.options.model;
+  }
+
+  function rejectCandidateStartup(): never {
+    throw new Error("Candidate unavailable");
   }
 
   function createStreamingQueryMock() {
@@ -1981,7 +1993,9 @@ describe("ClaudeAgentSession features", () => {
       resolveBinary: async () => "/test/claude/bin",
     });
     const thinkingChanges: Array<string | null> = [];
+    const sessions: AgentSession[] = [];
     const instrument = (session: AgentSession) => {
+      sessions.push(session);
       const setThinking = session.setThinkingOption?.bind(session);
       if (!setThinking) throw new Error("Expected Claude thinking setter");
       session.setThinkingOption = async (value) => {
@@ -2048,6 +2062,8 @@ describe("ClaudeAgentSession features", () => {
       manager,
       storage,
       queryMock,
+      queryFactory,
+      sessions,
       launches,
       messages,
       configSession,
@@ -2339,26 +2355,7 @@ describe("ClaudeAgentSession features", () => {
           ...record!,
           config: { ...record.config, model: "claude-opus-5" },
         });
-        let enter!: () => void;
-        let release!: () => void;
-        const entered = new Promise<void>((resolve) => {
-          enter = resolve;
-        });
-        const gate = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        const create = f.manager.createAgentFromRecord.bind(f.manager);
-        const resumeAgent = f.manager.resumeAgentFromPersistence.bind(f.manager);
-        f.manager.createAgentFromRecord = async (...args) => {
-          enter();
-          await gate;
-          return create(...args);
-        };
-        f.manager.resumeAgentFromPersistence = async (...args) => {
-          enter();
-          await gate;
-          return resumeAgent(...args);
-        };
+        const initialization = pauseAgentInitialization(f.manager);
         f.queryMock.setModel.mockRejectedValueOnce(new Error("Invalid first replacement"));
         const first = f.configSession.handleSetAgentModelRequest({
           type: "set_agent_model_request",
@@ -2366,16 +2363,8 @@ describe("ClaudeAgentSession features", () => {
           requestId: "invalid-first",
           modelId: "claude-sonnet-5-5",
         });
-        await entered;
-        let markWaiting!: () => void;
-        const waiting = new Promise<void>((resolve) => {
-          markWaiting = resolve;
-        });
-        const waitForClose = f.manager.waitForAgentClose.bind(f.manager);
-        f.manager.waitForAgentClose = async (agentId) => {
-          await waitForClose(agentId);
-          markWaiting();
-        };
+        await initialization.entered;
+        const waiting = initialization.waitForNextLoad();
         const second = f.configSession.handleSetAgentModelRequest({
           type: "set_agent_model_request",
           agentId: f.id,
@@ -2383,8 +2372,7 @@ describe("ClaudeAgentSession features", () => {
           modelId: "claude-opus-5-5",
         });
         await waiting;
-        await Promise.resolve();
-        release();
+        initialization.release();
         await Promise.all([first, second]);
         expect(
           f.messages.find((message) => message.payload?.requestId === "valid-second"),
@@ -2395,6 +2383,188 @@ describe("ClaudeAgentSession features", () => {
         ]);
         expect((await f.storage.get(f.id))?.config?.model).toBe("claude-opus-5-5");
       } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("an existing query rejects a model without being replaced or changing accepted state", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5",
+      thinkingOptionId: "high",
+      providerOptions: { fast_mode: true },
+    });
+    try {
+      await session.setModel?.("claude-opus-5");
+      const previous = await session.getRuntimeInfo();
+      queryMock.setModel.mockRejectedValueOnce(new Error("Live replacement rejected"));
+      await expect(session.setModel?.("claude-sonnet-5-5")).rejects.toThrow(
+        "Live replacement rejected",
+      );
+      expect(await session.getRuntimeInfo()).toEqual(previous);
+      expect(queryFactory).toHaveBeenCalledTimes(1);
+      expect(queryMock.close).not.toHaveBeenCalled();
+      expect(queryMock.return).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  describe.each([false, true])("plain-first lazy Claude model repair (resume=%s)", (resume) => {
+    test.each([
+      { label: "replacement", modelId: "claude-sonnet-5-5", expected: "claude-sonnet-5-5" },
+      { label: "default", modelId: null, expected: undefined },
+    ])("validates $label before launching a saved removed model", async ({ modelId, expected }) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      const initialization = pauseAgentInitialization(f.manager);
+      try {
+        const ordinary = ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await initialization.entered;
+        const waiting = initialization.waitForNextLoad();
+        const repair = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "plain-first",
+          modelId,
+        });
+        await waiting;
+        initialization.release();
+        await Promise.all([ordinary, repair]);
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith(expected);
+        expect(f.launches.map(launchedModel)).toEqual([expected]);
+        expect((await f.storage.get(f.id))?.config?.model).toBe(expected);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe(expected ?? null);
+      } finally {
+        initialization.release();
+        await f.cleanup();
+      }
+    });
+
+    test("a failed candidate startup leaves the lazy session retryable", async () => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await f.manager.flush();
+        const stored = await f.storage.get(f.id);
+        const runtime = structuredClone(f.manager.getAgent(f.id)?.runtimeInfo);
+        const providerRuntime = await f.sessions[0].getRuntimeInfo();
+        const persistence = structuredClone(f.sessions[0].describePersistence());
+        f.queryFactory.mockImplementationOnce(rejectCandidateStartup);
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "reject-startup",
+          modelId: "claude-sonnet-5-5",
+        });
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Candidate unavailable" },
+        });
+        expect(f.queryMock.setModel).not.toHaveBeenCalled();
+        expect(await f.storage.get(f.id)).toEqual(stored);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+        expect(await f.sessions[0].getRuntimeInfo()).toEqual(providerRuntime);
+        expect(f.sessions[0].describePersistence()).toEqual(persistence);
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "retry-startup",
+          modelId: "claude-sonnet-5-5",
+        });
+        expect(f.messages.at(-1)).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+      } finally {
+        await f.cleanup();
+      }
+    });
+
+    test("a rejected lazy replacement leaves accepted state intact and retires its query", async () => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await f.manager.flush();
+        const stored = await f.storage.get(f.id);
+        const runtime = structuredClone(f.manager.getAgent(f.id)?.runtimeInfo);
+        const providerRuntime = await f.sessions[0].getRuntimeInfo();
+        const persistence = structuredClone(f.sessions[0].describePersistence());
+        f.queryMock.setModel.mockRejectedValueOnce(new Error("Replacement unavailable"));
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "reject-lazy",
+          modelId: "claude-sonnet-5-5",
+        });
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Replacement unavailable" },
+        });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(f.queryMock.close).toHaveBeenCalledTimes(1);
+        expect(f.queryMock.return).toHaveBeenCalledTimes(1);
+        expect(await f.storage.get(f.id)).toEqual(stored);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+        expect(await f.sessions[0].getRuntimeInfo()).toEqual(providerRuntime);
+        expect(f.sessions[0].describePersistence()).toEqual(persistence);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  });
+
+  test.each([false, true])(
+    "archival wins before a queued configuration repair (resume=%s)",
+    async (resume) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      const archiveWrite = pauseArchiveWrite(f.storage);
+      const initialization = pauseAgentInitialization(f.manager);
+      try {
+        const repair = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "archive-race",
+          modelId: "claude-sonnet-5-5",
+        });
+        await initialization.entered;
+        const archival = f.manager.archiveSnapshot(f.id, "2026-11-10T00:00:00.000Z");
+        await archiveWrite.entered;
+        initialization.release();
+        await initialization.queued;
+        archiveWrite.release();
+        const archived = await archival;
+        await repair;
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: `Agent is archived: ${f.id}` },
+        });
+        expect((await f.storage.get(f.id))?.config).toEqual(archived.config);
+        expect(f.launches).toEqual([]);
+        expect(f.queryMock.setModel).not.toHaveBeenCalled();
+        expect(f.manager.getAgent(f.id)).toBeNull();
+      } finally {
+        initialization.release();
+        archiveWrite.release();
         await f.cleanup();
       }
     },
