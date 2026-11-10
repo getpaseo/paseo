@@ -1,4 +1,4 @@
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { latestTurn, type PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText, shellCommand } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -23,8 +23,7 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const text = latestOutputText(await latestTurn(agent.timeline));
     if (/out of credits/i.test(text)) {
       console.log("Sending a follow-up after out of credits", event.agent.id);
       await agent.send("Try again.");
