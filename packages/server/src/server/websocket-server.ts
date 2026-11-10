@@ -1,4 +1,4 @@
-import { DeviceCredentials, type CredentialAuthority } from "./device-credentials.js";
+import { DeviceCredentials, isFullOwner, type CredentialAuthority } from "./device-credentials.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -1651,6 +1651,8 @@ export class VoiceAssistantWebSocketServer {
         return {
           principalId: connection.principalId,
           permissions: connection.session.getPermissions(),
+          // A host-link channel acts with the origin's authority; it must not mint or manage devices here.
+          routed: source instanceof VirtualHostSocket || connection.session.isRouted(),
         };
     }
     throw new Error("Credential request source is no longer attached");
@@ -1679,13 +1681,17 @@ export class VoiceAssistantWebSocketServer {
                 this.issuingSockets.delete(source);
               }
             },
-            list: (source) => this.deviceCredentials!.list(this.socketCredentials.get(source)),
+            list: (source) =>
+              isFullOwner(this.credentialAuthority(source))
+                ? this.deviceCredentials!.list(this.socketCredentials.get(source))
+                : [],
             mintToken: (source) =>
               this.deviceCredentials!.mintToken(
                 this.credentialAuthority(source),
                 !!this.passwordHash,
               ),
-            revoke: async (_source, id) => {
+            revoke: async (source, id) => {
+              if (!isFullOwner(this.credentialAuthority(source))) return false;
               const removed = await this.deviceCredentials!.revoke(id);
               return removed.length > 0;
             },

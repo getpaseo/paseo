@@ -1024,6 +1024,48 @@ test("stops reconnecting after a password rejection on an established connection
   expect(attempts).toBe(1);
 });
 
+test("keeps a device credential after an unauthenticated close and drops it on hello.rejected", async () => {
+  const transports = Array.from({ length: 4 }, () => createMockTransport());
+  const transportFactory = vi.fn(
+    () => transports[transportFactory.mock.calls.length - 1]!.transport,
+  );
+  const onDeviceCredentialRejected = vi.fn();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "device-forged-close",
+    password: "saved-password",
+    deviceCredential: { id: "dc_synthetic", secret: "synthetic-secret" },
+    onDeviceCredentialRejected,
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory,
+  });
+  clients.push(client);
+  const hello = (index: number) => JSON.parse(assertStr(transports[index]!.sent[0])).auth;
+  const connected = client.connect();
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalledTimes(1));
+  // A relay can forge this close; nothing inside the encrypted channel rejected the credential.
+  transports[0]!.triggerClose({ code: 4002, reason: "Incorrect password" });
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalledTimes(2));
+  transports[1]!.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(hello(1)).toEqual({ kind: "password", password: "saved-password" });
+  expect(onDeviceCredentialRejected).not.toHaveBeenCalled();
+  transports[1]!.triggerClose({ code: 1006, reason: "network lost" });
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalledTimes(3));
+  transports[2]!.triggerOpen({ preserveSent: true });
+  expect(hello(2)).toEqual({
+    kind: "deviceCredential",
+    id: "dc_synthetic",
+    secret: "synthetic-secret",
+  });
+  transports[2]!.triggerMessage(
+    JSON.stringify({ type: "hello.rejected", reason: "incorrect_password", accepts: ["password"] }),
+  );
+  transports[2]!.triggerClose({ code: 4401, reason: "Incorrect password" });
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalledTimes(4));
+  expect(onDeviceCredentialRejected).toHaveBeenCalledOnce();
+});
+
 test("sends a password containing spaces in hello without an invalid WebSocket subprotocol", async () => {
   const mock = createMockTransport();
   const transportFactory = vi.fn(() => mock.transport);

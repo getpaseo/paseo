@@ -5188,13 +5188,15 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
   });
 });
 
-it.each(["directTcp", "routed"] as const)(
+// Routed connections never enroll: destinations refuse to mint for routed sessions.
+it.each(["directTcp"] as const)(
   "enrolls an admitted %s host once without reconnecting",
-  async (type) => {
-    const connection: HostConnection =
-      type === "routed"
-        ? { id: "via:origin", type: "routed", originServerId: "srv_origin" }
-        : { id: "direct:fixture", type: "directTcp", endpoint: "localhost:7777" };
+  async () => {
+    const connection: HostConnection = {
+      id: "direct:fixture",
+      type: "directTcp",
+      endpoint: "localhost:7777",
+    };
     const host = makeHost({ connections: [connection], preferredConnectionId: connection.id });
     const clients: FakeDaemonClient[] = [];
     const deps = makeDeps({}, clients);

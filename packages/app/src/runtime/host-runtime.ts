@@ -1561,7 +1561,8 @@ export class HostRuntimeController {
         }
         if (state.status === "connected") {
           this.learnRelaySecurity(client, connection.id);
-          void this.enrollDevice(client);
+          // Destinations refuse to mint for routed sessions; enroll over a direct or relay connection.
+          if (connection.type !== "routed") void this.enrollDevice(client);
         }
         // Switch evidence belongs to the socket it was measured against.
         if (state.status !== "connected") this.resetSwitchCandidate();

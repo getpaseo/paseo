@@ -1460,6 +1460,9 @@ export class DaemonClient {
   private destinationServerId: string | undefined;
   private connectionFailure: Error | undefined;
   private authFailureReasonValue: DaemonAuthFailureReason | null = null;
+  // Set only by an in-channel hello.rejected; close frames are unauthenticated over relay.
+  private helloRejectedReason: DaemonAuthFailureReason | null = null;
+  private skipDeviceCredentialOnce = false;
   private connectionState: ConnectionState = { status: "idle" };
   private readonly diffStreams = new DiffStreamRouter({
     modern: (compare) =>
@@ -1602,7 +1605,11 @@ export class DaemonClient {
     }
 
     try {
-      const resolution = resolveConnectionAuth(this.config);
+      const authConfig = this.skipDeviceCredentialOnce
+        ? { ...this.config, deviceCredential: undefined }
+        : this.config;
+      this.skipDeviceCredentialOnce = false;
+      const resolution = resolveConnectionAuth(authConfig);
       const selected = resolution instanceof Promise ? await resolution : resolution;
       if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
@@ -1658,6 +1665,7 @@ export class DaemonClient {
       });
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
+      this.helloRejectedReason = null;
 
       this.updateConnectionState(
         {
@@ -1703,22 +1711,7 @@ export class DaemonClient {
             this.pendingGenericTransportErrorTimeout = null;
           }
           this.authFailureReasonValue ??= authFailureFromLegacyClose(event);
-          const invalidHello =
-            event && typeof event === "object" && "code" in event && event.code === 4002;
-          const rejectedDevice =
-            this.helloAuth?.kind === "deviceCredential" &&
-            (this.authFailureReasonValue === "incorrect_password" || invalidHello);
-          if (rejectedDevice) {
-            this.config.deviceCredential = undefined;
-            this.config.onDeviceCredentialRejected?.();
-            this.helloAuth = undefined;
-            this.authFailureReasonValue = null;
-            this.lastErrorValue = null;
-            this.disposeTransport();
-            this.updateConnectionState({ status: "disconnected" });
-            void this.attemptConnect();
-            return;
-          }
+          if (this.retryAfterDeviceCredentialRejection(event)) return;
           // An endpoint security policy close cannot be fixed by retrying.
           const securityFailure = describeEndpointSecurityClose(event);
           if (securityFailure) this.setReconnectEnabled(false);
@@ -6121,6 +6114,29 @@ export class DaemonClient {
     });
   }
 
+  private retryAfterDeviceCredentialRejection(event: unknown): boolean {
+    if (this.helloAuth?.kind !== "deviceCredential") return false;
+    const invalidHello =
+      !!event && typeof event === "object" && "code" in event && event.code === 4002;
+    const revoked = this.helloRejectedReason === "incorrect_password";
+    if (!revoked && this.authFailureReasonValue !== "incorrect_password" && !invalidHello)
+      return false;
+    if (revoked) {
+      this.config.deviceCredential = undefined;
+      this.config.onDeviceCredentialRejected?.();
+    } else {
+      // A relay can forge this close: keep the credential, try the password once.
+      this.skipDeviceCredentialOnce = true;
+    }
+    this.helloAuth = undefined;
+    this.authFailureReasonValue = null;
+    this.lastErrorValue = null;
+    this.disposeTransport();
+    this.updateConnectionState({ status: "disconnected" });
+    void this.attemptConnect();
+    return true;
+  }
+
   setDeviceCredential(credential: DaemonClientConfig["deviceCredential"]): void {
     this.config.deviceCredential = credential;
   }
@@ -7545,6 +7561,7 @@ export class DaemonClient {
       this.lastErrorValue = reasonMessage[parsed.data.reason];
       this.authFailureReasonValue =
         parsed.data.reason === "incompatible_protocol" ? null : parsed.data.reason;
+      this.helloRejectedReason = this.authFailureReasonValue;
       return;
     }
 
