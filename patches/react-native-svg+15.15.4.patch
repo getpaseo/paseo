@@ -59,3 +59,130 @@ index 0c854d6..7dc2828 100644
    }
    return props.transform as TransformsStyle['transform'];
  }
+diff --git a/node_modules/react-native-svg/android/build.gradle b/node_modules/react-native-svg/android/build.gradle
+--- a/node_modules/react-native-svg/android/build.gradle
++++ b/node_modules/react-native-svg/android/build.gradle
+@@ -103,6 +103,7 @@
+     }
+ 
+     defaultConfig {
++        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+         minSdkVersion safeExtGet('minSdkVersion', 16)
+         //noinspection OldTargetApi
+         targetSdkVersion safeExtGet('targetSdkVersion', 28)
+@@ -136,6 +137,8 @@
+ }
+ 
+ dependencies {
++    androidTestImplementation 'androidx.test:runner:1.6.2'
++    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+     implementation 'com.facebook.react:react-native:+'
+     implementation("com.facebook.fresco:fresco:${FRESCO_VERSION}") {
+         exclude group: 'com.facebook.soloader'
+diff --git a/node_modules/react-native-svg/android/src/main/java/com/horcrux/svg/SvgView.java b/node_modules/react-native-svg/android/src/main/java/com/horcrux/svg/SvgView.java
+--- a/node_modules/react-native-svg/android/src/main/java/com/horcrux/svg/SvgView.java
++++ b/node_modules/react-native-svg/android/src/main/java/com/horcrux/svg/SvgView.java
+@@ -159,6 +159,8 @@
+   @Override
+   protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+     super.onSizeChanged(w, h, oldw, oldh);
++    // Percentage lengths and paths depend on the canvas size, not just SVG props.
++    clearChildCache();
+     this.invalidate();
+   }
+ 
+diff --git a/node_modules/react-native-svg/android/src/androidTest/java/com/horcrux/svg/SvgResizeTest.java b/node_modules/react-native-svg/android/src/androidTest/java/com/horcrux/svg/SvgResizeTest.java
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native-svg/android/src/androidTest/java/com/horcrux/svg/SvgResizeTest.java
+@@ -0,0 +1,90 @@
++package com.horcrux.svg;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
++
++import android.graphics.Bitmap;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.view.View;
++import androidx.test.ext.junit.runners.AndroidJUnit4;
++import androidx.test.platform.app.InstrumentationRegistry;
++import com.facebook.react.bridge.BridgeReactContext;
++import com.facebook.react.bridge.DynamicFromObject;
++import com.facebook.react.bridge.JavaOnlyArray;
++import com.facebook.react.bridge.JavaOnlyMap;
++import com.facebook.react.soloader.OpenSourceMergedSoMapping;
++import com.facebook.react.uimanager.DisplayMetricsHolder;
++import com.facebook.soloader.SoLoader;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++
++@RunWith(AndroidJUnit4.class)
++public class SvgResizeTest {
++  @Test
++  public void percentageFadeFollowsCanvasGrowthAndShrinkage() {
++    InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
++      android.content.Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
++      DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(app);
++      try {
++        SoLoader.init(app, OpenSourceMergedSoMapping.INSTANCE);
++      } catch (java.io.IOException exception) {
++        throw new RuntimeException(exception);
++      }
++      BridgeReactContext context = new DrawingContext(app);
++      SvgView svg = new SvgView(context);
++      LinearGradientView gradient = new LinearGradientView(context);
++      gradient.setName("fade");
++      gradient.setX1(new DynamicFromObject("0%"));
++      gradient.setY1(new DynamicFromObject("0%"));
++      gradient.setX2(new DynamicFromObject("0%"));
++      gradient.setY2(new DynamicFromObject("100%"));
++      gradient.setGradientUnits(0);
++      gradient.setGradient(JavaOnlyArray.of(0.0, Color.RED, 1.0, Color.TRANSPARENT));
++      svg.addView(gradient);
++      // Exercise recursive invalidation as well as the direct child case.
++      GroupView group = new GroupView(context);
++      RectView rectangle = new RectView(context);
++      rectangle.setX(new DynamicFromObject(0.0));
++      rectangle.setY(new DynamicFromObject(0.0));
++      rectangle.setWidth(new DynamicFromObject("100%"));
++      rectangle.setHeight(new DynamicFromObject("100%"));
++      rectangle.setFill(JavaOnlyMap.of("type", 1, "brushRef", "fade"));
++      group.addView(rectangle);
++      svg.addView(group);
++
++      assertFade(svg, 80, 60);
++      assertFade(svg, 160, 120);
++      assertFade(svg, 60, 40);
++      assertFade(svg, 160, 120);
++    });
++  }
++
++  // Pixel rendering needs a React context but does not send layout events to JavaScript.
++  private static final class DrawingContext extends BridgeReactContext
++      implements com.facebook.react.uimanager.events.EventDispatcherProvider {
++    DrawingContext(android.content.Context context) { super(context); }
++
++    @Override
++    public com.facebook.react.uimanager.events.EventDispatcher getEventDispatcher() { return null; }
++  }
++
++  private static void assertFade(SvgView svg, int width, int height) {
++    svg.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
++        View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
++    svg.layout(0, 0, width, height);
++    Bitmap image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
++    svg.draw(new Canvas(image));
++    try {
++      int middle = Color.alpha(image.getPixel(width / 2, height / 2));
++      int right = Color.alpha(image.getPixel(width - 2, height / 2));
++      assertTrue("Gradient midpoint must follow canvas height at " + width + "x" + height
++          + "; alpha=" + middle, middle >= 120 && middle <= 135);
++      assertEquals("Fade must reach the right edge at " + width + "x" + height, middle, right);
++      assertTrue("Fade must end at the new bottom edge",
++          Color.alpha(image.getPixel(width / 2, height - 2)) < 20);
++    } finally {
++      image.recycle();
++    }
++  }
++}

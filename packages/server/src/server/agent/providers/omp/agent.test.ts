@@ -10,7 +10,7 @@ import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderOptions } from "./provider-config.js";
-import { OmpRuntimeEventSchema } from "./rpc-types.js";
+import { OmpRuntimeEventSchema, OmpSessionStateSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
@@ -613,9 +613,9 @@ describe("OMP agent client and session", () => {
     expect(omp.requireSession().describePersistence()?.metadata?.model).toBe(
       "openrouter/google/gemini-3.8-flash",
     );
-    expect(omp.requireSession().features).toEqual([
+    expect(omp.requireSession().controls).toEqual([
       expect.objectContaining({
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);
@@ -626,16 +626,88 @@ describe("OMP agent client and session", () => {
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: false };
-    await session.setFeature?.("fast_mode", true);
+    await session.applyOptions?.({ fast_mode: true });
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
-    expect(session.features).toEqual([
+    expect(session.controls).toEqual([
       expect.objectContaining({
-        id: "fast_mode",
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply to this model/i),
         tooltip: expect.stringMatching(/does not apply to this model/i),
       }),
     ]);
+  });
+
+  test("applies only the options it is given and leaves the runtime alone otherwise", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+
+    // A patch without the key leaves the runtime alone.
+    await session.applyOptions?.({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+  });
+
+  test("rejects a live option the creation schema would reject, and sends nothing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).rejects.toThrow(/omp/i);
+    await expect(session.applyOptions?.({ fast_mode: "yes" })).rejects.toThrow(/omp/i);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a removal turns Fast off, and a Fast the runtime keeps is returned", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toEqual({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: true })).resolves.toEqual({
+      fast_mode: false,
+    });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+  });
+
+  test("a session opened without the Fast it was given says so in its open patch", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ providerOptions: { fast_mode: true } });
+
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+  });
+
+  test("reports a Fast change the runtime made on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+
+    omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
+    omp.runtime().queueStateReports([
+      {
+        ...omp.runtime().state,
+        model: omp.runtime().setModelResult,
+        fastModeEnabled: false,
+        fastModeActive: false,
+      },
+    ]);
+    await session.setModel?.("openrouter/other/model");
+
+    expect(omp.eventTypes().filter((type) => type === "options_changed")).toHaveLength(1);
   });
 
   test("shows Fast only when OMP reports its state fields", async () => {
@@ -649,11 +721,11 @@ describe("OMP agent client and session", () => {
     } = omp.runtime().state;
     omp.runtime().state = olderState;
     await session.getRuntimeInfo();
-    expect(session.features).toEqual([]);
-    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(/unavailable/i);
+    expect(session.controls).toEqual([]);
+    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(/unavailable/i);
     omp.runtime().state = { ...olderState, fastModeEnabled: false, fastModeActive: false };
     await session.getRuntimeInfo();
-    expect(session.features).toHaveLength(1);
+    expect(session.controls).toHaveLength(1);
   });
 
   test("switching model refreshes whether Fast applies", async () => {
@@ -661,8 +733,7 @@ describe("OMP agent client and session", () => {
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: true };
-    await session.setFeature?.("fast_mode", true);
-    expect(session.features).toEqual([expect.objectContaining({ value: true })]);
+    await session.applyOptions?.({ fast_mode: true });
 
     omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
     omp.runtime().queueStateReports([
@@ -674,24 +745,79 @@ describe("OMP agent client and session", () => {
       },
     ]);
     await session.setModel?.("openrouter/other/model");
-    expect(session.features).toEqual([
+    expect(session.controls).toEqual([
       expect.objectContaining({
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);
   });
 
+  test("a replacement runtime starts with the Fast the session has now, not the one it opened with", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await session.applyOptions?.({ fast_mode: false });
+
+    await omp.setMode("ask");
+
+    // The approval-mode restart starts a second runtime; it must not turn Fast back on.
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a replacement runtime starts with the Fast the session opened with, not the one it was asked for", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+
+    await omp.setMode("ask");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a replacement runtime that refuses the Fast the session had publishes what it accepted", async () => {
+    const omp = new OmpHarness();
+    omp.acceptFastOnNextRuntime();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    expect(omp.requireSession().openOptionsPatch).toEqual({});
+
+    // The approval-mode restart starts a second runtime, which refuses Fast.
+    await omp.setMode("ask");
+
+    expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
+  });
+
+  test("a Fast change the runtime reports when a turn completes is published", async () => {
+    const omp = new OmpHarness();
+    omp.acceptFastOnNextRuntime();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    omp.runtime().state = { ...omp.runtime().state, fastModeEnabled: false, fastModeActive: false };
+
+    const { completion } = await omp.startPromptUntilProviderIdle("hello", "done", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await completion;
+    await omp.requireSession().getRuntimeInfo();
+
+    expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
+  });
+
   test("restores Fast from the initial OMP state on create and resume", async () => {
     const created = new OmpHarness();
-    await created.start({ featureValues: { fast_mode: true } });
+    await created.start({ providerOptions: { fast_mode: true } });
     expect(created.runtime().setFastModeRequests).toEqual([true]);
     expect(created.runtime().getStateRequestCount).toBe(1);
 
     const resumed = new OmpHarness();
     await resumed.resume(
       { user: { id: "user-1", text: "hello" }, assistant: { id: "assistant-1", text: "hi" } },
-      { featureValues: { fast_mode: true } },
+      { providerOptions: { fast_mode: true } },
     );
     expect(resumed.runtime().setFastModeRequests).toEqual([true]);
     expect(resumed.runtime().getStateRequestCount).toBe(1);
@@ -1133,6 +1259,17 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    await expect(
+      omp.runPrompt("continue after resume", "resumed follow-up complete"),
+    ).resolves.toMatchObject({
+      finalText: "resumed follow-up complete",
+    });
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "resumed follow-up complete",
+      }),
+    );
     expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
     await omp.close();
     expect(omp.usageSession()).toBeNull();
@@ -1332,13 +1469,14 @@ describe("OMP agent client and session", () => {
     expect(omp.runtimeLaunches()).toHaveLength(1);
   });
 
-  test("closes a replacement process if the session closes during relaunch", async () => {
+  test("rejects a pending recovery start and closes its processes when the session closes", async () => {
     const omp = new OmpHarness();
     await omp.start();
     omp.processExit("OMP RPC process exited with code 1 and signal null");
     const turn = omp.startTurnDetached("continue");
+    const rejected = expect(turn).rejects.toThrow("closed");
     await omp.close();
-    await turn;
+    await rejected;
     await waitForImmediate();
     expect(omp.runtimeSessions().every((session) => session.closed)).toBe(true);
   });
@@ -1543,4 +1681,177 @@ describe("OMP agent client and session", () => {
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
   });
+});
+
+test("omp runtime safety protects queued replies and runtime-owned activity", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.state.isSettled = true;
+  native.state.hasPendingAsyncWork = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.state.queuedMessageCount = 1;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.queuedMessageCount = 0;
+  native.state.isStreaming = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isStreaming = false;
+  native.state.isCompacting = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isCompacting = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.getStateError = new Error("Unable to prove idle");
+  await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
+
+test("OMP runtime safety retains async work after the foreground turn finishes", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.state.hasPendingAsyncWork = true;
+  native.state.isSettled = false;
+  const prompted = native.nextPrompt();
+  const run = session.run("start a background job");
+  await prompted;
+  native.beginTurn();
+  native.acceptPrompt("start a background job", "async-user");
+  native.streamAssistantText("Job started in background");
+  native.finishTurn();
+  await run;
+  expect(native.state.isStreaming).toBe(false);
+  expect(native.state.queuedMessageCount).toBe(0);
+  expect(await session.canStopRuntime!()).toBe(false);
+  // The delivery is drained, but an admitted/scheduled continuation still prevents settlement.
+  native.state.hasPendingAsyncWork = false;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isSettled = true;
+  expect(await session.canStopRuntime!()).toBe(true);
+});
+
+test.each([
+  { hasPendingAsyncWork: true, isSettled: true, expected: false },
+  { hasPendingAsyncWork: false, isSettled: false, expected: false },
+  { hasPendingAsyncWork: false, isSettled: true, expected: true },
+  { hasPendingAsyncWork: undefined, isSettled: true, expected: false },
+  { hasPendingAsyncWork: false, isSettled: undefined, expected: false },
+  { hasPendingAsyncWork: undefined, isSettled: undefined, expected: false },
+])(
+  "OMP runtime safety requires explicit settlement: %j",
+  async ({ hasPendingAsyncWork, isSettled, expected }) => {
+    const runtime = new FakeOmp();
+    const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession(
+      {
+        provider: "omp",
+        cwd: process.cwd(),
+      },
+    );
+    onTestFinished(() => session.close());
+    const native = runtime.latestSession();
+    const response = { ...native.state };
+    if (hasPendingAsyncWork !== undefined) response.hasPendingAsyncWork = hasPendingAsyncWork;
+    if (isSettled !== undefined) response.isSettled = isSettled;
+    // Legacy get_state responses stay valid; missing safety fields never imply settlement.
+    native.state = OmpSessionStateSchema.parse(response);
+    expect(native.state.hasPendingAsyncWork).toBe(hasPendingAsyncWork);
+    expect(native.state.isSettled).toBe(isSettled);
+    expect(await session.canStopRuntime!()).toBe(expected);
+  },
+);
+
+test.each([false, true])(
+  "image prompt keeps OMP's vision capability contract (vision: %s)",
+  async (vision) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: {
+          provider: "test",
+          id: "image-model",
+          input: vision ? ["text", "image"] : ["text"],
+        },
+      };
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+    onTestFinished(() => session.close());
+    const bytes = Buffer.from("OMP attachment fixture");
+    const first = session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+    ]);
+    await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+    await first;
+    const [prompt] = runtime.latestSession().prompts;
+    expect(prompt.imageCount).toBe(vision ? 1 : 0);
+    if (vision) expect(prompt.message).toBe("Describe this image.");
+    else {
+      const imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTruthy();
+      const { readFile, rm } = await import("node:fs/promises");
+      expect(await readFile(imagePath!)).toEqual(bytes);
+      await rm(imagePath!);
+    }
+  },
+);
+
+test("interrupting OMP during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 53).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(runtime.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing OMP during image conversion rejects its pending start", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 54).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
 });

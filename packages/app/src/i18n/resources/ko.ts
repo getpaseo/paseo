@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  pluginCombobox: {
+    searching: "검색 중…",
+    empty: "결과 없음",
+    failed: "검색 실패: {{message}}",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
@@ -67,6 +72,7 @@ export const ko: TranslationResources = {
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
       daemonClientDisconnected: "데몬 클라이언트 연결이 끊어졌습니다",
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
+      folderOutsideWorkspace: "{{path}}은(는) 이 워크스페이스 밖에 있습니다",
       unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
@@ -133,6 +139,8 @@ export const ko: TranslationResources = {
       sendAndInterrupt: "보내고 중단",
       sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
+      longPressToQueue: "길게 눌러 대기열에 추가",
+      longPressToSendNow: "길게 눌러 지금 보내기",
       queue: "대기열",
       send: "보내기",
     },
@@ -377,6 +385,24 @@ export const ko: TranslationResources = {
       answerPlaceholder: "답변을 입력하세요...",
       otherPlaceholder: "기타...",
     },
+    backgroundWork: {
+      pillOne: "백그라운드 작업 1개",
+      pillMany: "백그라운드 작업 {{count}}개",
+      notRunning: "더 이상 실행 중이 아님",
+      dismiss: "닫기",
+      stop: "중지",
+      stopping: "중지 중…",
+      stopError: "중지를 확인하지 못했습니다.",
+      label: "백그라운드",
+      title: "백그라운드 작업",
+      waiting: "작업 세부 정보를 기다리는 중",
+      error: "백그라운드 작업을 불러오지 못했습니다",
+      retry: "다시 시도",
+      running: "백그라운드 작업 실행 중",
+      shell: "셸",
+      monitor: "모니터",
+      other: "기타 작업",
+    },
     todo: {
       title: "작업",
       empty: "아직 작업이 없습니다.",
@@ -615,6 +641,7 @@ export const ko: TranslationResources = {
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
+      restoreRequiresUpdate: "터미널을 보려면 호스트를 업데이트하세요.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
       fileUploaded: "파일을 업로드했습니다",
       pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
@@ -933,6 +960,9 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "기준 브랜치",
+        },
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -1161,6 +1191,14 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "사이드바 보기를 불러오지 못했습니다.",
+      useDefault: "기본 보기 사용",
+      readFailed: "사이드바 보기 설정을 불러오지 못했습니다.",
+      agentUnavailable: "에이전트를 더 이상 사용할 수 없습니다",
+      terminalUnavailable: "터미널을 더 이상 사용할 수 없습니다",
+      projectUnavailable: "프로젝트를 더 이상 사용할 수 없습니다",
+    },
     statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       needsInput: "입력 필요",
@@ -1236,6 +1274,7 @@ export const ko: TranslationResources = {
       hosts: "호스트",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+      moreActions: "추가 작업",
     },
     footer: {
       usage: "사용량",
@@ -1340,6 +1379,9 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
+        archived: "워크스페이스를 보관했습니다",
+        undoArchive: "실행 취소",
+        undoArchiveFailed: "보관을 취소하지 못했습니다",
       },
     },
   },
@@ -1546,6 +1588,9 @@ export const ko: TranslationResources = {
       cli: {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
+        uninstallFailed: "Paseo CLI를 제거할 수 없습니다.",
+        keptForeign:
+          "Paseo가 설치하지 않은 paseo 명령은 그대로 두었습니다. 제거하려면 직접 삭제하세요.",
       },
     },
   },
@@ -1597,6 +1642,7 @@ export const ko: TranslationResources = {
     openPath: "경로 열기",
   },
   branchSwitcher: {
+    failedToLoad: "브랜치를 불러오지 못했습니다. 선택기를 다시 열어 재시도하세요.",
     triggerTooltip: "워크스페이스 브랜치 전환",
     currentBranch: "현재 브랜치: {{branchName}}. 브랜치를 전환하려면 누르세요.",
     placeholder: "브랜치 전환...",
@@ -1620,7 +1666,11 @@ export const ko: TranslationResources = {
     loadingCommands: "명령 불러오는 중...",
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
-    failedToLoad: "불러오지 못했습니다",
+    loadingProviderCommands: "{{provider}} 명령 불러오는 중...",
+    commandsFailed: "명령을 불러오지 못했습니다",
+    providerCommandsFailed: "{{provider}} 명령을 불러오지 못했습니다",
+    filesFailed: "파일을 검색하지 못했습니다",
+    skillTag: "스킬",
     chooseProjectForCommands: "명령을 보려면 프로젝트를 선택하세요",
     chooseModelForCommands: "명령을 보려면 모델을 선택하세요",
   },
@@ -1647,6 +1697,60 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "{{total}}단계 중 {{current}}단계",
+      skip: "설정 건너뛰기",
+      continue: "계속",
+      finish: "완료",
+      steps: {
+        appearance: {
+          label: "모양",
+          title: "Paseo에 오신 것을 환영합니다",
+          description: "먼저 모양을 골라 보세요",
+        },
+        providers: {
+          label: "제공자",
+          title: "에이전트",
+          description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
+        },
+        projects: {
+          label: "프로젝트",
+          title: "프로젝트 추가",
+          description: "에이전트가 어디에서 작업하길 원하나요",
+          addProject: "프로젝트 추가",
+          added: "추가됨",
+          suggestions: {
+            loading: "작업했던 폴더를 찾는 중",
+            empty: "최근 프로젝트를 찾지 못했습니다",
+            lastUsed: "마지막 사용 {{time}}",
+            addSelected_one: "프로젝트 {{count}}개 추가",
+            addSelected_other: "프로젝트 {{count}}개 추가",
+            adding: "추가하는 중…",
+            addFailed: "이 폴더를 추가하지 못했습니다",
+          },
+        },
+        orchestration: {
+          label: "오케스트레이션",
+          title: "에이전트가 Paseo를 사용하도록 허용",
+          description: "에이전트가 워크스페이스를 만들고 다른 에이전트와 대화하게 하세요",
+        },
+        phone: {
+          label: "모바일",
+          title: "어디서나 에이전트와 함께",
+          description:
+            "모든 기능을 갖춘 네이티브 모바일 앱으로 휴대폰에서 어떤 Paseo 컴퓨터든 제어할 수 있습니다",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "연결 방법 선택",
+          connectDocs: "문서",
+          openConnectDocs: "연결 문서 열기",
+          recommended: "권장",
+          relay: { title: "릴레이", hint: "엔드투엔드 암호화, QR 코드를 스캔하세요" },
+          tailscale: { title: "Tailscale", hint: "약간의 설정이 필요합니다" },
+        },
+      },
+    },
     title: "Paseo에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
@@ -1865,6 +1969,8 @@ export const ko: TranslationResources = {
       notNow: "지금은 아님",
       directConnectionHint:
         "릴레이 없이 TCP, Tailscale 또는 다른 VPN을 통해 직접 연결하세요. QR 코드가 생성되지 않습니다.",
+      tailscaleDocs: "Tailscale 설정",
+      tailscaleDocsAccessibility: "Tailscale로 연결하는 방법 읽기",
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
@@ -1918,6 +2024,12 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    parent: {
+      backToParent: "상위 에이전트로 돌아가기",
+      backTo: "{{label}}(으)로 돌아가기",
+      parentAgent: "상위 에이전트",
+      openParent: "상위 에이전트 열기",
+    },
     title: "하위 에이전트",
     pillLabelOne: "하위 에이전트 1개",
     pillLabelMany: "하위 에이전트 {{count}}개",
@@ -2014,11 +2126,17 @@ export const ko: TranslationResources = {
   toolCallDetails: {
     error: "오류",
     empty: "추가 세부 정보가 없습니다",
-    subAgentActivity: "서브에이전트 활동",
     input: "입력",
     output: "출력",
   },
+  turnSummary: {
+    details: "턴 세부 정보 보기",
+    sentBy: "{{name}}이(가) 보냄",
+    showMore: "더 보기",
+    showLess: "접기",
+  },
   toolCallGroup: {
+    thought: "생각함",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",
@@ -2086,6 +2204,11 @@ export const ko: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "사용량 확인",
+    checkUsageHint: "모든 기기에서 {{host}}에 적용",
+    off: "{{host}}의 사용량 확인이 꺼져 있습니다.",
+    turnOn: "켜기",
+
     options: "설정",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
@@ -2133,6 +2256,7 @@ export const ko: TranslationResources = {
       days: "{{value}}일",
       hours: "{{value}}시간",
       minutes: "{{value}}분",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "마지막 업데이트: {{relativeTime}}",
@@ -2140,6 +2264,8 @@ export const ko: TranslationResources = {
       resetTimePassed: "초기화 시간이 지났습니다",
       resettingNow: "지금 재설정 중",
       resetsIn: "{{duration}} 후 재설정",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "지금 한도에 도달",
       runsOutIn: "{{duration}} 후 한도에 도달",
       justNow: "방금",
@@ -2219,6 +2345,7 @@ export const ko: TranslationResources = {
       connections: "연결",
       agents: "에이전트",
       metadata: "메타데이터",
+      voice: "음성",
       workspaces: "워크스페이스",
       providers: "프로바이더",
       usage: "사용량",
@@ -2241,9 +2368,77 @@ export const ko: TranslationResources = {
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },
+    voice: {
+      offline: "음성을 설정하려면 이 호스트에 연결하세요.",
+      updateHost: "음성을 설정하려면 호스트를 업데이트하세요.",
+      saveError: "음성 설정을 업데이트할 수 없습니다",
+      provider: "제공자",
+      providers: {
+        local: "로컬",
+        openai: "OpenAI",
+      },
+      voice: "목소리",
+      save: "저장",
+      retry: "다시 시도",
+      cancel: "취소",
+      model: "모델",
+      language: "언어",
+      languagePlaceholder: "자동 감지",
+      setBy: "{{name}}에서 설정됨",
+      unknownProvider: "{{provider}}을(를) 설정하려면 앱을 업데이트하세요",
+      sites: {
+        dictationStt: "음성 텍스트 변환",
+        voiceModeStt: "듣기",
+        voiceModeTts: "말하기",
+      },
+      dictation: {
+        title: "받아쓰기",
+        enabled: "받아쓰기",
+        enabledHint: "입력하는 대신 메시지 상자에 말하세요",
+      },
+      voiceMode: {
+        title: "음성 모드",
+        info: "음성 모드는 말한 내용을 텍스트로 옮기고 에이전트의 답변을 소리 내어 읽어 줍니다.",
+        enabled: "음성 모드",
+        enabledHint: "손을 쓰지 않고 에이전트와 대화하세요",
+      },
+      openai: {
+        apiKey: "API 키",
+        apiKeyHint: "호스트에 저장되며 다시 표시되지 않습니다.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "저장됨",
+        missingKey: "API 키 없음",
+        baseUrl: "기본 URL",
+        baseUrlHint: "OpenAI 호환 서버용입니다. OpenAI를 사용하려면 비워 두세요.",
+      },
+      models: {
+        loading: "모델을 불러오는 중...",
+        loadError: "로컬 모델을 불러올 수 없습니다",
+        none: "사용 가능한 모델 없음",
+        downloaded: "다운로드됨",
+        inUse: "사용 중",
+        recommended: "추천",
+        download: "다운로드",
+        downloadAction: "{{label}} 다운로드",
+        downloading: "다운로드 중...",
+        downloadingPercent: "다운로드 중 {{percent}}%",
+        extracting: "압축 해제 중...",
+        delete: "삭제",
+        deleteAction: "{{label}} 삭제",
+        deleteTitle: "{{label}}을(를) 삭제할까요?",
+        deleteMessage: "{{size}}가 확보됩니다. 나중에 다시 다운로드할 수 있습니다.",
+        languages: "{{label}} 지원 언어",
+        moreLanguages: "{{languages}} 외 {{count}}개",
+      },
+    },
     general: {
       title: "일반",
       sending: "전송",
+      setup: {
+        label: "초기 설정",
+        description: "모양, 제공자, 프로젝트, 휴대폰 페어링을 다시 진행합니다",
+        action: "설정 다시 보기",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2265,10 +2460,25 @@ export const ko: TranslationResources = {
           queue:
             "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 중단합니다. Enter는 줄바꿈합니다.",
+          steer:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 현재 턴에 지시합니다. Enter는 줄바꿈합니다.",
+          queue:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 대기열에 추가합니다. Enter는 줄바꿈합니다.",
+        },
         options: {
           interrupt: "중단",
           steer: "지시",
           queue: "대기열",
+        },
+      },
+      sendShortcut: {
+        label: "전송 단축키",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2287,12 +2497,13 @@ export const ko: TranslationResources = {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
       },
-      toolCallDetail: {
-        label: "도구 호출 표시",
-        description: "타임라인에 도구 호출이 표시되는 방식",
+      chatDisplay: {
+        label: "채팅 표시",
+        description: "채팅에 표시할 에이전트 작업의 양",
         options: {
-          overview: "요약",
-          detailed: "전체 세부정보",
+          full: "전체",
+          collapseToolCalls: "도구 호출 접기",
+          collapseTurns: "턴 접기",
         },
       },
       language: {
@@ -2387,6 +2598,13 @@ export const ko: TranslationResources = {
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
       sidebar: {
+        view: {
+          title: "사이드바 보기",
+          label: "보기",
+          default: "기본 보기",
+          unavailable:
+            "선택한 보기를 사용할 수 없거나 비활성화되어 있습니다. 기본 보기를 표시합니다.",
+        },
         header: {
           title: "헤더",
           description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
@@ -2517,11 +2735,7 @@ export const ko: TranslationResources = {
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
-      },
-      actions: {
-        install: "설치",
-        installing: "설치 중...",
-        installed: "설치됨",
+        accessibilityLabel: "Paseo CLI 설치",
       },
     },
     permissions: {
@@ -2599,10 +2813,9 @@ export const ko: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "오케스트레이션 스킬",
         title: "오케스트레이션 스킬",
-        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
+        description: "에이전트에게 Paseo 도구 사용법을 알려 줍니다",
         updateAvailable: "업데이트 사용 가능",
         updateTitle: "Paseo 스킬을 업데이트할까요?",
-        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
         uninstallTitle: "Paseo 스킬을 제거할까요?",
         uninstallMessage:
           "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
@@ -2620,9 +2833,6 @@ export const ko: TranslationResources = {
         uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
         saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
         actions: {
-          install: "설치",
-          installing: "설치 중...",
-          installed: "설치됨",
           update: "업데이트",
           working: "작업 중...",
           remove: "제거",
@@ -2644,6 +2854,7 @@ export const ko: TranslationResources = {
           title: "Paseo 도구 활성화",
           hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
+          updateFailed: "Paseo 도구를 업데이트할 수 없습니다.",
         },
         systemPrompt: {
           title: "시스템 프롬프트",
@@ -2659,6 +2870,19 @@ export const ko: TranslationResources = {
       },
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
+        resumeOnStartup: {
+          title: "재시작 후 에이전트 재개",
+          info: "호스트가 중지될 때 작업 중이던 에이전트를 다시 열고 재개 메시지를 보냅니다. 정상 재시작과 비정상 종료 후 모두 적용됩니다.",
+          hint: "중단된 작업을 자동으로 계속합니다.",
+          prompt: "재개 메시지",
+          edit: "편집",
+          editAccessibilityLabel: "메시지 편집",
+        },
+        idleRuntimeCleanup: {
+          title: "유휴 에이전트 해제",
+          hint: "1시간 동안 활동이 없으면 메모리를 확보합니다.",
+          info: "대화를 유지하면서 에이전트 프로세스를 중지합니다. 메시지를 보내면 다시 이어집니다.\n\n진행 중인 작업, 대기 중인 알림, 프로바이더 안전 검사가 있으면 정리하지 않습니다.",
+        },
       },
       workspaces: {
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",
@@ -2751,6 +2975,10 @@ export const ko: TranslationResources = {
           requestFailedTitle: "오류",
           requestFailedMessage:
             "재시작 요청을 보내지 못했습니다. Paseo가 자동으로 다시 연결하므로 호스트가 온라인으로 표시되면 다시 시도하세요.",
+          closeTerminals: "재시작하고 터미널 닫기",
+          closeTerminalsHint: "재시작하면서 이 호스트의 모든 터미널도 닫습니다.",
+          closeTerminalsConfirmMessage:
+            "데몬을 재시작하고 모든 터미널을 닫습니다. 터미널에서 실행 중인 프로그램은 종료됩니다. 앱은 자동으로 다시 연결됩니다.",
           dialogFailedMessage: "재시작 확인 대화 상자를 열 수 없습니다.",
         },
         update: {

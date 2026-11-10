@@ -101,3 +101,20 @@ test("focus mode only applies to the active workspace screen", async ({ page, wi
   await expect(exitFocusMode).toHaveCount(0);
   await expect(settingsButton).toBeVisible();
 });
+
+async function exitFocusModeFromCompactHeader(page: Page) {
+  await page.setViewportSize({ width: 400, height: 844 });
+  await page.getByTestId("workspace-header-menu-trigger").click();
+  await page.getByRole("menuitem", { name: "Exit focus mode", exact: true }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
+test("compact workspace menu keeps focus mode exit reachable", async ({ page, withWorkspace }) => {
+  const workspace = await withWorkspace({ prefix: "compact-focus-exit-" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await workspace.navigateTo();
+  await enterFocusMode(page);
+  await exitFocusModeFromCompactHeader(page);
+  await expect(exitFocusModeButton(page)).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
+});

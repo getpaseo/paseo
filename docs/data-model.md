@@ -26,6 +26,10 @@ checkout root. They intentionally differ for an exact subproject inside a worktr
 restore, branch auto-name, and descriptor flows consume those persisted facts rather than
 rediscovering ownership from a directory that may already be gone. Reconciliation may refresh
 mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
+An explicit base selection is stored in the checkout's Git-directory Paseo metadata and
+mirrored to `baseBranch` in every workspace record sharing that checkout. The record keeps
+recovery possible after the checkout metadata is deleted. A newly opened workspace inherits
+the checkout's selected base; separate worktrees keep separate bases.
 Workspace archive runs lifecycle teardown from the exact `cwd` but removes only the backing
 `worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
 checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
@@ -92,6 +96,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                                                                                                                                                                                                                                         |
 | `title`              | `string?`                                | User-visible title                                                                                                                                                                                                                                                                                                                                                                  |
 | `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). Paseo uses `paseo.parent-agent-id` for parentage and client-scoped `paseo.open-agent-tab.*` labels while managed subagent tabs are open — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                           |
+| `metadata`           | `Record<string, JsonValue>`              | Plugin-owned data (default `{}`). Paseo stores and forwards it and never reads a key. Set at creation or through `agent.metadata.update.request`; `null` in a patch removes a key                                                                                                                                                                                                   |
 | `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`. `closed` means the record is resumable but has no live provider runtime; archive remains represented separately by `archivedAt`.                                                                                                                                                                            |
 | `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                                                                                                                                                                                                                                 |
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
@@ -221,12 +226,6 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     }
   },
   providers: {
-    openai: {
-      apiKey?: string,
-      baseUrl?: string,
-      stt?: { apiKey?: string, baseUrl?: string },
-      tts?: { apiKey?: string, baseUrl?: string }
-    },
     local: { modelsDir: string }
   },
   agents: {
@@ -244,8 +243,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
   pluginsEnabled: boolean,
   plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
-    dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
-    voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
+    dictation: { enabled, stt: SpeechSttConfig },
+    voiceMode: { enabled, llm, stt: SpeechSttConfig, turnDetection, tts: SpeechTtsConfig }
   },
   log: {
     level, format,
@@ -341,6 +340,14 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
+Commands wait in one of three lanes, drained in order: `high` (worktree creation and archive),
+`normal` (everything a caller waits for, including diffs and explicit refreshes), and `background`
+(workspace reconciliation, refreshes triggered by watchers, polls and fetches, and the fetches
+themselves). Daemon-initiated fan-out must run in the background lane: one rescan over ~90 worktrees
+queues over 1,000 commands, and in the normal lane every command a cold diff runs waited behind
+them. Set the lane on the runner with `createRunGitCommand(provenance, { priority })`, or around a
+whole operation with `runWithGitCommandPriority`.
+
 Environment variables override `config.json`:
 
 | Environment variable                 | Setting                  |
@@ -353,42 +360,27 @@ Environment variables override `config.json`:
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
 
-Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
+### Speech configuration
 
-Set these to select OpenAI instead of local speech:
+Each use site owns its provider settings: `features.dictation.stt`,
+`features.voiceMode.stt`, and `features.voiceMode.tts`. `provider` selects a strict
+`local` or `openai` variant. Both STT variants carry `language`; normalization preserves
+it regardless of provider. `providers.local.modelsDir` remains shared storage.
+See [Voice configuration](../public-docs/voice.md) for fields, examples and env precedence.
 
-| Env var                        | Applies to                      |
-| ------------------------------ | ------------------------------- |
-| `PASEO_VOICE_STT_PROVIDER`     | Voice mode STT provider         |
-| `PASEO_DICTATION_STT_PROVIDER` | Composer dictation STT provider |
-| `PASEO_VOICE_TTS_PROVIDER`     | Voice mode TTS provider         |
+On load, `persisted-config.ts` folds legacy `providers.openai` credentials and URLs
+into OpenAI sites that lack their own values, using endpoint settings before shared
+settings. A provider-less site becomes local; provider names are lower-cased, and
+fields ignored by the selected speech provider are discarded. The next save writes only the
+inline shape. A legacy key with no site to receive it is discarded with a warning
+that names its path, without logging its value.
 
-OpenAI speech can be configured under `providers.openai`. STT and TTS resolve independently, so they can point at different endpoints:
-
-```json
-{
-  "providers": {
-    "openai": {
-      "stt": {
-        "apiKey": "sk-...",
-        "baseUrl": "https://stt.example.com/v1"
-      },
-      "tts": {
-        "apiKey": "sk-...",
-        "baseUrl": "https://api.openai.com/v1"
-      }
-    }
-  }
-}
-```
-
-`providers.openai.stt` is used for both composer dictation and voice mode speech-to-text; `providers.openai.tts` is used for voice mode text-to-speech. The equivalent env vars are `OPENAI_STT_API_KEY`/`OPENAI_STT_BASE_URL` and `OPENAI_TTS_API_KEY`/`OPENAI_TTS_BASE_URL`. Each feature falls back to `providers.openai.apiKey`/`providers.openai.baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when its own fields are unset. These settings apply only to Paseo OpenAI speech features, not to Codex or other OpenAI-backed tools.
-
-Paseo uses these paths under the configured OpenAI base URL:
-
-- dictation STT: `/v1/audio/transcriptions`
-- voice mode STT: `/v1/audio/transcriptions`
-- voice mode TTS: `/v1/audio/speech`
+`speech-settings.ts` owns mutable config reads and patches. The wire uses the same
+`features` structure. Reads replace OpenAI keys with `hasApiKey` (saved in config)
+and report effective env sources in `envOverrides`. A site patch that changes
+`provider` replaces the entire object. The same or omitted `provider` merges fields
+into the current variant, preserving the write-only key when a form re-saves it. `null` clears a value. Switching providers discards credentials and
+options from the previous variant.
 
 ---
 
@@ -491,7 +483,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `title`                        | `string \| null`                                             | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
 | `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
 | `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
-| `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.               |
+| `baseBranch`                   | `string \| null`                                             | Current base retained across archive and restore. Explicit selections and branch-off creation store exact refs; older records may store branch names. Null means no recorded base.            |
 | `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
 | `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
 | `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
@@ -499,6 +491,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
 | `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
+| `metadata`                     | `Record<string, JsonValue>`                                  | Plugin-owned data (default `{}`). Paseo stores and forwards it and never reads a key. Set at creation or through `workspace.metadata.update.request`.                                         |
 | `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 

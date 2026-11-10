@@ -229,6 +229,143 @@ test("captures the desktop import sheet and command-center entry", async ({ page
   });
 });
 
+test("large import lists keep mounted rows bounded and remain scrollable", async ({
+  page,
+}, testInfo) => {
+  const fixtureDirectory = path.join(claudeConfigDirectory, "projects", "virtualization-fixture");
+  await mkdir(fixtureDirectory, { recursive: true });
+  try {
+    const newest = Date.now();
+    for (let index = 0; index < 200; index += 1) {
+      const id = `virtualized-${String(index).padStart(3, "0")}`;
+      const file = path.join(fixtureDirectory, `${id}.jsonl`);
+      await writeFile(
+        file,
+        `${JSON.stringify({
+          type: "user",
+          sessionId: id,
+          cwd: index % 2 === 0 ? scenario.projectRoot : scenario.worktreeDirectory,
+          message: {
+            role: "user",
+            content: `Virtualized session ${index}${index % 3 === 0 ? " with a longer preview that wraps onto a second line in a compact sheet" : ""}`,
+          },
+        })}\n`,
+      );
+      const timestamp = new Date(newest - index * 10);
+      await utimes(file, timestamp, timestamp);
+    }
+    for (const width of [1280, 390]) {
+      const flow = new ImportSessionFlow(page);
+      await flow.openWorkspace(scenario.project.workspaceId, { width, height: 844 });
+      await flow.openGlobally();
+      const rows = page.locator('[data-testid^="import-session-session-"]');
+      const scrollToEnd = async (end = true) => {
+        // Scroll the body's real overflow element. Virtual rows need not exist yet.
+        await rows.first().evaluate((row, atEnd) => {
+          let element = row.parentElement;
+          while (element && !["auto", "scroll"].includes(getComputedStyle(element).overflowY)) {
+            element = element.parentElement;
+          }
+          if (!element) throw new Error("Import list has no scroll owner");
+          element.scrollTop = atEnd ? element.scrollHeight : 0;
+          element.dispatchEvent(new Event("scroll"));
+        }, end);
+      };
+      for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+        const loadMore = page.getByTestId("import-session-load-more");
+        await expect(async () => {
+          await scrollToEnd();
+          await expect(loadMore).toBeInViewport({ timeout: 500 });
+        }).toPass({ timeout: 10_000 });
+        await loadMore.click();
+        if (pageIndex < 2) await expect(loadMore).toBeEnabled();
+      }
+      await expect(async () => {
+        await scrollToEnd();
+        await expect(
+          page.getByTestId("import-session-session-claude-virtualized-199"),
+        ).toBeInViewport({ timeout: 500 });
+      }).toPass({ timeout: 10_000 });
+      await expect.poll(() => rows.count()).toBeLessThan(100);
+      await page.screenshot({ path: testInfo.outputPath(`virtualized-${width}.png`) });
+      if (width === 1280) {
+        const row = (index: number) =>
+          page.getByTestId(
+            `import-session-session-claude-virtualized-${String(index).padStart(3, "0")}`,
+          );
+        await expect(async () => {
+          await scrollToEnd(false);
+          await expect(row(0)).toBeInViewport({ timeout: 500 });
+        }).toPass({ timeout: 10_000 });
+        await row(0).focus();
+        for (let index = 1; index <= 30; index += 1) {
+          await page.keyboard.press("Tab");
+          await expect(row(index)).toBeFocused();
+        }
+        for (let index = 29; index >= 15; index -= 1) {
+          await page.keyboard.press("Shift+Tab");
+          await expect(row(index)).toBeFocused();
+        }
+        const list = page.getByTestId("import-session-list");
+        const scrollWithKey = async (event: "scroll" | "scrollend", key: string) => {
+          const listener = await list.evaluateHandle((node, eventName) => {
+            const promise = new Promise<void>((resolve) => {
+              node.addEventListener(eventName, () => resolve(), { once: true });
+            });
+            return { promise };
+          }, event);
+          try {
+            await page.keyboard.press(key);
+            await listener.evaluate((value) => value.promise);
+          } finally {
+            await listener.dispose();
+          }
+        };
+        const beforePageDown = await list.evaluate((node) => node.scrollTop);
+        await scrollWithKey("scroll", "PageDown");
+        await expect
+          .poll(() => list.evaluate((node) => node.scrollTop))
+          .toBeGreaterThan(beforePageDown);
+        await expect(row(15)).toBeFocused();
+        await page.keyboard.press("End");
+        await expect(row(15)).toBeFocused();
+        await expect(row(199)).toBeInViewport();
+        // Home must remain at the first row after the native page scroll ends.
+        await scrollWithKey("scrollend", "Home");
+        await expect(row(0)).toBeInViewport();
+        await expect(row(15)).toBeFocused();
+
+        await page.keyboard.press("End");
+        await expect(row(199)).toBeInViewport();
+        await row(199).focus();
+        await scrollWithKey("scroll", "PageUp");
+        await page.keyboard.press("Home");
+        await expect(row(0)).toBeInViewport();
+        await scrollWithKey("scrollend", "End");
+        await expect(row(199)).toBeInViewport();
+        await expect(row(199)).toBeFocused();
+        await testInfo.attach("keyboard-scroll-owner", {
+          body: JSON.stringify(
+            await list.evaluate((node) => ({
+              focusedRow: document.activeElement?.getAttribute("data-testid"),
+              scrollTop: node.scrollTop,
+              scrollHeight: node.scrollHeight,
+              clientHeight: node.clientHeight,
+            })),
+          ),
+          contentType: "application/json",
+        });
+        await page.screenshot({ path: testInfo.outputPath("virtualized-keyboard-end.png") });
+        await page.keyboard.press("Home");
+        await expect(row(0)).toBeInViewport();
+      }
+      await flow.close();
+    }
+  } finally {
+    await rm(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const outputPath = testInfo.outputPath(name);
   await page.screenshot({ path: outputPath, fullPage: true });

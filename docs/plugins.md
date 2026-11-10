@@ -99,6 +99,10 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+The `worktree-include` built-in copies gitignored files selected by
+[`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
+before setup and agents, through `worktree.create.after`.
+
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
 filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
@@ -114,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -333,11 +337,10 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
-the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
-created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
-state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
-errors are logged and do not interrupt host teardown.
+The contribution function must return cleanup for resources created by plugin code. Server cleanup
+may be async; Paseo waits for it when stopping the server plugin. Cleanup errors are logged and do
+not interrupt host teardown. Client installation retention and disposal follow the public
+[hosts and lifecycle contract](../public-docs/plugins/reference.md#hosts-and-lifecycle).
 
 Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
@@ -354,9 +357,27 @@ keys are stored under a `param.` prefix; plugins never see it and may use any ke
 `openScreen` validates its input once (`parsePluginOpenScreenInput`); code past it trusts the
 params.
 
-RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
-typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
-Paseo gives each plugin installation its own query client.
+RPC and subscription contracts validate inputs, outputs, and events in both the app and plugin
+subprocess. `useRpc` returns a typed async function. Use the host-provided `@tanstack/react-query`
+for request state and caching; Paseo gives each plugin installation its own query client.
+
+A subscription is a session-owned observation (`plugin-rpc` delivery family): the session that
+subscribed owns its lifetime, so release, disconnect, plugin stop, and reload need no plugin code.
+Each subscriber gets its own handler call in the subprocess; there is no fan-out or replay. The
+runtime buffers pushes until the session has sent `plugin.rpc.subscribe.response`, so a client
+never sees an event for an unknown subscription. The app installation's lifetime aborts every
+subscription its surfaces left open, and a reload replaces the installation, which resubscribes
+mounted hooks.
+
+The byte rule (a top-level `Uint8Array` is binary, a nested one is a validation error) is checked
+once per hop by `assertPluginWireValue`. Bytes ride plugin binary frames, opcodes `0x20`-`0x2f`
+(`packages/protocol/src/binary-frames/plugin.ts`); nothing on the path copies or re-encodes them,
+and `plugin-subscriptions.perf.e2e.test.ts` locks that. Keep it that way: never stringify a plugin
+payload for a log, and the client's bootstrap buffer holds bytes only until the first observer
+attaches. Binary outputs reach only clients that send `pluginBinaryPayloads`. A binary input
+frame (`0x22`) becomes a synthetic `plugin.rpc.invoke.request` and runs through the normal message
+path, so it is authorized like any other invoke. The author contract, including the native upload
+limit, is in [stream events from the daemon](../public-docs/plugins/reference.md#subscriptions).
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle.
@@ -381,6 +402,15 @@ normal clients, never resumes another session, and is cleaned immediately on exi
 grace. During daemon startup, plugin sessions may connect while application WebSockets remain
 paused; the daemon accepts clients only after configured plugins have settled and the initial
 catalog is complete.
+
+The app retains client bundles per host in its file cache (IndexedDB on web), keyed by plugin ID
+and the daemon's SHA-256. A cold client verifies stored contents before advertising their hashes;
+missing or corrupt files request full bundles. Only the latest catalog's bundles remain. Hashing
+uses Expo's native async digest on mobile, avoiding a JavaScript hash loop on Hermes; reading and
+passing the bundle string still costs memory and time once per client lifetime.
+Persistence runs after catalog reconstruction without delaying installation. One write runs at a
+time; while storage is busy, only the newest pending catalog is kept. A failed write leaves the
+in-memory bundles usable, and a later catalog retries persistence.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
@@ -428,14 +458,26 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
 
 ## Lifecycle hooks
 
-Server entries register lifecycle observers with `server.on()` and request transforms with
-`server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
-eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Server entries register async handlers with `server.addHook(name, handler)`, returning a cleanup
+function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
+registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
+owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
+every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+
+Worktree placement is resolved before Git source planning, so a hook can change the branch and base
+without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
+Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,
+ownership checks prefer the marker-verified worktree root over the legacy
+path shape: a plugin can place a worktree several directories below the default worktrees root.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
-live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
-answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
+or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+The same holds for a hook that runs inside an agent's lifecycle lane: an `agent.open.before` or
+`agent.create.before` hook that awaits a write to the agent being opened (`setMetadata`, `setLabels`,
+an option, model, thinking or mode change) waits on the open, which waits on the hook. The hooks
+reference tells plugin authors to start such a write without awaiting it.
 
 ## Contribute a provider
 
@@ -491,12 +533,25 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
-Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
-the opaque `ProviderSessionConfig.providerOptions` object on `session.open`.
-It contains the provider defaults and per-agent overrides merged by the daemon.
+A provider's configuration is the opaque `ProviderSessionConfig.providerOptions` object on
+`session.open`. It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+The provider draws some of those keys in the composer by reporting `controls` and the values it runs
+(`providerOptions`) in `session.config`. A running-agent change arrives as
+`session.configure` with `changes.providerOptions` and follows the same apply-or-throw contract as
+built-in providers ([options flow](providers.md#options-flow)). `PluginAgentSession` in
+`packages/server/src/server/agent/plugin-provider.ts` is that adapter. A provider still reporting
+`settings` is read through `plugin-provider-options.ts`, which turns each setting into a control and
+its value into an option and is sent both shapes in `session.configure`; delete it with
+`COMPAT(plugin-provider-settings)`. The ACP shim still reports `settings`.
+
+Providers add an optional veto to daemon baseline cleanup through the per-session
+[runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
+The daemon calls the same `AgentSession.canStopRuntime()` interface for built-ins and plugins;
+the plugin bridge transports that query through the existing provider request/event protocol.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
@@ -525,7 +580,14 @@ string is never inline SVG or a URL.
 
 Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same SVG file rules as provider icons.
 
-The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
+When the host’s **Check usage** switch is off, the daemon rejects usage requests before discovery, without reading logins or calling vendors. Otherwise, the daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
+
+## Replace sidebar content
+
+The sidebar view slot is global across hosts, while header and footer contributions retain their
+host selection. The slot owns selection loading, fallback and the error boundary; the plugin owns
+its layout. This keeps plugin failures from removing navigation or recovery controls. The
+[sidebar view guide](../public-docs/plugins/sidebar-views.md) owns the author API.
 
 ## Contribute sidebar items
 
@@ -601,12 +663,140 @@ Request observation with `client.paseo.agents.list({ subscribe: {} })` and consu
 demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
 list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
 [shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
-also run after reconnect; replace your view before applying its subsequent updates. The installation
+also run after reconnect; replace your view before applying its subsequent updates. An installation
+stays loaded during a dropped connection while the app retains its `DaemonClient` object. An
+unchanged installation does not rerun setup on reconnect, so refresh state from those snapshots
+rather than from setup. Switching connections replaces the client object and reinstalls plugins. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.
 
 Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
 work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
+
+## Contribute composer items
+
+`addComposerItem` mounts a plugin component in the agent, draft and New workspace composers. The
+public contract is the [composer items reference](../public-docs/plugins/reference.md#composer-items).
+
+A plugin reads one `ComposerModel` (`packages/app/src/composer/model.ts`): state, subscribe and
+commands. `toPluginComposer` (`packages/app/src/plugins/composer-items/`) turns its state into the
+`PluginComposer` an item reads, and the host never learns which kind of composer it got. Two
+implementations provide it:
+
+- A running agent's `agentComposer(serverId, agentId)` (`composer/agent-composer/`). It exists
+  without a mounted tab: the prompt and attachments are the agent's draft in the draft store, the
+  settings are the session store's agent, and `model` and `thinking` resolve through the provider
+  catalog with `resolveAgentModelSelection`, the picker's own function, so a read equals what the
+  picker shows. The model loads the catalog itself and resolves with no models until it lands, as the picker does,
+  so a read never differs from what the picker shows. While anything watches the model it holds a
+  `QueryObserver` on the agent's catalog: that is what lets reconnect repair, which refetches only
+  active queries, refresh a catalog nobody has a picker open for, and retry one that failed.
+  `PluginComposersSource.subscribe(selector, listener)` is what holds it for `useComposers`, so
+  the subscription must go through the model's own `subscribe`. Watching again after the catalog
+  was invalidated or failed refetches it, and a read with no watcher starts one deduplicated
+  refresh and shows the cached catalog until it lands. The model keeps one pair of store
+  subscriptions however many components watch it. It is shared for as long as its agent is in the
+  session and not archived, so a command a plugin saved keeps reaching the composer a later tab
+  mounts; it is dropped when the agent is gone or archived and nothing watches it or has one
+  mounted, checked on session changes and when the last holder lets go. The mounted
+  `AgentControls` plugs its input in with `attachInput` so `insertText` lands at the cursor.
+  Without a live input the model writes the stored prompt with `replaceDraftText`, which also asks
+  a mounted input to show it. A workspace the user left stays mounted, display none. Web
+  drops the input ref there; native keeps the input, with a stale cursor and selection.
+  `ComposerInput.isLive()` is how the model tells: it needs the ref and a retained panel that is
+  showing (`useRetainedPanelActive`). Closing a root agent's tab archives
+  it, so a running agent with no mounted composer at all only exists as a subagent whose tab was
+  closed. The daemon does not check `setModel` and `setThinking` against a catalog; the provider
+  decides and its refusal rejects the call.
+- A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
+  in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
+  `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
+
+`ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
+implementations and `toPluginComposer`; never branch on `context` in the host.
+
+`useComposers` and `composers()` reach an agent's model by reference (`plugins/composer-items/source.ts`):
+`PluginInstallationProvider` provides the plugin's source to every surface, and
+`createPluginCapabilities` puts `composers` on every command context. `{ focused: true }` is the
+agent Command Center registration hands to agent items, published through `plugins/focused-agent.ts`
+(null outside a workspace route). The source reads that module, not the navigation or layout
+stores, so the plugin runtime does not import them. The remembered workspace selection is
+navigation restore state and is not the focused agent. The query-cache subscriptions react to
+`updated` events only: a `useQuery` in another component's render announces `added`, and a
+subscriber that updates then triggers React's "update a component while rendering a different one"
+warning.
+
+Plugin `Toggle`, `Select` and `Action`, the thinking select and provider option controls all
+render through `ComposerControl` (`packages/app/src/composer/agent-controls/composer-control.tsx`),
+a toolbar icon or a row in the overflow sheet. Model and mode stay specialized but share its trigger,
+density and overflow. Plugin items count in the density presence in `layout.ts`, so a composer
+condenses to make room for them. A custom component renders wherever its item is placed, and an
+item that renders nothing still counts for density; there is no registration for either.
+
+A command runs against the owner's current state, not the render that built the callback. The
+draft's form (`openAgentForm`) and options (`openDraftOptions`) are plain stores for that reason,
+and `draftComposerAgent` rejects a provider the host does not offer. It passes a model id to the form
+as the picker does, with no catalog check; for a running agent the provider decides. `ComposerControl` owns the pending state and the error toast for callbacks that
+return a promise.
+
+The overflow sheet's content portals to the app root, away from the composer. Pass
+`useComposerSheetBridge()` as the sheet's `contextBridge`, or `useComposer()` returns nothing and
+the sheet draws no plugin rows.
+
+## Contribute New workspace items
+
+`addNewWorkspaceItem` mounts a plugin component on the New workspace screen. The public contract
+is the [New workspace items reference](../public-docs/plugins/reference.md#new-workspace-items).
+
+The screen's choices that a plugin may change live in one plain store,
+`createNewWorkspaceSetup` (`packages/app/src/screens/new-workspace/setup-model.ts`): the base
+picker selection, the manual isolation, the branch name and the workspace metadata. The pickers and
+the plugin commands write to it, so a command sees what an earlier command left. Project and host
+stay in the screen's hooks (`useNewWorkspaceHostSelector` reconciles them against each other), and
+they are read-only to plugins; a command that switched them would unmount the item that called it.
+
+The store is built in the render that creates the screen, with what the screen derives from its
+hooks (the lock, the project, whether the project can make worktrees, whether the host supports
+metadata), so a command is valid from a child's first effect, which runs before the screen's own
+effects. `syncInputs` refreshes those inputs in a layout effect on every commit, and commands read
+them when they run, never from the render that built them. The pickers and the commands pick
+through the same `chooseBase` and `chooseIsolation`, so a plugin command has the effects of a
+pick; the screen injects those effects when it builds the store (syncing the picker's PR attachment,
+remembering the isolation), so a command from a mount effect does the same as a click. Closing the
+picker stays in the picker's own handler. Add a capability by extending the store;
+do not read screen state from a plugin component.
+
+The item host (`PluginNewWorkspaceItems`) keys the items by `(serverId, project id)`, so a change of
+project or host remounts them. That is what keeps an item's own state and a `Combobox`'s cached
+results from outliving their project: the `Combobox` cannot tell that an author's inline `search`
+now means another project, because its identity changes every render. The store clears `branch`
+and `metadata` on the same change in `syncInputs`, and a remounted item's mount effect sets them
+again.
+
+An item's commands come from `setup.commandsFor({ serverId, projectId })`, bound to the target the
+item was mounted for. Once `syncInputs` reports another target they reject with a "moved" error, so
+a lookup that finishes after a project switch cannot write into the new project's choices. The
+reset only clears what was already written; this check covers what is written later. Rejecting, not
+ignoring, matches the lock: a command's promise resolves only when the change took effect.
+
+Known limit: an item that issues a command from `useLayoutEffect` on mount after a project or host
+switch runs before the screen's `syncInputs` layout effect, so its commands (bound to the new
+target) still see the previous target and reject as moved. This applies to a project switch as well as a host switch, since items
+remount per `(serverId, project id)`. Passive effects are not affected.
+
+`ensureWorkspace` sends the store's `branch` as `source.branchName` whenever the worktree cuts a
+new branch (`startsNewBranch`, which mirrors the daemon: anything but a checkout, including no base
+at all on a detached HEAD), and its `metadata` on `workspace.create` when it is not empty. The
+server uses `branchName ?? worktreeSlug` as the new branch. `baseRef.name` is the exact ref
+creation uses; `branchNameFromRef` is for labels only.
+
+Items render through `ComposerControl` with `surface="field"`: a `FieldTrigger` (a badge on
+desktop, a full-width field when compact) and the same pending state, error toast and list as the
+composer's controls. `ComposerControlLockProvider` carries the screen's lock to them. Plugin
+`Combobox` is a `select` item with `remoteSearch`: the app `Combobox` does not filter locally, and
+`PluginCombobox` (`plugins/react-native/composer-controls.tsx`) runs `search` through
+`useFetchQuery` with `dataShape: "list"`, which keeps the previous results while a newer query runs.
+`plugins/item-host.tsx` is the host shared by composer and New workspace items.
 
 ## Contribute timeline items
 

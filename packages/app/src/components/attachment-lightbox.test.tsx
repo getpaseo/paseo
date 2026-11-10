@@ -11,6 +11,7 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
+    opacity: { 50: 0.5 },
     borderRadius: { full: 999, md: 6, lg: 8 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400" },
@@ -72,6 +73,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("react-native-safe-area-context", () => ({
+  SafeAreaProvider: ({ children }: { children?: React.ReactNode }) => children,
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 

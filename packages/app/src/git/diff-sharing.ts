@@ -1,7 +1,8 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
-import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import type { CheckoutDiffSnapshot } from "./diff-snapshot";
+import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 
-type DiffPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
+type DiffPayload = CheckoutDiffSnapshot;
 
 /** File identity owns text-model reuse. Never reconstruct the hunk/token graph. */
 export function retainDiffFiles(
@@ -24,15 +25,24 @@ export function shareCheckoutDiff(previous: unknown, incoming: unknown): DiffPay
   const next = incoming as DiffPayload;
   const old = previous as DiffPayload | undefined;
   if (!old || old === next) return next;
+  // A new subscription announces its entries before the bodies arrive. That is
+  // progress on the first load only: once a diff has settled it stays on screen
+  // until the next revision commits, so an unchanged diff never repaints.
+  if (isLoadingSnapshot(next) && !isLoadingSnapshot(old)) return old;
   const files = retainDiffFiles(old.files, next.files);
   const error = replaceEqualDeep(old.error, next.error);
   return files === old.files &&
     error === old.error &&
     old.cwd === next.cwd &&
     old.requestId === next.requestId &&
+    old.entries === next.entries &&
     old.diffTooLarge === next.diffTooLarge
     ? old
     : { ...next, files, error };
+}
+
+function isLoadingSnapshot(payload: DiffPayload): boolean {
+  return payload.entries !== undefined;
 }
 
 export function shareCommitFileDiff(

@@ -1,9 +1,12 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import pino from "pino";
 
 import { DictationStreamManager } from "./dictation-stream-manager.js";
-import { PersistedConfigSchema } from "../persisted-config.js";
+import { loadPersistedConfig } from "../persisted-config.js";
 import { resolveSpeechConfig } from "../speech/speech-config-resolver.js";
 import type {
   SpeechToTextProvider,
@@ -131,12 +134,18 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     env?: NodeJS.ProcessEnv;
     persisted?: unknown;
   }): string {
-    const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
-      env: params.env ?? ({} as NodeJS.ProcessEnv),
-      persisted: PersistedConfigSchema.parse(params.persisted ?? {}),
-    });
-    return result.speech.sttLanguages.dictation;
+    const home = mkdtempSync(path.join(tmpdir(), "stt-language-"));
+    try {
+      writeFileSync(path.join(home, "config.json"), JSON.stringify(params.persisted ?? {}));
+      const result = resolveSpeechConfig({
+        paseoHome: home,
+        env: params.env ?? {},
+        persisted: loadPersistedConfig(home),
+      });
+      return result.speech.sttLanguages.dictation;
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 
   async function startWithResolvedDictationLanguage(params: {

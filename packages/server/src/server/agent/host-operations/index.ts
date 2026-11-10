@@ -16,6 +16,11 @@ import type { ConnectedHosts } from "../../connected-hosts/index.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import { selectAgentListItems } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
+import {
+  inheritAgentBackground,
+  inheritWorkspaceBackground,
+  type BackgroundCaller,
+} from "../create-agent/intent.js";
 import { expandUserPath } from "../../path-utils.js";
 import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
 
@@ -177,6 +182,7 @@ const remoteCreate = z
     workspaceId: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
     notifyOnFinish: z.boolean().optional(),
+    background: z.boolean().optional(),
     idempotencyKey: z.string().optional(),
     settings: z
       .object({
@@ -197,6 +203,8 @@ export function createHostResolver(input: {
   local: HostOperations;
   hosts: () => ToolHosts;
   callerAgentId?: string;
+  /** The destination can't see the caller, so its background defaults resolve before routing. */
+  caller: () => BackgroundCaller | null;
   lockedCwd?: string;
 }) {
   return {
@@ -214,9 +222,7 @@ export function createHostResolver(input: {
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
-            const workspace = (await client.fetchWorkspaces({})).entries.find(
-              (row) => row.id === parsed.workspaceId,
-            );
+            const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
             const labels = {
               ...parsed.labels,
@@ -235,6 +241,10 @@ export function createHostResolver(input: {
                 featureValues: parsed.settings?.features,
               },
               workspaceId: parsed.workspaceId,
+              // Older hosts reject any background with a workspaceId, so a visible create omits it.
+              ...(inheritAgentBackground(parsed.background, input.caller())
+                ? { background: true }
+                : {}),
               labels,
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
@@ -359,7 +369,10 @@ export function createHostResolver(input: {
                       worktreeSlug: args.worktreeSlug as string | undefined,
                     },
               title: args.title as string | undefined,
-              background: args.background as boolean | undefined,
+              background: inheritWorkspaceBackground(
+                args.background as boolean | undefined,
+                input.caller(),
+              ),
             });
             if (response.error || !response.workspace)
               throw new Error(response.error ?? "Workspace creation failed");
@@ -399,14 +412,16 @@ function remoteObservation(client: DaemonClient): HostObservation {
           // A new turn may start between the snapshot and the current-response read.
           // Bound that wait and refresh state instead of attributing the old event to it.
           const current = await client.waitForFinish(agentId, 100);
-          if (current.status === "timeout")
-            snapshot = (await client.fetchAgent(agentId))?.agent ?? null;
-          else {
-            if (!current.final && current.error && current.error !== `Agent not found: ${agentId}`)
-              throw new Error(current.error);
-            snapshot = current.final;
-            lastMessage = current.lastMessage;
+          if (current.status === "timeout") {
+            // Queued delivery can leave a closed/error snapshot visible before the new turn.
+            // A timed-out wait has not established an outcome for that queued work.
+            if (event?.type === "permission_resolved") handler(snapshot, event);
+            return;
           }
+          if (!current.final && current.error && current.error !== `Agent not found: ${agentId}`)
+            throw new Error(current.error);
+          snapshot = current.final;
+          lastMessage = current.lastMessage;
         }
         handler(snapshot, event, lastMessage);
       };

@@ -4,6 +4,6 @@ export { useHostReportsUsage } from "./queries";
 export {
   UsageSidebarItem,
   UsageSidebarRoot,
-  useHasUsageSummary,
+  useUsageSummary,
   useOpenSidebarUsage,
 } from "./sidebar-item";

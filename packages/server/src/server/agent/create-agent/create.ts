@@ -21,7 +21,19 @@ import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
-import { resolveCreateAgentIntent } from "./intent.js";
+import {
+  inheritAgentBackground,
+  inheritWorkspaceBackground,
+  resolveCreateAgentIntent,
+} from "./intent.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { foldFeatureValues, type LegacyFeatureValues } from "../option-controls.js";
+
+/** How a workspace this creation makes inherits its creator's visibility. */
+interface McpWorkspaceIntent {
+  background?: boolean;
+  callerWorkspaceId?: string;
+}
 
 export interface CreateAgentCommandDependencies {
   finishSubscriptions?: FinishSubscriptions;
@@ -40,15 +52,17 @@ export interface CreateAgentCommandDependencies {
 export type EnsureWorkspaceForCreate = (
   cwd: string,
   firstAgentContext?: FirstAgentContext,
-  context?: { callerWorkspaceId?: string },
+  context?: { background?: boolean; callerWorkspaceId?: string },
 ) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
   onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
-  config: AgentSessionConfig;
+  /** Wire configs from older clients can still carry `featureValues`; they are folded on entry. */
+  config: AgentSessionConfig & LegacyFeatureValues;
   workspaceId: string;
+  background: boolean;
   initialPrompt?: string;
   source?: AgentPromptSource;
   clientMessageId?: string;
@@ -56,6 +70,7 @@ export interface CreateAgentFromSessionInput {
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: AgentAttachment[];
   labels: Record<string, string>;
+  metadata?: CreateAgentOptions["metadata"];
   env?: Record<string, string>;
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
@@ -70,13 +85,15 @@ export interface CreateAgentFromMcpInput {
   cwd?: string;
   workspaceId?: string;
   thinking?: string;
-  features?: Record<string, unknown>;
+  providerOptions?: ProviderOptions;
   labels?: Record<string, string>;
   mode?: string;
   unattended?: boolean;
   promptFailure?: CreateAgentPromptFailureMode;
   notifyOnFinish: boolean;
   internal?: boolean;
+  /** Omitted with a caller, the caller agent's own background applies. */
+  background?: boolean;
   detached?: boolean;
   owner?: AgentOwner;
   env?: Record<string, string>;
@@ -218,19 +235,19 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const builtSessionConfig = input.config;
+  const builtSessionConfig = foldFeatureValues(input.config);
   const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: builtSessionConfig.cwd,
     provider: builtSessionConfig.provider,
     requestedMode: builtSessionConfig.modeId,
-    featureValues: builtSessionConfig.featureValues,
+    providerOptions: builtSessionConfig.providerOptions,
     parent: null,
     unattended: false,
   });
   const sessionConfig: AgentSessionConfig = {
     ...builtSessionConfig,
     modeId: resolvedCreateConfig.modeId,
-    featureValues: resolvedCreateConfig.featureValues,
+    providerOptions: resolvedCreateConfig.providerOptions,
   };
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
@@ -248,6 +265,7 @@ async function resolveSessionCreateAgent(
     config: sessionConfig,
     createOptions: {
       labels: input.labels,
+      metadata: input.metadata,
       initialPrompt: trimmedPrompt,
       env: input.env,
       initialTitle: input.provisionalTitle,
@@ -255,6 +273,7 @@ async function resolveSessionCreateAgent(
       // provider session either. Same as the daemon's own ephemeral helpers.
       ...(sessionConfig.internal ? { persistSession: false } : {}),
       workspaceId: requireResolvedWorkspaceId(workspaceId),
+      background: input.background,
     },
     prompt: hasPromptContent ? prompt : undefined,
     source: input.source,
@@ -277,12 +296,16 @@ async function resolveMcpCreateAgent(
     ? requireParentAgent(dependencies.agentManager, input.callerAgentId)
     : null;
   const cwd = resolveMcpInitialCwd(input, parentAgent);
+  const workspaceIntent = {
+    background: inheritWorkspaceBackground(input.background, parentAgent),
+    callerWorkspaceId: parentAgent?.workspaceId,
+  };
   const { resolvedCwd, createdWorkspaceId, createdWorktree } = await resolveMcpCwd({
     dependencies,
     cwd,
     worktree: input.worktree,
     initialPrompt: input.initialPrompt ?? "",
-    callerWorkspaceId: parentAgent?.workspaceId,
+    workspaceIntent,
   });
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
   const intent = await resolveCreateAgentIntent({
@@ -300,7 +323,7 @@ async function resolveMcpCreateAgent(
           dependencies,
           resolvedCwd,
           input.initialPrompt ?? "",
-          parentAgent?.workspaceId,
+          workspaceIntent,
         ),
       ),
       cwd: resolvedCwd,
@@ -323,12 +346,13 @@ async function resolveMcpCreateAgent(
       resolvedCwd: intent.cwd,
       trimmedPrompt,
       resolvedMode: resolvedCreateConfig.modeId,
-      resolvedFeatures: resolvedCreateConfig.featureValues,
+      resolvedProviderOptions: resolvedCreateConfig.providerOptions,
     }),
     createOptions: {
       ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
       workspaceId: intent.workspaceId,
       owner: input.owner,
+      background: inheritAgentBackground(input.background, parentAgent),
       env: input.env,
     },
     prompt: trimmedPrompt ? trimmedPrompt : undefined,
@@ -361,16 +385,21 @@ async function resolveMcpProviderCreateConfig(params: {
   provider: string;
   resolvedCwd: string;
   parentAgent: ManagedAgent | null;
-}): Promise<{ modeId?: string; featureValues?: Record<string, unknown> }> {
+}): Promise<{ modeId?: string; providerOptions?: ProviderOptions }> {
   const passthroughConfig = params.input.config;
   return params.dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: params.resolvedCwd,
     provider: params.provider,
     requestedMode: params.input.mode ?? passthroughConfig?.modeId,
-    featureValues: params.input.features ?? passthroughConfig?.featureValues,
+    providerOptions: mergeMcpProviderOptions(params.input),
     parent: params.parentAgent,
     unattended: params.input.unattended ?? false,
   });
+}
+
+function mergeMcpProviderOptions(input: CreateAgentFromMcpInput): ProviderOptions | undefined {
+  if (!input.providerOptions) return input.config?.providerOptions;
+  return { ...input.config?.providerOptions, ...input.providerOptions };
 }
 
 function buildMcpSessionConfig(params: {
@@ -380,14 +409,14 @@ function buildMcpSessionConfig(params: {
   resolvedCwd: string;
   trimmedPrompt: string;
   resolvedMode?: string;
-  resolvedFeatures?: Record<string, unknown>;
+  resolvedProviderOptions?: ProviderOptions;
 }): AgentSessionConfig {
   const passthroughConfig = params.input.config;
   const { provisionalTitle } = resolveCreateAgentTitles({
     configTitle: passthroughConfig?.title ?? params.input.title,
     initialPrompt: params.trimmedPrompt,
   });
-  const featureValues = params.resolvedFeatures ?? passthroughConfig?.featureValues;
+  const providerOptions = params.resolvedProviderOptions ?? mergeMcpProviderOptions(params.input);
   const config: AgentSessionConfig = {
     ...passthroughConfig,
     provider: params.provider,
@@ -400,8 +429,8 @@ function buildMcpSessionConfig(params: {
   if (provisionalTitle) {
     config.title = provisionalTitle;
   }
-  if (featureValues) {
-    config.featureValues = featureValues;
+  if (providerOptions) {
+    config.providerOptions = providerOptions;
   }
   return config;
 }
@@ -410,16 +439,12 @@ async function ensureWorkspaceForMcpCreate(
   dependencies: CreateAgentCommandDependencies,
   cwd: string,
   initialPrompt: string,
-  callerWorkspaceId?: string,
+  workspaceIntent: McpWorkspaceIntent,
 ): Promise<string | undefined> {
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(
-    cwd,
-    { prompt: initialPrompt },
-    { callerWorkspaceId },
-  );
+  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt }, workspaceIntent);
 }
 
 async function sendInitialPrompt(
@@ -512,7 +537,7 @@ async function resolveMcpCwd(params: {
   dependencies: CreateAgentCommandDependencies;
   cwd: string;
   initialPrompt: string;
-  callerWorkspaceId?: string;
+  workspaceIntent: McpWorkspaceIntent;
   worktree: CreateAgentFromMcpInput["worktree"];
 }): Promise<{
   resolvedCwd: string;
@@ -542,7 +567,7 @@ async function resolveMcpCwd(params: {
   const createdWorktree = await createMcpWorktree({
     input: {
       cwd: params.cwd,
-      callerWorkspaceId: params.callerWorkspaceId,
+      ...params.workspaceIntent,
       worktreeSlug: worktree.worktreeName,
       branchName: worktree.branchName,
       refName: worktree.refName,

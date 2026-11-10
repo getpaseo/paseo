@@ -548,7 +548,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
   );
 
   expect(created.worktree.branchName).toBe("dazzling-yak");
-  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
+  expect(await readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 2,
     firstAgentBranchAutoName: {
       status: "pending",
@@ -575,7 +575,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
     branchName: "renamed-from-agent-context",
   });
   expect(branchAfterFirst).toBe("renamed-from-agent-context");
-  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
+  expect(await readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 2,
     firstAgentBranchAutoName: {
       status: "attempted",
@@ -675,6 +675,40 @@ test("renames the branch even when the app supplies a random placeholder slug", 
   expect(branchAfter).toBe("renamed-from-prompt");
 });
 
+test("keeps a branch the caller named instead of renaming it from the first agent context", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      branchName: "pas-101-slow-sidebar",
+      firstAgentContext: { prompt: "Investigate the failing login flow" },
+
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(created.worktree.branchName).toBe("pas-101-slow-sidebar");
+  await expect(
+    attemptFirstAgentBranchAutoName({
+      cwd: created.worktree.worktreePath,
+      firstAgentContext: { prompt: "Investigate the failing login flow" },
+      generateBranchNameFromContext: async () => "must-not-rename",
+    }),
+  ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim(),
+  ).toBe("pas-101-slow-sidebar");
+});
+
 test("renames the branch from a github_pr attachment when no prompt is supplied", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
@@ -762,7 +796,7 @@ test("leaves the branch alone when generated branch text is invalid", async () =
       .toString()
       .trim(),
   ).toBe("dazzling-yak");
-  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
+  expect(await readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 2,
     firstAgentBranchAutoName: {
       status: "attempted",
@@ -794,7 +828,7 @@ test("does not mark checkout branch worktrees as eligible for first-agent rename
   // baseRefName must be the repo's default branch, not the checked-out branch
   // itself — otherwise the diff panel compares the branch against itself and
   // always shows no changes.
-  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
+  expect(await readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 1,
     baseRefName: "main",
   });
@@ -831,7 +865,7 @@ test("does not mark GitHub PR checkout worktrees as eligible for first-agent ren
     createDeps(),
   );
 
-  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
+  expect(await readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 1,
     baseRefName: "main",
   });
@@ -1092,7 +1126,8 @@ function createDeps(options?: {
   const workspaceRegistry: WorkspaceRegistry = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => Array.from(workspaces.values()),
+    listAll: async () => Array.from(workspaces.values()),
+    listActive: async () => Array.from(workspaces.values()).filter((record) => !record.archivedAt),
     get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
     update: async (workspaceId, updater) => {
       const workspace = workspaces.get(workspaceId);

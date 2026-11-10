@@ -40,7 +40,7 @@ describe("Codex app-server provider (real) plan mode", () => {
       });
 
       try {
-        await session.setFeature?.("plan_mode", true);
+        await session.applyOptions!({ plan_mode: true });
 
         const result = await session.run(
           "You are in plan mode. Produce a markdown plan with a short heading and exactly 3 bullets for implementing a login screen. Do not ask questions.",

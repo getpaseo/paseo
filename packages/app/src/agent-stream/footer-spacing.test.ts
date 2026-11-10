@@ -3,32 +3,13 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { layoutStream } from "./layout";
 import type { StreamStrategy } from "./strategy";
+import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
 function strategyFor(platform: "web" | "native"): StreamStrategy {
-  const inverted = platform === "native";
-  const neighborStep = inverted ? 1 : -1;
-  const getHistoryBoundaryIndex = (items: StreamItem[]) => {
-    if (items.length === 0) return null;
-    return inverted ? 0 : items.length - 1;
-  };
-  const getLiveHeadBoundaryIndex = (items: StreamItem[]) => {
-    if (items.length === 0) return null;
-    return inverted ? items.length - 1 : 0;
-  };
-  return {
-    orderTail: (items) => (inverted ? [...items].toReversed() : items),
-    orderHead: (items) => (inverted ? [...items].toReversed() : items),
-    getNeighborIndex: (index, relation) =>
-      relation === "above" ? index + neighborStep : index - neighborStep,
-    getNeighborItem: (items, index, relation) => {
-      const neighborIndex = relation === "above" ? index + neighborStep : index - neighborStep;
-      return items[neighborIndex];
-    },
-    getHistoryLiveBoundaryIndex: getHistoryBoundaryIndex,
-    getLiveHeadHistoryBoundaryIndex: getLiveHeadBoundaryIndex,
-    getLatestItemIndex: getHistoryBoundaryIndex,
-    getFrameChildOrder: () => (inverted ? "footer-then-content" : "content-then-footer"),
-  } as StreamStrategy;
+  return resolveStreamRenderStrategy({
+    platform: platform === "native" ? "android" : "web",
+    isMobileBreakpoint: false,
+  });
 }
 
 function userMessage(id: string): Extract<StreamItem, { kind: "user_message" }> {
@@ -71,7 +52,7 @@ function layoutFor(input: { platform: "web" | "native"; isTurnActive: boolean })
       isTurnActive: input.isTurnActive,
       history: strategy.orderTail([userMessage("user"), assistant]),
       liveHead: [],
-      timingByAssistantId: timingFor(assistant.id),
+      timingByItemId: timingFor(assistant.id),
     }),
   };
 }
