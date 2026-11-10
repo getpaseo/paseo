@@ -248,8 +248,8 @@ describe("getClaudeModels", () => {
     ["claude-sonnet-5-20260101", true, "high"],
     ["claude-fable-5", false, "high"],
     ["claude-fable-5-1", false, "high"],
-    ["claude-fable-5-2", false, "high"],
-    ["claude-mythos-5-2", false, "high"],
+    ["claude-fable-5-2", false, "medium"],
+    ["claude-mythos-5-2", false, "medium"],
     ["claude-haiku-5-5", true, "medium"],
     ["claude-haiku-5-5-20261007", true, "medium"],
     ["claude-haiku-4-5", false, undefined],
@@ -829,14 +829,14 @@ describe("Claude Fable 5.1 catalog", () => {
 });
 
 describe("Claude Fable 5.2 catalog", () => {
-  it("offers one 1M model with high default effort, always-on thinking, and fast mode", () => {
+  it("offers one 1M model with medium default effort, always-on thinking, and fast mode", () => {
     const models = getClaudeModels().filter((model) => model.id.startsWith("claude-fable-5-2"));
     expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({
       id: "claude-fable-5-2",
       label: "Fable 5.2",
       contextWindowMaxTokens: 1_000_000,
-      defaultThinkingOptionId: "high",
+      defaultThinkingOptionId: "medium",
     });
     expect(models[0].thinkingOptions?.map((option) => option.id)).toEqual([
       "low",
@@ -1047,14 +1047,39 @@ describe("Claude Mythos 5.1 catalog", () => {
 });
 
 describe("Claude Mythos 5.2 catalog", () => {
-  it("offers one 1M model with high default effort, always-on thinking, and fast mode", () => {
+  it("stays hidden on Claude Code older than 2.1.321 even when advertised", async () => {
+    const configDir = await createClaudeConfigDir({});
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveVersion: async () => "2.1.320",
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      discoverModels: async () => [
+        {
+          value: "mythos",
+          resolvedModel: "claude-mythos-5-2",
+          displayName: "Mythos",
+          description: "",
+        },
+      ],
+    });
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: configDir,
+      force: false,
+    });
+
+    expect(models.some((model) => model.id === "claude-mythos-5-2")).toBe(false);
+  });
+
+  it("offers one 1M model with medium default effort, always-on thinking, and fast mode", () => {
     const models = getClaudeModels().filter((model) => model.id.startsWith("claude-mythos-5-2"));
     expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({
       id: "claude-mythos-5-2",
       label: "Mythos 5.2",
       contextWindowMaxTokens: 1_000_000,
-      defaultThinkingOptionId: "high",
+      defaultThinkingOptionId: "medium",
     });
     expect(models[0].thinkingOptions?.map((option) => option.id)).toEqual([
       "low",
