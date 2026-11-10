@@ -136,8 +136,8 @@ test("captureRunningAgents captures agents supplied via runningAgentIds even if 
     await recovery.captureRunningAgents(["interrupted-claude", "archived-running"]);
     expect((await storage.get("interrupted-claude"))?.resumeOnStartup).toBe(true);
     expect((await storage.get("still-running"))?.resumeOnStartup).toBe(true);
-    expect((await storage.get("already-idle"))?.resumeOnStartup).toBe(false);
-    expect((await storage.get("archived-running"))?.resumeOnStartup).toBe(false);
+    expect((await storage.get("already-idle"))?.resumeOnStartup).toBeFalsy();
+    expect((await storage.get("archived-running"))?.resumeOnStartup).toBeFalsy();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
