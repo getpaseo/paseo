@@ -2620,7 +2620,13 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     savedThinking = "high",
     globalThinking = false,
     unknownThinking = false,
-  }: { savedThinking?: string; globalThinking?: boolean; unknownThinking?: boolean } = {}) {
+    catalogFailure = false,
+  }: {
+    savedThinking?: string;
+    globalThinking?: boolean;
+    unknownThinking?: boolean;
+    catalogFailure?: boolean;
+  } = {}) {
     const root = await mkdtemp(join(tmpdir(), "plugin-startup-repair-"));
     const states = new Map<string, ProviderConfigState>();
     const thinkingOptions = ["low", "medium", "high"].map((id) => ({ id, label: id }));
@@ -2632,6 +2638,14 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
     const harness = createProviderHarness({
       handleInput: async (input, emit) => {
         if (input.type === "catalog") {
+          if (catalogFailure) {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "catalog unavailable" },
+            });
+            return true;
+          }
           emit({
             type: "catalog",
             requestId: input.requestId,
@@ -2886,6 +2900,31 @@ describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume
       }
     },
   );
+
+  test("catalog failure rejects model-only repair before opening or changing storage", async () => {
+    const f = await fixture({ savedThinking: "off", catalogFailure: true });
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "plugin-model" },
+        }),
+      ).rejects.toThrow("catalog unavailable");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs.filter(
+          (input) => input.type === "session.open" || input.type === "session.configure",
+        ),
+      ).toEqual([]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
 
   test("preserves saved high when the catalog does not specify thinking choices", async () => {
     const f = await fixture({ unknownThinking: true });

@@ -993,6 +993,8 @@ class PluginAgentClient implements AgentClient {
       !("thinkingOptionId" in change) &&
       startup.thinkingOptionId !== undefined;
     if (!reconcileSavedThinking) return startup;
+    // Catalog errors abort before opening: guessing could discard a valid preference.
+    // Unknown choices below preserve that preference for native validation.
     const catalog = await this.fetchCatalog({ scope: "workspace", cwd: config.cwd, force: false });
     const target = startup.model
       ? catalog.models.find((model) => model.id === startup.model)
