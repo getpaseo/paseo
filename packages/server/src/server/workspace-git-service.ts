@@ -69,6 +69,7 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
   type SubscribeToFileChanges,
+  FileObservationLimitError,
   createFileObserver,
 } from "./file-observer/index.js";
 import {
@@ -458,7 +459,7 @@ class WorkspaceGitServiceDisposedError extends Error {
   }
 }
 
-class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
+export class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
   constructor(watchPath: string) {
     super(
       `Watcher subscription for ${watchPath} timed out after ${WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS}ms`,
@@ -570,6 +571,8 @@ interface WorkingTreeWatchTarget {
   ignoreRefreshDeadlineMs: number | null;
   aliases: Set<string>;
   workspaceKeys: Set<string>;
+  // The tree is past what recursive observation can hold; re-subscribing would only repeat the scan.
+  recursiveLimitExceeded: boolean;
   fallbackPolling: boolean;
   fallbackPollTimer: NodeJS.Timeout | null;
   fallbackPollQuietTickCount: number;
@@ -1545,6 +1548,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       ignoreRefreshDeadlineMs: null,
       aliases: new Set([cwd]),
       workspaceKeys: new Set(),
+      recursiveLimitExceeded: false,
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
@@ -1696,6 +1700,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             }
             watcherErrored = true;
             this.watcherErrorCallbackCount += 1;
+            this.noteRecursiveLimit(target, error);
             this.logger.warn(
               { err: error, cwd: target.cwd },
               "Working tree watcher error; using degraded polling",
@@ -1762,6 +1767,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (this.disposed || target.closed) {
         return false;
       }
+      this.noteRecursiveLimit(target, error);
       this.logger.warn(
         { err: error, cwd: target.cwd },
         "Failed to start working tree watcher; using degraded polling",
@@ -2011,8 +2017,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
   }
 
+  private noteRecursiveLimit(target: WorkingTreeWatchTarget, error: unknown): void {
+    if (!(error instanceof FileObservationLimitError) || target.recursiveLimitExceeded) return;
+    target.recursiveLimitExceeded = true;
+    this.logger.warn({ cwd: target.cwd }, "Working tree is too large to watch; staying on polling");
+  }
+
   private scheduleWorkingTreeWatchRecovery(target: WorkingTreeWatchTarget): void {
-    if (target.closed || target.subscription || target.recovery.timer) {
+    if (
+      target.closed ||
+      target.subscription ||
+      target.recovery.timer ||
+      target.recursiveLimitExceeded
+    ) {
       return;
     }
     const delayMs = this.advanceWatchRecoveryLadder(target.recovery);

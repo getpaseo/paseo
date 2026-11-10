@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import treeKill from "tree-kill";
 
 export interface TreeKillTarget {
@@ -64,13 +65,61 @@ export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals)
     return Promise.resolve();
   }
 
-  return new Promise((resolve) => {
-    treeKill(pid, signal, (error) => {
-      if (error) {
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      treeKill(pid, signal, (error) => {
+        if (error) {
+          signalDirectChild(child, signal);
+        }
+        resolve();
+      });
+    });
+  }
+  return signalPosixTree(child, pid, signal);
+}
+
+// tree-kill spawns `ps` without an error listener, so a spawn failure (EAGAIN under a task
+// limit) is an uncaught exception that takes the whole process down. This lists the tree
+// through execFile, which reports the same failure to its callback.
+async function signalPosixTree(
+  child: TreeKillTarget,
+  pid: number,
+  signal: NodeJS.Signals,
+): Promise<void> {
+  const pids = await listPosixTree(pid).catch(() => [pid]);
+  for (const target of pids) {
+    try {
+      process.kill(target, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH" && target === pid) {
         signalDirectChild(child, signal);
       }
-      resolve();
-    });
+    }
+  }
+}
+
+function listPosixTree(rootPid: number): Promise<number[]> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ps",
+      ["-A", "-o", "pid=", "-o", "ppid="],
+      { encoding: "utf8", timeout: 5_000, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        const childrenOf = new Map<number, number[]>();
+        for (const line of stdout.split("\n")) {
+          const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+          if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+          childrenOf.set(ppid, [...(childrenOf.get(ppid) ?? []), pid]);
+        }
+        const tree = [rootPid];
+        for (const parent of tree) tree.push(...(childrenOf.get(parent) ?? []));
+        resolve(tree);
+      },
+    );
   });
 }
 

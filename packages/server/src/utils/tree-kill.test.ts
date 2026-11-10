@@ -181,4 +181,22 @@ describe("terminateWithTreeKill", () => {
       );
     },
   );
+
+  test.runIf(process.platform !== "win32")(
+    "terminates the child instead of crashing when ps cannot be started",
+    async () => {
+      ownerProcess = spawn("sleep", ["60"], { stdio: "ignore" });
+      const originalPath = process.env.PATH;
+      process.env.PATH = "";
+      try {
+        const result = await terminateWithTreeKill(ownerProcess, {
+          gracefulTimeoutMs: 2000,
+          forceTimeoutMs: 2000,
+        });
+        expect(result).toBe("terminated");
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
 });
