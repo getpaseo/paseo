@@ -5,6 +5,7 @@ import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   pinRelayProtectedSecurityInProfiles,
+  reconcileLearnedDirectConnections,
   relayConnectionFromOffer,
   resolveActiveHostServerId,
   upsertHostConnectionInProfiles,
@@ -174,6 +175,82 @@ describe("normalizeStoredHostProfile", () => {
       sshPort: 2222,
       daemonPort: 7777,
     });
+  });
+});
+
+describe("learned direct connections", () => {
+  it("drops a stored learned address when its paired relay or key is gone", () => {
+    const learned = {
+      type: "directTcp",
+      endpoint: "192.168.1.8:6767",
+      learnedFromConnectionId: "relay:example:443",
+      daemonPublicKeyB64: "paired-key",
+    };
+    expect(normalizeStoredHostProfile({ serverId: "srv", connections: [learned] })).toBeNull();
+    expect(
+      normalizeStoredHostProfile({
+        serverId: "srv",
+        connections: [
+          { type: "relay", relayEndpoint: "example:443", daemonPublicKeyB64: "other-key" },
+          learned,
+        ],
+      })?.connections,
+    ).toHaveLength(1);
+  });
+
+  it("adds, updates, and withdraws addresses while preserving manual connections", () => {
+    const relay: HostConnection = {
+      id: "relay:example:443",
+      type: "relay",
+      relayEndpoint: "example:443",
+      daemonPublicKeyB64: "paired-key",
+    };
+    const manual: HostConnection = {
+      id: "direct:192.168.1.8:6767",
+      type: "directTcp",
+      endpoint: "192.168.1.8:6767",
+      useTls: false,
+    };
+    const host = { ...makeHost("srv-learned"), connections: [relay, manual] };
+    const input = { sourceConnectionId: relay.id, daemonPublicKeyB64: "paired-key" };
+    const first = reconcileLearnedDirectConnections({
+      host,
+      ...input,
+      endpoints: ["192.168.1.8:6767", "100.100.1.5:6767"],
+    });
+    expect(first.connections).toEqual([
+      relay,
+      manual,
+      {
+        id: "direct:100.100.1.5:6767",
+        type: "directTcp",
+        endpoint: "100.100.1.5:6767",
+        useTls: false,
+        learnedFromConnectionId: relay.id,
+        daemonPublicKeyB64: "paired-key",
+      },
+    ]);
+    expect(normalizeStoredHostProfile(first)?.connections).toEqual(first.connections);
+    const second = reconcileLearnedDirectConnections({
+      host: first,
+      ...input,
+      endpoints: ["100.100.1.6:6767"],
+    });
+    expect(second.connections.map((connection) => connection.id)).toEqual([
+      relay.id,
+      manual.id,
+      "direct:100.100.1.6:6767",
+    ]);
+    expect(
+      reconcileLearnedDirectConnections({
+        host: second,
+        ...input,
+        endpoints: ["100.100.1.6:6767"],
+      }),
+    ).toBe(second);
+    expect(
+      reconcileLearnedDirectConnections({ host: second, ...input, endpoints: [] }).connections,
+    ).toEqual([relay, manual]);
   });
 });
 

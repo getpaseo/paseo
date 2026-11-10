@@ -124,8 +124,10 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { reachableDirectEndpoints } from "./direct-endpoints.js";
+import { admitSecuredRelaySocket } from "./websocket/secure-relay-ingress.js";
 
-import type { SecurityMode } from "@getpaseo/relay/e2ee";
+import type { KeyPair, SecurityMode } from "@getpaseo/relay/e2ee";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
@@ -184,6 +186,7 @@ interface WebSocketConnectionIdentity {
 }
 
 interface WebSocketServerConfig {
+  daemonKeyPair?: KeyPair;
   allowedOrigins?: Set<string>;
   hostnames?: HostnamesConfig;
   getAllowedOrigins?: () => Set<string>;
@@ -633,6 +636,8 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private unsubscribeTerminalActivity: (() => void) | null = null;
+  private directEndpointsInterval: ReturnType<typeof setInterval> | null = null;
+  private lastDirectEndpoints = "";
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
@@ -835,6 +840,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
+    this.startDirectEndpointsInterval();
     this.startRuntimeMetricsInterval();
     this.startApplicationSocketLeaseInterval();
 
@@ -914,6 +920,22 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
+      if (new URL(request.url ?? "/ws", "http://localhost").searchParams.get("secure") === "1") {
+        if (!wsConfig.daemonKeyPair) {
+          ws.close(1011, "Secure direct transport unavailable");
+          return;
+        }
+        void admitSecuredRelaySocket(
+          ws,
+          {
+            daemonKeyPair: wsConfig.daemonKeyPair,
+            logger: this.logger,
+            requireProtectedMode: () => true,
+          },
+          async ({ socket }) => this.attachSocket(socket, request),
+        );
+        return;
+      }
       void this.attachAuthenticatedSocket(ws, request, password);
     });
     return wss;
@@ -940,6 +962,26 @@ export class VoiceAssistantWebSocketServer {
     }, APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS);
     this.applicationSocketLeaseInterval = interval;
     (interval as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private getDirectEndpoints(): string[] {
+    return reachableDirectEndpoints(
+      this.getDaemonTcpHost?.() ?? null,
+      this.getDaemonTcpPort?.() ?? null,
+    );
+  }
+
+  private startDirectEndpointsInterval(): void {
+    this.lastDirectEndpoints = JSON.stringify(this.getDirectEndpoints());
+    this.directEndpointsInterval = setInterval(() => {
+      const current = JSON.stringify(this.getDirectEndpoints());
+      if (current === this.lastDirectEndpoints) return;
+      this.lastDirectEndpoints = current;
+      for (const connection of new Set(this.sessions.values())) {
+        this.sendToConnection(connection, this.createServerInfoMessage(connection.session));
+      }
+    }, 15_000);
+    this.directEndpointsInterval.unref?.();
   }
 
   // Main-loop stall visibility: terminal frames and agent traffic share one event
@@ -1175,6 +1217,10 @@ export class VoiceAssistantWebSocketServer {
     if (this.applicationSocketLeaseInterval) {
       clearInterval(this.applicationSocketLeaseInterval);
       this.applicationSocketLeaseInterval = null;
+    }
+    if (this.directEndpointsInterval) {
+      clearInterval(this.directEndpointsInterval);
+      this.directEndpointsInterval = null;
     }
     this.applicationSocketLease.clear();
     this.flushRuntimeMetrics({ final: true });
@@ -2019,6 +2065,7 @@ export class VoiceAssistantWebSocketServer {
       hostname: getHostName(),
       version: this.daemonVersion,
       sourceId: session.getHostSourceId(),
+      directEndpoints: this.getDirectEndpoints(),
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
@@ -2026,6 +2073,7 @@ export class VoiceAssistantWebSocketServer {
       features: {
         connectedHosts: true,
         hostMultiplexing: true,
+        learnedDirectEndpoints: true,
         // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
         relayProtectedSecurity: true,
         usageSetting: true,

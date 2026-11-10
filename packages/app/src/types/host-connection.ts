@@ -21,7 +21,12 @@ import {
 import { z } from "zod";
 
 export { DirectTcpHostConnectionSchema };
-export type DirectTcpHostConnection = Omit<WireDirectTcpHostConnection, "password">;
+export type DirectTcpHostConnection = Omit<WireDirectTcpHostConnection, "password"> & {
+  /** A direct route learned from a paired relay route. */
+  learnedFromConnectionId?: string;
+  /** Pinned daemon identity; learned routes require protected endpoint security. */
+  daemonPublicKeyB64?: string;
+};
 
 export interface DirectSocketHostConnection {
   id: string;
@@ -143,9 +148,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
 
   if (left.type === "routed" && right.type === "routed")
     return left.originServerId === right.originServerId;
-  if (left.type === "directTcp" && right.type === "directTcp") {
-    return left.endpoint === right.endpoint && (left.useTls ?? false) === (right.useTls ?? false);
-  }
+  if (left.type === "directTcp" && right.type === "directTcp")
+    return directTcpConnectionEquals(left, right);
   if (left.type === "directSocket" && right.type === "directSocket") {
     return left.path === right.path;
   }
@@ -164,6 +168,18 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   }
 
   return false;
+}
+
+function directTcpConnectionEquals(
+  left: DirectTcpHostConnection,
+  right: DirectTcpHostConnection,
+): boolean {
+  return (
+    left.endpoint === right.endpoint &&
+    (left.useTls ?? false) === (right.useTls ?? false) &&
+    left.learnedFromConnectionId === right.learnedFromConnectionId &&
+    left.daemonPublicKeyB64 === right.daemonPublicKeyB64
+  );
 }
 
 function remoteSshConnectionEquals(
@@ -394,6 +410,50 @@ export function upsertHostConnectionInProfiles(input: {
   return next;
 }
 
+export function reconcileLearnedDirectConnections(input: {
+  host: HostProfile;
+  sourceConnectionId: string;
+  daemonPublicKeyB64: string;
+  endpoints: readonly string[];
+}): HostProfile {
+  const otherEndpoints = new Set(
+    input.host.connections.flatMap((connection) =>
+      connection.type === "directTcp" &&
+      connection.learnedFromConnectionId !== input.sourceConnectionId
+        ? [connection.endpoint]
+        : [],
+    ),
+  );
+  const learned = [...new Set(input.endpoints)].flatMap((endpoint): DirectTcpHostConnection[] => {
+    try {
+      const normalized = normalizeHostPort(endpoint);
+      if (otherEndpoints.has(normalized)) return [];
+      return [
+        {
+          id: `direct:${normalized}`,
+          type: "directTcp",
+          endpoint: normalized,
+          useTls: false,
+          learnedFromConnectionId: input.sourceConnectionId,
+          daemonPublicKeyB64: input.daemonPublicKeyB64,
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+  const connections = [
+    ...input.host.connections.filter(
+      (connection) =>
+        connection.type !== "directTcp" ||
+        connection.learnedFromConnectionId !== input.sourceConnectionId,
+    ),
+    ...learned,
+  ];
+  if (JSON.stringify(connections) === JSON.stringify(input.host.connections)) return input.host;
+  return { ...input.host, connections, updatedAt: new Date().toISOString() };
+}
+
 export function connectionFromListen(listen: string): HostConnection | null {
   const normalizedListen = listen.trim();
   if (!normalizedListen) {
@@ -489,6 +549,8 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     endpoint: z.string(),
     useTls: z.boolean().optional(),
     password: z.string().optional(),
+    learnedFromConnectionId: z.string().optional(),
+    daemonPublicKeyB64: z.string().optional(),
   }),
   z.strictObject({
     id: z.string().optional(),
@@ -532,20 +594,7 @@ type StoredHostConnection = z.infer<typeof StoredHostConnectionSchema>;
 
 function normalizeStoredConnection(connection: StoredHostConnection): HostConnection | null {
   if (connection.type === "routed") return connection;
-  if (connection.type === "directTcp") {
-    try {
-      const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(connection.endpoint));
-      const parsed = DirectTcpHostConnectionSchema.parse({
-        id: `direct:${endpoint}`,
-        type: "directTcp",
-        endpoint,
-        useTls: connection.useTls,
-      });
-      return { id: parsed.id, type: parsed.type, endpoint: parsed.endpoint, useTls: parsed.useTls };
-    } catch {
-      return null;
-    }
-  }
+  if (connection.type === "directTcp") return normalizeStoredDirectTcpConnection(connection);
   if (connection.type === "directSocket") {
     const path = connection.path.trim();
     return path ? { id: `socket:${path}`, type: "directSocket", path } : null;
@@ -589,6 +638,36 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
   return null;
 }
 
+function normalizeStoredDirectTcpConnection(
+  connection: Extract<StoredHostConnection, { type: "directTcp" }>,
+): DirectTcpHostConnection | null {
+  try {
+    if (Boolean(connection.learnedFromConnectionId) !== Boolean(connection.daemonPublicKeyB64))
+      return null;
+    const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(connection.endpoint));
+    const parsed = DirectTcpHostConnectionSchema.parse({
+      id: `direct:${endpoint}`,
+      type: "directTcp",
+      endpoint,
+      useTls: connection.useTls,
+    });
+    return {
+      id: parsed.id,
+      type: parsed.type,
+      endpoint: parsed.endpoint,
+      useTls: parsed.useTls,
+      ...(connection.learnedFromConnectionId && connection.daemonPublicKeyB64
+        ? {
+            learnedFromConnectionId: connection.learnedFromConnectionId,
+            daemonPublicKeyB64: connection.daemonPublicKeyB64,
+          }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   const result = StoredHostProfileSchema.safeParse(entry);
   if (!result.success) {
@@ -603,9 +682,20 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   const password =
     record.password ?? (legacyPassword?.type === "directTcp" ? legacyPassword.password : undefined);
 
-  const connections = record.connections
+  const normalizedConnections = record.connections
     .map((connection) => normalizeStoredConnection(connection))
     .filter((connection): connection is HostConnection => connection !== null);
+  const connections = normalizedConnections.filter(
+    (connection) =>
+      connection.type !== "directTcp" ||
+      !connection.learnedFromConnectionId ||
+      normalizedConnections.some(
+        (source) =>
+          source.id === connection.learnedFromConnectionId &&
+          source.type === "relay" &&
+          source.daemonPublicKeyB64 === connection.daemonPublicKeyB64,
+      ),
+  );
   if (connections.length === 0) {
     return null;
   }
