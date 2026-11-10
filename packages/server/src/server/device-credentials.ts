@@ -17,10 +17,13 @@ export interface CredentialAuthority {
   principalId: string;
   permissions: readonly DaemonPermission[];
   credentialId?: string;
+  /** Admitted through another daemon's host link rather than directly. */
+  routed?: boolean;
 }
 export function isFullOwner(authority: CredentialAuthority): boolean {
   return (
     authority.principalId === "owner" &&
+    authority.routed !== true &&
     OWNER_PERMISSIONS.every((p) => authority.permissions.includes(p))
   );
 }

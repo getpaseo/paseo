@@ -140,9 +140,13 @@ describe("device hello authentication", () => {
     }
   });
 
-  test.each(["incorrect", "invalid"] as const)(
-    "forgets a %s credential and retries the password once",
-    async (rejection) => {
+  // Only an in-channel hello.rejected forgets; a bare close may be forged by a relay.
+  test.each([
+    { rejection: "incorrect", forgets: 1 },
+    { rejection: "invalid", forgets: 0 },
+  ] as const)(
+    "retries the password once after an $rejection credential (forgets: $forgets)",
+    async ({ rejection, forgets }) => {
       const fixture = new AuthFixture();
       fixture.rejectDevice = rejection;
       let forgotten = 0;
@@ -159,7 +163,7 @@ describe("device hello authentication", () => {
           "deviceCredential",
           "password",
         ]);
-        expect(forgotten).toBe(1);
+        expect(forgotten).toBe(forgets);
       } finally {
         await client.close();
       }

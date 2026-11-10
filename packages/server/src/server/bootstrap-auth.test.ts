@@ -77,7 +77,11 @@ describe("daemon bearer auth", () => {
         ws.once("close", closed);
       });
     }
-    async function hello(clientId: string, auth: Record<string, string>) {
+    async function hello(
+      clientId: string,
+      auth: Record<string, string>,
+      extra: Record<string, unknown> = {},
+    ) {
       const { ws } = await connectWebSocket({ port: handle.port });
       sockets.push(ws);
       const response = receive(
@@ -90,7 +94,14 @@ describe("daemon bearer auth", () => {
             .safeParse(frame).success,
       );
       ws.send(
-        JSON.stringify({ type: "hello", clientId, clientType: "cli", protocolVersion: 1, auth }),
+        JSON.stringify({
+          type: "hello",
+          clientId,
+          clientType: "cli",
+          protocolVersion: 1,
+          auth,
+          ...extra,
+        }),
       );
       await expect(response).resolves.toMatchObject({
         type: "session",
@@ -140,6 +151,34 @@ describe("daemon bearer auth", () => {
           requestId: "list",
         }),
       ).toMatchObject({ message: { payload: { credentials: [{ id, current: true }] } } });
+      const password = { kind: "password", password: "correct-password" };
+      const routed = await hello("routed-session", password, { routed: true });
+      expect(
+        await request(routed, {
+          type: "access.device_credentials.issue.request",
+          requestId: "routed-issue",
+          label: "Routed phone",
+        }),
+      ).toMatchObject({
+        message: { payload: { credential: null, error: "unsupported_principal" } },
+      });
+      const narrowed = await hello("narrowed-session", password, {
+        sessionPermissions: ["access.manage"],
+      });
+      expect(
+        await request(narrowed, {
+          type: "access.device_credentials.list.request",
+          requestId: "narrowed-list",
+        }),
+      ).toMatchObject({ message: { payload: { credentials: [] } } });
+      expect(
+        await request(narrowed, {
+          type: "access.device_credentials.revoke.request",
+          requestId: "narrowed-revoke",
+          id: "*",
+        }),
+      ).toMatchObject({ message: { payload: { revoked: false } } });
+      expect(device.readyState).toBe(WebSocket.OPEN);
       const closed = new Promise<number>((resolve) => device.once("close", resolve));
       expect(
         await request(owner, {

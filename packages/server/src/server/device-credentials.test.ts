@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
-import { DeviceCredentials } from "./device-credentials.js";
+import { DeviceCredentials, isFullOwner } from "./device-credentials.js";
 import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { resolveSessionAdmission } from "./session-admission-auth.js";
 
@@ -53,7 +53,7 @@ describe("device credentials", () => {
     }
   });
 
-  test("rejects narrowed and non-owner issuers and open-daemon issuance", async () => {
+  test("rejects narrowed, routed and non-owner issuers and open-daemon issuance", async () => {
     const store = new DeviceCredentials("unused");
     await expect(store.issue("Phone", owner, false)).resolves.toMatchObject({
       error: "password_not_configured",
@@ -61,7 +61,9 @@ describe("device credentials", () => {
     for (const authority of [
       { principalId: "owner", permissions: ["access.manage"] as const },
       { principalId: "hub", permissions: OWNER_PERMISSIONS },
+      { ...owner, routed: true },
     ]) {
+      expect(isFullOwner(authority)).toBe(false);
       await expect(store.issue("Phone", authority, true)).resolves.toMatchObject({
         error: "unsupported_principal",
       });

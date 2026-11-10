@@ -13,7 +13,9 @@ principal -> grants
 
 A principal is the durable identity the daemon authorizes. A credential proves that a device or service represents it. Keep them separate so you can rotate credentials, attach more than one device, and revoke a Hub user without inventing daemon user accounts.
 
-Device credentials authenticate the existing `owner` principal. Only owner sessions holding every owner permission may issue them, and issuance requires a configured daemon password. They grant full owner authority; a narrowed owner session or a Hub principal cannot mint one.
+Device credentials authenticate the existing `owner` principal. Only directly admitted owner sessions holding every owner permission may issue, list, or revoke them, or request a pairing invitation, and issuance requires a configured daemon password. They grant full owner authority; a narrowed owner session, a Hub principal, or a session routed through another daemon's host link cannot mint or manage one. A routed session acts with the origin's link authority, so minting there would turn a link into a standing credential on the destination. Narrowed sessions see an empty list and cannot revoke, so `access.manage` alone cannot lock other devices out.
+
+The app drops a stored device credential only after an in-channel `hello.rejected`. A relay can forge or replace WebSocket close frames, so a bare close keeps the credential and retries once with the saved password.
 
 The daemon persists only SHA-256 digests of random 256-bit secrets in the private `device-credentials.json` store. A malformed store is quarantined and admits no devices. Changing the password preserves device credentials; revoke one or all to remove access. Revocation closes the sockets admitted by that credential, including their host links. Password sockets sharing the same session remain connected.
 

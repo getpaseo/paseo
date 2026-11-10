@@ -43,7 +43,7 @@ Transport: both kinds are accepted on direct and relay. The relay path is E2EE (
 
 ### Owner-only
 
-Issuing a credential or a pairing token requires a session whose principal is `owner` and whose current permissions include every `OWNER_PERMISSIONS` entry. Everything issued therefore carries full owner authority and nothing narrower. This closes a hijack path: sessions are keyed `(principalId, clientId)` and `clientId` is client-chosen, so a narrower owner-principal credential could resume another client's session and narrow its live sockets through `resumeSession`. Hub and other principals get `unsupported_principal`, even with `access.manage`. Routed sessions on a destination are admitted as `owner` through the origin's link, so they can issue when their permissions are not narrowed by a `sessionPermissions` ceiling.
+Issuing a credential or a pairing token requires a session whose principal is `owner` and whose current permissions include every `OWNER_PERMISSIONS` entry. Everything issued therefore carries full owner authority and nothing narrower. This closes a hijack path: sessions are keyed `(principalId, clientId)` and `clientId` is client-chosen, so a narrower owner-principal credential could resume another client's session and narrow its live sockets through `resumeSession`. Hub and other principals get `unsupported_principal`, even with `access.manage`. Routed sessions on a destination are refused (`unsupported_principal`) even though they are admitted as `owner` through the origin's link; list and revoke follow the same full-owner rule. See [docs/permissions.md](../../docs/permissions.md).
 
 ### Revocation is per credential
 
@@ -67,11 +67,11 @@ The admitting `credentialId` is recorded on the `PendingConnection` and on each 
 
 ## App
 
-- After any admitted connection (direct with password, desktop local credential, pairing token, routed `via:<origin>`) to a host with `features.deviceCredentials` and `access.manage` in `server_info.permissions`, and no stored credential for that host, the app calls `issue` once with label `<device name> (<platform>)` and stores the result.
+- After any admitted connection (direct with password, desktop local credential, pairing token; not routed) to a host with `features.deviceCredentials` and `access.manage` in `server_info.permissions`, and no stored credential for that host, the app calls `issue` once with label `<device name> (<platform>)` and stores the result.
 - Storage: `HostProfile.deviceCredential = { id, secret }` in the existing host registry (AsyncStorage key `@paseo:daemon-registry`; `StoredHostProfileSchema` gains the optional field). The app already stores the host password there in plaintext and has no secure store; a per-device, revocable credential beside it is strictly less exposure than the password, and it lets the user clear the password. Moving the registry's secrets to a secure store is a separate change (needs `expo-secure-store` and a native rebuild).
-- Hello auth order: local credential (desktop, direct) → device credential → password. A stored credential proves the daemon supported the feature when it was minted. If a hello carrying it is rejected (`incorrect_password`, i.e. revoked) or closed as an invalid hello (daemon downgraded), the app drops the credential and retries once with the stored password, else shows the existing "Password required" state. This does not depend on unmerged #9122.
+- Hello auth order: local credential (desktop, direct) → device credential → password. A stored credential proves the daemon supported the feature when it was minted. If an in-channel `hello.rejected` with `incorrect_password` arrives (revoked), the app drops the credential and retries once with the stored password, else shows the existing "Password required" state. A bare close (`4002` or "Incorrect password") is unauthenticated over relay, so it keeps the credential and retries the next attempt with the password. This does not depend on unmerged #9122.
 - Pairing: scanning an offer with `pairingToken` sends `{ kind: "pairingToken" }` on the first hello, then mints a device credential immediately. The token is never persisted in `HostProfile`.
-- Routed hosts: once the origin is admitted, each routed host is admitted through the origin's link; the app mints a credential on each, so the phone can later reach them directly over relay without the origin.
+- Routed hosts: the app does not mint over a routed connection; it mints when it connects to that host directly or over relay.
 - Settings → host: list this host's devices and revoke one (uses list/revoke RPCs).
 
 ## Compatibility
