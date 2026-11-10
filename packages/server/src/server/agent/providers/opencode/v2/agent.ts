@@ -3,6 +3,9 @@ import { V2_CAPABILITIES } from "./capabilities.js";
 import { controls, permissionRules, applyResumeOverrides } from "./configuration.js";
 import { SessionMcp } from "./session-mcp.js";
 import { commands } from "./commands.js";
+import { messages } from "./history.js";
+import { readSessionChildrenHistory } from "./children.js";
+import { V2Timeline } from "./timeline.js";
 
 import { waitForLocationReady } from "./readiness.js";
 
@@ -15,6 +18,8 @@ import type {
   AgentCreateSessionOptions,
   AgentResumeSessionOptions,
   AgentDraftControls,
+  AgentHistoryReadContext,
+  AgentHistoryReadResult,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentSession,
@@ -225,6 +230,35 @@ export class OpenCodeV2AgentClient implements AgentClient {
       wrap: launch?.wrap,
     });
     return { launch, environment, mcp };
+  }
+
+  // Dedicated read-only replay: this never calls attach()/initialize(), so it cannot
+  // register MCP servers, write the Paseo instructions entry, open an event stream, or
+  // unarchive the session the way an interactive resume does.
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const cwd = context?.cwd ?? handle.metadata?.cwd;
+    if (typeof cwd !== "string")
+      throw new Error("OpenCode history read requires the original working directory");
+    const sessionID = handle.nativeHandle ?? handle.sessionId;
+    const connection =
+      this.connections.get(sessionID)?.retain() ??
+      (await this.runtime.acquire({ dedicated: dedicatedLaunch(context) }));
+    try {
+      const info = await connection.client.session.get({ sessionID });
+      const timeline = new V2Timeline(false);
+      return {
+        events: [
+          ...timeline.messages(await messages(connection.client, info.id)),
+          ...(await readSessionChildrenHistory(connection.client, info.id)),
+        ],
+        coverage: { kind: "complete" },
+      };
+    } finally {
+      await connection.release();
+    }
   }
   private async attach(
     connection: V2Connection,

@@ -270,6 +270,82 @@ describe("ClaudeAgentSession history replay regression", () => {
     expect(timelineText).toContain(HISTORY_ASSISTANT_MARKER);
   });
 
+  test("reads persisted history without starting a Claude SDK query", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    queryFactory.mockClear();
+
+    const historyEvents = await client.readSessionHistory(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+
+    expect(historyEvents.coverage).toEqual({ kind: "complete" });
+    expect(collectTimelineText(historyEvents.events)).toContain(HISTORY_USER_MARKER);
+    expect(collectTimelineText(historyEvents.events)).toContain(HISTORY_ASSISTANT_MARKER);
+    expect(queryFactory).not.toHaveBeenCalled();
+    expect(lastQuery).toBeNull();
+  });
+
+  test("reads persisted history from the provider profile's CLAUDE_CONFIG_DIR", async () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(tempRoot, "daemon-claude-config");
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    queryFactory.mockClear();
+
+    const history = await client.readSessionHistory(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+
+    expect(collectTimelineText(history.events)).toContain(HISTORY_ASSISTANT_MARKER);
+    expect(queryFactory).not.toHaveBeenCalled();
+  });
+
+  test("prefers the explicit config directory when reading persisted history", async () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(tempRoot, "daemon-claude-config");
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      configDir,
+      runtimeSettings: {
+        env: { CLAUDE_CONFIG_DIR: path.join(tempRoot, "profile-claude-config") },
+      },
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    queryFactory.mockClear();
+
+    const history = await client.readSessionHistory(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+
+    expect(collectTimelineText(history.events)).toContain(HISTORY_ASSISTANT_MARKER);
+    expect(queryFactory).not.toHaveBeenCalled();
+  });
+
   test("replays persisted sidechains as provider subagent timelines", async () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),

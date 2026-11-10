@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
   PROVIDER_PROTOCOL_VERSION,
+  ProviderHistoryReadResultSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderStatusSchema,
@@ -26,6 +27,8 @@ import {
   type ProviderConnection,
   type ProviderError,
   type ProviderEvent,
+  type ProviderHistoryChild,
+  type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderPersistence,
   type ProviderPrompt,
@@ -41,6 +44,8 @@ import type {
   AgentClientUpdateCheckContext,
   AgentClientUpdateContext,
   AgentCreateSessionOptions,
+  AgentHistoryReadContext,
+  AgentHistoryReadResult,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -332,6 +337,24 @@ class ProviderRuntime {
     if (event.type !== "sessions")
       throw new Error("Provider returned an invalid sessions response");
     return event.sessions;
+  }
+
+  async readSessionHistory(
+    persistence: ProviderPersistence,
+    context: { cwd: string; env?: Readonly<Record<string, string>> },
+  ): Promise<ProviderHistoryReadResult> {
+    const reader = this.registration.readSessionHistory;
+    if (!reader) {
+      throw new Error(`Plugin provider '${this.registration.id}' does not support history reads`);
+    }
+    return ProviderHistoryReadResultSchema.parse(
+      await reader({
+        persistence,
+        cwd: context.cwd,
+        env: context.env,
+        launch: await this.resolveLaunch(),
+      }),
+    );
   }
 
   onSessionOpened(
@@ -1161,6 +1184,52 @@ class PluginAgentClient implements AgentClient {
       history: "replay",
       persist: true,
     });
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const cwd = context?.cwd ?? handle.metadata?.cwd;
+    if (typeof cwd !== "string") {
+      throw new Error(
+        `Plugin provider '${this.provider}' requires cwd to read a session's history`,
+      );
+    }
+    const result = await this.runtime.readSessionHistory(decodePersistence(handle), {
+      cwd,
+      env: context?.env,
+    });
+    const snapshots = new Map<string, ProviderTimelineItem>();
+    const events: AgentStreamEvent[] = [];
+    for (const entry of result.items) {
+      const item = mapTimelineItem(entry.item, snapshots);
+      if (!item) continue;
+      events.push({
+        type: "timeline",
+        provider: this.provider,
+        item,
+        timestamp: entry.timestamp,
+      });
+    }
+    for (const child of result.children ?? []) {
+      events.push({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: historyChildUpsert(child),
+      });
+      const childSnapshots = new Map<string, ProviderTimelineItem>();
+      for (const entry of child.items) {
+        const item = mapTimelineItem(entry.item, childSnapshots);
+        if (!item) continue;
+        events.push({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: { type: "timeline", id: child.sessionId, item, timestamp: entry.timestamp },
+        });
+      }
+    }
+    return { events, coverage: result.coverage };
   }
 
   async fetchCatalog(
@@ -2211,6 +2280,19 @@ function mapPromptInput(
 function mapPromptContent(prompt: AgentPromptInput): ProviderContent[] {
   const content = typeof prompt === "string" ? [{ type: "text" as const, text: prompt }] : prompt;
   return toJsonValue(content, "prompt content") as ProviderContent[];
+}
+
+function historyChildUpsert(child: ProviderHistoryChild) {
+  return {
+    type: "upsert" as const,
+    id: child.sessionId,
+    parentSubagentId: child.parentSessionId,
+    toolCallId: child.toolCallId ?? null,
+    title: child.title ?? null,
+    description: child.description ?? null,
+    status: "completed" as const,
+    cwd: child.cwd,
+  };
 }
 
 function mapTimelineItem(

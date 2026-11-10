@@ -3311,7 +3311,8 @@ function createToolCatalog(
         logger: childLogger,
       });
       const timeline = agentManager.getTimeline(agentId);
-      const snapshot = agentManager.getAgent(agentId);
+      const snapshot =
+        agentManager.getAgent(agentId) ?? agentManager.getHistorySnapshot?.(agentId) ?? null;
 
       return {
         content: [],
