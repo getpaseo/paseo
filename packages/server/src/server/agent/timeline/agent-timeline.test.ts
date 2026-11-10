@@ -1034,3 +1034,388 @@ describe("conversation rewind", () => {
     expect(pages).toBe(20);
   });
 });
+
+describe("provider history", () => {
+  const scope = root("agent");
+
+  function prompt(messageId: string): TimelineEntry {
+    return { item: { type: "user_message", text: messageId, messageId } };
+  }
+
+  function submitted(clientMessageId: string): TimelineEntry {
+    return {
+      item: {
+        type: "user_message",
+        text: clientMessageId,
+        messageId: clientMessageId,
+        clientMessageId,
+      },
+    };
+  }
+
+  function reply(text: string): TimelineEntry {
+    return { item: { type: "assistant_message", text } };
+  }
+
+  function texts(rows: readonly { item: AgentTimelineItem }[]): string[] {
+    return rows.map((row) => ("text" in row.item ? row.item.text : row.item.type));
+  }
+
+  function committedTexts(commits: readonly { row: { item: AgentTimelineItem } }[]): string[] {
+    return texts(commits.map((commit) => commit.row));
+  }
+
+  async function owned(entries: TimelineEntry[]): Promise<{
+    backend: DeferredTimelineBackend;
+    timeline: AgentTimeline;
+  }> {
+    const backend = new DeferredTimelineBackend();
+    const timeline = new AgentTimeline(backend);
+    await timeline.create(scope, { epoch: "e" });
+    await timeline.append(scope, entries);
+    return { backend, timeline };
+  }
+
+  it("imports history into a scope that has none, once", async () => {
+    const timeline = new AgentTimeline(new DeferredTimelineBackend());
+    const history = [prompt("a"), reply("A"), prompt("b"), reply("B")];
+
+    const first = await timeline.importHistory(scope, history);
+    const repeat = await timeline.importHistory(scope, history);
+
+    expect(first).toMatchObject({ kind: "imported", head: { size: 4, retirementCount: 0 } });
+    expect(repeat).toEqual({ kind: "present", head: first.head });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "B"]);
+    const tail = await timeline.fetch(scope);
+    expect(tail).toMatchObject({ epoch: first.head.epoch, startSeq: 1, endSeq: 4 });
+  });
+
+  it("leaves existing history alone when asked to import", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A")]);
+
+    const result = await timeline.importHistory(scope, [prompt("x"), reply("X")]);
+
+    expect(result).toMatchObject({ kind: "present", head: { epoch: "e", size: 2 } });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A"]);
+  });
+
+  function tool(callId: string, output: string, status: "running" | "completed" = "completed") {
+    const detail = { type: "shell" as const, command: "npm test", output };
+    const item: AgentTimelineItem =
+      status === "running"
+        ? { type: "tool_call", callId, name: "shell", status, error: null, detail }
+        : { type: "tool_call", callId, name: "shell", status, error: null, detail };
+    return { item };
+  }
+
+  it("changes nothing when the provider holds the same conversation", async () => {
+    const { backend, timeline } = await owned([
+      prompt("a"),
+      tool("t1", "3 passed"),
+      reply("Tests "),
+      reply("pass."),
+      // Paseo writes notifications itself; the provider has none.
+      { item: { type: "notification", level: "info", message: "Agent resumed" } },
+      prompt("b"),
+      reply("B"),
+    ]);
+    const appendsBefore = backend.appends.length;
+    const published: unknown[] = [];
+
+    const result = await timeline.reconcileProviderHistory(
+      scope,
+      [
+        prompt("a"),
+        // The same tool call, its fields in another order.
+        {
+          item: {
+            detail: { output: "3 passed", command: "npm test", type: "shell" },
+            error: null,
+            status: "completed",
+            name: "shell",
+            callId: "t1",
+            type: "tool_call",
+          },
+        },
+        // The provider stores the answer whole; Paseo streamed it in chunks.
+        reply("Tests pass."),
+        prompt("b"),
+        reply("B"),
+      ],
+      { publish: (commits) => published.push(commits) },
+    );
+
+    expect(result).toEqual({ kind: "unchanged" });
+    expect(published).toEqual([]);
+    expect(backend.appends.length).toBe(appendsBefore);
+    expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 0 });
+  });
+
+  it("appends the turns the provider has after the owned conversation", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A")]);
+    const published: TimelineCommit[][] = [];
+
+    const result = await timeline.reconcileProviderHistory(
+      scope,
+      [prompt("a"), reply("A"), prompt("b"), reply("B")],
+      { publish: (commits) => published.push(commits) },
+    );
+
+    expect(result).toMatchObject({ kind: "appended" });
+    expect(published.map(committedTexts)).toEqual([["b", "B"]]);
+    expect(published[0].map((commit) => commit.row.seq)).toEqual([3, 4]);
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "B"]);
+    expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 0 });
+  });
+
+  it.each([
+    {
+      case: "the turn has no output yet",
+      owned: [prompt("a"), reply("A"), prompt("b")],
+      appended: ["tool_call", "B"],
+    },
+    {
+      case: "the turn ends on a finished tool call",
+      owned: [prompt("a"), reply("A"), prompt("b"), tool("t1", "3 passed")],
+      appended: ["B"],
+    },
+  ])("appends the rows the provider has after the last turn when $case", async (example) => {
+    const { timeline } = await owned(example.owned);
+    const before = await timeline.readRows(scope);
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      reply("A"),
+      prompt("b"),
+      tool("t1", "3 passed"),
+      reply("B"),
+    ]);
+
+    expect(result).toMatchObject({ kind: "appended" });
+    if (result.kind !== "appended") throw new Error("expected an append");
+    expect(committedTexts(result.commits)).toEqual(example.appended);
+    // The rows Paseo already showed are the same rows, unchanged.
+    expect((await timeline.readRows(scope)).slice(0, before.length)).toEqual(before);
+    expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 0 });
+  });
+
+  it.each([
+    {
+      case: "an earlier answer differs under the same prompts",
+      provider: [prompt("a"), reply("edited"), prompt("b"), reply("B"), prompt("c"), reply("C")],
+      reason: "The provider history has a different answer",
+    },
+    {
+      case: "the last answer differs under the same prompts",
+      provider: [prompt("a"), reply("A"), prompt("b"), reply("something else"), prompt("c")],
+      reason: "The provider history has a different last answer",
+    },
+    {
+      case: "the provider's last answer is shorter than Paseo's",
+      provider: [prompt("a"), reply("A"), prompt("b"), reply("B"), prompt("c")],
+      owned: [prompt("a"), reply("A"), prompt("b"), reply("B and more")],
+      reason: "The provider history has a different last answer",
+    },
+    {
+      case: "the provider finished an answer Paseo saw only part of",
+      owned: [prompt("a"), reply("A"), prompt("b"), reply("The answer is")],
+      provider: [prompt("a"), reply("A"), prompt("b"), reply("The answer is 42."), prompt("c")],
+      reason: "The provider history has a different last answer",
+    },
+    {
+      case: "a tool call Paseo saw running has finished",
+      owned: [prompt("a"), reply("A"), prompt("b"), tool("t1", "", "running")],
+      provider: [prompt("a"), reply("A"), prompt("b"), tool("t1", "3 passed"), reply("B")],
+      reason: "The provider history has a different last answer",
+    },
+    {
+      case: "only the indentation of an answer differs",
+      owned: [prompt("a"), reply("def f():\n    return 1"), prompt("b"), reply("B")],
+      provider: [prompt("a"), reply("def f():\n  return 1"), prompt("b"), reply("B")],
+      reason: "The provider history has a different answer",
+    },
+    {
+      case: "only the spacing inside a string differs",
+      owned: [prompt("a"), reply("A"), prompt("b"), reply('print("a  b")')],
+      provider: [prompt("a"), reply("A"), prompt("b"), reply('print("a b")'), prompt("c")],
+      reason: "The provider history has a different last answer",
+    },
+    {
+      case: "the answer is the same but a tool result differs",
+      owned: [prompt("a"), tool("t1", "3 passed"), reply("Done"), prompt("b"), reply("B")],
+      provider: [prompt("a"), tool("t1", "1 failed"), reply("Done"), prompt("b"), reply("B")],
+      reason: "The provider history has a different answer",
+    },
+    {
+      case: "the prompts differ",
+      provider: [prompt("a"), reply("A"), prompt("x"), reply("B"), prompt("c")],
+      reason: "The provider history has different prompts",
+    },
+    {
+      case: "the provider dropped a turn Paseo shows",
+      provider: [prompt("a"), reply("A")],
+      reason: "The provider history is missing turns Paseo shows",
+    },
+  ])("keeps the owned history when $case", async (example) => {
+    const { backend, timeline } = await owned(
+      example.owned ?? [prompt("a"), reply("A"), prompt("b"), reply("B")],
+    );
+    const before = await timeline.readRows(scope);
+    const appendsBefore = backend.appends.length;
+
+    const result = await timeline.reconcileProviderHistory(scope, example.provider);
+
+    expect(result).toEqual({ kind: "diverged", reason: example.reason });
+    expect(await timeline.readRows(scope)).toEqual(before);
+    expect(backend.appends.length).toBe(appendsBefore);
+    expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 0 });
+  });
+
+  function promptText(messageId: string, text: string): TimelineEntry {
+    return { item: { type: "user_message", text, messageId } };
+  }
+
+  it.each([
+    {
+      case: "an earlier prompt was edited under the same id",
+      provider: [promptText("a", "a, edited"), reply("A"), prompt("b"), reply("B"), prompt("c")],
+    },
+    {
+      case: "the last prompt was edited under the same id",
+      provider: [prompt("a"), reply("A"), promptText("b", "b, edited"), reply("B"), prompt("c")],
+    },
+    {
+      case: "only the spacing inside a prompt differs",
+      owned: [promptText("a", "fix  it"), reply("A"), prompt("b"), reply("B")],
+      provider: [promptText("a", "fix it"), reply("A"), prompt("b"), reply("B")],
+    },
+    {
+      case: "only a prompt's trailing whitespace differs",
+      provider: [promptText("a", "a "), reply("A"), prompt("b"), reply("B")],
+    },
+  ])("keeps the owned history when $case", async (example) => {
+    const { backend, timeline } = await owned(
+      example.owned ?? [prompt("a"), reply("A"), prompt("b"), reply("B")],
+    );
+    const before = await timeline.readRows(scope);
+    const appendsBefore = backend.appends.length;
+
+    const result = await timeline.reconcileProviderHistory(scope, example.provider);
+
+    expect(result).toEqual({
+      kind: "diverged",
+      reason: "The provider history has different prompts",
+    });
+    expect(await timeline.readRows(scope)).toEqual(before);
+    expect(backend.appends.length).toBe(appendsBefore);
+  });
+
+  it("matches a prompt Paseo submitted to the provider's stored copy of it", async () => {
+    const typed = "Fix the login bug.\n\n  Keep the API as it is.";
+    const { timeline } = await owned([
+      { item: { type: "user_message", text: typed, messageId: "c-1", clientMessageId: "c-1" } },
+    ]);
+    await timeline.attachProviderMessageId(scope, "c-1", "p-1");
+    await timeline.append(scope, [reply("Done.")]);
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      promptText("p-1", typed),
+      reply("Done."),
+      prompt("b"),
+      reply("B"),
+    ]);
+
+    expect(result).toMatchObject({ kind: "appended" });
+    expect(texts(await timeline.readRows(scope))).toEqual([typed, "Done.", "b", "B"]);
+  });
+
+  it("reads a prompt the provider repeats unchanged as one turn", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A")]);
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      prompt("a"),
+      reply("A"),
+    ]);
+
+    expect(result).toEqual({ kind: "unchanged" });
+  });
+
+  it("keeps the owned history when the provider repeats a prompt id with other text", async () => {
+    const { backend, timeline } = await owned([prompt("a")]);
+    const appendsBefore = backend.appends.length;
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      promptText("a", "something else"),
+      reply("A"),
+    ]);
+
+    expect(result).toEqual({
+      kind: "diverged",
+      reason: "The provider history has two prompts with one id",
+    });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a"]);
+    expect(backend.appends.length).toBe(appendsBefore);
+  });
+
+  it("does not append provider turns after a prompt the provider never received", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A"), submitted("refused")]);
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      reply("A"),
+      prompt("b"),
+      reply("B"),
+    ]);
+
+    expect(result).toEqual({
+      kind: "diverged",
+      reason: "A prompt the provider did not receive is last",
+    });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "refused"]);
+  });
+
+  it("keeps a rewound turn retired while appending what the provider added after it", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A"), prompt("b"), reply("B")]);
+    const intent = await timeline.beginRewind(scope, "b");
+    await timeline.recordRewindCut(scope, intent.id, { kind: "at_target" });
+    await timeline.completeRewind(scope, intent.id);
+    await timeline.append(scope, [prompt("c"), reply("C")]);
+
+    const stale = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      reply("A"),
+      prompt("b"),
+      reply("B"),
+      prompt("c"),
+      reply("C"),
+    ]);
+    const continued = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      reply("A"),
+      prompt("c"),
+      reply("C"),
+      prompt("d"),
+      reply("D"),
+    ]);
+
+    expect(stale).toEqual({
+      kind: "diverged",
+      reason: "The provider history has different prompts",
+    });
+    expect(continued).toMatchObject({ kind: "appended" });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "c", "C", "d", "D"]);
+    expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 1 });
+  });
+
+  it("leaves history alone while a rewind is open", async () => {
+    const { timeline } = await owned([prompt("a"), reply("A"), prompt("b"), reply("B")]);
+    await timeline.beginRewind(scope, "b");
+
+    const result = await timeline.reconcileProviderHistory(scope, [prompt("a"), reply("A")]);
+
+    expect(result).toEqual({ kind: "rewind_open" });
+    expect(texts(await timeline.readRows(scope))).toEqual(["a", "A", "b", "B"]);
+  });
+});

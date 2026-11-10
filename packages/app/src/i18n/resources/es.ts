@@ -706,6 +706,8 @@ export const es: TranslationResources = {
         resumeCommandUnavailable: "Comando de reanudación no disponible",
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
+        reloadedAgentHistoryDiverged:
+          "Agente recargado, pero el historial del proveedor no coincide con este chat, así que no se sincronizó",
         failedToReloadAgent: "No se pudo recargar el agente",
         failedToCloseAgent: "No se pudo cerrar el agente",
       },

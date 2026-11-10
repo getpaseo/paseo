@@ -706,6 +706,8 @@ export const fr: TranslationResources = {
         resumeCommandUnavailable: "Commande de reprise indisponible",
         reloadingAgent: "Rechargement de l’agent…",
         reloadedAgent: "Agent rechargé",
+        reloadedAgentHistoryDiverged:
+          "Agent rechargé, mais l’historique du fournisseur ne correspond pas à cette conversation, il n’a donc pas été synchronisé",
         failedToReloadAgent: "Impossible de recharger l’agent",
         failedToCloseAgent: "Impossible de fermer l’agent",
       },

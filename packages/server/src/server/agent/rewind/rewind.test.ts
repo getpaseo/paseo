@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { ensureAgentLoaded, loadAgentHistory } from "../agent-loading.js";
 import { AgentManager, type AgentManagerEvent } from "../agent-manager.js";
 import {
   RewindNotAppliedError,
@@ -85,6 +86,12 @@ async function createRewindHarness(
     workspaceId: undefined,
   });
   return { manager, session, client, backend, agentId: agent.id };
+}
+
+/** What the Reload agent action does for a loaded agent. */
+async function reloadAgent(manager: AgentManager, agentId: string) {
+  await manager.reloadAgentSession(agentId);
+  return manager.reconcileProviderHistory(agentId);
 }
 
 /** A conversation the provider answers, with no history before Paseo's first prompt. */
@@ -279,6 +286,48 @@ describe("AgentManager conversation rewind", () => {
     ]);
   });
 
+  test("archiving and unarchiving after A, B, rewind B, C keeps C and leaves B retired", async () => {
+    const registry = await createFlakyStorage();
+    const harness = await createConversationHarness({ registry });
+    const { manager, agentId, session, client } = harness;
+    const loader = { agentManager: manager, agentStorage: registry, logger: createTestLogger() };
+    await harness.prompt("A");
+    await harness.prompt("B");
+    await manager.rewind(agentId, "B", "conversation");
+    await harness.prompt("C");
+    const before = await manager.fetchTimeline(agentId, { limit: 0 });
+
+    await manager.archiveAgent(agentId);
+
+    // The archived chat reads from its stored history, without starting the provider.
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(await loadAgentHistory(agentId, loader)).toMatchObject({ kind: "stored" });
+    expect(await manager.fetchTimeline(agentId, { limit: 0 })).toEqual(before);
+    expect(client.resumedSessionIds).toEqual([]);
+
+    // Unarchive, as the refresh request runs it: load the agent, then reconcile its history.
+    await manager.unarchiveSnapshot(agentId);
+    await ensureAgentLoaded(agentId, loader);
+    expect(await manager.reconcileProviderHistory(agentId)).toEqual({ kind: "unchanged" });
+    await harness.prompt("D");
+
+    expect(client.resumedSessionIds).toHaveLength(1);
+    expect(await harness.activeTexts()).toEqual([
+      "A",
+      "reply to A",
+      "C",
+      "reply to C",
+      "D",
+      "reply to D",
+    ]);
+    expect(await manager.fetchTimeline(agentId, { limit: 0 })).toMatchObject({
+      epoch: before.epoch,
+      retirementCount: 1,
+    });
+    expect(harness.retirements()).toHaveLength(1);
+    expect(session.recordedRewinds).toHaveLength(1);
+  });
+
   test("reloading settles an unknown outcome the provider history proves applied", async () => {
     const harness = await createConversationHarness();
     const { manager, agentId, session } = harness;
@@ -287,7 +336,7 @@ describe("AgentManager conversation rewind", () => {
     session.nextRewind = { kind: "unknown", applied: true };
     await expect(manager.rewind(agentId, "B", "conversation")).rejects.toThrow();
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
     await harness.prompt("C");
 
     expect(session.recordedRewinds).toHaveLength(1);
@@ -303,7 +352,7 @@ describe("AgentManager conversation rewind", () => {
     session.nextRewind = { kind: "unknown", applied: false };
     await expect(manager.rewind(agentId, "B", "conversation")).rejects.toThrow();
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
     await harness.prompt("C");
 
     expect(harness.retirements()).toEqual([]);
@@ -327,7 +376,7 @@ describe("AgentManager conversation rewind", () => {
     // A provider that replays no history leaves nothing to compare.
     session.history = [];
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
 
     await expect(harness.prompt("C")).rejects.toThrow(
       "Paseo could not confirm whether the conversation was rewound.",
@@ -353,7 +402,7 @@ describe("AgentManager conversation rewind", () => {
     // Refused before reaching the provider, so the provider history has no C.
     await expect(harness.prompt("C")).rejects.toThrow();
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
     await harness.prompt("D");
 
     expect(harness.retirements()).toHaveLength(1);
@@ -369,7 +418,7 @@ describe("AgentManager conversation rewind", () => {
     await expect(manager.rewind(agentId, "B", "conversation")).rejects.toThrow();
     await expect(harness.prompt("C")).rejects.toThrow();
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
     await harness.prompt("D");
 
     expect(harness.retirements()).toEqual([]);
@@ -400,14 +449,15 @@ describe("AgentManager conversation rewind", () => {
     );
     expect(harness.retirements()).toEqual([]);
 
-    await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+    await reloadAgent(manager, agentId);
     await harness.prompt("C");
 
     expect(client.resumedSessionIds).toEqual(["rewound-session"]);
     expect((await registry.get(agentId))?.persistence?.sessionId).toBe("rewound-session");
-    // The reload committed the recorded cut on the same timeline; it did not replay history.
+    // The reload committed the recorded cut on the same timeline, without judging the replay:
+    // its one history read is the reconcile after the rewind settled.
     expect(session.recordedRewinds).toHaveLength(1);
-    expect(session.historyReadCount).toBe(0);
+    expect(session.historyReadCount).toBe(1);
     expect(harness.retirements()).toEqual([
       expect.objectContaining({ epoch: before.epoch, retireFromSeq: before.rows[2]!.seqStart }),
     ]);

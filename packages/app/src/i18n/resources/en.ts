@@ -696,6 +696,8 @@ export const en = {
         resumeCommandUnavailable: "Resume command not available",
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
+        reloadedAgentHistoryDiverged:
+          "Reloaded agent, but the provider's history doesn't match this chat, so it wasn't synced",
         failedToReloadAgent: "Failed to reload agent",
         failedToCloseAgent: "Failed to close agent",
       },

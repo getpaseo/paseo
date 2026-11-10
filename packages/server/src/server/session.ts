@@ -62,7 +62,11 @@ import {
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import {
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  loadAgentHistory,
+} from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -2183,6 +2187,18 @@ export class Session {
 
   private buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
     return this.enrichAgentPayload(toAgentPayload(agent));
+  }
+
+  /** The agent whose history a read serves, without opening its provider when it is stored. */
+  private async loadAgentHistoryPayload(agentId: string): Promise<AgentSnapshotPayload> {
+    const source = await loadAgentHistory(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    });
+    return source.kind === "live"
+      ? await this.buildAgentPayload(source.agent)
+      : this.buildStoredAgentPayload(source.record);
   }
 
   private buildStoredAgentPayload(
@@ -4674,7 +4690,6 @@ export class Session {
         throw error;
       }
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
-      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = (await this.agentManager.getTimeline(snapshot.id)).length;
       if (requestId) {
@@ -4794,13 +4809,14 @@ export class Session {
     try {
       await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+      // Without stored history, loading the agent imports the provider's; with it, Reload agent
+      // keeps the history and brings in what the provider added.
+      const historyPresent = await this.agentManager.hasStoredHistory(agentId);
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
-          rehydrateFromDisk: true,
-        });
+        snapshot = await this.agentManager.reloadAgentSession(agentId);
       } else {
         const record = await this.agentStorage.get(agentId);
         if (!record) {
@@ -4819,12 +4835,13 @@ export class Session {
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
-          broadcastTimeline: true,
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
-      await this.agentUpdates.forwardLiveAgent(snapshot);
+      const reconciled = historyPresent
+        ? await this.agentManager.reconcileProviderHistory(agentId)
+        : null;
+      await this.agentUpdates.forwardLiveAgent(this.agentManager.getAgent(agentId) ?? snapshot);
       const timelineSize = (await this.agentManager.getTimeline(agentId)).length;
       if (requestId) {
         this.emit({
@@ -4834,6 +4851,7 @@ export class Session {
             agentId,
             requestId,
             timelineSize,
+            ...(reconciled?.kind === "diverged" ? { historyDiverged: true } : {}),
           },
         });
       }
@@ -7891,12 +7909,7 @@ export class Session {
     const cursor = msg.cursor ? this.readWireCursor(msg.cursor, source) : undefined;
 
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
+      const agentPayload = await this.loadAgentHistoryPayload(msg.agentId);
 
       const fetchedControlTimeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction,
@@ -7949,7 +7962,7 @@ export class Session {
               : {}),
             entries: entries.map((entry) => {
               const payloadEntry = {
-                provider: snapshot.provider,
+                provider: agentPayload.provider,
                 item: entry.item,
                 timestamp: entry.timestamp,
                 seqStart: entry.seqStart,
@@ -8026,11 +8039,7 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentHistoryPayload(msg.agentId);
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const before = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
@@ -8081,11 +8090,7 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentHistoryPayload(msg.agentId);
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
@@ -8128,15 +8133,26 @@ export class Session {
     }
   }
 
+  /**
+   * Provider children are part of their parent's history: a stored parent, archived or not, is
+   * read without resuming its provider.
+   */
+  private async loadProviderSubagentParent(parentAgentId: string): Promise<void> {
+    const source = await loadAgentHistory(parentAgentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    });
+    if (source.kind === "stored" && source.record.internal) {
+      throw new Error(`Unknown agent '${parentAgentId}'`);
+    }
+  }
+
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadProviderSubagentParent(msg.parentAgentId);
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
@@ -8165,11 +8181,7 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadProviderSubagentParent(msg.parentAgentId);
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
         throw new Error("Provider subagent not found");
@@ -8263,12 +8275,7 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
+      const agentPayload = await this.loadAgentHistoryPayload(msg.agentId);
       const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
@@ -8283,7 +8290,7 @@ export class Session {
           : null,
         boundaryMessageId: msg.boundaryMessageId,
         agentTitle: agentPayload.title,
-        cwd: snapshot.cwd,
+        cwd: agentPayload.cwd,
       });
 
       this.emit({

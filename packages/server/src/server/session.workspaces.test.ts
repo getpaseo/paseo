@@ -144,7 +144,8 @@ interface SessionTestAccess {
       preferredId?: string,
       extras?: unknown,
     ): Promise<unknown>;
-    hydrateTimelineFromProvider(agentId: string): Promise<unknown>;
+    hasStoredHistory(agentId: string): Promise<boolean>;
+    reconcileProviderHistory(agentId: string): Promise<unknown>;
     getTimeline(agentId: string): readonly unknown[];
     setTitle(agentId: string, title: string): Promise<unknown>;
   };
@@ -358,7 +359,6 @@ function makeManagedAgent(input: {
     inFlightPermissionResponses: new Set(),
     pendingReplacement: false,
     persistence: null,
-    historyPrimed: true,
     lastUserMessageAt: null,
     attention: {
       requiresAttention: false,
@@ -5403,7 +5403,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.hasStoredHistory = async () => true;
+  session.agentManager.reconcileProviderHistory = async () => ({ kind: "unchanged" });
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -5501,7 +5502,8 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.hasStoredHistory = async () => true;
+  session.agentManager.reconcileProviderHistory = async () => ({ kind: "unchanged" });
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -5592,7 +5594,8 @@ test("refresh_agent_request does not recreate or unarchive a deleted worktree", 
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.hasStoredHistory = async () => true;
+  session.agentManager.reconcileProviderHistory = async () => ({ kind: "unchanged" });
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -5691,7 +5694,8 @@ test("refresh_agent_request does not inspect an archived worktree branch", async
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.hasStoredHistory = async () => true;
+  session.agentManager.reconcileProviderHistory = async () => ({ kind: "unchanged" });
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -5820,7 +5824,8 @@ test("legacy refresh_agent_request restores a real deleted worktree", async () =
   session.agentManager.getAgent = () => managed;
   session.interruptAgentIfRunning = async () => undefined;
   session.agentManager.reloadAgentSession = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.hasStoredHistory = async () => true;
+  session.agentManager.reconcileProviderHistory = async () => ({ kind: "unchanged" });
   session.agentManager.getTimeline = () => [];
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 

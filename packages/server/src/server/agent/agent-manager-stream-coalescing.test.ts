@@ -182,6 +182,7 @@ class TestAgentSession implements AgentSession {
 class TestAgentClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;
   private sessionCounter = 0;
+  private history: AgentStreamEvent[] = [];
   readonly sessions = new Map<string, TestAgentSession>();
 
   constructor(readonly provider: AgentProvider = "codex") {}
@@ -195,6 +196,7 @@ class TestAgentClient implements AgentClient {
       config,
       `${config.provider}-session-${++this.sessionCounter}`,
     );
+    session.setHistory(this.history);
     this.sessions.set(config.cwd, session);
     return session;
   }
@@ -228,6 +230,11 @@ class TestAgentClient implements AgentClient {
 
   async isAvailable(): Promise<boolean> {
     return true;
+  }
+
+  /** The provider history of the sessions created from now on. */
+  setHistory(events: AgentStreamEvent[]): void {
+    this.history = [...events];
   }
 
   getSession(cwd: string): TestAgentSession {
@@ -275,6 +282,20 @@ function createHarness(options?: {
 function createIdFactory(): () => string {
   let index = 0;
   return () => AGENT_IDS[index++] ?? `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+/** Resumes an agent whose history Paseo does not hold, so it imports the provider's. */
+async function resumeWithProviderHistory(
+  harness: Harness,
+  history: AgentStreamEvent[],
+): Promise<{ agentId: string }> {
+  harness.client.setHistory(history);
+  const agent = await harness.manager.resumeAgentFromPersistence(
+    { provider: harness.client.provider, sessionId: "provider-history" },
+    { cwd: harness.workdir },
+    AGENT_IDS[0],
+  );
+  return { agentId: agent.id };
 }
 
 async function createManagedSession(
@@ -447,15 +468,15 @@ describe("target coalesced behavior", () => {
     }
   });
 
-  test("bounds tool output while hydrating provider history", async () => {
+  test("bounds tool output while importing provider history", async () => {
     const harness = createHarness();
     try {
-      const { agentId, session } = await createManagedSession(harness);
       const output = `${"a".repeat(512 * 1024)}${"z".repeat(512 * 1024)}`;
       const expectedItem = limitAgentTimelineItemContent(toolCall({ status: "completed", output }));
-      session.setHistory([timelineEvent(toolCall({ status: "completed", output }))]);
 
-      await harness.manager.hydrateTimelineFromProvider(agentId, { force: true });
+      const { agentId } = await resumeWithProviderHistory(harness, [
+        timelineEvent(toolCall({ status: "completed", output })),
+      ]);
 
       expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
         expectedItem,
@@ -1341,14 +1362,16 @@ describe("target coalesced behavior", () => {
     }
   });
 
-  test("history hydration projects immediately without waiting for a streaming window", async () => {
+  test("history import projects immediately without waiting for a streaming window", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
     try {
-      const { agentId, session } = await createManagedSession(harness);
-      session.setHistory([assistant("a1"), assistant("a2"), reasoning("r1"), reasoning("r2")]);
-
-      await harness.manager.hydrateTimelineFromProvider(agentId, { force: true });
+      const { agentId } = await resumeWithProviderHistory(harness, [
+        assistant("a1"),
+        assistant("a2"),
+        reasoning("r1"),
+        reasoning("r2"),
+      ]);
 
       const rows = await harness.manager.getTimelineRows(agentId);
       expect(getTimelineItems(rows)).toEqual([

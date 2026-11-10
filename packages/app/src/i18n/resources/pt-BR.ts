@@ -704,6 +704,8 @@ export const ptBR: TranslationResources = {
         resumeCommandUnavailable: "Comando de retomada indisponível",
         reloadingAgent: "Recarregando agente...",
         reloadedAgent: "Agente recarregado",
+        reloadedAgentHistoryDiverged:
+          "Agente recarregado, mas o histórico do provedor não corresponde a este chat, então não foi sincronizado",
         failedToReloadAgent: "Falha ao recarregar agente",
         failedToCloseAgent: "Falha ao fechar agente",
       },

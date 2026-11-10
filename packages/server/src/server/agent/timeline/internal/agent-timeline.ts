@@ -18,6 +18,7 @@ import type {
 } from "./backend.js";
 import { UnknownTimelineError } from "./backend.js";
 import { MemoryTimelineBackend } from "./memory-backend.js";
+import { planProviderHistory } from "./provider-history.js";
 
 export type {
   TimelineEntry,
@@ -102,6 +103,23 @@ export type TimelineAppendResult =
   /** The rows are committed but `publish` threw; see `TimelineIngestResult`. */
   | { kind: "unpublished"; commits: TimelineCommit[]; error: unknown };
 
+export type TimelineImportResult =
+  | { kind: "imported"; head: TimelineHead }
+  /** The scope already has history; nothing changed. */
+  | { kind: "present"; head: TimelineHead };
+
+export type TimelineReconcileResult =
+  /** The provider's history holds what the owned history holds. Nothing changed. */
+  | { kind: "unchanged" }
+  /** The provider continued the conversation; its turns were appended. */
+  | { kind: "appended"; commits: TimelineCommit[] }
+  /** Committed, but `publish` threw; see `TimelineIngestResult`. */
+  | { kind: "unpublished"; commits: TimelineCommit[]; error: unknown }
+  /** The provider's history disagrees with the owned history, which is kept unchanged. */
+  | { kind: "diverged"; reason: string }
+  /** A rewind is open; it settles first. Nothing changed. */
+  | { kind: "rewind_open" };
+
 export interface TimelineIngestOptions {
   /**
    * Runs right after the commit, before any later operation on the agent's timeline starts, so
@@ -143,6 +161,53 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const existing = await this.backend.head(scope);
       return existing ?? this.track(scope, await this.backend.create(scope, {}));
+    });
+  }
+
+  /**
+   * Creates the scope's history from the provider's, in one commit, when the scope has none.
+   * Existing history is left as it is, so repeating an import adds nothing.
+   */
+  importHistory(
+    scope: TimelineScope,
+    entries: readonly TimelineEntry[],
+    options: { timestamp?: string } = {},
+  ): Promise<TimelineImportResult> {
+    return this.run(scope, async () => {
+      const existing = await this.backend.head(scope);
+      if (existing) return { kind: "present", head: existing };
+      const head = await this.backend.create(scope, {
+        entries: entries.map(boundEntry),
+        timestamp: options.timestamp,
+      });
+      return { kind: "imported", head: this.track(scope, head) };
+    });
+  }
+
+  /**
+   * Appends what the provider's history has after the owned history, which is never changed. When
+   * the histories differ in any compared content the result is `diverged` and nothing is written;
+   * see `planProviderHistory` for what is compared and what continuation is supported.
+   */
+  reconcileProviderHistory(
+    scope: TimelineScope,
+    entries: readonly TimelineEntry[],
+    options?: { publish?: (commits: TimelineCommit[]) => void },
+  ): Promise<TimelineReconcileResult> {
+    return this.run(scope, async () => {
+      const head = await this.requireHead(scope);
+      if (head.rewind) return { kind: "rewind_open" };
+      const plan = planProviderHistory({
+        rows: await this.backend.readRows(scope),
+        prompts: await this.backend.prompts(scope),
+        provider: entries.map(boundEntry),
+      });
+      if (plan.kind !== "append") return plan;
+      const commits = await this.commit(scope, plan.entries);
+      const failure = publishCommitted(options?.publish, commits);
+      return failure
+        ? { kind: "unpublished", commits, error: failure.error }
+        : { kind: "appended", commits };
     });
   }
 
@@ -346,11 +411,7 @@ export class AgentTimeline {
     scope: TimelineScope,
     entries: readonly TimelineEntry[],
   ): Promise<TimelineCommit[]> {
-    const bounded = entries.map((entry) => ({
-      ...entry,
-      item: limitAgentTimelineItemContent(entry.item),
-    }));
-    const { rows, head } = await this.backend.append(scope, bounded);
+    const { rows, head } = await this.backend.append(scope, entries.map(boundEntry));
     this.track(scope, head);
     return rows.map((row) => ({
       row,
@@ -384,6 +445,10 @@ export class AgentTimeline {
 }
 
 function settledOperation(): void {}
+
+function boundEntry(entry: TimelineEntry): TimelineEntry {
+  return { ...entry, item: limitAgentTimelineItemContent(entry.item) };
+}
 
 interface PublishFailure {
   error: unknown;

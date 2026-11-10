@@ -610,7 +610,6 @@ function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
 
   async function open(): Promise<void> {
     await manager.resumeAgentFromPersistence(handle, config, agentId);
-    await manager.hydrateTimelineFromProvider(agentId);
   }
 
   return {

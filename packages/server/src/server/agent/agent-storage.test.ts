@@ -125,7 +125,6 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
         sessionId: overrides.sessionId ?? "session-123",
       }),
     persistence: overrides.persistence ?? null,
-    historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,

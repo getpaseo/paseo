@@ -3938,6 +3938,8 @@ export const AgentResumedStatusPayloadSchema = z
 export const AgentRefreshedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_refreshed"),
+    /** The provider's history differs from the kept history, which Reload agent did not change. */
+    historyDiverged: z.boolean().optional(),
   })
   .extend(AgentStatusWithTimelineSchema.shape);
 

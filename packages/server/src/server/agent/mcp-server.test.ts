@@ -267,7 +267,7 @@ function buildAgentManagerSpies() {
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
-    hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
+    hasStoredHistory: vi.fn().mockResolvedValue(false),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     getPluginTools: () => [],
@@ -6677,12 +6677,13 @@ describe("agent snapshot MCP serialization", () => {
       id: "archived-activity-agent",
       currentModeId: "default",
     } as ManagedAgent;
-    spies.agentManager.getAgent
-      .mockReturnValueOnce(null)
-      .mockReturnValue(snapshot)
-      .mockReturnValue(snapshot);
+    let resumed = false;
+    spies.agentManager.getAgent.mockImplementation(() => (resumed ? snapshot : null));
     spies.agentStorage.get.mockResolvedValue(record);
-    spies.agentManager.resumeAgentFromPersistence.mockResolvedValue(snapshot);
+    spies.agentManager.resumeAgentFromPersistence.mockImplementation(async () => {
+      resumed = true;
+      return snapshot;
+    });
     spies.agentManager.getTimeline.mockReturnValue([
       {
         kind: "status",
@@ -6708,10 +6709,35 @@ describe("agent snapshot MCP serialization", () => {
       }),
     );
     expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "archived-activity-agent",
-      { broadcast: expect.any(Function) },
+  });
+
+  it("reads get_agent_activity from stored history without resuming the provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const record = createStoredRecord({ id: "stored-activity-agent", lastModeId: "plan" });
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue(record);
+    spies.agentManager.hasStoredHistory.mockResolvedValue(true);
+    spies.agentManager.getTimeline.mockReturnValue([
+      { type: "assistant_message", text: "Stored reply" },
+    ]);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_activity");
+    const response = await tool.handler({ agentId: "stored-activity-agent" });
+
+    expect(response.structuredContent).toEqual(
+      expect.objectContaining({
+        agentId: "stored-activity-agent",
+        updateCount: 1,
+        currentModeId: "plan",
+      }),
     );
+    expect(spies.agentManager.resumeAgentFromPersistence).not.toHaveBeenCalled();
   });
 
   it("get_agent_activity limit counts projected messages, not raw deltas", async () => {

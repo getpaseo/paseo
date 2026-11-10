@@ -105,7 +105,6 @@ class InMemoryAgentManager {
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
       persistence: null,
-      historyPrimed: true,
       lastUsage: undefined,
       lastError: undefined,
       attention: { requiresAttention: false, attentionReason: null, attentionTimestamp: null },

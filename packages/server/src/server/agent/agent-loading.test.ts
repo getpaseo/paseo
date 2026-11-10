@@ -5,8 +5,7 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
-import { startAgentRun } from "./agent-prompt.js";
+import { AgentNotFoundError, ensureAgentLoaded, loadAgentHistory } from "./agent-loading.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -160,13 +159,8 @@ test("loads an archived agent's history after its working directory is removed",
     const agent = await manager.createAgent({ provider: "codex", cwd: worktree }, agentId, {
       workspaceId: "workspace-worktree",
     });
-    await startAgentRun(manager, agent.id, "what did you change", logger, {});
-    // Dispatching a run does not finish it: the provider appends the reply to its
-    // history afterwards, and the turn is finalized only once that append lands.
-    // Archive after the turn is finalized so the transcript this test reads back is
-    // already on disk when the worktree goes away.
-    const finished = await manager.waitForAgentEvent(agent.id);
-    expect(finished.status).toBe("idle");
+    // Archive once the turn has finished, so the reply is part of the history archive keeps.
+    await manager.runAgent(agent.id, "what did you change");
     await manager.archiveAgent(agent.id);
     await manager.closeAgent(agent.id);
     await manager.flush();
@@ -183,8 +177,8 @@ test("loads an archived agent's history after its working directory is removed",
     });
 
     expect(loaded.id).toBe(agentId);
-    // The transcript is replayed from the provider's persisted history, so the reply the
-    // agent gave before the worktree went away is still readable.
+    // Archive kept the transcript, so the reply the agent gave before the worktree went away
+    // is still readable from the resumed agent.
     const replies = (await manager.getTimeline(agentId)).filter(
       (item) => item.type === "assistant_message",
     );
@@ -195,6 +189,109 @@ test("loads an archived agent's history after its working directory is removed",
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reads stored history without starting or requiring the provider, and imports history that is not stored", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-history-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const baseClient = createTestAgentClients().codex;
+  if (!baseClient) {
+    throw new Error("expected Codex test client");
+  }
+  let resumes = 0;
+  const client: AgentClient = {
+    provider: baseClient.provider,
+    capabilities: baseClient.capabilities,
+    createSession: async (config: AgentSessionConfig, launchContext?: AgentLaunchContext) =>
+      await baseClient.createSession(config, launchContext),
+    resumeSession: async (
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ) => {
+      resumes += 1;
+      return await baseClient.resumeSession(handle, overrides, launchContext);
+    },
+    fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
+    isAvailable: async () => await baseClient.isAvailable(),
+  };
+  const agentId = "00000000-0000-4000-8000-000000000601";
+  const managers: AgentManager[] = [];
+  function startDaemon(): AgentManager {
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    managers.push(manager);
+    return manager;
+  }
+
+  try {
+    const manager = startDaemon();
+    const agent = await manager.createAgent({ provider: "codex", cwd: root }, agentId, {
+      workspaceId: "workspace-a",
+    });
+    await manager.runAgent(agent.id, "hello");
+    const transcript = await manager.getTimeline(agent.id);
+    expect(transcript.map((item) => item.type)).toContain("assistant_message");
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await storage.flush();
+
+    const stored = await loadAgentHistory(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(stored).toMatchObject({ kind: "stored", record: { id: agentId } });
+    expect(await manager.getTimeline(agentId)).toEqual(transcript);
+    expect(manager.getAgent(agentId)).toBeNull();
+    // Stored history needs no provider, so it still reads once the provider is removed.
+    await expect(
+      loadAgentHistory(agentId, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+        validProviders: [],
+      }),
+    ).resolves.toMatchObject({ kind: "stored", record: { id: agentId } });
+    expect(resumes).toBe(0);
+
+    // A restarted daemon has no history in memory; the provider's own history is imported,
+    // which needs the provider.
+    const restarted = startDaemon();
+    await expect(
+      loadAgentHistory(agentId, {
+        agentManager: restarted,
+        agentStorage: storage,
+        logger,
+        validProviders: [],
+      }),
+    ).rejects.toThrow("references unavailable provider 'codex'");
+    const loaded = await loadAgentHistory(agentId, {
+      agentManager: restarted,
+      agentStorage: storage,
+      logger,
+    });
+    expect(loaded).toMatchObject({ kind: "live", agent: { id: agentId } });
+    expect(resumes).toBe(1);
+    expect((await restarted.getTimeline(agentId)).map((item) => item.type)).toEqual(
+      transcript.map((item) => item.type),
+    );
+
+    await expect(
+      loadAgentHistory("00000000-0000-4000-8000-000000000602", {
+        agentManager: restarted,
+        agentStorage: storage,
+        logger,
+      }),
+    ).rejects.toBeInstanceOf(AgentNotFoundError);
+  } finally {
+    for (const manager of managers) {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush().catch(() => undefined);
+    }
     await storage.flush().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }

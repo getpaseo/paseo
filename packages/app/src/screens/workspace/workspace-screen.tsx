@@ -2162,11 +2162,10 @@ function WorkspaceScreenContent({
 
       toast.show(t("workspace.tabs.toasts.reloadingAgent"), { durationMs: null });
       try {
-        await client.refreshAgent(agentId);
-        // Send the existing cursor so the server detects the new epoch and
-        // returns reset:true. Without a cursor, the server returns reset:false
-        // and the client takes the incremental path, where new-epoch rows are
-        // dropped against the stale cursor.
+        const refreshed = await client.refreshAgent(agentId);
+        // Send the existing cursor: Reload agent keeps the history, so the server
+        // returns only the rows it added. When the history was imported again
+        // under a new epoch, the cursor reads as stale and the server resets.
         const sessionState = useSessionStore.getState().sessions[normalizedServerId];
         const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
         await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
@@ -2175,7 +2174,13 @@ function WorkspaceScreenContent({
             ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
             : {}),
         });
-        toast.show(t("workspace.tabs.toasts.reloadedAgent"), { variant: "success" });
+        if (refreshed.historyDiverged) {
+          toast.show(t("workspace.tabs.toasts.reloadedAgentHistoryDiverged"), {
+            variant: "warning",
+          });
+        } else {
+          toast.show(t("workspace.tabs.toasts.reloadedAgent"), { variant: "success" });
+        }
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToReloadAgent"),
