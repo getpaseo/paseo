@@ -8,7 +8,6 @@ import type {
   AgentOptionSelectControlSchema,
   AgentOptionToggleControlSchema,
 } from "./messages.js";
-import type { z } from "zod";
 
 export type AgentProvider = string;
 

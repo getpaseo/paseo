@@ -3252,7 +3252,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
@@ -3285,7 +3285,7 @@ describe("ACPAgentSession", () => {
     );
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
 
     session.subscribe((event) => {
       events.push(event);
