@@ -101,47 +101,23 @@ export const TOOLBAR_DISC_SIZES = { touch: 36, pointer: 28 } satisfies SizingVal
 export const TOOLBAR_DISC_SIZE = bySizing(TOOLBAR_DISC_SIZES);
 
 /**
- * The space between adjacent toolbar controls. Touch-sized it is the visible space between what
- * the controls paint, because each control lays out at its painted width (`toolbarSlot`).
+ * The space between adjacent toolbar controls. Touch-sized there is none: each control lays out at
+ * its fully rounded highlight, so neighbouring highlights touch and never overlap.
  */
-export const TOOLBAR_CONTROL_GAPS = { touch: 20, pointer: 4 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_GAPS = { touch: 0, pointer: 4 } satisfies SizingValue;
 export const TOOLBAR_CONTROL_GAP = bySizing(TOOLBAR_CONTROL_GAPS);
 
-/**
- * A toolbar control's frame: a disc-sized circle, which is also its fully rounded highlight.
- * Touch-sized it lays out at the width of the glyph it paints, `shapeWidth`, and the circle reaches
- * into the gaps on either side, so the row spaces what you see. Pointer-sized it is the square
- * control.
- */
-export function toolbarSlot(shapeWidth: number): {
-  width: LayoutValue;
-  height: LayoutValue;
-  marginHorizontal: LayoutValue;
-} {
-  return {
-    width: TOOLBAR_DISC_SIZE,
-    height: TOOLBAR_DISC_SIZE,
-    marginHorizontal: bySizing({
-      touch: (shapeWidth - TOOLBAR_DISC_SIZES.touch) / 2,
-      pointer: 0,
-    }),
-  };
+/** A labelled toolbar control's padding on each side of its content. */
+export const TOOLBAR_LABEL_PADDING = 8;
+
+/** An icon-only toolbar control's frame: a disc-sized circle, which is also its highlight. */
+export function toolbarSlot(): { width: LayoutValue; height: LayoutValue } {
+  return { width: TOOLBAR_DISC_SIZE, height: TOOLBAR_DISC_SIZE };
 }
 
-/**
- * A toolbar control as wide as its content, such as a labelled picker: a disc-tall pill. Touch-sized
- * its padding reaches into the gaps, so its content is what the row spaces.
- */
-export function toolbarContentSlot(padding: number): {
-  height: LayoutValue;
-  paddingHorizontal: number;
-  marginHorizontal: LayoutValue;
-} {
-  return {
-    height: TOOLBAR_DISC_SIZE,
-    paddingHorizontal: padding,
-    marginHorizontal: bySizing({ touch: -padding, pointer: 0 }),
-  };
+/** A toolbar control as wide as its content, such as a labelled picker: a disc-tall pill. */
+export function toolbarContentSlot(): { height: LayoutValue; paddingHorizontal: number } {
+  return { height: TOOLBAR_DISC_SIZE, paddingHorizontal: TOOLBAR_LABEL_PADDING };
 }
 
 /**

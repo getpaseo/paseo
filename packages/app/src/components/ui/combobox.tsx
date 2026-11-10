@@ -63,6 +63,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { density, densityIconBox } from "@/styles/density";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -1369,6 +1370,7 @@ export function Combobox({
   useEffect(() => {
     if (!active && isOpen) handleClose();
   }, [active, isOpen, handleClose]);
+  useDismissibleOverlay(isOpen, handleClose);
 
   useResetSearchOnOpen(isOpen, setSearchQueryWithCallback, bumpSearchResetKey);
 

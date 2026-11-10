@@ -340,6 +340,14 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
+Commands wait in one of three lanes, drained in order: `high` (worktree creation and archive),
+`normal` (everything a caller waits for, including diffs and explicit refreshes), and `background`
+(workspace reconciliation, refreshes triggered by watchers, polls and fetches, and the fetches
+themselves). Daemon-initiated fan-out must run in the background lane: one rescan over ~90 worktrees
+queues over 1,000 commands, and in the normal lane every command a cold diff runs waited behind
+them. Set the lane on the runner with `createRunGitCommand(provenance, { priority })`, or around a
+whole operation with `runWithGitCommandPriority`.
+
 Environment variables override `config.json`:
 
 | Environment variable                 | Setting                  |

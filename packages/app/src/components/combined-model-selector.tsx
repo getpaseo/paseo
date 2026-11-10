@@ -305,7 +305,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(theme.spacing[2]),
+    ...toolbarContentSlot(),
     borderRadius: theme.borderRadius.full,
   },
   triggerHovered: {
@@ -338,7 +338,6 @@ const styles = StyleSheet.create((theme) => ({
   customTriggerWrapper: {
     paddingHorizontal: 0,
     paddingVertical: 0,
-    marginHorizontal: 0,
     height: "auto",
   },
   triggerFill: {
