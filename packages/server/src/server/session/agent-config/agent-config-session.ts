@@ -134,6 +134,7 @@ export class AgentConfigSession {
       logLabel: "set_agent_thinking_request",
       logFields: { agentId, thinkingOptionId, requestId },
       failureText: "Failed to set agent thinking option",
+      configOverrides: { thinkingOptionId: thinkingOptionId ?? undefined },
       run: () => this.operations.setThinking(agentId, thinkingOptionId),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_thinking_response", payload }),
     });
@@ -143,21 +144,22 @@ export class AgentConfigSession {
     msg: Extract<SessionInboundMessage, { type: "agent.config.apply.request" }>,
   ): Promise<void> {
     const { agentId, config, requestId } = msg;
+    const changesModel = config.modelId !== undefined;
+    const changesThinking = config.thinkingOptionId !== undefined;
+    const configOverrides =
+      changesModel || changesThinking
+        ? {
+            ...(changesModel ? { model: config.modelId ?? undefined } : {}),
+            ...(changesThinking ? { thinkingOptionId: config.thinkingOptionId ?? undefined } : {}),
+          }
+        : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
-      configOverrides:
-        config.modelId === undefined
-          ? undefined
-          : {
-              model: config.modelId ?? undefined,
-              ...(config.thinkingOptionId !== undefined
-                ? { thinkingOptionId: config.thinkingOptionId ?? undefined }
-                : {}),
-            },
+      configOverrides,
       run: () => this.applyBundle(agentId, config),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });

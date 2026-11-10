@@ -207,6 +207,103 @@ test.each([
   },
 );
 
+test.each([
+  { surface: "single", thinking: "low" },
+  { surface: "single", thinking: null },
+  { surface: "bundle", thinking: "low" },
+  { surface: "bundle", thinking: null },
+] as const)(
+  "thinking-only recovery through $surface with $thinking",
+  async ({ surface, thinking }) => {
+    await withFakeACPAgent("removed-thinking-on-load", async (command, cwd) => {
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { acp: new GenericACPAgentClient({ logger, command }) },
+        registry: storage,
+        logger,
+      });
+      const messages: SessionOutboundMessage[] = [];
+      const configSession = new AgentConfigSession({
+        host: { emit: (message) => messages.push(message) },
+        logger,
+        operations: {
+          ensureLoaded: async (agentId, configOverrides) => {
+            await ensureUnarchivedAgentLoaded(agentId, {
+              agentManager: manager,
+              agentStorage: storage,
+              logger,
+              configOverrides,
+            });
+          },
+          setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+          setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
+          setMode: (agentId, value) => manager.setAgentMode(agentId, value),
+          setOptions: (agentId, value) => manager.setAgentOptions(agentId, value),
+        },
+      });
+      const changeThinking = (agentId: string, value: string | null) =>
+        surface === "single"
+          ? configSession.handleSetAgentThinkingRequest({
+              type: "set_agent_thinking_request",
+              agentId,
+              thinkingOptionId: value,
+              requestId: "repair-thinking",
+            })
+          : configSession.handleAgentConfigApplyRequest({
+              type: "agent.config.apply.request",
+              agentId,
+              config: { thinkingOptionId: value },
+              requestId: "repair-thinking",
+            });
+      try {
+        const created = await manager.createAgent(
+          { provider: "acp", cwd, model: "default", thinkingOptionId: "high" },
+          undefined,
+          { workspaceId: undefined },
+        );
+        expect(created.config.thinkingOptionId).toBe("high");
+        await manager.closeAgent(created.id);
+        await manager.flush();
+        const original = await storage.get(created.id);
+        await expect(
+          ensureUnarchivedAgentLoaded(created.id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          }),
+        ).rejects.toThrow("Effort high is not allowed");
+        await changeThinking(created.id, "invalid-thinking");
+        expect(messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: expect.stringContaining("invalid-thinking") },
+        });
+        await manager.flush();
+        expect(await storage.get(created.id)).toEqual(original);
+        expect(manager.getAgent(created.id)).toBeNull();
+        await changeThinking(created.id, thinking);
+        expect(messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+        await manager.flush();
+        expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(thinking ?? undefined);
+        expect((await storage.get(created.id))?.config?.thinkingOptionId).toBe(
+          thinking ?? undefined,
+        );
+        expect((await storage.get(created.id))?.config?.model).toBe(original?.config?.model);
+        await manager.closeAgent(created.id);
+        await ensureUnarchivedAgentLoaded(created.id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(thinking ?? undefined);
+      } finally {
+        await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+        await manager.flush();
+        await storage.flush();
+      }
+    });
+  },
+);
+
 test("a lazy provider rejecting a replacement leaves its durable config intact", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "lazy-model-rejection-"));
   const logger = createTestLogger();
@@ -278,7 +375,8 @@ async function withFakeACPAgent(
     | "missing-model-choice"
     | "no-model-selector"
     | "config-model-only"
-    | "removed-on-load",
+    | "removed-on-load"
+    | "removed-thinking-on-load",
   run: (command: [string, ...string[]], cwd: string) => Promise<void>,
 ): Promise<void> {
   const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-request-errors-"));
@@ -296,6 +394,15 @@ const readline = require("node:readline");
 
 const mode = process.argv[2];
 const rl = readline.createInterface({ input: process.stdin });
+let loaded = false;
+let thinking = "high";
+function thinkingState() {
+  return { configOptions: [
+    { id: "model", name: "Model", category: "model", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] },
+    { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: thinking,
+      options: loaded ? [{ value: "low", name: "Low" }] : [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+  ] };
+}
 
 function write(message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
@@ -312,6 +419,27 @@ rl.on("line", (line) => {
       },
     });
     return;
+  }
+
+  if (mode === "removed-thinking-on-load") {
+    if (message.method === "session/new" || message.method === "session/load") {
+      loaded = message.method === "session/load";
+      thinking = loaded ? "low" : "high";
+      write({ id: message.id, result: { sessionId: "session-1", ...thinkingState() } });
+      return;
+    }
+    if (message.method === "session/set_config_option") {
+      const value = message.params.value;
+      if (message.params.configId === "effort") {
+        if (value !== "low" && (loaded || value !== "high")) {
+          write({ id: message.id, error: { code: -32603, message: "Internal error", data: { details: "Effort " + value + " is not allowed" } } });
+          return;
+        }
+        thinking = value;
+      }
+      write({ id: message.id, result: thinkingState() });
+      return;
+    }
   }
 
   if (message.method === "session/new" || message.method === "session/load") {

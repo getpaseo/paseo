@@ -41,7 +41,7 @@ export interface EnsureAgentLoadedDeps {
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
   purpose?: "history" | "interactive";
-  /** Explicit model mutation: validate this selection while opening, before persisting it. */
+  /** Explicit settings mutation: validate this selection while opening, before persisting it. */
   configOverrides?: AgentSessionConfigChange;
   logger: Logger;
 }
