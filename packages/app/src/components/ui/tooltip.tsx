@@ -30,6 +30,7 @@ import { FloatingSurface } from "@/components/ui/floating";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { isNative, isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
+import { holdSurfaceEdge, surfaceFrameStyles, type SurfacePosition } from "./anchor";
 
 type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
@@ -475,7 +476,7 @@ export function TooltipContent({
   const ctx = useTooltipContext("TooltipContent");
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [position, setPosition] = useState<SurfacePosition | null>(null);
 
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {
@@ -509,7 +510,12 @@ export function TooltipContent({
       align,
       offset,
     });
-    setPosition({ x: result.x, y: result.y });
+    setPosition(
+      holdSurfaceEdge(
+        { x: result.x, y: result.y, actualPlacement: result.actualSide },
+        contentSize.height,
+      ),
+    );
   }, [triggerRect, contentSize, side, align, offset]);
 
   const handleLayout = useCallback(
@@ -520,17 +526,8 @@ export function TooltipContent({
     [],
   );
 
-  const frameStyle = useMemo(
-    () => [
-      {
-        position: "absolute" as const,
-        top: position?.y ?? -9999,
-        left: position?.x ?? -9999,
-        maxWidth,
-      },
-    ],
-    [maxWidth, position?.x, position?.y],
-  );
+  const frame = useMemo(() => surfaceFrameStyles(position), [position]);
+  const frameStyle = useMemo(() => [frame.surface, { maxWidth }], [frame.surface, maxWidth]);
   const contentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
@@ -543,19 +540,21 @@ export function TooltipContent({
   if (isWeb) {
     return createPortal(
       <View pointerEvents="none" style={styles.portalOverlay}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          role="tooltip"
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+        <View pointerEvents="box-none" style={frame.holder}>
+          <FloatingSurface
+            pointerEvents="none"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            role="tooltip"
+            testID={testID}
+            onLayout={handleLayout}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </View>
       </View>,
       getOverlayRoot(),
     );
@@ -570,19 +569,21 @@ export function TooltipContent({
       onRequestClose={handleDismiss}
     >
       <Pressable testID="tooltip-dismiss" style={styles.overlay} onPress={handleDismiss}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          role="tooltip"
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+        <View pointerEvents="box-none" style={frame.holder}>
+          <FloatingSurface
+            pointerEvents="none"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            role="tooltip"
+            testID={testID}
+            onLayout={handleLayout}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </View>
       </Pressable>
     </Modal>
   );
