@@ -47,14 +47,19 @@ export function resolveGitProcessPolicy(input: {
   };
 }
 
+// Admission reserves a process slot and a start-rate token; the job runs only
+// once its token fires. The job is chosen when the token fires, not when the
+// slot is reserved, so work submitted while background jobs hold every reserved
+// slot still takes the next start.
 export class GitProcessScheduler {
   private readonly startThrottled;
-  private readonly queues: Record<GitProcessPriority, Array<() => void>> = {
+  private readonly queues: Record<GitProcessPriority, Array<() => Promise<void>>> = {
     high: [],
     normal: [],
     background: [],
   };
   private admitted = 0;
+  private reservedStarts = 0;
   private running = 0;
   private waiting = 0;
   private drainScheduled = false;
@@ -65,7 +70,7 @@ export class GitProcessScheduler {
       interval: 1_000,
       strict: true,
     });
-    this.startThrottled = throttle((start: () => Promise<void>) => start());
+    this.startThrottled = throttle(() => this.startNext());
   }
 
   get activeCount(): number {
@@ -82,15 +87,7 @@ export class GitProcessScheduler {
   ): Promise<T> {
     this.waiting += 1;
     return new Promise<T>((resolve, reject) => {
-      const admit = () => {
-        void this.startThrottled(() => this.execute(start, resolve, reject)).catch((error) => {
-          this.waiting = Math.max(0, this.waiting - 1);
-          this.admitted = Math.max(0, this.admitted - 1);
-          reject(error);
-          this.scheduleDrain();
-        });
-      };
-      this.queues[options?.priority ?? "normal"].push(admit);
+      this.queues[options?.priority ?? "normal"].push(() => this.execute(start, resolve, reject));
       if (this.admitted === 0 && !this.drainScheduled) {
         this.drainOne();
       } else {
@@ -99,40 +96,40 @@ export class GitProcessScheduler {
     });
   }
 
+  private canReserveStart(): boolean {
+    return this.admitted < this.policy.maxProcessConcurrency && this.waiting > this.reservedStarts;
+  }
+
   private scheduleDrain(): void {
-    if (this.drainScheduled || this.admitted >= this.policy.maxProcessConcurrency) {
-      return;
-    }
-    if (!this.hasQueuedWork()) {
+    if (this.drainScheduled || !this.canReserveStart()) {
       return;
     }
     this.drainScheduled = true;
     scheduleImmediate(() => this.drainOne());
   }
 
-  private hasQueuedWork(): boolean {
-    return (
-      this.queues.high.length > 0 ||
-      this.queues.normal.length > 0 ||
-      this.queues.background.length > 0
-    );
-  }
-
   private drainOne(): void {
     this.drainScheduled = false;
-    if (this.admitted >= this.policy.maxProcessConcurrency) {
-      return;
-    }
-    const admit =
-      this.queues.high.shift() ?? this.queues.normal.shift() ?? this.queues.background.shift();
-    if (!admit) {
+    if (!this.canReserveStart()) {
       return;
     }
     this.admitted += 1;
-    admit();
+    this.reservedStarts += 1;
+    void this.startThrottled();
     // Spawning can be synchronous and expensive on a throttled host. Let timers,
     // sockets, and child exits run before admitting another Git process.
     this.scheduleDrain();
+  }
+
+  private startNext(): Promise<void> {
+    this.reservedStarts -= 1;
+    // Every reservation is backed by a queued job: jobs leave the queues only here.
+    const next =
+      this.queues.high.shift() ?? this.queues.normal.shift() ?? this.queues.background.shift();
+    if (!next) {
+      throw new Error("Git process start fired without a queued process");
+    }
+    return next();
   }
 
   private async execute<T>(
