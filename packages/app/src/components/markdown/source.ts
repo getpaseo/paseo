@@ -1,7 +1,7 @@
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
-import { normalizeTexDelimiters } from "./tex-delimiters";
+import { findMath, inMathRange } from "./tex-delimiters";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
@@ -142,7 +142,7 @@ export function prepareMarkdownSource(
     forgeReferencePattern?: string;
   } = {},
 ) {
-  source = normalizeTexDelimiters(normalizeMarkdownHtml(source));
+  source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
   let tree: Root | undefined;
   const getTree = () =>
@@ -159,6 +159,8 @@ export function prepareMarkdownSource(
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
+    !source.includes("\\(") &&
+    !source.includes("\\[") &&
     // Match content, header, and delimiter lines; quote-only lines count as blank.
     !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
       source,
@@ -175,6 +177,9 @@ export function prepareMarkdownSource(
     if ("children" in node) node.children.forEach(definitionsIn);
   }
   definitionsIn(getTree());
+  // Math keeps its TeX: md4c reads it raw, so prose rewrites below must not touch it.
+  const math = findMath(source, getTree());
+  edits.push(...math.edits);
   function collectImage(
     node: Extract<Nodes, { type: "image" | "imageReference" }>,
     start: number,
@@ -274,13 +279,18 @@ export function prepareMarkdownSource(
         return;
       }
       if (node.type === "text") {
-        const text = source
-          .slice(start, end)
-          .replace(/(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);/g, (entity) =>
-            decodeString(entity).replace(/[!-/:-@[-`{-~]/g, "\\$&"),
-          )
-          .replace(/(?<!\\)\|\|/g, "\\|\\|");
-        if (text !== source.slice(start, end)) edits.push({ start, end, text });
+        const text = source.slice(start, end);
+        const rewrite = (pattern: RegExp, replace: (match: string) => string) => {
+          for (const match of text.matchAll(pattern)) {
+            const at = start + match.index;
+            if (inMathRange(math.ranges, at, at + match[0].length)) continue;
+            edits.push({ start: at, end: at + match[0].length, text: replace(match[0]) });
+          }
+        };
+        rewrite(/(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);/g, (entity) =>
+          decodeString(entity).replace(/[!-/:-@[-`{-~]/g, "\\$&"),
+        );
+        rewrite(/(?<!\\)\|\|/g, () => "\\|\\|");
       }
     }
     if ("children" in node)

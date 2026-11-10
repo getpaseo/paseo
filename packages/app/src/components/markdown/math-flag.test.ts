@@ -15,6 +15,10 @@ function nodeTypes(tree: ASTNode): string[] {
   return types;
 }
 
+function textContent(node: ASTNode): string {
+  return (node.content ?? "") + (node.children ?? []).map(textContent).join("");
+}
+
 describe("markdown math flags", () => {
   it("parses inline and display LaTeX into math nodes", async () => {
     const tree = await parseMarkdown("Cost is $E = mc^2$.\n\n$$\\frac{a}{b} = c$$", MD4C_FLAGS);
@@ -25,6 +29,6 @@ describe("markdown math flags", () => {
   it("leaves currency as text", async () => {
     const tree = await parseMarkdown("Between $20 and $30 per day.", MD4C_FLAGS);
     expect(nodeTypes(tree)).not.toContain("LatexMathInline");
-    expect(JSON.stringify(tree)).toContain("$20 and $30");
+    expect(textContent(tree)).toBe("Between $20 and $30 per day.");
   });
 });

@@ -2,7 +2,6 @@ import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkd
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { describe, expect, it } from "vitest";
 import { prepareMarkdownSource } from "./source";
-import { normalizeTexDelimiters } from "./tex-delimiters";
 
 /** Flags the renderer passes to the library; keep in sync with renderer.tsx. */
 const MD4C_FLAGS = { latexMath: true, hardSoftBreaks: true, admonitions: true };
@@ -28,6 +27,8 @@ f_x&0&c_x\\
 \end{bmatrix}
 \]`;
 
+const render = (source: string) => prepareMarkdownSource(source).render();
+
 function mathNodes(tree: ASTNode): { type: string; tex: string }[] {
   const found: { type: string; tex: string }[] = [];
   const text = (node: ASTNode): string =>
@@ -45,7 +46,7 @@ function mathNodes(tree: ASTNode): { type: string; tex: string }[] {
 
 describe("TeX delimiters", () => {
   it("rewrites \\( \\) and \\[ \\] to the dollar delimiters md4c parses", () => {
-    expect(normalizeTexDelimiters(String.raw`Let \(x^2\) be \[\frac{a}{b}\] here.`)).toBe(
+    expect(render(String.raw`Let \(x^2\) be \[\frac{a}{b}\] here.`)).toBe(
       String.raw`Let $x^2$ be $$\frac{a}{b}$$ here.`,
     );
   });
@@ -79,18 +80,28 @@ describe("TeX delimiters", () => {
       "",
       "A literal \\\\(not math\\\\) stays.",
     ].join("\n");
-    expect(normalizeTexDelimiters(source)).toBe(source);
+    expect(render(source)).toBe(source);
   });
 
   it("pairs delimiters only inside one paragraph and skips unmatched ones", () => {
     const source = "Opens \\( here\n\nand closes \\) there. A lone \\] too.";
-    expect(normalizeTexDelimiters(source)).toBe(source);
+    expect(render(source)).toBe(source);
   });
 
   it("pads a delimiter only where md4c would not open or close it", () => {
-    expect(normalizeTexDelimiters(String.raw`为\(x\)的`)).toBe("为 $x$ 的");
-    expect(normalizeTexDelimiters(String.raw`（\(x\)，\(y\)）`)).toBe("（$x$，$y$）");
-    expect(normalizeTexDelimiters(String.raw`\(a\)\(b\)`)).toBe("$a$ $b$");
+    expect(render(String.raw`为\(x\)的`)).toBe("为 $x$ 的");
+    expect(render(String.raw`（\(x\)，\(y\)）`)).toBe("（$x$，$y$）");
+    expect(render(String.raw`\(a\)\(b\)`)).toBe("$a$ $b$");
+  });
+
+  it("keeps bars and entities inside math out of the prose rewrites", async () => {
+    expect(render(String.raw`Norm \(||x||_2\) and $||y||_1$, spoiler ||hidden||, A &amp; B`)).toBe(
+      String.raw`Norm $||x||_2$ and $||y||_1$, spoiler \|\|hidden\|\|, A \& B`,
+    );
+    const math = mathNodes(
+      await parseMarkdown(render(String.raw`Norm \(||x||_2\) here.`), MD4C_FLAGS),
+    );
+    expect(math).toEqual([{ type: "LatexMathInline", tex: "||x||_2" }]);
   });
 
   it("keeps currency and shell variables in prose as text", async () => {
