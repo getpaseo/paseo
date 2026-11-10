@@ -38,6 +38,7 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
+import { asInternals } from "../test-utils/class-mocks.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -611,7 +612,17 @@ describe("ScheduleService", () => {
     },
   );
 
+  // Fake clock and timers; schedule files stay on the real file system. `planning` is the
+  // service's latest wake plan: awaiting it means the next wake is armed.
+  const FAKE_TIMERS = {
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  } as const;
+  interface ScheduleServiceWakeInternals {
+    planning: Promise<void> | undefined;
+  }
+
   test("sleeps between ticks while nothing is due instead of polling", async () => {
+    vi.useFakeTimers(FAKE_TIMERS);
     const list = vi.spyOn(ScheduleStore.prototype, "list");
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -620,7 +631,6 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       runner: async () => ({ agentId: null, output: "ok" }),
-      wakeBoundsMs: { min: 10, max: 60_000 },
     });
     await service.create({
       prompt: "Due in an hour",
@@ -630,20 +640,23 @@ describe("ScheduleService", () => {
     });
     try {
       await service.start();
-      // The first wake (10 ms) ticks, then plans the next one an hour out (capped at the maximum).
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // The first wake ticks, then plans the next one an hour out (capped at 30 s).
+      await vi.advanceTimersByTimeAsync(1_000);
+      await asInternals<ScheduleServiceWakeInternals>(service).planning;
       const settled = list.mock.calls.length;
       expect(settled).toBeGreaterThan(0);
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-      // A once-a-second poll would have listed (read) every schedule file again by now.
+      await vi.advanceTimersByTimeAsync(20_000);
+      // A once-a-second poll would have read every schedule file 20 more times.
       expect(list.mock.calls.length).toBe(settled);
     } finally {
       await service.stop();
       list.mockRestore();
+      vi.useRealTimers();
     }
   });
 
   test("does not keep waking for an active schedule without a next run", async () => {
+    vi.useFakeTimers(FAKE_TIMERS);
     const list = vi.spyOn(ScheduleStore.prototype, "list");
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -652,7 +665,6 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       runner: async () => ({ agentId: null, output: "ok" }),
-      wakeBoundsMs: { min: 10, max: 60_000 },
     });
     const created = await service.create({
       prompt: "Expired without a next slot",
@@ -669,19 +681,22 @@ describe("ScheduleService", () => {
     }));
     try {
       await service.start();
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await asInternals<ScheduleServiceWakeInternals>(service).planning;
       const settled = list.mock.calls.length;
       expect(settled).toBeGreaterThan(0);
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await vi.advanceTimersByTimeAsync(20_000);
       expect(list.mock.calls.length).toBe(settled);
     } finally {
       await service.stop();
       list.mockRestore();
+      vi.useRealTimers();
     }
   });
 
   test("runs a schedule created while the service sleeps without waiting for the next wake", async () => {
-    const ran = Promise.withResolvers<void>();
+    vi.useFakeTimers(FAKE_TIMERS);
+    const ran = Promise.withResolvers<number>();
     const service = createScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
@@ -689,32 +704,78 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       runner: async () => {
-        ran.resolve();
+        ran.resolve(Date.now());
         return { agentId: null, output: "ok" };
       },
-      wakeBoundsMs: { min: 10, max: 60_000 },
     });
     try {
       await service.start();
-      // Nothing is due, so the service plans to sleep for the full minute.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Nothing is due, so the service plans to sleep for the full 30 s.
+      await vi.advanceTimersByTimeAsync(1_000);
+      const internals = asInternals<ScheduleServiceWakeInternals>(service);
+      await internals.planning;
+      const createdAt = Date.now();
       await service.create({
         prompt: "Run now",
         runOnCreate: true,
         cadence: { type: "every", everyMs: 3_600_000 },
         target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
       });
-      await expect(
-        Promise.race([
-          ran.promise.then(() => "ran"),
-          new Promise((resolve) => setTimeout(() => resolve("still asleep"), 5_000)),
-        ]),
-      ).resolves.toBe("ran");
+      await internals.planning;
+      // The write re-plans the wake for 1 s after the last tick, not 30 s.
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect((await ran.promise) - createdAt).toBeLessThanOrEqual(1_100);
       await vi.waitFor(async () =>
         expect((await service.list())[0]?.runs[0]?.status).toBe("succeeded"),
       );
     } finally {
       await service.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  test("writes shortly before a due wake do not postpone it", async () => {
+    vi.useFakeTimers(FAKE_TIMERS);
+    const ranAt: number[] = [];
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      runner: async () => {
+        ranAt.push(Date.now());
+        return { agentId: null, output: "ok" };
+      },
+    });
+    const startedAt = Date.now();
+    await service.create({
+      prompt: "Due in 5 s",
+      runOnCreate: false,
+      cadence: { type: "every", everyMs: 5_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const other = await service.create({
+      prompt: "Changed every 500 ms",
+      runOnCreate: false,
+      cadence: { type: "every", everyMs: 3_600_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const internals = asInternals<ScheduleServiceWakeInternals>(service);
+    try {
+      await service.start();
+      // Another schedule changes every 500 ms through the due time; each change re-plans the wake.
+      for (let step = 0; step < 14; step += 1) {
+        await (step % 2 === 0 ? service.pause(other.id) : service.resume(other.id));
+        await internals.planning;
+        await vi.advanceTimersByTimeAsync(500);
+      }
+      await vi.waitFor(() => expect(ranAt).toHaveLength(1));
+      // It ran at its due time, while the writes were still coming in (they stop at 7 s).
+      expect(ranAt[0]! - startedAt).toBeLessThan(6_000);
+    } finally {
+      await service.stop();
+      vi.useRealTimers();
     }
   });
 
