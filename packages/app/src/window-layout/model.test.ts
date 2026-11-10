@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveSafeAreaInsets,
+  resolveStatusBarTapsReachHeader,
   resolveTopBand,
   type WindowLayout,
   type WindowLayoutRect,
@@ -151,5 +152,31 @@ describe("resolveTopBand", () => {
 
   it("is null before the native layout arrives", () => {
     expect(resolveTopBand(duo.systemTop, null)).toBeNull();
+  });
+});
+
+describe("resolveStatusBarTapsReachHeader", () => {
+  it("is true beside a folded iPhone's vertical bar, as measured on the iPhone Duo", () => {
+    expect(
+      resolveStatusBarTapsReachHeader(
+        layout({
+          bounds: { x: 0, y: 0, width: 466, height: 1000 },
+          verticalBarEdge: "trailing",
+          verticalBar: { x: 382, y: 0, width: 84, height: 1000 },
+        }),
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("is true in a top band", () => {
+    expect(resolveStatusBarTapsReachHeader(layout(), { top: 20, trailingObstruction: null })).toBe(
+      true,
+    );
+  });
+
+  it("is false below an ordinary status bar", () => {
+    expect(resolveStatusBarTapsReachHeader(layout(), null)).toBe(false);
+    expect(resolveStatusBarTapsReachHeader(null, null)).toBe(false);
   });
 });
