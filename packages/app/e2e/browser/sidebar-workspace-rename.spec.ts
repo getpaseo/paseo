@@ -41,6 +41,22 @@ async function waitForTwoFrames(page: Page): Promise<void> {
   });
 }
 
+type DaemonWebSocketGate = Awaited<ReturnType<typeof installDaemonWebSocketGate>>;
+
+/** Sets the title from a second daemon client and waits until this page has rendered it. */
+async function renameFromAnotherClient(
+  page: Page,
+  gate: DaemonWebSocketGate,
+  workspace: Awaited<ReturnType<typeof seedWorkspace>>,
+  title: string,
+): Promise<void> {
+  gate.holdNextServerMessage("workspace_update");
+  await workspace.client.setWorkspaceTitle(workspace.workspaceId, title);
+  await gate.waitForHeldServerMessage("workspace_update");
+  gate.releaseHeldServerMessage("workspace_update");
+  await waitForTwoFrames(page);
+}
+
 interface Box {
   x: number;
   y: number;
@@ -190,17 +206,44 @@ test.describe("Sidebar workspace rename", () => {
       await expect(input).toBeFocused();
       await expect(input).toHaveValue("main");
 
-      // Another client renames the workspace while this field is open and untouched.
-      gate.holdNextServerMessage("workspace_update");
-      await workspace.client.setWorkspaceTitle(workspace.workspaceId, "External title");
-      await gate.waitForHeldServerMessage("workspace_update");
-      gate.releaseHeldServerMessage("workspace_update");
-      await waitForTwoFrames(page);
+      await renameFromAnotherClient(page, gate, workspace, "External title");
 
       await page.mouse.click(900, 700);
       await expect(input).toHaveCount(0);
       await expect(row).toContainText("External title");
       expect(gate.getClientRequestCount("workspace.title.set.request")).toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("saving after a rename elsewhere holds the submitted title until it arrives", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-external-save-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await renameFromAnotherClient(page, gate, workspace, "External title");
+
+      await input.fill("Submitted title");
+      gate.holdNextServerMessage("workspace_update");
+      await page.keyboard.press("Enter");
+      await gate.waitForHeldServerMessage("workspace_update");
+
+      await expect(input).toHaveValue("Submitted title");
+      await expect(row).not.toContainText("External title");
+
+      gate.releaseHeldServerMessage("workspace_update");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("Submitted title");
     } finally {
       await workspace.cleanup();
     }

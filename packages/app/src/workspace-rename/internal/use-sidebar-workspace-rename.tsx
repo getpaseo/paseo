@@ -19,14 +19,13 @@ export interface SidebarRenamableWorkspace extends RenamableWorkspace {
  *
  * `saving` and `saved` keep the field on screen holding the submitted text. The daemon answers
  * the request before it pushes the updated workspace, so closing on the answer would show the
- * old title for a beat. `saved` ends when the row's title moves off the one editing started from.
+ * old title for a beat. `saved` ends when the row's title moves off the one it had at submit,
+ * which is not the one editing started from when another client renamed it in between.
  */
-interface InlineRenameSession {
-  kind: "inline";
-  phase: "editing" | "saving" | "saved";
-  initialValue: string;
-  titleAtStart: string | null;
-}
+type InlineRenameSession = { kind: "inline"; initialValue: string } & (
+  | { phase: "editing" }
+  | { phase: "saving" | "saved"; titleBeforeSave: string | null }
+);
 
 type RenameSession = { kind: "closed" } | { kind: "modal" } | InlineRenameSession;
 
@@ -52,7 +51,7 @@ export function useSidebarWorkspaceRename(
   if (
     session.kind === "inline" &&
     session.phase === "saved" &&
-    currentTitle !== session.titleAtStart
+    currentTitle !== session.titleBeforeSave
   ) {
     setSession(CLOSED);
   }
@@ -61,10 +60,10 @@ export function useSidebarWorkspaceRename(
   const begin = useCallback(() => {
     setSession(
       resolveWorkspaceRenameSurface() === "inline"
-        ? { kind: "inline", phase: "editing", initialValue, titleAtStart: currentTitle }
+        ? { kind: "inline", phase: "editing", initialValue }
         : { kind: "modal" },
     );
-  }, [currentTitle, initialValue]);
+  }, [initialValue]);
 
   const close = useCallback(() => setSession(CLOSED), []);
 
@@ -76,7 +75,12 @@ export function useSidebarWorkspaceRename(
         setSession(CLOSED);
         return;
       }
-      setSession({ ...session, phase: "saving" });
+      setSession({
+        kind: "inline",
+        initialValue: session.initialValue,
+        phase: "saving",
+        titleBeforeSave: currentTitle,
+      });
       setWorkspaceTitle(title).then(
         () =>
           setSession((previous) =>
@@ -90,7 +94,7 @@ export function useSidebarWorkspaceRename(
         },
       );
     },
-    [session, setWorkspaceTitle, toast],
+    [currentTitle, session, setWorkspaceTitle, toast],
   );
 
   const titleEditor =
