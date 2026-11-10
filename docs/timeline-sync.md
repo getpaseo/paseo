@@ -117,11 +117,13 @@ agent, so an agent the daemon has not loaded answers `behind` and resumes in tha
 
 Cached history remains readable during recovery. The chat shows Reconnecting to host while the host
 is offline and until a reconnected chat's check answers, so an unchanged chat never shows a second
-toast. A check on cached content shows nothing. Updating messages appears for a chat that is behind,
-until the fetch completes, and for a check still unanswered `FRESHNESS_CHECK_QUIET_MS` after it was
-sent. That delay measures the daemon, so it starts at the request: on a cold start the cache read
-alone can take longer. Socket connectivity alone cannot certify that the displayed conversation is
-current. The timeline owner publishes freshness; the view renders it without a toast timer or a
+toast. Returning from background on a socket that stayed connected shows nothing until the check
+answers: the chat stayed subscribed, so a slow answer is no reason to doubt it, and a socket that
+died without closing fails the foreground liveness probe and becomes a reconnect. Updating messages
+appears for a chat that is behind, until the fetch completes, and for an opened chat whose check is
+still unanswered `FRESHNESS_CHECK_QUIET_MS` after it was sent. That delay measures the daemon, so it
+starts at the request: on a cold start the cache read alone can take longer. Socket connectivity
+alone cannot certify that the displayed conversation is current. The timeline owner publishes freshness; the view renders it without a toast timer or a
 separate resume workflow.
 
 The turn footer in a chat follows its messages, not the agent status. Turn activity comes from the
