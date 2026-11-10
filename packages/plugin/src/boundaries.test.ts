@@ -230,6 +230,7 @@ describe("plugin composer SDK boundary", () => {
         composer.setOptions({ effort: null });
         composer.setMetadata({ flag: true, stale: null });
         composer.insertText("text");
+        composer.focus({ selection: { start: 0, end: composer.prompt.length } }).then(() => composer.focus());
         composer.addAttachment({ sourceId: "issues", item: { id: "1", identifier: "1", title: "t", url: "https://e.com", text: "t", resourceType: "issue" } });
         // @ts-expect-error commands take JSON values
         composer.setMetadata({ fn: () => {} });
