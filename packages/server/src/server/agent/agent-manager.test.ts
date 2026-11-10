@@ -2153,6 +2153,47 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
   }
 });
 
+test("prepareForShutdown records running agents and preserves them when cancelled during shutdown", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-running-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    agentStorage: storage,
+  });
+  try {
+    const runningAgent = await manager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const idleAgent = await manager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+    // Mark one agent as running
+    const managedRunning = (manager as unknown as { agents: Map<string, { lifecycle: string }> }).agents.get(runningAgent.id);
+    if (managedRunning) {
+      managedRunning.lifecycle = "running";
+    }
+
+    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set());
+    manager.prepareForShutdown();
+    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set([runningAgent.id]));
+    expect(manager.getRunningAgentsAtShutdown().has(idleAgent.id)).toBe(false);
+
+    // Even if the turn is cancelled during shutdown, it remains captured
+    await manager.cancelAgentRun(runningAgent.id);
+    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set([runningAgent.id]));
+  } finally {
+    await manager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reload does not create a replacement when the closed snapshot cannot be persisted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
   const storagePath = join(workdir, "agents");

@@ -879,6 +879,8 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private shuttingDown = false;
+  private readonly runningAgentsAtShutdown = new Set<string>();
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -976,7 +978,17 @@ export class AgentManager {
   }
 
   prepareForShutdown(): void {
+    this.shuttingDown = true;
     this.acceptingAgentRegistrations = false;
+    for (const [id, agent] of this.agents) {
+      if (agent.lifecycle === "running") {
+        this.runningAgentsAtShutdown.add(id);
+      }
+    }
+  }
+
+  getRunningAgentsAtShutdown(): Set<string> {
+    return new Set(this.runningAgentsAtShutdown);
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -3341,6 +3353,9 @@ export class AgentManager {
   }
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
+    if (this.shuttingDown && (agent.lifecycle === "running" || agent.activeForegroundTurnId)) {
+      this.runningAgentsAtShutdown.add(agent.id);
+    }
     const mutableAgent = agent;
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
@@ -3774,6 +3789,9 @@ export class AgentManager {
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
+    if (this.shuttingDown && (agent.lifecycle === "running" || agent.activeForegroundTurnId)) {
+      this.runningAgentsAtShutdown.add(agentId);
+    }
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
@@ -4510,6 +4528,9 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    if (this.shuttingDown && (agent.lifecycle === "running" || agent.activeForegroundTurnId)) {
+      this.runningAgentsAtShutdown.add(agent.id);
+    }
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -5378,6 +5399,9 @@ export class AgentManager {
       | undefined;
   }): void {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+    if (this.shuttingDown && (agent.lifecycle === "running" || agent.activeForegroundTurnId)) {
+      this.runningAgentsAtShutdown.add(agent.id);
+    }
     this.logger.trace(
       {
         agentId: agent.id,

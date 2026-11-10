@@ -1983,11 +1983,11 @@ export async function createPaseoDaemon(
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
+    agentManager.prepareForShutdown();
     wsServer?.prepareForShutdown();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
-    agentManager.prepareForShutdown();
-    await restartRecovery.captureRunningAgents();
+    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),

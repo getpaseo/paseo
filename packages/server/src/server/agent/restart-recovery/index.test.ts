@@ -103,3 +103,42 @@ test("opt-out consumes pending recovery and excludes archived, private, owned an
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("captureRunningAgents captures agents supplied via runningAgentIds even if their persisted status is already idle", async () => {
+  const root = await mkdtemp(join(tmpdir(), "restart-recovery-"));
+  try {
+    const storage = new AgentStorage(root, createTestLogger());
+    for (const [id, lastStatus] of [
+      ["interrupted-claude", "idle"],
+      ["still-running", "running"],
+      ["already-idle", "idle"],
+      ["archived-running", "idle"],
+    ] as const) {
+      await storage.upsert(
+        parseStoredAgentRecord({
+          id,
+          lastStatus,
+          provider: "claude",
+          cwd: root,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          ...(id === "archived-running" ? { archivedAt: "today" } : {}),
+        }),
+      );
+    }
+    const recovery = createRestartRecovery({
+      storage,
+      settings: () => ({ enabled: true, prompt: "Resume working." }),
+      eligible: async () => true,
+      dispatch: async () => {},
+      report: () => {},
+    });
+    await recovery.captureRunningAgents(["interrupted-claude", "archived-running"]);
+    expect((await storage.get("interrupted-claude"))?.resumeOnStartup).toBe(true);
+    expect((await storage.get("still-running"))?.resumeOnStartup).toBe(true);
+    expect((await storage.get("already-idle"))?.resumeOnStartup).toBe(false);
+    expect((await storage.get("archived-running"))?.resumeOnStartup).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
