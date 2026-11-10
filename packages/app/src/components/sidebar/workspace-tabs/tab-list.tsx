@@ -327,6 +327,12 @@ function SidebarAgentTabEntry({
     [workspaceKey, tab.tabId],
   );
   const hasSubagents = rows.length > 0;
+  // A focused child tab sits under this row rather than at the top level, so while the list is
+  // collapsed the parent carries its highlight; expanded, the child's own row does.
+  const childActive = useMemo(
+    () => !expanded && rows.some((row) => isSubagentTarget(activeTarget, row)),
+    [activeTarget, expanded, rows],
+  );
   const trailing = useMemo(
     () =>
       hasSubagents ? (
@@ -350,7 +356,7 @@ function SidebarAgentTabEntry({
       <SidebarWorkspaceTabRow
         tab={tab}
         presentation={presentation}
-        active={active}
+        active={active || childActive}
         serverId={serverId}
         workspaceId={workspaceId}
         workspaceKey={workspaceKey}
