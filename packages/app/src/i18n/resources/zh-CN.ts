@@ -280,9 +280,14 @@ export const zhCN: TranslationResources = {
     title: "历史",
     empty: "还没有会话",
     noMatches: "没有匹配的会话",
+    noMainAgents: "没有主 Agent 会话",
     tooManyMatches: "匹配过多 — 请缩小搜索范围",
     hostLoadFailed: "{{host}}：无法加载历史",
     searchPlaceholder: "搜索历史",
+    agentScope: {
+      all: "全部",
+      main: "主 Agent",
+    },
     actions: {
       loadMore: "加载更多",
       clearSearch: "清除搜索",

@@ -285,9 +285,14 @@ export const fr: TranslationResources = {
     title: "Historique",
     empty: "Aucune session pour l’instant",
     noMatches: "Aucune session correspondante",
+    noMainAgents: "Aucune session d’agent principal",
     tooManyMatches: "Trop de résultats — affinez la recherche",
     hostLoadFailed: "{{host}} : impossible de charger l’historique",
     searchPlaceholder: "Rechercher dans l’historique",
+    agentScope: {
+      all: "Toutes",
+      main: "Principal",
+    },
     actions: {
       loadMore: "Charger plus",
       clearSearch: "Effacer la recherche",

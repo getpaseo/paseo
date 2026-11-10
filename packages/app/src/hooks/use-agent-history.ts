@@ -28,6 +28,8 @@ export interface AgentHistoryResult {
   isLoadingMore: boolean;
   /** False when any target host predates search; the screen hides the field. */
   isSearchSupported: boolean;
+  /** False when any target host predates the main-agent filter; the screen hides it. */
+  isMainAgentFilterSupported: boolean;
   /** More sessions matched than the ranked page holds. Narrow the query. */
   isSearchTruncated: boolean;
   /** Hosts that failed while others succeeded. The list still renders. */
@@ -76,9 +78,11 @@ export async function fetchAgentHistoryPage(input: {
   serverId: string;
   cursor: string | null;
   search?: string;
+  mainAgentsOnly?: boolean;
 }): Promise<AgentHistoryPage> {
   const payload = await input.client.fetchAgentHistory({
     ...(input.search ? { search: input.search } : {}),
+    ...(input.mainAgentsOnly ? { filter: { excludeDelegated: true } } : {}),
     sort: AGENT_HISTORY_SORT,
     page: input.cursor
       ? { limit: AGENT_HISTORY_PAGE_LIMIT, cursor: input.cursor }
@@ -161,6 +165,7 @@ export async function fetchAgentHistoryBatch(input: {
   hosts: readonly AgentHistoryHost[];
   cursorByServerId: AgentHistoryCursorByServerId | null;
   search?: string;
+  mainAgentsOnly?: boolean;
 }): Promise<AgentHistoryBatchPage> {
   const cursorByServerId = input.cursorByServerId ?? {};
   const hasCursorFilter = Object.keys(cursorByServerId).length > 0;
@@ -175,6 +180,7 @@ export async function fetchAgentHistoryBatch(input: {
         serverId: host.serverId,
         cursor: cursorByServerId[host.serverId] ?? null,
         ...(input.search ? { search: input.search } : {}),
+        ...(input.mainAgentsOnly ? { mainAgentsOnly: true } : {}),
       });
       return { host, page };
     }),
@@ -218,6 +224,7 @@ export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
   search?: string;
+  mainAgentsOnly?: boolean;
 }): AgentHistoryResult {
   const { t } = useTranslation();
   const daemons = useHosts();
@@ -270,16 +277,28 @@ export function useAgentHistory(options: {
       [targetServerIds],
     ),
   );
+  const isMainAgentFilterSupported = useSessionStore(
+    useCallback(
+      (state) =>
+        targetServerIds.length > 0 &&
+        targetServerIds.every(
+          (id) => state.sessions[id]?.serverInfo?.features?.agentHistoryMainAgentFilter === true,
+        ),
+      [targetServerIds],
+    ),
+  );
   const search = useMemo(() => {
     const trimmed = options.search?.trim() ?? "";
     return isSearchSupported ? trimmed : "";
   }, [isSearchSupported, options.search]);
+  const mainAgentsOnly = isMainAgentFilterSupported && options.mainAgentsOnly === true;
   const queryKey = useMemo(
     () => [
       ...(serverId ? agentHistoryQueryKey(serverId) : allAgentHistoryQueryKey(targetServerIds)),
       search,
+      mainAgentsOnly,
     ],
-    [search, serverId, targetServerIds],
+    [mainAgentsOnly, search, serverId, targetServerIds],
   );
   const serverLabelById = useMemo(
     () => new Map(daemons.map((daemon) => [daemon.serverId, daemon.label])),
@@ -306,6 +325,7 @@ export function useAgentHistory(options: {
         hosts: targetHosts,
         cursorByServerId: pageParam,
         ...(search ? { search } : {}),
+        ...(mainAgentsOnly ? { mainAgentsOnly: true } : {}),
       });
     },
   });
@@ -361,6 +381,7 @@ export function useAgentHistory(options: {
     hasMore: hasNextPage,
     isLoadingMore: isFetchingNextPage,
     isSearchSupported,
+    isMainAgentFilterSupported,
     isSearchTruncated,
     hostErrors,
     refreshAll,

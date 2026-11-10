@@ -284,9 +284,14 @@ export const ru: TranslationResources = {
     title: "История",
     empty: "Сессий пока нет",
     noMatches: "Подходящих сессий не найдено",
+    noMainAgents: "Нет сессий основных агентов",
     tooManyMatches: "Слишком много совпадений — уточните запрос",
     hostLoadFailed: "{{host}}: не удалось загрузить историю",
     searchPlaceholder: "Поиск по истории",
+    agentScope: {
+      all: "Все",
+      main: "Основные",
+    },
     actions: {
       loadMore: "Загрузить ещё",
       clearSearch: "Очистить поиск",

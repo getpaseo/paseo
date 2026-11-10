@@ -284,9 +284,14 @@ export const ptBR: TranslationResources = {
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",
     noMatches: "Nenhuma sessão corresponde",
+    noMainAgents: "Nenhuma sessão de agente principal",
     tooManyMatches: "Muitos resultados — refine a busca",
     hostLoadFailed: "{{host}}: Não foi possível carregar o histórico",
     searchPlaceholder: "Buscar no histórico",
+    agentScope: {
+      all: "Todas",
+      main: "Principal",
+    },
     actions: {
       loadMore: "Carregar mais",
       clearSearch: "Limpar busca",

@@ -5,6 +5,7 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "../../messages.js";
+import { isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
@@ -123,6 +124,10 @@ export function matchesAgentUpdatesFilter(input: {
   filter?: AgentUpdatesFilter;
 }): boolean {
   const { agent, project, filter } = input;
+
+  if (filter?.excludeDelegated === true && isDelegatedAgent(agent)) {
+    return false;
+  }
 
   if (filter?.labels) {
     const matchesLabels = Object.entries(filter.labels).every(

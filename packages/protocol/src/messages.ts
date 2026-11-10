@@ -929,6 +929,8 @@ const AgentDirectoryFilterSchema = z.object({
   projectKeys: z.array(z.string()).optional(),
   statuses: z.array(AgentStatusSchema).optional(),
   includeArchived: z.boolean().optional(),
+  // COMPAT(agentHistoryMainAgentFilter): added in v0.15.5, remove gate after 2027-05-10.
+  excludeDelegated: z.boolean().optional(),
   requiresAttention: z.boolean().optional(),
   thinkingOptionId: z.string().nullable().optional(),
   // Retained for wire parsing; private helpers are excluded from public discovery.
@@ -3703,6 +3705,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
+        // COMPAT(agentHistoryMainAgentFilter): added in v0.15.5, remove gate after 2027-05-10.
+        agentHistoryMainAgentFilter: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97

@@ -200,6 +200,23 @@ describe("fetchAgentHistoryPage", () => {
     } satisfies FetchAgentHistoryOptions);
   });
 
+  it("passes excludeDelegated when filtering to main agents", async () => {
+    const client = createClient([historyPayload({ entries: [] })]);
+
+    await fetchAgentHistoryPage({
+      client,
+      serverId: "server-1",
+      cursor: null,
+      mainAgentsOnly: true,
+    });
+
+    expect(client.calls[0]).toEqual({
+      filter: { excludeDelegated: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    } satisfies FetchAgentHistoryOptions);
+  });
+
   it("maps daemon history entries into aggregated agents tagged with the requested server", async () => {
     const client = createClient([
       historyPayload({
