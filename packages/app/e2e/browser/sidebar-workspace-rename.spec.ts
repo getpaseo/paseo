@@ -3,6 +3,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -12,9 +13,13 @@ function workspaceRenameModalTestId(workspaceId: string, suffix: string): string
   return `sidebar-workspace-rename-modal-${getServerId()}:${workspaceId}-${suffix}`;
 }
 
-async function openRenameModal(page: Page, workspaceId: string) {
+function workspaceRenameInputTestId(workspaceId: string): string {
+  return `sidebar-workspace-rename-input-${getServerId()}:${workspaceId}`;
+}
+
+async function chooseRenameFromKebab(page: Page, workspaceId: string): Promise<void> {
   const serverId = getServerId();
-  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
+  const row = page.getByTestId(workspaceRowTestId(workspaceId));
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.hover();
 
@@ -25,40 +30,62 @@ async function openRenameModal(page: Page, workspaceId: string) {
   const renameItem = page.getByTestId(`sidebar-workspace-menu-rename-${serverId}:${workspaceId}`);
   await expect(renameItem).toBeVisible({ timeout: 10_000 });
   await renameItem.click();
+}
 
-  const input = page.getByTestId(workspaceRenameModalTestId(workspaceId, "input"));
-  await expect(input).toBeVisible({ timeout: 10_000 });
-  return input;
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+async function rowBox(page: Page, workspaceId: string): Promise<Box> {
+  const box = await page.getByTestId(workspaceRowTestId(workspaceId)).boundingBox();
+  if (!box) throw new Error(`sidebar row ${workspaceId} has no layout box`);
+  return box;
 }
 
 // In Model B the workspace title is its identity: renaming sets a custom title
 // layered over the derived branch/directory name, and reconciliation never
 // touches it. The sidebar row shows the title verbatim — no branch mutation.
 test.describe("Sidebar workspace rename", () => {
-  test("renaming via kebab sets a custom title that survives reload", async ({ page }) => {
+  test("renaming in place sets a custom title without moving the row, and survives reload", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-" });
 
     try {
       expect(workspace.workspaceName).toBe("main");
 
+      await page.setViewportSize({ width: 1280, height: 800 });
       await gotoAppShell(page);
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
+      const restingBox = await rowBox(page, workspace.workspaceId);
 
-      const input = await openRenameModal(page, workspace.workspaceId);
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+      await expect(input).toBeFocused();
+      await expect(input).toBeEditable();
       await expect(input).toHaveValue("main");
+      await expect(
+        page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "input")),
+      ).toHaveCount(0);
+      expect(await rowBox(page, workspace.workspaceId)).toEqual(restingBox);
 
       const customTitle = "Payments Refactor";
-      await input.fill(customTitle);
-      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
+      // The whole title is selected, so typing replaces it.
+      await page.keyboard.type(customTitle);
+      expect(await rowBox(page, workspace.workspaceId)).toEqual(restingBox);
+      await page.keyboard.press("Enter");
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
       // The title is shown exactly as typed — not slugified into a branch name.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,
-        { timeout: 15_000 },
       );
+      expect(await rowBox(page, workspace.workspaceId)).toEqual(restingBox);
 
       // The custom title is backing metadata on the workspace: a full reload
       // re-resolves the descriptor from persistence and must not lose it. This
@@ -68,6 +95,94 @@ test.describe("Sidebar workspace rename", () => {
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
         customTitle,
         { timeout: 30_000 },
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("Escape discards an in-place rename and clicking away saves it", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-blur-" });
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await page.keyboard.type("Discarded title");
+      await page.keyboard.press("Escape");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("main");
+      await expect(row).not.toContainText("Discarded title");
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      // Clicking inside the field places the caret; it does not press the row underneath.
+      await input.click();
+      await expect(input).toBeFocused();
+      await input.fill("Saved on blur");
+      // Click empty space in the main pane, away from any control.
+      await page.mouse.click(900, 700);
+      await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(row).toContainText("Saved on blur");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("the submitted title stays on screen until the renamed workspace arrives", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-hold-" });
+
+    try {
+      const gate = await installDaemonWebSocketGate(page);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId));
+
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+      await expect(input).toBeFocused();
+      await page.keyboard.type("Held title");
+      // The daemon answers the rename before it pushes the renamed workspace.
+      gate.holdNextServerMessage("workspace_update");
+      await page.keyboard.press("Enter");
+      await gate.waitForHeldServerMessage("workspace_update");
+
+      await expect(input).toHaveValue("Held title");
+      await expect(input).not.toBeEditable();
+      await expect(row).not.toContainText("main");
+
+      gate.releaseHeldServerMessage("workspace_update");
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("Held title");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("below the lg breakpoint renaming opens the modal", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-modal-" });
+
+    try {
+      await page.setViewportSize({ width: 800, height: 800 });
+      await gotoAppShell(page);
+      await chooseRenameFromKebab(page, workspace.workspaceId);
+
+      const input = page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "input"));
+      await expect(input).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByTestId(workspaceRenameInputTestId(workspace.workspaceId))).toHaveCount(
+        0,
+      );
+      await input.fill("Modal Title");
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
+      await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
+        "Modal Title",
       );
     } finally {
       await workspace.cleanup();
