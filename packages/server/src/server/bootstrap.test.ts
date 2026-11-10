@@ -28,13 +28,22 @@ test("reports only private addresses accepted by the bound listener", () => {
     vpn: [address("100.100.1.5")],
     loopback: [address("127.0.0.1")],
   };
-  expect(reachableDirectEndpoints("0.0.0.0", 6767, interfaces)).toEqual([
-    "100.100.1.5:6767",
-    "192.168.1.30:6767",
-  ]);
-  expect(reachableDirectEndpoints("100.100.1.5", 6767, interfaces)).toEqual(["100.100.1.5:6767"]);
-  expect(reachableDirectEndpoints("127.0.0.1", 6767, interfaces)).toEqual([]);
-  expect(reachableDirectEndpoints("0.0.0.0", 6767, { vpn: [] })).toEqual([]);
+  const endpointsFor = (boundHost: string) =>
+    reachableDirectEndpoints({
+      boundAddress: { address: boundHost, family: "IPv4", port: 6767 },
+      interfaces,
+    });
+  expect(endpointsFor("0.0.0.0")).toEqual(["100.100.1.5:6767", "192.168.1.30:6767"]);
+  expect(endpointsFor("100.100.1.5")).toEqual(["100.100.1.5:6767"]);
+  expect(endpointsFor("127.0.0.1")).toEqual([]);
+  expect(
+    reachableDirectEndpoints({
+      boundAddress: { address: "0.0.0.0", family: "IPv4", port: 6767 },
+      interfaces: { vpn: [] },
+    }),
+  ).toEqual([]);
+  // A configured hostname can resolve to this bound address; the reported route uses the IP.
+  expect(endpointsFor("192.168.1.30")).toEqual(["192.168.1.30:6767"]);
 });
 
 test("reconciliation emits workspace updates when observer sync fails", async () => {

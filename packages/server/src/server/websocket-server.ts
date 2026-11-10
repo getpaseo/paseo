@@ -592,6 +592,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly connectedHosts: ConnectedHosts;
+  private readonly httpServer: HTTPServer;
 
   toolHosts() {
     return createToolHosts(this.connectedHosts);
@@ -802,6 +803,7 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
+    this.httpServer = server;
     this.passwordHash = auth?.password;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -981,10 +983,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private getDirectEndpoints(): string[] {
-    return reachableDirectEndpoints(
-      this.getDaemonTcpHost?.() ?? null,
-      this.getDaemonTcpPort?.() ?? null,
-    );
+    return reachableDirectEndpoints({ boundAddress: this.httpServer.address() });
   }
 
   private startDirectEndpointsInterval(): void {
@@ -993,9 +992,7 @@ export class VoiceAssistantWebSocketServer {
       const current = JSON.stringify(this.getDirectEndpoints());
       if (current === this.lastDirectEndpoints) return;
       this.lastDirectEndpoints = current;
-      for (const connection of new Set(this.sessions.values())) {
-        this.sendToConnection(connection, this.createServerInfoMessage(connection.session));
-      }
+      this.broadcastServerInfoUpdate();
     }, 15_000);
     this.directEndpointsInterval.unref?.();
   }
@@ -1140,7 +1137,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     this.serverCapabilities = next;
-    this.broadcastCapabilitiesUpdate();
+    this.broadcastServerInfoUpdate();
   }
 
   public async attachExternalSocket(
@@ -2310,7 +2307,7 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  private broadcastCapabilitiesUpdate(): void {
+  private broadcastServerInfoUpdate(): void {
     for (const connection of new Set(this.sessions.values())) {
       if (
         ![...connection.sockets].some((socket) =>
