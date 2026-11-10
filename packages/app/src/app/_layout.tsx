@@ -7,6 +7,8 @@ import {
   useWindowLayout,
   resolveDesktopDivisionLayout,
 } from "@/window-layout";
+import { WindowLayoutContentAllocationContext } from "@/window-layout/context";
+import { SidebarResizeGeometryProvider } from "@/window-layout/sidebar-resize-geometry";
 import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -110,7 +112,11 @@ import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
-import { MobilePanelsProvider, useIsMobilePanelActive } from "@/mobile-panels/provider";
+import {
+  MobilePanelsProvider,
+  useIsMobilePanelActive,
+  useLeftPanelWidth,
+} from "@/mobile-panels/provider";
 import {
   KeyboardActionDispatcherProvider,
   useKeyboardActionDispatcher,
@@ -387,6 +393,39 @@ interface AppContainerProps {
 
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
+function WindowLayoutContentFrame({
+  compact,
+  workspaceKey,
+  explorerVisible,
+  unreservedWidth,
+  divided,
+  desktopSidebarVisible,
+  children,
+}: {
+  compact: boolean;
+  workspaceKey: string | null;
+  explorerVisible: boolean;
+  unreservedWidth: number;
+  divided: boolean;
+  desktopSidebarVisible: boolean;
+  children: ReactNode;
+}) {
+  const sidebarWidth = useLeftPanelWidth();
+  const leftDockWidth = desktopSidebarVisible && !divided ? sidebarWidth : 0;
+  // A retained native stack can still report its previous docked frame for one layout pass.
+  const width = desktopSidebarVisible ? null : unreservedWidth;
+  const targetWidth = unreservedWidth - leftDockWidth;
+  const allocation = useMemo(
+    () => (compact ? null : { workspaceKey, explorerVisible, width, targetWidth, leftDockWidth }),
+    [compact, workspaceKey, explorerVisible, width, targetWidth, leftDockWidth],
+  );
+  return (
+    <WindowLayoutContentAllocationContext.Provider value={allocation}>
+      <View style={flexStyle}>{children}</View>
+    </WindowLayoutContentAllocationContext.Provider>
+  );
+}
+
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
@@ -451,11 +490,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   useGlobalNewWorkspaceAction();
 
   const activeWorkspace = useActiveWorkspaceSelection();
+  const activeWorkspaceKey = activeWorkspace
+    ? `${activeWorkspace.serverId}:${activeWorkspace.workspaceId}`
+    : null;
   const explorerVisible = useIsExplorerSidebarOpen({
     isCompact: isCompactLayout,
-    workspaceKey: activeWorkspace
-      ? `${activeWorkspace.serverId}:${activeWorkspace.workspaceId}`
-      : null,
+    workspaceKey: activeWorkspaceKey,
   });
   const appContentMinimumWidth = resolveDesktopAppContentMinimum({
     explorerVisible: isWorkspaceRoute && explorerVisible,
@@ -502,6 +542,18 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   if (isWeb) {
     themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
   }
+  const workspaceContent = (
+    <WindowLayoutContentFrame
+      compact={isCompactLayout}
+      workspaceKey={activeWorkspaceKey}
+      explorerVisible={explorerVisible}
+      unreservedWidth={divisionLayout?.contentWidth ?? viewportWidth}
+      divided={divisionLayout !== null}
+      desktopSidebarVisible={desktopSidebarVisible}
+    >
+      {children}
+    </WindowLayoutContentFrame>
+  );
   const workspaceChrome = (
     <WindowLayoutSurface compact={isCompactLayout} style={rowStyle}>
       <WorkspaceLayoutModePublisher />
@@ -519,7 +571,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <WindowChromeRegion
           corners={isCompactLayout && chromeEnabled ? "both" : appChromeLayout.contentCorners}
         >
-          <View style={flexStyle}>{children}</View>
+          {workspaceContent}
         </WindowChromeRegion>
       </WorkspaceExplorerOpenGesture>
     </WindowLayoutSurface>
@@ -580,7 +632,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
   return (
     <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation === "overlay"}>
-      <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
+      <SidebarResizeGeometryProvider viewportWidth={viewportWidth}>
+        <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
+      </SidebarResizeGeometryProvider>
     </AppContainerLifetime>
   );
 }

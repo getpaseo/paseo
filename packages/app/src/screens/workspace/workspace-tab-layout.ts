@@ -1,7 +1,50 @@
 import { COMPACT_CONTENT_WIDTH } from "@/constants/layout";
+import { resolveWorkspaceActionPlacement, type WindowLayout } from "@/window-layout/model";
+
+export function shouldUseInlineWorkspaceHeader(
+  layout: WindowLayout | null,
+  compact = false,
+  focusMode = false,
+): boolean {
+  return (
+    !compact &&
+    !focusMode &&
+    layout !== null &&
+    layout.bounds.width > layout.bounds.height &&
+    resolveWorkspaceActionPlacement(layout) === "vertical-bar"
+  );
+}
 
 export function shouldUseCompactWorkspaceHeader(width: number): boolean {
   return width < COMPACT_CONTENT_WIDTH;
+}
+
+export const WORKSPACE_INLINE_TABS_MIN_WIDTH = 320;
+export type WorkspaceInlineTabPresentation = "tabs" | "switcher";
+
+export function resolveInlineWorkspaceTabPresentation(
+  width: number,
+  naturalWidth: number | null,
+  current: WorkspaceInlineTabPresentation = "tabs",
+): WorkspaceInlineTabPresentation {
+  if (width >= WORKSPACE_INLINE_TABS_MIN_WIDTH) return "tabs";
+  if (naturalWidth === null) return current;
+  return naturalWidth <= width ? "tabs" : "switcher";
+}
+
+export function resolveInlineWorkspaceTabBudget({
+  width,
+  horizontalInset,
+  leadingWidth,
+  gap,
+}: {
+  width: number;
+  horizontalInset: number;
+  leadingWidth: number;
+  gap: number;
+}): number {
+  const contentWidth = Math.max(0, width - horizontalInset);
+  return Math.max(0, contentWidth - Math.min(leadingWidth, contentWidth / 3) - gap);
 }
 
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
@@ -29,6 +72,8 @@ export interface WorkspaceTabLayoutInput {
    * narrow X beside the label is easy to hit by accident and the tab's long-press menu closes it.
    */
   compact: boolean;
+  /** Embedded rails preserve tab widths and scroll independently of close-button sizing. */
+  preserveNaturalWidths?: boolean;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -40,6 +85,19 @@ export interface WorkspaceTabLayoutResult {
   items: WorkspaceTabLayoutItem[];
   closeButtonPolicy: WorkspaceTabCloseButtonPolicy;
   requiresHorizontalScrollFallback: boolean;
+}
+
+export function workspaceTabNaturalWidth(
+  layout: WorkspaceTabLayoutResult,
+  metrics: WorkspaceTabLayoutMetrics,
+): number {
+  return (
+    layout.items.reduce((width, item) => width + item.width, 0) +
+    metrics.rowHorizontalInset * 2 +
+    metrics.rowPaddingHorizontal * 2 +
+    Math.max(0, layout.items.length - 1) * metrics.tabGap +
+    metrics.actionsReservedWidth
+  );
 }
 
 export function retainWorkspaceTabMeasuredWidth(
@@ -92,17 +150,18 @@ export function computeWorkspaceTabLayout(
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
   const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
+  const scrollNaturally = input.compact || input.preserveNaturalWidths === true;
   // A row that scrolls has no reason to truncate: the tabs keep their natural widths and the
-  // viewport pans over them. Pointer layouts first shrink toward the clickable minimum and scroll
-  // only once even that does not fit; compact layouts skip the shrink.
-  const requiresHorizontalScrollFallback = input.compact
+  // viewport pans over them. Ordinary pointer rails shrink first; compact and explicitly scrolling
+  // rails keep their natural widths.
+  const requiresHorizontalScrollFallback = scrollNaturally
     ? naturalTotalWidth > availableTabsWidth
     : availableTabsWidth < minimumTotalWidth;
 
   let resolvedWidths = naturalWidths;
   if (
     !requiresHorizontalScrollFallback &&
-    !input.compact &&
+    !scrollNaturally &&
     naturalTotalWidth > availableTabsWidth
   ) {
     const widthToRemove = naturalTotalWidth - availableTabsWidth;

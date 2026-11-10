@@ -7,6 +7,15 @@ export const WindowLayoutContext = createContext<WindowLayout | null>(null);
 /** Published by `WindowLayoutProvider` beside the safe-area insets it derives from it. */
 export const TopBandContext = createContext<TopBand | null>(null);
 
+export const WindowLayoutContentAllocationContext = createContext<{
+  workspaceKey: string | null;
+  explorerVisible: boolean;
+  // A docked navigation sidebar owns live resize geometry through flex layout.
+  width: number | null;
+  targetWidth: number;
+  leftDockWidth: number;
+} | null>(null);
+
 export function useWindowLayout(): WindowLayout | null {
   const layout = useContext(WindowLayoutContext);
   const { width, height } = useAppWindowSize();

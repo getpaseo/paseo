@@ -34,6 +34,10 @@ Yoga without waiting for the workspace's JS render; applying `insets.top` in Rea
 padding visible during rotation. Modals outside that root use their own context inset. Changes to
 the native probe or spacer require a client rebuild; a Metro reload cannot apply them.
 
+The shared sidebar toggle reserves extra rounded-corner clearance on touch layouts only while
+navigation is collapsed. When navigation is open, use the ordinary leading inset so workspace and
+other page headers stay aligned; pointer layouts keep their existing inset in both states.
+
 ## Sheets
 
 On compact layouts, files and subagents open in a sheet over the workspace, so the tab switcher
@@ -89,6 +93,12 @@ Ordinary leaf routes retain the stack appearance policy.
 The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
 never read or modify that width.
 
+Budget workspace headers against the shell's target allocation, including live navigation and
+Explorer resize widths. A retained native stack can report its previous docked frame for one layout
+pass, so its `onLayout` must not choose the first header presentation. Keep the tab track's
+presentations, label measurements, layout snapshot, and + width above the header branches;
+reparenting during rotation must not restart those measurements.
+
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
@@ -107,8 +117,11 @@ Explorer uses the shared workspace tab row and ordinary tab context menus. Files
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
 since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.
-Compact tabs also keep their natural width and the rail scrolls as soon as they overflow, while
-pointer layouts shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+Compact and embedded landscape rails keep their natural width and scroll as soon as they overflow.
+Other pointer rails shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+On Duo's landscape bar layout, the title and tabs share one row. The boxed picker depends on the
+available track width, not the tab count: a few natural-width tabs can stay inline below the usual
+scrolling-rail budget.
 The + menu opens compatible panels in the dock, including Agent and terminal profiles. Compact
 layouts omit Diff from it because compact Changes shows each file's diff inline.
 Web also supports dragging agents and terminals into Explorer.

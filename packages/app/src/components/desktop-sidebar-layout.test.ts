@@ -39,6 +39,7 @@ describe("desktop sidebar layout", () => {
   it("shows the tab count only for the compact header selection", () => {
     expect(resolveWorkspaceBarActions("compact")).toEqual(["tab-count", "overflow", "explorer"]);
     expect(resolveWorkspaceBarActions("full")).toEqual(["overflow", "explorer"]);
+    expect(resolveWorkspaceBarActions("inline")).toEqual(["git", "overflow", "explorer"]);
   });
 
   it("allocates both panels around a live division without clamping to saved sidebar widths", () => {

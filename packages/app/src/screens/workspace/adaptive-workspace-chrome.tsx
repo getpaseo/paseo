@@ -3,30 +3,57 @@ import { View, type LayoutChangeEvent } from "react-native";
 import { selectWorkspaceChrome } from "./workspace-tab-layout";
 import { WorkspaceTabMeasurementScope } from "./workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "./workspace-tabs-types";
+import {
+  useWorkspaceHeaderWidth,
+  type WorkspaceHeaderGeometry,
+} from "./use-workspace-header-width";
 
-/**
- * Shows `children` (full header and tab rail) or `compactHeader` below the compact width.
- * Without a compact header it always shows `children`, keeping the same tree so they never remount.
- */
-export function AdaptiveWorkspaceChrome({
-  compactHeader,
-  children,
-}: {
+interface WorkspaceChromeProps {
   compactHeader: ReactNode | null;
+  inlineHeader?: ReactNode;
+  inlineHeaderActive?: boolean;
   children: ReactNode;
-}) {
+}
+
+/** Split panes choose chrome from their measured allocation. */
+export function AdaptiveWorkspaceChrome(props: WorkspaceChromeProps) {
   const [width, setWidth] = useState<number | null>(null);
   const measure = useCallback((event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.width;
     if (measured > 0) setWidth(measured);
   }, []);
+  return <WorkspaceChrome {...props} width={width} onLayout={measure} />;
+}
+
+/** Root chrome shares the target allocation with Explorer, including live sidebar resizing. */
+export function ProjectedWorkspaceChrome({
+  geometry,
+  ...props
+}: WorkspaceChromeProps & { geometry: WorkspaceHeaderGeometry }) {
+  const width = useWorkspaceHeaderWidth(geometry);
+  return <WorkspaceChrome {...props} width={width} />;
+}
+
+function WorkspaceChrome({
+  compactHeader,
+  inlineHeader,
+  inlineHeaderActive = false,
+  children,
+  width,
+  onLayout,
+}: WorkspaceChromeProps & {
+  width: number | null;
+  onLayout?: (event: LayoutChangeEvent) => void;
+}) {
+  let chrome = children;
+  if (compactHeader !== null) {
+    chrome = inlineHeaderActive
+      ? inlineHeader
+      : selectWorkspaceChrome({ width, compact: compactHeader, full: children });
+  }
   return (
     <WorkspaceTabMeasurementScope>
-      <View onLayout={measure}>
-        {compactHeader === null
-          ? children
-          : selectWorkspaceChrome({ width, compact: compactHeader, full: children })}
-      </View>
+      <View onLayout={onLayout}>{chrome}</View>
     </WorkspaceTabMeasurementScope>
   );
 }

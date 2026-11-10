@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import {
   runOnJS,
@@ -21,8 +21,10 @@ import {
   resolveExplorerSidebarWidth,
   type ExplorerSidebarResize,
 } from "@/components/explorer-sidebar-layout";
+import { usePublishExplorerResizeWidth } from "@/window-layout/sidebar-resize-geometry";
 import type { ExplorerGeometryInput, ExplorerGeometry } from "./geometry-types";
 export function useExplorerGeometry({
+  workspaceKey,
   width,
   containerWidth,
   overlay,
@@ -30,17 +32,71 @@ export function useExplorerGeometry({
   onResize,
 }: ExplorerGeometryInput): ExplorerGeometry {
   const insets = useSafeAreaInsets();
+  const publishExplorerResizeWidth = usePublishExplorerResizeWidth(workspaceKey, containerWidth);
+  const resizePublication = useMemo(
+    () => ({
+      active: false,
+      enabled: resizeEnabled && !overlay,
+      publish: publishExplorerResizeWidth,
+    }),
+    [publishExplorerResizeWidth, overlay, resizeEnabled],
+  );
+  const publishResizeWidth = useCallback(
+    (nextWidth: number | null) => {
+      if (resizePublication.active) resizePublication.publish(nextWidth);
+    },
+    [resizePublication],
+  );
   const resizeWidth = useSharedValue(width);
   const startWidth = useSharedValue(width);
   const resize = useSharedValue<ExplorerSidebarResize | null>(null);
+  const resizeWorkspaceKey = useSharedValue(workspaceKey);
   const [resizePressed, setResizePressed] = useState(false);
+  useEffect(() => {
+    resizePublication.active = resizePublication.enabled;
+    resize.value = null;
+    setResizePressed(false);
+    return () => {
+      // An old workspace/allocation may still have work queued on the JS thread.
+      resizePublication.active = false;
+      resizePublication.publish(null);
+    };
+  }, [resize, resizePublication]);
   useAnimatedReaction(
-    () => ({ resize: resize.value, width, containerWidth, overlay, resizeEnabled }),
-    ({ resize: currentResize, ...allocation }) => {
-      const nextResize = reconcileExplorerSidebarResize(currentResize, allocation);
-      if (nextResize !== currentResize) resize.value = nextResize;
+    () => ({
+      resize: resize.value,
+      ownerWorkspaceKey: resizeWorkspaceKey.value,
+      workspaceKey,
+      width,
+      containerWidth,
+      overlay,
+      resizeEnabled,
+    }),
+    ({
+      resize: currentResize,
+      ownerWorkspaceKey,
+      workspaceKey: currentWorkspaceKey,
+      ...allocation
+    }) => {
+      const nextResize =
+        ownerWorkspaceKey === currentWorkspaceKey
+          ? reconcileExplorerSidebarResize(currentResize, allocation)
+          : null;
+      if (nextResize !== currentResize) {
+        resize.value = nextResize;
+        if (!nextResize) runOnJS(publishResizeWidth)(null);
+      }
     },
-    [containerWidth, overlay, resize, resizeEnabled, width],
+    [
+      containerWidth,
+      overlay,
+      publishResizeWidth,
+      resize,
+      resizeEnabled,
+      resizeWorkspaceKey,
+      width,
+      workspaceKey,
+    ],
   );
 
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
@@ -54,15 +110,17 @@ export function useExplorerGeometry({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          const previousResize = resizeWorkspaceKey.value === workspaceKey ? resize.value : null;
           const currentWidth = resolveExplorerSidebarFrameWidth({
             width,
             containerWidth,
             overlay,
             resizeEnabled,
-            resize: resize.value,
+            resize: previousResize,
             resizeWidth: resizeWidth.value,
           });
-          resize.value = beginExplorerSidebarResize(resize.value, {
+          resizeWorkspaceKey.value = workspaceKey;
+          resize.value = beginExplorerSidebarResize(previousResize, {
             width,
             containerWidth,
             overlay,
@@ -70,15 +128,18 @@ export function useExplorerGeometry({
           });
           startWidth.value = currentWidth + event.translationX;
           resizeWidth.value = currentWidth;
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onUpdate((event) => {
-          if (!resize.value) return;
+          if (!resize.value || resizeWorkspaceKey.value !== workspaceKey) return;
           resizeWidth.value = resolveExplorerSidebarWidth({
             requestedWidth: startWidth.value - event.translationX,
             containerWidth,
           });
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onEnd((_event, success) => {
+          if (resizeWorkspaceKey.value !== workspaceKey) return;
           {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, success);
             if (!success || !resize.value) return;
@@ -86,9 +147,10 @@ export function useExplorerGeometry({
           runOnJS(onResize)(resizeWidth.value);
         })
         .onFinalize((_event, success) => {
-          if (!success) {
+          if (!success && resizeWorkspaceKey.value === workspaceKey) {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, false);
           }
+          runOnJS(publishResizeWidth)(null);
           scheduleOnRN(hideResizeGrip);
         }),
     [
@@ -97,11 +159,14 @@ export function useExplorerGeometry({
       containerWidth,
       hideResizeGrip,
       overlay,
+      publishResizeWidth,
       resize,
       resizeWidth,
+      resizeWorkspaceKey,
       showResizeGrip,
       startWidth,
       width,
+      workspaceKey,
     ],
   );
   // Reanimated retains the last animated value when its style is removed. Keep this
@@ -115,12 +180,12 @@ export function useExplorerGeometry({
           containerWidth,
           overlay,
           resizeEnabled,
-          resize: resize.value,
+          resize: resizeWorkspaceKey.value === workspaceKey ? resize.value : null,
           resizeWidth: resizeWidth.value,
         }),
       };
     }
-  }, [containerWidth, overlay, resizeEnabled, width]);
+  }, [containerWidth, overlay, resizeEnabled, width, workspaceKey]);
   return {
     frameStyle: animatedWidthStyle,
     panelStyle: {

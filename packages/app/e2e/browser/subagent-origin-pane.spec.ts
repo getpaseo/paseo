@@ -18,7 +18,8 @@ test.use({ e2eInjectPaseoTools: true });
 const SETTINGS_KEY = "@paseo:app-settings";
 
 async function openParentInRightPane(page: Page, parentId: string, workspaceId: string) {
-  await page.setViewportSize({ width: 1400, height: 900 });
+  // Keep the initial two panes in desktop-rail mode; later splits can compact.
+  await page.setViewportSize({ width: 1600, height: 900 });
   await openAgentRoute(page, { workspaceId, agentId: parentId });
   await expect(page.getByTestId(`workspace-tab-agent_${parentId}`)).toBeVisible();
   await page.getByTestId("workspace-pane-main").getByTestId("workspace-new-tab-button").click();

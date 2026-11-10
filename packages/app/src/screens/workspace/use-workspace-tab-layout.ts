@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useWindowDimensions } from "react-native";
+import { useAppWindowSize } from "@/hooks/use-app-window-size";
 import {
   computeWorkspaceTabLayout,
   type WorkspaceTabLayoutMetrics,
@@ -11,6 +11,7 @@ interface UseWorkspaceTabLayoutInput {
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
   compact: boolean;
+  preserveNaturalWidths?: boolean;
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -20,7 +21,7 @@ interface UseWorkspaceTabLayoutResult {
 export function useWorkspaceTabLayout(
   input: UseWorkspaceTabLayoutInput,
 ): UseWorkspaceTabLayoutResult {
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: viewportWidth } = useAppWindowSize();
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
       ? input.viewportWidthOverride
@@ -33,8 +34,15 @@ export function useWorkspaceTabLayout(
         tabLabelWidths: input.tabLabelWidths,
         metrics: input.metrics,
         compact: input.compact,
+        preserveNaturalWidths: input.preserveNaturalWidths,
       }),
-    [input.compact, input.metrics, input.tabLabelWidths, resolvedViewportWidth],
+    [
+      input.compact,
+      input.preserveNaturalWidths,
+      input.metrics,
+      input.tabLabelWidths,
+      resolvedViewportWidth,
+    ],
   );
 
   return {

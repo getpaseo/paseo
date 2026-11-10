@@ -86,11 +86,10 @@ export function resolveWorkspaceActionPlacement(
 }
 
 export function resolveWorkspaceBarActions(
-  headerVariant: "compact" | "full",
-): readonly ("tab-count" | "overflow" | "explorer")[] {
-  return headerVariant === "compact"
-    ? ["tab-count", "overflow", "explorer"]
-    : ["overflow", "explorer"];
+  headerVariant: "compact" | "full" | "inline",
+): readonly ("tab-count" | "git" | "overflow" | "explorer")[] {
+  if (headerVariant === "compact") return ["tab-count", "overflow", "explorer"];
+  return headerVariant === "inline" ? ["git", "overflow", "explorer"] : ["overflow", "explorer"];
 }
 
 /** One book-like partition owns allocation; horizontal folds retain the normal flow. */

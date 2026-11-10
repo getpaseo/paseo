@@ -5,14 +5,15 @@ import { useGitActions } from "@/git/use-actions";
 interface WorkspaceActionsProps {
   serverId: string;
   cwd: string;
+  menuOnly?: boolean;
 }
 
-export function WorkspaceActions({ serverId, cwd }: WorkspaceActionsProps) {
+export function WorkspaceActions({ serverId, cwd, menuOnly }: WorkspaceActionsProps) {
   const { gitActions } = useGitActions({
     serverId,
     cwd,
     icons: GIT_ACTION_ICONS,
   });
 
-  return <GitActionsSplitButton gitActions={gitActions} />;
+  return <GitActionsSplitButton gitActions={gitActions} menuOnly={menuOnly} menuTrigger="icon" />;
 }

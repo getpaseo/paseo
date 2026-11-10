@@ -37,6 +37,7 @@ import {
   WindowLayoutTopInset,
 } from "@/window-layout";
 import { useAppWindowSize } from "@/hooks/use-app-window-size";
+import { usePublishSidebarResizeWidth } from "@/window-layout/sidebar-resize-geometry";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -722,24 +723,50 @@ function DesktopSidebar({
     rightInset: insets.right,
   });
   const visibleSidebarWidth = useLeftPanelWidth();
+  const resizeEnabled = active && !overlay && divisionLayout === null;
+  const publishSidebarResizeWidth = usePublishSidebarResizeWidth();
+  const resizePublication = useMemo(
+    () => ({
+      active: false,
+      enabled: resizeEnabled,
+      width: visibleSidebarWidth,
+      publish: publishSidebarResizeWidth,
+    }),
+    [publishSidebarResizeWidth, resizeEnabled, visibleSidebarWidth],
+  );
+  const publishResizeWidth = useCallback(
+    (width: number | null) => {
+      if (resizePublication.active) resizePublication.publish(width);
+    },
+    [resizePublication],
+  );
 
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
 
   const startWidth = useSharedValue(visibleSidebarWidth);
   const resizeWidth = useSharedValue(visibleSidebarWidth);
+  const resizing = useSharedValue(false);
   const [resizePressed, setResizePressed] = useState(false);
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
 
   useEffect(() => {
-    resizeWidth.value = visibleSidebarWidth;
-  }, [resizeWidth, visibleSidebarWidth]);
+    resizePublication.active = resizePublication.enabled;
+    resizing.value = false;
+    resizeWidth.value = resizePublication.width;
+    setResizePressed(false);
+    return () => {
+      // Reject queued updates from the old allocation after clearing its sample.
+      resizePublication.active = false;
+      resizePublication.publish(null);
+    };
+  }, [resizePublication, resizeWidth, resizing]);
 
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(divisionLayout === null)
+        .enabled(resizeEnabled)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
@@ -750,27 +777,36 @@ function DesktopSidebar({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          resizing.value = true;
           startWidth.value = visibleSidebarWidth - event.translationX;
           resizeWidth.value = visibleSidebarWidth;
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onUpdate((event) => {
+          if (!resizing.value) return;
           // Dragging right (positive translationX) increases width
           const newWidth = startWidth.value + event.translationX;
           resizeWidth.value = resolveDesktopSidebarWidth({
             requestedWidth: newWidth,
             viewportWidth,
           });
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onEnd((_event, success) => {
-          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
+          if (success && resizing.value) runOnJS(setSidebarWidth)(resizeWidth.value);
         })
-        .onFinalize(() => {
+        .onFinalize((_event, success) => {
+          if (!success && resizing.value) resizeWidth.value = visibleSidebarWidth;
+          resizing.value = false;
+          runOnJS(publishResizeWidth)(null);
           scheduleOnRN(hideResizeGrip);
         }),
     [
-      divisionLayout,
+      resizeEnabled,
       hideResizeGrip,
+      publishResizeWidth,
       resizeWidth,
+      resizing,
       setSidebarWidth,
       showResizeGrip,
       startWidth,

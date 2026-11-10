@@ -28,6 +28,7 @@ interface FakeTheme {
   fontSize: {
     code: number;
     content: number;
+    xs: number;
     sm: number;
     base: number;
     lg: number;
@@ -48,6 +49,7 @@ function makeFakeTheme(): FakeTheme {
     fontSize: {
       code: 12,
       content: 15,
+      xs: 11,
       sm: 12,
       base: 14,
       lg: 16,
@@ -128,6 +130,7 @@ describe("applyAppearance", () => {
 
     const { fontSize } = runCapturedUpdater();
     expect(fontSize.base).toBe(15);
+    expect(fontSize.xs).toBe(12);
     expect(fontSize.sm).toBe(13);
     expect(fontSize.lg).toBe(17);
     expect(fontSize.xl).toBe(19);
@@ -144,6 +147,7 @@ describe("applyAppearance", () => {
     alreadyScaled.fontSize = {
       code: 4,
       content: 4,
+      xs: 4,
       sm: 4,
       base: 4,
       lg: 4,
@@ -155,6 +159,7 @@ describe("applyAppearance", () => {
 
     const { fontSize } = updater(alreadyScaled);
     expect(fontSize.base).toBe(15); // rebuilt from FONT_SIZE, not the live value of 4
+    expect(fontSize.xs).toBe(12);
     expect(fontSize.lg).toBe(17);
   });
 
@@ -165,6 +170,7 @@ describe("applyAppearance", () => {
     expect(fontSize.base).toBe(14);
     expect(fontSize.lg).toBe(16);
     expect(fontSize.sm).toBe(12);
+    expect(fontSize.xs).toBe(11);
     expect(fontSize.code).toBe(10);
   });
 

@@ -1,6 +1,13 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import {
+  ScrollView,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
 import { router } from "expo-router";
 import { ArrowLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,6 +25,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useTopBand, WindowLayoutTopInset } from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
@@ -92,28 +100,90 @@ export function CompactHeader({
   );
 }
 
-function CompactHeaderTitle({
+export function CompactHeaderTitle({
   loading,
   title,
   titleTestID,
   subtitle,
-}: Pick<CompactHeaderProps, "title" | "titleTestID" | "subtitle"> & { loading: boolean }) {
+  fadeOverflow = false,
+  workspaceRow = false,
+}: Pick<CompactHeaderProps, "title" | "titleTestID" | "subtitle"> & {
+  loading: boolean;
+  fadeOverflow?: boolean;
+  workspaceRow?: boolean;
+}) {
   if (loading) {
     return <View style={styles.titleSkeleton} />;
   }
+  if (!title) {
+    return subtitle ?? null;
+  }
+  const titleStyle = [
+    subtitle ? styles.title : styles.singleLineTitle,
+    workspaceRow && styles.workspaceTitle,
+  ];
   return (
     <>
-      {title ? (
-        <Text
-          style={subtitle ? styles.title : styles.singleLineTitle}
-          numberOfLines={1}
-          testID={titleTestID}
-        >
+      {fadeOverflow ? (
+        <FadingHeaderTitle title={title} titleTestID={titleTestID} style={titleStyle} />
+      ) : (
+        <Text style={titleStyle} numberOfLines={1} testID={titleTestID}>
           {title}
         </Text>
-      ) : null}
+      )}
       {subtitle}
     </>
+  );
+}
+
+interface FadingHeaderTitleProps {
+  title: string;
+  titleTestID?: string;
+  style: StyleProp<TextStyle>;
+}
+
+function FadingHeaderTitle({ title, titleTestID, style }: FadingHeaderTitleProps) {
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [textWidth, setTextWidth] = useState(0);
+  const measureViewport = useCallback((event: LayoutChangeEvent) => {
+    setViewportWidth(event.nativeEvent.layout.width);
+  }, []);
+  const measureText = useCallback((event: LayoutChangeEvent) => {
+    setTextWidth(event.nativeEvent.layout.width);
+  }, []);
+
+  return (
+    <View style={styles.fadingTitle} onLayout={measureViewport}>
+      <Text
+        style={[style, styles.clippedTitle]}
+        numberOfLines={1}
+        ellipsizeMode="clip"
+        testID={titleTestID}
+      >
+        {title}
+      </Text>
+      {/* A horizontal scroll content measures the full line even when the visible title is clipped. */}
+      <ScrollView
+        horizontal
+        scrollEnabled={false}
+        style={styles.titleMeasurement}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        showsHorizontalScrollIndicator={false}
+      >
+        <Text style={[style, styles.unconstrainedTitle]} numberOfLines={1} onLayout={measureText}>
+          {title}
+        </Text>
+      </ScrollView>
+      {textWidth > viewportWidth + 1 ? (
+        <TrailingActionScrim
+          backdrop="surface0"
+          width={32}
+          testID={titleTestID ? `${titleTestID}-fade` : undefined}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -183,6 +253,30 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
     textAlign: "left",
+  },
+  workspaceTitle: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.25,
+  },
+  fadingTitle: {
+    flexDirection: "row",
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
+  },
+  clippedTitle: {
+    flexShrink: 1,
+  },
+  titleMeasurement: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    opacity: 0,
+  },
+  unconstrainedTitle: {
+    flexShrink: 0,
   },
   titleSkeleton: {
     width: 140,
