@@ -2328,6 +2328,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.appliedIgnoreList = next;
     } catch (error) {
       target.subscription = null;
+      this.noteRecursiveLimit(target, error);
       if (!target.closed && !target.fallbackPolling) {
         this.startWorkingTreeWatchFallback(target, "watcher_update_failed");
         this.scheduleWorkingTreeWatchRecovery(target);

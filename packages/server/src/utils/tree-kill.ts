@@ -15,6 +15,8 @@ export interface TerminateWithTreeKillOptions {
   gracefulTimeoutMs: number;
   forceTimeoutMs?: number;
   onForceSignal?: () => void;
+  /** The process tree could not be read, so descendants outside the process group may survive. */
+  onTreeReadFailed?: (error: unknown) => void;
 }
 
 export type TerminateWithTreeKillResult =
@@ -39,13 +41,13 @@ export async function terminateWithTreeKill(
   }
 
   const exitPromise = waitForProcessExit(child);
-  await signalProcessTree(child, options.gracefulSignal ?? "SIGTERM");
+  await signalProcessTree(child, options.gracefulSignal ?? "SIGTERM", options.onTreeReadFailed);
   if (await waitForExitOrTimeout(exitPromise, options.gracefulTimeoutMs)) {
     return "terminated";
   }
 
   options.onForceSignal?.();
-  await signalProcessTree(child, options.forceSignal ?? "SIGKILL");
+  await signalProcessTree(child, options.forceSignal ?? "SIGKILL", options.onTreeReadFailed);
   if (options.forceTimeoutMs === undefined) {
     return "killed";
   }
@@ -54,7 +56,11 @@ export async function terminateWithTreeKill(
     : "kill-timeout";
 }
 
-export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
+export function signalProcessTree(
+  child: TreeKillTarget,
+  signal: NodeJS.Signals,
+  onTreeReadFailed?: (error: unknown) => void,
+): Promise<void> {
   if (isProcessExited(child)) {
     return Promise.resolve();
   }
@@ -75,7 +81,7 @@ export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals)
       });
     });
   }
-  return signalPosixTree(child, pid, signal);
+  return signalPosixTree(child, pid, signal, onTreeReadFailed);
 }
 
 // tree-kill spawns `ps` without an error listener, so a spawn failure (EAGAIN under a task
@@ -85,8 +91,22 @@ async function signalPosixTree(
   child: TreeKillTarget,
   pid: number,
   signal: NodeJS.Signals,
+  onTreeReadFailed?: (error: unknown) => void,
 ): Promise<void> {
-  const pids = await listPosixTree(pid).catch(() => [pid]);
+  let pids: number[];
+  try {
+    pids = await listPosixTree(pid);
+  } catch (error) {
+    onTreeReadFailed?.(error);
+    // Without the tree, the process group is the widest reach left: it covers every descendant
+    // that did not start its own group, and exists only when the child leads one.
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      // The child does not lead a group.
+    }
+    pids = [pid];
+  }
   for (const target of pids) {
     try {
       process.kill(target, signal);
