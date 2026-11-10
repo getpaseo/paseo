@@ -260,6 +260,10 @@ export const ja: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "このターン中の変更",
+      backToConversation: "会話に戻る",
+    },
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",

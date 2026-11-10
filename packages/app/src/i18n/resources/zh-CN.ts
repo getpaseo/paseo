@@ -258,6 +258,10 @@ export const zhCN: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "本轮期间的更改",
+      backToConversation: "返回对话",
+    },
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",

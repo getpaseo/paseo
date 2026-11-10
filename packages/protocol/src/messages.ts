@@ -917,6 +917,10 @@ export const AgentSnapshotPayloadSchema = z.object({
   status: AgentStatusSchema,
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  // COMPAT(turnChanges): added in v0.16.0, remove gate after 2027-11-11.
+  latestTurnChanges: z
+    .object({ turnId: z.string(), before: z.string(), after: z.string() })
+    .optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),

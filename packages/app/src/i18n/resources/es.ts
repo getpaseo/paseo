@@ -260,6 +260,10 @@ export const es: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "Cambios durante este turno",
+      backToConversation: "Volver a la conversación",
+    },
     states: {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",

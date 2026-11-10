@@ -12,6 +12,12 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Changes during a turn
+
+For a foreground turn in a Git worktree, the daemon captures the whole worktree before invoking the provider and again when the turn settles. The latest completed pair is retained as Git refs and exposed on the agent snapshot. The agent tab can compare the pair using the normal diff viewer. The capture uses a private index, includes untracked files, and respects Git ignore rules; it never changes the user's staging index.
+
+The comparison is a worktree time boundary, not attribution to the agent process. Edits from terminals, people, or other agents during that interval appear too. Changes made and reverted within the interval do not appear. The view is available after completion, and only the latest turn is shown. A non-Git directory or failed capture has no turn comparison.
+
 ## Daemon restart recovery
 
 Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
