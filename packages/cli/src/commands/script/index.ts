@@ -44,9 +44,7 @@ export function createScriptCommand(): Command {
     addWorkspaceSelectionOptions(
       script
         .command("forward")
-        .description(
-          "Forward a running workspace service to this computer over the encrypted tunnel",
-        )
+        .description("Forward a running workspace service to this computer over the daemon tunnel")
         .argument("<name>")
         .option(
           "--local-port <port>",
