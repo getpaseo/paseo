@@ -51,7 +51,7 @@ describe("local project links store", () => {
     expect(store.getState().links).toEqual([]);
   });
 
-  test("restores a saved link when its removal cannot be persisted", async () => {
+  test("keeps a saved link available for retry when its removal cannot be persisted", async () => {
     let failWrites = false;
     const store = createLocalProjectLinksStore(
       storageThat(async () => {
@@ -67,5 +67,11 @@ describe("local project links store", () => {
     ).rejects.toThrow("storage unavailable");
 
     expect(store.getState().links).toEqual(savedLinks);
+
+    failWrites = false;
+    await expect(
+      store.getState().unlinkProject({ serverId: "host-a", projectId: "project-a" }),
+    ).resolves.toBeUndefined();
+    expect(store.getState().links).toEqual([]);
   });
 });

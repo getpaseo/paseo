@@ -37,6 +37,7 @@ export function ProjectLinksSheet({
   const [pendingOperationKey, setPendingOperationKey] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
   const pendingOperationRef = useRef<string | null>(null);
+  const canClose = useCallback(() => pendingOperationRef.current === null, []);
   const placementsByKey = useMemo(
     () => new Map(placements.map((placement) => [projectLinkPlacementKey(placement), placement])),
     [placements],
@@ -125,6 +126,7 @@ export function ProjectLinksSheet({
       visible={visible}
       header={header}
       onClose={handleClose}
+      canClose={canClose}
       testID="project-links-sheet"
       desktopMaxWidth={620}
       footer={footer}

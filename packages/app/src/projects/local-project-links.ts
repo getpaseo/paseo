@@ -94,10 +94,9 @@ export function resolveProjectGitIdentity(input: {
   for (const workspace of input.workspaces) {
     if (workspace.projectId !== input.project.projectId) continue;
     const checkout = workspace.project?.checkout;
-    let identityRoot: string | null = null;
-    if (checkout?.isGit) {
-      identityRoot = checkout.isPaseoOwnedWorktree ? checkout.mainRepoRoot : checkout.worktreeRoot;
-    }
+    const identityRoot = checkout?.isGit
+      ? findProjectCheckoutRoot(input.project.projectRootPath, checkout)
+      : null;
     const remoteUrl = workspace.gitRuntime?.remoteUrl;
     if (!identityRoot || !remoteUrl) continue;
 
@@ -117,6 +116,20 @@ export function resolveProjectGitIdentity(input: {
   }
 
   return sawIdentity ? resolved : null;
+}
+
+/** Prefer the checkout that actually contains the selected project. */
+function findProjectCheckoutRoot(
+  projectRootPath: string,
+  checkout: { worktreeRoot: string; mainRepoRoot: string | null },
+): string | null {
+  const candidateRoots = [checkout.worktreeRoot, checkout.mainRepoRoot];
+  return (
+    candidateRoots.find(
+      (root): root is string =>
+        root !== null && relativeProjectPath(root, projectRootPath) !== null,
+    ) ?? null
+  );
 }
 
 export function deriveProjectGitIdentity(input: {
