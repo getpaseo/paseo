@@ -53,40 +53,42 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
 function DiscoveredModelRow({
   model,
   isDefault,
-  onSetDefault,
-  onClearDefault,
+  onToggleDefault,
 }: {
   model: AgentModelDefinition;
   isDefault: boolean;
-  onSetDefault?: (modelId: string) => void;
-  onClearDefault?: () => void;
+  onToggleDefault?: (modelId: string) => void;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const [isHovered, setIsHovered] = useState(false);
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const handlePress = useCallback(() => {
-    if (isDefault) {
-      onClearDefault?.();
-    } else {
-      onSetDefault?.(model.id);
-    }
-  }, [isDefault, model.id, onClearDefault, onSetDefault]);
+  const handlePress = useCallback(() => onToggleDefault?.(model.id), [model.id, onToggleDefault]);
   const buttonStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      sheetStyles.iconButton,
+      sheetStyles.defaultStarButton,
       (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
     ],
     [],
   );
-  const actionVisible = Boolean(onSetDefault || onClearDefault) && (isHovered || isDefault);
   return (
-    <View
-      style={sheetStyles.modelRow}
-      onPointerEnter={isWeb ? handlePointerEnter : undefined}
-      onPointerLeave={isWeb ? handlePointerLeave : undefined}
-    >
+    <View style={sheetStyles.modelRow}>
+      <Pressable
+        onPress={handlePress}
+        hitSlop={8}
+        style={buttonStyle}
+        accessibilityRole="button"
+        accessibilityLabel={
+          isDefault
+            ? t("settings.providers.models.clearDefault")
+            : t("settings.providers.models.setDefault")
+        }
+        testID={`provider-model-default-${model.id}`}
+      >
+        <Star
+          size={theme.iconSize.sm}
+          color={isDefault ? theme.colors.foreground : theme.colors.foregroundMuted}
+          fill={isDefault ? theme.colors.foregroundMuted : "none"}
+        />
+      </Pressable>
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
         {model.label}
         {isDefault ? (
@@ -108,27 +110,6 @@ function DiscoveredModelRow({
         <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
           {model.description}
         </Text>
-      ) : null}
-      <View style={sheetStyles.modelRowFiller} />
-      {actionVisible ? (
-        <Pressable
-          onPress={handlePress}
-          hitSlop={8}
-          style={buttonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={
-            isDefault
-              ? t("settings.providers.models.clearDefault")
-              : t("settings.providers.models.setDefault")
-          }
-          testID={`provider-model-default-${model.id}`}
-        >
-          <Star
-            size={theme.iconSize.sm}
-            color={isDefault ? theme.colors.foreground : theme.colors.foregroundMuted}
-            fill={isDefault ? theme.colors.foregroundMuted : "none"}
-          />
-        </Pressable>
       ) : null}
     </View>
   );
@@ -468,8 +449,7 @@ interface ProviderModalBodyProps {
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
   defaultModelId: string | null;
-  onSetDefault: (modelId: string) => void;
-  onClearDefault: () => void;
+  onToggleDefault: (modelId: string) => void;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
 
@@ -562,8 +542,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     onRefresh,
     onDeleteCustom,
     defaultModelId,
-    onSetDefault,
-    onClearDefault,
+    onToggleDefault,
     theme,
   } = props;
 
@@ -616,8 +595,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
                 key={model.id}
                 model={model}
                 isDefault={model.id === defaultModelId}
-                onSetDefault={onSetDefault}
-                onClearDefault={onClearDefault}
+                onToggleDefault={onToggleDefault}
               />
             ))}
           </View>
@@ -666,35 +644,23 @@ export function ProviderDiagnosticSheet({
     () => preferences.providerPreferences?.[provider]?.model ?? null,
     [preferences, provider],
   );
-  const handleSetDefaultModel = useCallback(
+  const handleToggleDefaultModel = useCallback(
     async (modelId: string) => {
       try {
+        const alreadyDefault = preferences.providerPreferences?.[provider]?.model === modelId;
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
             provider: provider as AgentProvider,
-            updates: { model: modelId },
+            updates: { model: alreadyDefault ? null : modelId },
           }),
         );
       } catch (error) {
-        console.warn("[ProviderDiagnosticSheet] persist default model failed", error);
+        console.warn("[ProviderDiagnosticSheet] toggle default model failed", error);
       }
     },
-    [provider, updatePreferences],
+    [preferences, provider, updatePreferences],
   );
-  const handleClearDefaultModel = useCallback(async () => {
-    try {
-      await updatePreferences((current) =>
-        mergeProviderPreferences({
-          preferences: current,
-          provider: provider as AgentProvider,
-          updates: { model: null },
-        }),
-      );
-    } catch (error) {
-      console.warn("[ProviderDiagnosticSheet] clear default model failed", error);
-    }
-  }, [provider, updatePreferences]);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -811,8 +777,7 @@ export function ProviderDiagnosticSheet({
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
           defaultModelId={defaultModelId}
-          onSetDefault={handleSetDefaultModel}
-          onClearDefault={handleClearDefaultModel}
+          onToggleDefault={handleToggleDefaultModel}
           theme={theme}
         />
       </AdaptiveModalSheet>
@@ -897,6 +862,13 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  defaultStarButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.full,
   },
   modelRow: {
     flexDirection: "row",
