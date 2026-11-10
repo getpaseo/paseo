@@ -5,7 +5,7 @@ export const CLAUDE_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",
   id: "fast_mode",
   label: "Fast",
-  description: "Lower latency Opus responses at higher token cost",
+  description: "Lower latency responses at higher token cost",
   tooltip: "Toggle fast mode",
   icon: "zap",
 };
