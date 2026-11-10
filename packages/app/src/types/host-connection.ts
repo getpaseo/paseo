@@ -416,10 +416,13 @@ export function reconcileLearnedDirectConnections(input: {
   daemonPublicKeyB64: string;
   endpoints: readonly string[];
 }): HostProfile {
+  const isLearnedFromSameDaemon = (connection: HostConnection): boolean =>
+    connection.type === "directTcp" &&
+    Boolean(connection.learnedFromConnectionId) &&
+    connection.daemonPublicKeyB64 === input.daemonPublicKeyB64;
   const otherEndpoints = new Set(
     input.host.connections.flatMap((connection) =>
-      connection.type === "directTcp" &&
-      connection.learnedFromConnectionId !== input.sourceConnectionId
+      connection.type === "directTcp" && !isLearnedFromSameDaemon(connection)
         ? [connection.endpoint]
         : [],
     ),
@@ -443,11 +446,7 @@ export function reconcileLearnedDirectConnections(input: {
     }
   });
   const connections = [
-    ...input.host.connections.filter(
-      (connection) =>
-        connection.type !== "directTcp" ||
-        connection.learnedFromConnectionId !== input.sourceConnectionId,
-    ),
+    ...input.host.connections.filter((connection) => !isLearnedFromSameDaemon(connection)),
     ...learned,
   ];
   if (JSON.stringify(connections) === JSON.stringify(input.host.connections)) return input.host;
