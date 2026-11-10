@@ -124,6 +124,8 @@ Z.AI 通过兼容 Anthropic 的端点提供 GLM 模型。把 `ANTHROPIC_BASE_URL
 }
 ```
 
+使用 OpenCode 1.x 时，`paseo reload` 不会把新的密钥传给 OpenCode，因为 Paseo 会保留启动时的 OpenCode 设置。添加或修改密钥后需要重启 daemon：运行 `paseo daemon restart`，或在应用中打开 **设置 → 你的主机 → 概览** 并使用 **重启 Daemon**。
+
 如果 Paseo 复用正在运行的 OpenCode v2 服务器，请不要在 Paseo 的 `env` 中设置 `WALLY_API_KEY`，而是把它设置在该服务器的环境变量中。
 
 ## 多个配置 {#multiple-profiles}

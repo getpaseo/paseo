@@ -295,6 +295,7 @@ Run `opencode models wally` for every Wally model OpenCode knows. Prices: [runwa
 ### Notes
 
 - Put the key on `opencode`, not on a profile that extends it. With OpenCode 1.x, those profiles share one OpenCode server, which starts with the `opencode` provider's `env`, so a profile's `env` does not reach OpenCode. A profile's `models` list also replaces the discovered entries and drops their thinking options.
+- Restart the daemon after adding or changing the key (`paseo daemon restart`). With OpenCode 1.x, `paseo reload` replaces the provider client, but `OpenCodeServerManager.getInstance` returns the existing manager with the settings it was created with, so a new `env` does not reach OpenCode until the daemon restarts.
 - When Paseo reuses an existing OpenCode v2 server, it rejects provider `env`. Leave `WALLY_API_KEY` out of Paseo's `env` and set it in that server's environment. See [OpenCode with an existing v2 server](#opencode-with-an-existing-v2-server).
 - Wally serves Chat Completions only. It does not work as `OPENAI_BASE_URL` for a profile that extends `codex` (Codex needs the Responses API) or as `ANTHROPIC_BASE_URL` for `claude`.
 - Official docs: [docs.runanywhere.ai/wally-cloud/api](https://docs.runanywhere.ai/wally-cloud/api)

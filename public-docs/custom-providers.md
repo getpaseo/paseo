@@ -131,6 +131,8 @@ Alibaba's coding plan routes Claude Code to Qwen models via an Anthropic-compati
 }
 ```
 
+With OpenCode 1.x, `paseo reload` does not pass a new key to OpenCode, because Paseo keeps the OpenCode settings it started with. Restart the daemon after adding or changing the key: run `paseo daemon restart`, or use **Restart daemon** under **Settings → your host → Overview**.
+
 If Paseo reuses a running OpenCode v2 server, leave `WALLY_API_KEY` out of Paseo's `env` and set it in that server's environment.
 
 ## Multiple profiles
