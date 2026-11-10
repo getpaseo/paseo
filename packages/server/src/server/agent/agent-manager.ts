@@ -1,4 +1,4 @@
-import type { AgentSessionConfigChange } from "./agent-sdk-types.js";
+import type { AgentSessionConfigChange, AgentConfigInitialization } from "./agent-sdk-types.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -1496,6 +1496,7 @@ export class AgentManager {
   createAgentFromRecord(
     agentId: string,
     overrides?: AgentSessionConfigChange,
+    onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"],
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "createAgentFromRecord");
     return this.trackAgentRegistrationOperation(
@@ -1522,6 +1523,7 @@ export class AgentManager {
             env: record.launchEnv,
           },
           overrides,
+          onConfigApplied,
         );
       }),
     );
@@ -1532,6 +1534,7 @@ export class AgentManager {
     resolvedAgentId: string,
     options: CreateAgentOptions,
     configChange?: AgentSessionConfigChange,
+    onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"],
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     config = this.withConvertedOptions(config);
@@ -1584,7 +1587,8 @@ export class AgentManager {
     const createOptions = this.buildCreateSessionOptions(options);
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
-    await this.applyInitialConfigChange(session, storedConfig, configChange);
+    const initialization = await this.applyInitialConfigChange(session, storedConfig, configChange);
+    if (initialization) onConfigApplied?.(initialization);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1723,7 +1727,12 @@ export class AgentManager {
       currentResumeOptions,
     );
     if (purpose === "history") this.historySessions.add(session);
-    await this.applyInitialConfigChange(session, storedConfig, resumeOptions?.configChange);
+    const initialization = await this.applyInitialConfigChange(
+      session,
+      storedConfig,
+      resumeOptions?.configChange,
+    );
+    if (initialization) resumeOptions?.onConfigApplied?.(initialization);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1743,8 +1752,9 @@ export class AgentManager {
     session: AgentSession,
     config: AgentSessionConfig,
     change?: AgentSessionConfigChange,
-  ): Promise<void> {
+  ): Promise<AgentConfigInitialization | undefined> {
     if (!change) return;
+    let notice: AgentProviderNotice | null = null;
     try {
       if ("model" in change) {
         const model = change.model ?? null;
@@ -1758,10 +1768,16 @@ export class AgentManager {
           config.thinkingOptionId = runtimeInfo.thinkingOptionId ?? undefined;
         }
       }
+      if (change.modeId !== undefined) {
+        notice = (await session.setMode?.(change.modeId)) ?? null;
+        config.modeId = (await session.getCurrentMode()) ?? change.modeId;
+      }
       if ("thinkingOptionId" in change) {
-        await session.setThinkingOption?.(change.thinkingOptionId ?? null);
+        const thinkingNotice = await session.setThinkingOption?.(change.thinkingOptionId ?? null);
+        notice ??= thinkingNotice ?? null;
         config.thinkingOptionId = change.thinkingOptionId;
       }
+      return { notice };
     } catch (error) {
       await this.closeUnregisteredSession(session);
       throw error;

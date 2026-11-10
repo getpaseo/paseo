@@ -17,6 +17,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
   AgentDraftControls,
   AgentLaunchContext,
   AgentPersistenceHandle,
@@ -131,6 +132,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const cwd = overrides?.cwd ?? handle.metadata?.cwd;
     if (typeof cwd !== "string")
@@ -150,7 +152,9 @@ export class OpenCodeV2AgentClient implements AgentClient {
       const info = await connection.client.session.get({
         sessionID: handle.nativeHandle ?? handle.sessionId,
       });
-      await applyResumeOverrides(connection.client, info, overrides);
+      // The manager applies explicit mutations in order before registration. Replaying
+      // saved settings here could reject the very preference that mutation repairs.
+      if (!options?.configChange) await applyResumeOverrides(connection.client, info, overrides);
       return await this.attach(connection, info, config, launch, true);
     } catch (error) {
       await connection.release();

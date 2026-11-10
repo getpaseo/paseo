@@ -1,6 +1,10 @@
 import type { Logger } from "pino";
 
-import type { AgentProvider, AgentSessionConfigChange } from "./agent-sdk-types.js";
+import type {
+  AgentProvider,
+  AgentSessionConfigChange,
+  AgentResumeSessionOptions,
+} from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import {
@@ -43,6 +47,7 @@ export interface EnsureAgentLoadedDeps {
   purpose?: "history" | "interactive";
   /** Explicit settings mutation: validate this selection while opening, before persisting it. */
   configOverrides?: AgentSessionConfigChange;
+  onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"];
   logger: Logger;
 }
 
@@ -120,7 +125,11 @@ export async function ensureAgentLoaded(
         buildConfigOverrides(record),
         agentId,
         { ...extractTimestamps(record), attention: extractAttention(record) },
-        { purpose: deps.purpose, configChange: deps.configOverrides },
+        {
+          purpose: deps.purpose,
+          configChange: deps.configOverrides,
+          onConfigApplied: deps.onConfigApplied,
+        },
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
@@ -128,7 +137,11 @@ export async function ensureAgentLoaded(
       // bringing one back, so it stamps activity and carries no stored attention. Records
       // without a handle never got far enough to accumulate either. The manager rereads the
       // record inside the agent's lane, so a write that lands after this read is not lost.
-      snapshot = await deps.agentManager.createAgentFromRecord(agentId, deps.configOverrides);
+      snapshot = await deps.agentManager.createAgentFromRecord(
+        agentId,
+        deps.configOverrides,
+        deps.onConfigApplied,
+      );
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 

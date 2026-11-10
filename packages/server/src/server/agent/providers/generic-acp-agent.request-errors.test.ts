@@ -1,3 +1,4 @@
+import type { AgentConfigInitialization } from "../agent-sdk-types.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -115,12 +116,17 @@ test.each([
         host: { emit: (message) => messages.push(message) },
         operations: {
           ensureLoaded: async (agentId, configOverrides) => {
+            let initialization: AgentConfigInitialization | undefined;
             await ensureUnarchivedAgentLoaded(agentId, {
               agentManager: manager,
               agentStorage: storage,
               logger,
               configOverrides,
+              onConfigApplied: (result) => {
+                initialization = result;
+              },
             });
+            return initialization;
           },
           setModel: (agentId, value) => manager.setAgentModel(agentId, value),
           setMode: async () => null,
@@ -181,14 +187,14 @@ test.each([
               agentId: created.id,
               accepted: true,
               error: null,
-              notice: surface === "single" ? undefined : null,
+              notice: null,
             },
           }),
         ]);
         await manager.flush();
         expect(manager.getAgent(created.id)?.config.model).toBe(modelId ?? undefined);
         expect(manager.getAgent(created.id)?.config.thinkingOptionId).toBe(
-          surface === "bundle" ? undefined : "low",
+          surface === "bundle" ? undefined : "high",
         );
         expect((await storage.get(created.id))?.config?.model).toBe(modelId ?? undefined);
         await manager.closeAgent(created.id);
@@ -229,12 +235,17 @@ test.each([
         logger,
         operations: {
           ensureLoaded: async (agentId, configOverrides) => {
+            let initialization: AgentConfigInitialization | undefined;
             await ensureUnarchivedAgentLoaded(agentId, {
               agentManager: manager,
               agentStorage: storage,
               logger,
               configOverrides,
+              onConfigApplied: (result) => {
+                initialization = result;
+              },
             });
+            return initialization;
           },
           setModel: (agentId, value) => manager.setAgentModel(agentId, value),
           setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
@@ -325,12 +336,17 @@ test("a lazy provider rejecting a replacement leaves its durable config intact",
     logger,
     operations: {
       ensureLoaded: async (agentId, configOverrides) => {
+        let initialization: AgentConfigInitialization | undefined;
         await ensureUnarchivedAgentLoaded(agentId, {
           agentManager: manager,
           agentStorage: storage,
           logger,
           configOverrides,
+          onConfigApplied: (result) => {
+            initialization = result;
+          },
         });
+        return initialization;
       },
       setModel: (agentId, value) => manager.setAgentModel(agentId, value),
       setMode: async () => null,
@@ -500,6 +516,15 @@ rl.on("line", (line) => {
         options: [{ value: "default", name: "Default" }, { value: "requested", name: "Requested" }],
       }] } });
     }
+    return;
+  }
+
+  if (message.method === "session/set_config_option" && message.params.configId === "effort" && mode === "removed-on-load") {
+    write({ id: message.id, result: { configOptions: [
+      { id: "model", name: "Model", category: "model", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] },
+      { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: message.params.value,
+        options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+    ] } });
     return;
   }
 

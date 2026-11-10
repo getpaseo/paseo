@@ -2,7 +2,11 @@ import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
-import type { AgentProviderNotice, AgentSessionConfigChange } from "../../agent/agent-sdk-types.js";
+import type {
+  AgentProviderNotice,
+  AgentSessionConfigChange,
+  AgentConfigInitialization,
+} from "../../agent/agent-sdk-types.js";
 import type { ProviderOptionsPatch } from "../../agent/option-controls.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
@@ -26,7 +30,10 @@ export interface AgentConfigSessionHost {
  * thinking yield a provider notice; model and options do not.
  */
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string, overrides?: AgentSessionConfigChange): Promise<void>;
+  ensureLoaded(
+    agentId: string,
+    overrides?: AgentSessionConfigChange,
+  ): Promise<AgentConfigInitialization | void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
@@ -49,7 +56,9 @@ interface ConfigChange {
   logLabel: string;
   logFields: Record<string, unknown>;
   failureText: string;
-  run: () => Promise<AgentProviderNotice | null | undefined>;
+  run: (
+    initialization?: AgentConfigInitialization,
+  ) => Promise<AgentProviderNotice | null | undefined>;
   emitResponse: (payload: AgentActionResponsePayload) => void;
 }
 
@@ -97,7 +106,8 @@ export class AgentConfigSession {
       logFields: { agentId, modelId, requestId },
       failureText: "Failed to set agent model",
       configOverrides: { model: modelId ?? undefined },
-      run: async () => {
+      run: async (initialization) => {
+        if (initialization) return initialization.notice;
         await this.operations.setModel(agentId, modelId);
         return undefined;
       },
@@ -135,7 +145,10 @@ export class AgentConfigSession {
       logFields: { agentId, thinkingOptionId, requestId },
       failureText: "Failed to set agent thinking option",
       configOverrides: { thinkingOptionId: thinkingOptionId ?? undefined },
-      run: () => this.operations.setThinking(agentId, thinkingOptionId),
+      run: async (initialization) =>
+        initialization
+          ? initialization.notice
+          : this.operations.setThinking(agentId, thinkingOptionId),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_thinking_response", payload }),
     });
   }
@@ -150,6 +163,7 @@ export class AgentConfigSession {
       changesModel || changesThinking
         ? {
             ...(changesModel ? { model: config.modelId ?? undefined } : {}),
+            ...(config.modeId !== undefined ? { modeId: config.modeId } : {}),
             ...(changesThinking ? { thinkingOptionId: config.thinkingOptionId ?? undefined } : {}),
           }
         : undefined;
@@ -160,7 +174,14 @@ export class AgentConfigSession {
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
       configOverrides,
-      run: () => this.applyBundle(agentId, config),
+      run: (initialization) =>
+        this.applyBundle(
+          agentId,
+          initialization
+            ? { options: config.options, featureValues: config.featureValues }
+            : config,
+          initialization?.notice,
+        ),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });
   }
@@ -188,8 +209,9 @@ export class AgentConfigSession {
   private async applyBundle(
     agentId: string,
     config: AgentConfigApply,
+    initialNotice?: AgentProviderNotice | null,
   ): Promise<AgentProviderNotice | null> {
-    let notice: AgentProviderNotice | null = null;
+    let notice: AgentProviderNotice | null = initialNotice ?? null;
 
     if (config.modelId !== undefined) {
       await this.operations.setModel(agentId, config.modelId);
@@ -218,8 +240,8 @@ export class AgentConfigSession {
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId, change.configOverrides);
-      const notice = await run();
+      const initialization = await this.operations.ensureLoaded(agentId, change.configOverrides);
+      const notice = await run(initialization ?? undefined);
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });
     } catch (error) {

@@ -665,9 +665,17 @@ export interface AgentCreateSessionOptions {
 export type AgentResumePurpose = "interactive" | "history";
 
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
-export type AgentSessionConfigChange = Pick<AgentSessionConfig, "model" | "thinkingOptionId">;
+export type AgentSessionConfigChange = Pick<
+  AgentSessionConfig,
+  "model" | "modeId" | "thinkingOptionId"
+>;
+
+export interface AgentConfigInitialization {
+  notice: AgentProviderNotice | null;
+}
 
 export interface AgentResumeSessionOptions {
+  onConfigApplied?: (result: AgentConfigInitialization) => void;
   /** Explicit settings mutation to validate before the resumed session is registered. */
   configChange?: AgentSessionConfigChange;
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */

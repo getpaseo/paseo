@@ -90,6 +90,7 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type AgentSessionConfigChange,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -544,6 +545,7 @@ interface ACPAgentSessionOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
+  reconcileSavedThinking?: boolean;
   configuredModelIds?: readonly string[];
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1064,6 +1066,19 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
+  private prepareResumeConfigChange(change?: AgentSessionConfigChange) {
+    const changesModel = change !== undefined && "model" in change;
+    const changesThinking = change !== undefined && "thinkingOptionId" in change;
+    return {
+      // Explicit thinking changes run after the bundle's mode step, not during startup.
+      startupConfig: {
+        ...(changesModel ? { model: change.model } : {}),
+        ...(changesThinking ? { thinkingOptionId: undefined } : {}),
+      },
+      reconcileSavedThinking: changesModel && !changesThinking,
+    };
+  }
+
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1080,11 +1095,13 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} resume requires the original working directory`);
     }
 
+    const { startupConfig, reconcileSavedThinking } = this.prepareResumeConfigChange(
+      options?.configChange,
+    );
     const mergedConfig: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,
-      // A settings mutation must not replay an incompatible saved thinking setting first.
-      ...(options?.configChange ? { thinkingOptionId: undefined, ...options.configChange } : {}),
+      ...startupConfig,
       provider: this.provider,
       cwd,
     };
@@ -1114,6 +1131,7 @@ export class ACPAgentClient implements AgentClient {
       },
       handle,
       resumePurpose: options?.purpose,
+      reconcileSavedThinking,
       configuredModelIds: options?.configuredModelIds,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -1781,6 +1799,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
   private readonly resumePurpose: AgentResumePurpose;
+  private readonly reconcileSavedThinking: boolean;
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -1848,6 +1867,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     this.initialHandle = options.handle;
     this.resumePurpose = options.resumePurpose ?? "interactive";
+    this.reconcileSavedThinking = options.reconcileSavedThinking ?? false;
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
     this.currentModel = config.model ?? null;
@@ -3141,6 +3161,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.inOptionsTransaction(() => this.writeConfiguredOverrides());
   }
 
+  private resolveConfiguredThinking(): string | undefined {
+    const value = this.config.thinkingOptionId;
+    if (!this.reconcileSavedThinking || this.thinkingOptionWriter) return value;
+    // A model-only change retains the saved preference when the new model still offers it.
+    const option = findSelectConfigOption({
+      configOptions: this.configOptions,
+      category: "thought_level",
+    });
+    const supported =
+      option && flattenSelectOptions(option.options).some((choice) => choice.value === value);
+    return supported ? value : undefined;
+  }
+
   private async writeConfiguredOverrides(): Promise<void> {
     const configuredModeId = this.config.modeId;
     if (configuredModeId && configuredModeId !== this.currentMode) {
@@ -3156,8 +3189,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
       switchedModel = true;
     }
-    if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
-      await this.setThinkingOption(this.config.thinkingOptionId);
+    const configuredThinking = this.resolveConfiguredThinking();
+    if (configuredThinking && configuredThinking !== this.thinkingOptionId) {
+      await this.setThinkingOption(configuredThinking);
     }
     const configuredFeatureValues = this.config.providerOptions ?? {};
     for (const featureOption of this.configFeatureOptions) {

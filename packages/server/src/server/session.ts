@@ -1,3 +1,4 @@
+import type { AgentConfigInitialization } from "./agent/agent-sdk-types.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -1112,12 +1113,17 @@ export class Session {
       },
       operations: {
         ensureLoaded: async (agentId, configOverrides) => {
+          let initialization: AgentConfigInitialization | undefined;
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
             logger: this.sessionLogger,
             configOverrides,
+            onConfigApplied: (result) => {
+              initialization = result;
+            },
           });
+          return initialization;
         },
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
