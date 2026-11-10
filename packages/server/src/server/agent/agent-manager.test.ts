@@ -2154,43 +2154,33 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
 });
 
 test("prepareForShutdown records running agents and preserves them when cancelled during shutdown", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-running-test-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const client = new TestAgentClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    logger,
-    agentStorage: storage,
+  const fixture = await createControlledInterruptFixture({
+    name: "shutdown-running",
+    agentId: "00000000-0000-4000-8000-000000000305",
+    turnId: "shutdown-turn",
+    interrupt: async () => {},
   });
+
   try {
-    const runningAgent = await manager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
-    const idleAgent = await manager.createAgent(
-      { provider: "codex", cwd: workdir },
-      undefined,
-      { workspaceId: undefined },
-    );
-    // Mark one agent as running
-    const managedRunning = (manager as unknown as { agents: Map<string, { lifecycle: string }> }).agents.get(runningAgent.id);
-    if (managedRunning) {
-      managedRunning.lifecycle = "running";
-    }
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "shutdown-turn",
+    });
+    await running;
 
-    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set());
-    manager.prepareForShutdown();
-    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set([runningAgent.id]));
-    expect(manager.getRunningAgentsAtShutdown().has(idleAgent.id)).toBe(false);
+    expect(fixture.manager.getRunningAgentsAtShutdown()).toEqual(new Set());
+    fixture.manager.prepareForShutdown();
+    expect(fixture.manager.getRunningAgentsAtShutdown()).toEqual(new Set([fixture.agentId]));
 
-    // Even if the turn is cancelled during shutdown, it remains captured
-    await manager.cancelAgentRun(runningAgent.id);
-    expect(manager.getRunningAgentsAtShutdown()).toEqual(new Set([runningAgent.id]));
+    // Cancelling the run during shutdown transitions the agent away from running,
+    // but its presence at shutdown remains captured.
+    await fixture.manager.cancelAgentRun(fixture.agentId);
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).not.toBe("running");
+    expect(fixture.manager.getRunningAgentsAtShutdown()).toEqual(new Set([fixture.agentId]));
   } finally {
-    await manager.flush().catch(() => undefined);
-    rmSync(workdir, { recursive: true, force: true });
+    await fixture.cleanup();
   }
 });
 

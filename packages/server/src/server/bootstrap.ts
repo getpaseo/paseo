@@ -1983,11 +1983,10 @@ export async function createPaseoDaemon(
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
-    agentManager.prepareForShutdown();
     wsServer?.prepareForShutdown();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
-    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
+    agentManager.prepareForShutdown();
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
@@ -1996,6 +1995,8 @@ export async function createPaseoDaemon(
     }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
+    await agentStorage.flush().catch(() => undefined);
+    await restartRecovery.captureRunningAgents(agentManager.getRunningAgentsAtShutdown());
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();
