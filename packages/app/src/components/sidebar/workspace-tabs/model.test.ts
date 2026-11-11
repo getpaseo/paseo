@@ -8,6 +8,7 @@ import type { SubagentRow } from "@/subagents/select";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   resolveSidebarWorkspaceTabsDisclosure,
+  selectHoldingWorkspaceId,
   selectNestedSubagentTabIds,
   selectSidebarWorkspaceTabs,
   summarizeSidebarWorkspaceTabs,
@@ -212,5 +213,53 @@ describe("selectNestedSubagentTabIds", () => {
   it("keeps a child at the top level when its parent has no tab or does not list it", () => {
     expect(selectNestedSubagentTabIds([child, providerTab], () => [paseoChild("c")])).toEqual([]);
     expect(selectNestedSubagentTabIds([parent, child], () => [])).toEqual([]);
+  });
+
+  it("nests only under a parent tab that stays at the top level", () => {
+    const grandchild = descriptor("agent_g", { kind: "agent", agentId: "g" });
+    const greatGrandchild = descriptor("agent_gg", { kind: "agent", agentId: "gg" });
+    const rows: Record<string, SubagentRow[]> = {
+      p: [paseoChild("c")],
+      c: [paseoChild("g")],
+      g: [paseoChild("gg")],
+    };
+    expect(
+      selectNestedSubagentTabIds(
+        [parent, child, grandchild, greatGrandchild],
+        (id) => rows[id] ?? [],
+      ),
+    ).toEqual(["agent_c", "agent_gg"]);
+  });
+
+  it("nests a grandchild a top-level tab also lists", () => {
+    const grandchild = descriptor("agent_g", { kind: "agent", agentId: "g" });
+    const rows: Record<string, SubagentRow[]> = {
+      p: [paseoChild("c"), paseoChild("g")],
+      c: [paseoChild("g")],
+    };
+    expect(selectNestedSubagentTabIds([parent, child, grandchild], (id) => rows[id] ?? [])).toEqual(
+      ["agent_c", "agent_g"],
+    );
+  });
+
+  it("leaves a cycle of tabs at the top level", () => {
+    const rows: Record<string, SubagentRow[]> = {
+      p: [paseoChild("c")],
+      c: [paseoChild("p")],
+    };
+    expect(selectNestedSubagentTabIds([parent, child], (id) => rows[id] ?? [])).toEqual([]);
+  });
+});
+
+describe("selectHoldingWorkspaceId", () => {
+  it("uses the listing workspace when it holds the tab, otherwise the subagent's own", () => {
+    expect(selectHoldingWorkspaceId("parent", "child", (id) => id === "child")).toBe("child");
+    expect(selectHoldingWorkspaceId("parent", "child", (id) => id === "parent")).toBe("parent");
+    expect(selectHoldingWorkspaceId("parent", null, (id) => id === "parent")).toBe("parent");
+  });
+
+  it("omits a workspace when neither layout holds the tab", () => {
+    expect(selectHoldingWorkspaceId("parent", "child", () => false)).toBeNull();
+    expect(selectHoldingWorkspaceId("parent", "parent", () => false)).toBeNull();
   });
 });

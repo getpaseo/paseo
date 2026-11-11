@@ -47,8 +47,9 @@ export function childTimesByParent(
 
 /**
  * Drops nested workspace keys and, for Created and Last prompt, reorders what remains so a
- * parent sorts as recently as its newest nested workspace. Manual order and the name order
- * used when no sort is active only lose the hidden keys.
+ * parent sorts as recently as its newest nested workspace. A child can sit in another project,
+ * so a list that hides nothing still re-sorts when one of its rows inherits that child's time.
+ * Manual order and the name order used when no sort is active only lose the hidden keys.
  */
 export function orderWorkspaceKeys(
   workspaceKeys: readonly string[],
@@ -64,15 +65,30 @@ export function orderWorkspaceKeys(
       break;
     }
   }
-  if (!hidesNested) return workspaceKeys;
-  const visible = workspaceKeys.filter((key) => !nestedKeys.has(key));
-  if (sort !== "created" && sort !== "lastPrompt") return visible;
+  const sortsByTime = sort === "created" || sort === "lastPrompt";
+  if (!sortsByTime) {
+    if (!hidesNested) return workspaceKeys;
+    return workspaceKeys.filter((key) => !nestedKeys.has(key));
+  }
+  let visible = workspaceKeys;
+  if (hidesNested) visible = workspaceKeys.filter((key) => !nestedKeys.has(key));
+  if (!hidesNested && !inheritsChildTime(visible, childTimeByParent)) return workspaceKeys;
   const ordered = [...visible].sort((left, right) => {
     const leftTime = effectiveSortTime(left, timeOf, childTimeByParent);
     const rightTime = effectiveSortTime(right, timeOf, childTimeByParent);
     return rightTime - leftTime || left.localeCompare(right);
   });
   return sameKeys(visible, ordered) ? visible : ordered;
+}
+
+function inheritsChildTime(
+  workspaceKeys: readonly string[],
+  childTimeByParent: ReadonlyMap<string, number>,
+): boolean {
+  for (const key of workspaceKeys) {
+    if (childTimeByParent.has(key)) return true;
+  }
+  return false;
 }
 
 export function effectiveSortTime(
@@ -127,6 +143,40 @@ export function sidebarSubagentSortTime(input: {
       : undefined;
   if (sort === "created") return clock?.createdAt ?? agent.createdAt;
   return clock?.lastPromptAt ?? agent.lastPromptAt;
+}
+
+export function sameWorkspaceSortClock(
+  left: WorkspaceSortClock,
+  right: WorkspaceSortClock,
+): boolean {
+  return (
+    left.createdAt === right.createdAt &&
+    left.lastPromptAt === right.lastPromptAt &&
+    left.statusEnteredAt === right.statusEnteredAt
+  );
+}
+
+export function sameAgentSortClock(left: AgentSortClock, right: AgentSortClock): boolean {
+  return (
+    left.createdAt === right.createdAt &&
+    left.lastPromptAt === right.lastPromptAt &&
+    left.workspaceKey === right.workspaceKey
+  );
+}
+
+/** Keeps `previous` when every key and value matches, so a rebuilt map does not wake subscribers. */
+export function reuseEqualMap<T>(
+  previous: ReadonlyMap<string, T>,
+  next: ReadonlyMap<string, T>,
+  same: (left: T, right: T) => boolean,
+): ReadonlyMap<string, T> {
+  if (previous === next) return previous;
+  if (previous.size !== next.size) return next;
+  for (const [key, value] of next) {
+    const prior = previous.get(key);
+    if (prior === undefined || !same(prior, value)) return next;
+  }
+  return previous;
 }
 
 function sameKeys(left: readonly string[], right: readonly string[]): boolean {

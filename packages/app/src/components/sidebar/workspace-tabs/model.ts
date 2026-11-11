@@ -97,10 +97,10 @@ function sameAgentIds(left: readonly string[], right: readonly string[]): boolea
 }
 
 /**
- * What a workspace row's disclosure opens. A row offers its tabs only when there is a choice to
- * make: with one tab, opening the workspace already lands on it. When that lone tab is an agent
- * with subagents, the disclosure skips the tab and lists the subagents themselves, so the row
- * reads as the agent's subagent count rather than as one tab with children under it.
+ * What a workspace row's disclosure opens. A row offers its tabs only when there is more than
+ * one: opening the workspace already lands on a single tab. When that tab is an agent with
+ * subagents, the disclosure counts the subagents. The list still shows the tab, so its menu
+ * stays reachable, and lists those subagents under it.
  */
 export type SidebarWorkspaceTabsDisclosure =
   | { kind: "none" }
@@ -146,26 +146,86 @@ export function isSubagentTarget(target: WorkspaceTabTarget | null, row: Subagen
 }
 
 /**
- * The tabs listed under another agent tab's subagents, which the top level leaves out. Only a
- * child its parent's list actually shows is nested, so a tab whose row the list hides (an archived
- * or hidden child) stays reachable at the top level. A tab never nests under itself.
+ * The tabs listed under another agent tab's subagents, which the top level leaves out. A tab
+ * nests only under a parent tab that itself stays at the top level, so a grandchild whose parent
+ * tab is nested stays reachable and can list its own children. Only a child its parent's list
+ * actually shows is nested, so a tab whose row the list hides (an archived or hidden child)
+ * stays at the top level. A tab never nests under itself.
  */
 export function selectNestedSubagentTabIds(
   tabs: readonly WorkspaceTabDescriptor[],
   subagentsOf: (agentId: string) => readonly SubagentRow[],
 ): string[] {
+  const parentTabIdsByTabId = collectParentTabIds(tabs, subagentsOf);
+  const placement = new Map<string, "top" | "nested">();
+  const pending = new Set(tabs.map((tab) => tab.tabId));
+  let moved = true;
+  while (moved && pending.size > 0) {
+    moved = false;
+    for (const tabId of pending) {
+      const decision = decideTabNesting(parentTabIdsByTabId.get(tabId), placement, pending);
+      if (!decision) continue;
+      placement.set(tabId, decision);
+      pending.delete(tabId);
+      moved = true;
+    }
+  }
   const nested: string[] = [];
-  const parents = tabs.flatMap((tab) =>
-    tab.target.kind === "agent"
-      ? [{ tabId: tab.tabId, rows: subagentsOf(tab.target.agentId) }]
-      : [],
-  );
   for (const tab of tabs) {
-    const isChild = parents.some(
-      (parent) =>
-        parent.tabId !== tab.tabId && parent.rows.some((row) => isSubagentTarget(tab.target, row)),
-    );
-    if (isChild) nested.push(tab.tabId);
+    if (placement.get(tab.tabId) === "nested") nested.push(tab.tabId);
   }
   return nested;
+}
+
+/**
+ * Where a nested subagent's tab can be closed. The listing workspace wins when it holds the
+ * tab; otherwise the subagent's own workspace. Null means neither layout has it, so the menu
+ * has no Close.
+ */
+export function selectHoldingWorkspaceId(
+  listingWorkspaceId: string,
+  ownWorkspaceId: string | null,
+  holdsTab: (workspaceId: string) => boolean,
+): string | null {
+  if (holdsTab(listingWorkspaceId)) return listingWorkspaceId;
+  if (ownWorkspaceId && ownWorkspaceId !== listingWorkspaceId && holdsTab(ownWorkspaceId)) {
+    return ownWorkspaceId;
+  }
+  return null;
+}
+
+function collectParentTabIds(
+  tabs: readonly WorkspaceTabDescriptor[],
+  subagentsOf: (agentId: string) => readonly SubagentRow[],
+): Map<string, string[]> {
+  const parentTabIdsByTabId = new Map<string, string[]>();
+  for (const tab of tabs) {
+    if (tab.target.kind !== "agent") continue;
+    const rows = subagentsOf(tab.target.agentId);
+    if (rows.length === 0) continue;
+    for (const other of tabs) {
+      if (other.tabId === tab.tabId) continue;
+      if (!rows.some((row) => isSubagentTarget(other.target, row))) continue;
+      const parents = parentTabIdsByTabId.get(other.tabId);
+      if (parents) parents.push(tab.tabId);
+      else parentTabIdsByTabId.set(other.tabId, [tab.tabId]);
+    }
+  }
+  return parentTabIdsByTabId;
+}
+
+/** Null while a parent tab later in the list is still unresolved. A cycle never resolves. */
+function decideTabNesting(
+  parentTabIds: readonly string[] | undefined,
+  placement: ReadonlyMap<string, "top" | "nested">,
+  pending: ReadonlySet<string>,
+): "top" | "nested" | null {
+  if (!parentTabIds || parentTabIds.length === 0) return "top";
+  let waiting = false;
+  for (const parentTabId of parentTabIds) {
+    const parentPlacement = placement.get(parentTabId);
+    if (parentPlacement === "top") return "nested";
+    if (parentPlacement === undefined && pending.has(parentTabId)) waiting = true;
+  }
+  return waiting ? null : "top";
 }

@@ -26,6 +26,7 @@ import {
   navigateToWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import {
@@ -37,7 +38,8 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import { useSettings } from "@/hooks/use-settings";
 import { useSessionStore } from "@/stores/session-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { collectAllTabs, type WorkspaceLayout } from "@/stores/workspace-layout-actions";
+import { useWorkspaceLayoutStore, type SheetTab } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSubagentCount, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
 import { useArchiveSubagent } from "@/subagents/use-archive-subagent";
@@ -66,6 +68,7 @@ import {
 import {
   resolveSidebarWorkspaceTabsDisclosure,
   isSubagentTarget,
+  selectHoldingWorkspaceId,
   summarizeSidebarWorkspaceTabs,
 } from "./model";
 import { useNestedSubagentTabIds, useSidebarWorkspaceTabs } from "./use-workspace-tabs";
@@ -145,19 +148,39 @@ function SidebarWorkspaceTabList({
     />
   );
 
-  // The lone tab is what the workspace row already opens, so its subagents are the top level.
+  // The workspace row already opened this list. The lone tab stays in it so its menu (copy,
+  // reload, close) remains reachable, and its subagents stay listed under that row.
   if (disclosure.kind === "subagents" && soleTab && soleAgentId) {
     return (
       <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
-        <SidebarSoleAgentSubagents
-          parentTabId={soleTab.tabId}
-          agentId={soleAgentId}
-          activeTarget={activeTarget}
+        <WorkspaceTabPresentationResolver
+          tab={soleTab}
           serverId={serverId}
           workspaceId={workspaceId}
-          workspaceKey={workspaceKey}
-          menuActions={menuActions}
-        />
+        >
+          {(presentation) => (
+            <SidebarWorkspaceTabRow
+              tab={soleTab}
+              presentation={presentation}
+              active={soleTab.tabId === activeTabId}
+              serverId={serverId}
+              workspaceId={workspaceId}
+              workspaceKey={workspaceKey}
+              menuActions={menuActions}
+            />
+          )}
+        </WorkspaceTabPresentationResolver>
+        <View style={styles.subagentList}>
+          <SidebarSoleAgentSubagents
+            parentTabId={soleTab.tabId}
+            agentId={soleAgentId}
+            activeTarget={activeTarget}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            workspaceKey={workspaceKey}
+            menuActions={menuActions}
+          />
+        </View>
         {renameModal}
       </View>
     );
@@ -206,6 +229,51 @@ function SidebarWorkspaceTabList({
 
 // The sidebar keeps no state per tab that a close would need to clear.
 function ignoreTabClosed(): void {}
+
+function entriesWithoutClose(entries: readonly WorkspaceTabMenuEntry[]): WorkspaceTabMenuEntry[] {
+  return entries.filter((entry) => entry.key !== "close" && entry.key !== "close-separator");
+}
+
+/**
+ * The workspace whose layout holds this agent's tab. The listing workspace wins; otherwise the
+ * agent's own workspace. Null when the tab is not open in either.
+ */
+function useWorkspaceIdHoldingAgentTab(
+  serverId: string,
+  listingWorkspaceId: string,
+  agentId: string,
+): string | null {
+  const tabId = buildDeterministicWorkspaceTabId({ kind: "agent", agentId });
+  const ownWorkspaceId = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    return agent?.workspaceId ?? null;
+  });
+  return useWorkspaceLayoutStore((state) =>
+    selectHoldingWorkspaceId(listingWorkspaceId, ownWorkspaceId, (workspaceId) =>
+      workspaceHoldsTab(
+        state.layoutByWorkspace,
+        state.sheetsByWorkspace,
+        buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+        tabId,
+      ),
+    ),
+  );
+}
+
+function workspaceHoldsTab(
+  layoutByWorkspace: Record<string, WorkspaceLayout>,
+  sheetsByWorkspace: Record<string, readonly SheetTab[]>,
+  workspaceKey: string | null,
+  tabId: string,
+): boolean {
+  if (!workspaceKey) return false;
+  const sheets = sheetsByWorkspace[workspaceKey];
+  if (sheets?.some((sheet) => sheet.tab.tabId === tabId)) return true;
+  const layout = layoutByWorkspace[workspaceKey];
+  if (!layout) return false;
+  return collectAllTabs(layout.root).some((tab) => tab.tabId === tabId);
+}
 
 type SidebarWorkspaceTabMenuActions = Omit<
   Parameters<typeof buildWorkspaceTabActionEntries>[0],
@@ -659,6 +727,7 @@ function SidebarSubagentRow({
       <SidebarSubagentMenu
         agentId={row.id}
         serverId={serverId}
+        workspaceId={workspaceId}
         label={label}
         menuTestIDBase={`sidebar-workspace-subagent-menu-${workspaceKey}-${row.id}`}
         menuActions={menuActions}
@@ -696,6 +765,7 @@ function SidebarSubagentRow({
 function SidebarSubagentMenu({
   agentId,
   serverId,
+  workspaceId,
   label,
   menuTestIDBase,
   menuActions,
@@ -703,6 +773,7 @@ function SidebarSubagentMenu({
 }: {
   agentId: string;
   serverId: string;
+  workspaceId: string;
   label: string;
   menuTestIDBase: string;
   menuActions: SidebarWorkspaceTabMenuActions;
@@ -715,10 +786,19 @@ function SidebarSubagentMenu({
   const canDetach = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
+  // The listing workspace's close looks in that layout only. A subagent whose tab lives in
+  // its own workspace closes there; with no open tab, Close is left out.
+  const holdingWorkspaceId = useWorkspaceIdHoldingAgentTab(serverId, workspaceId, agentId);
+  const { closeTabById } = useWorkspaceTabClose({
+    serverId,
+    workspaceId: holdingWorkspaceId ?? workspaceId,
+    onTabClosed: ignoreTabClosed,
+  });
   const entries = useMemo<WorkspaceTabMenuEntry[]>(() => {
+    const tabId = buildDeterministicWorkspaceTabId({ kind: "agent", agentId });
     const tab: WorkspaceTabDescriptor = {
-      key: `agent_${agentId}`,
-      tabId: `agent_${agentId}`,
+      key: tabId,
+      tabId,
       kind: "agent",
       target: { kind: "agent", agentId },
     };
@@ -743,8 +823,12 @@ function SidebarSubagentMenu({
       testID: `${menuTestIDBase}-archive`,
       onSelect: () => archiveSubagent(address),
     });
+    const tabActions = holdingWorkspaceId
+      ? { ...menuActions, onCloseTab: closeTabById }
+      : menuActions;
+    const tabEntries = buildWorkspaceTabActionEntries({ ...tabActions, tab, menuTestIDBase });
     return [
-      ...buildWorkspaceTabActionEntries({ ...menuActions, tab, menuTestIDBase }),
+      ...(holdingWorkspaceId ? tabEntries : entriesWithoutClose(tabEntries)),
       { kind: "separator", key: "subagent-lifecycle-separator" },
       ...lifecycle,
     ];
@@ -752,7 +836,9 @@ function SidebarSubagentMenu({
     agentId,
     archiveSubagent,
     canDetach,
+    closeTabById,
     detachSubagent,
+    holdingWorkspaceId,
     menuActions,
     menuTestIDBase,
     serverId,

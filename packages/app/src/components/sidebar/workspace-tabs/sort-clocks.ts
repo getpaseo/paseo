@@ -1,5 +1,12 @@
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
-import { workspaceSortClock, type AgentSortClock, type WorkspaceSortClock } from "./nested-sort";
+import {
+  reuseEqualMap,
+  sameAgentSortClock,
+  sameWorkspaceSortClock,
+  workspaceSortClock,
+  type AgentSortClock,
+  type WorkspaceSortClock,
+} from "./nested-sort";
 
 type SessionState = ReturnType<typeof useSessionStore.getState>;
 
@@ -41,7 +48,13 @@ function selectWorkspaceSidebarSnapshot(state: SessionState): WorkspaceSidebarSn
       statusByKey.set(key, workspace.status);
     }
   }
-  workspaceSnapshot = { clocks, statusByKey };
+  // A workspace map can be replaced without any clock changing. Subscribers compare this
+  // reference, so an equal rebuild must keep the previous one.
+  const stableClocks = reuseEqualMap(workspaceSnapshot.clocks, clocks, sameWorkspaceSortClock);
+  workspaceSnapshot = {
+    clocks: stableClocks.size === 0 ? EMPTY_CLOCKS : stableClocks,
+    statusByKey,
+  };
   return workspaceSnapshot;
 }
 
@@ -62,7 +75,12 @@ function selectAgentSortClocks(state: SessionState): ReadonlyMap<string, AgentSo
       });
     }
   }
-  agentClocks = next.size === 0 ? EMPTY_AGENT_CLOCKS : next;
+  const stable = reuseEqualMap(
+    agentClocks,
+    next.size === 0 ? EMPTY_AGENT_CLOCKS : next,
+    sameAgentSortClock,
+  );
+  agentClocks = stable.size === 0 ? EMPTY_AGENT_CLOCKS : stable;
   return agentClocks;
 }
 
