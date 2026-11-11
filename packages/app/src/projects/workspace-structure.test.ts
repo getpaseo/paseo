@@ -69,6 +69,52 @@ describe("buildWorkspaceStructureProjects", () => {
     });
   });
 
+  test("does not inspect Git link facts when no local links are saved", () => {
+    const candidate = workspace("ws-a", "prj_a", "/a/app");
+    let gitFactReads = 0;
+    Object.defineProperties(candidate, {
+      gitRuntime: {
+        enumerable: true,
+        get() {
+          gitFactReads += 1;
+          return { remoteUrl: "https://github.com/acme/app.git" };
+        },
+      },
+      project: {
+        enumerable: true,
+        get() {
+          gitFactReads += 1;
+          return {
+            projectKey: "legacy-key",
+            projectName: "acme/app",
+            checkout: {
+              cwd: "/a/app",
+              isGit: true,
+              currentBranch: "main",
+              remoteUrl: null,
+              worktreeRoot: "/a/app",
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          };
+        },
+      },
+    });
+
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [project({ id: "prj_a", key: "host:a", root: "/a/app" })],
+          workspaces: [candidate],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(gitFactReads).toBe(0);
+  });
+
   test("keeps two clones with the same key on one host separate", () => {
     const key = "remote:github.com/acme/app";
     const result = buildWorkspaceStructureProjects({

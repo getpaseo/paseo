@@ -320,11 +320,28 @@ function addExistingLinkMergeSuggestions(input: {
 }): void {
   for (const links of input.linksByIdentity.values()) {
     if (links.length < 2) continue;
-    const placements = links.flatMap((link) => getLinkPlacements(link, input.placementsByKey));
-    if (!hasOnePlacementPerHost(placements)) continue;
     const identity = links[0]?.identity;
     if (!identity) continue;
-    input.addSuggestion(identity, placements);
+    const placementsByLink = links.map((link) => getLinkPlacements(link, input.placementsByKey));
+    const allPlacements = placementsByLink.flat();
+    if (hasOnePlacementPerHost(allPlacements)) {
+      input.addSuggestion(identity, allPlacements);
+      continue;
+    }
+
+    // Different clones on one host can make one pair of saved links incompatible without
+    // invalidating independent pairs. Offer every compatible pair so people can merge the
+    // links they intend instead of having to dismantle the conflicting clone link first.
+    for (let leftIndex = 0; leftIndex < placementsByLink.length; leftIndex += 1) {
+      const left = placementsByLink[leftIndex];
+      if (!left) continue;
+      for (let rightIndex = leftIndex + 1; rightIndex < placementsByLink.length; rightIndex += 1) {
+        const right = placementsByLink[rightIndex];
+        if (!right) continue;
+        const pair = [...left, ...right];
+        if (hasOnePlacementPerHost(pair)) input.addSuggestion(identity, pair);
+      }
+    }
   }
 }
 
@@ -554,15 +571,11 @@ function projectLinkIdentityKey(identity: LocalProjectLinkIdentity): string {
   return JSON.stringify([canonicalProjectRepository(identity.repository), identity.subdirectory]);
 }
 
-/**
- * Canonicalize known cloud SSH aliases to their web host. SSH ports describe a transport
- * endpoint, not a repository identity; self-hosted HTTP(S) ports remain part of the identity.
- */
+/** Canonicalize known cloud SSH aliases; self-hosted ports distinguish repository authorities. */
 function projectRepositoryAuthority(remote: GitRemoteLocation): string {
   const cloudHost = canonicalCloudHost(remote.host);
   const host = cloudHost ?? remote.host;
-  const port =
-    cloudHost || remote.transport === "ssh" || remote.transport === "scp" ? undefined : remote.port;
+  const port = cloudHost ? undefined : remote.port;
   return port ? `${host}:${port}` : host;
 }
 

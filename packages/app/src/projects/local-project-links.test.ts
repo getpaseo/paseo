@@ -7,6 +7,7 @@ import {
   deriveProjectGitIdentity,
   projectLinkPlacementKey,
   resolveProjectGitIdentity,
+  sameLocalProjectLinkIdentity,
 } from "./local-project-links";
 import { linkLocalProjects, unlinkLocalProject } from "./local-project-links-store";
 
@@ -152,17 +153,26 @@ describe("local project links", () => {
     });
   });
 
-  test("omits SSH transport ports while preserving self-hosted HTTPS origin ports", () => {
-    expect(
-      deriveProjectGitIdentity({
-        projectRootPath: "/repos/app",
-        worktreeRoot: "/repos/app",
-        remoteUrl: "ssh://git@git.example.test:2222/team/app.git",
-      }),
-    ).toMatchObject({
-      repository: "git.example.test/team/app",
+  test("preserves distinct self-hosted SSH and HTTPS origin ports", () => {
+    const sshPort2222 = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "ssh://git@git.example.test:2222/team/app.git",
+    });
+    const sshPort3333 = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "ssh://git@git.example.test:3333/team/app.git",
+    });
+    expect(sshPort2222).toMatchObject({
+      repository: "git.example.test:2222/team/app",
       remoteDisplay: "git.example.test:2222/team/app",
     });
+    expect(sshPort3333).toMatchObject({
+      repository: "git.example.test:3333/team/app",
+      remoteDisplay: "git.example.test:3333/team/app",
+    });
+    expect(sameLocalProjectLinkIdentity(sshPort2222!, sshPort3333!)).toBe(false);
     expect(
       deriveProjectGitIdentity({
         projectRootPath: "/repos/app",
@@ -559,6 +569,89 @@ describe("local project links", () => {
         ]),
       }),
     ]);
+  });
+
+  test("offers compatible link merges despite a conflicting clone link", () => {
+    const placements = buildProjectLinkPlacements({ hosts: hosts() });
+    const hostC = {
+      ...placements[1]!,
+      serverId: "host-c",
+      serverName: "Server",
+      projectId: "prj-c",
+      projectKey: "legacy-c",
+      projectRootPath: "/srv/app/packages/web",
+    };
+    const hostD = {
+      ...placements[1]!,
+      serverId: "host-d",
+      serverName: "Tablet",
+      projectId: "prj-d",
+      projectKey: "legacy-d",
+      projectRootPath: "/tablet/app/packages/web",
+    };
+    const hostAClone = {
+      ...placements[0]!,
+      projectId: "prj-a-clone",
+      projectName: "acme/app clone",
+      projectRootPath: "/repos/clone/packages/web",
+    };
+    const hostE = {
+      ...placements[1]!,
+      serverId: "host-e",
+      serverName: "Phone",
+      projectId: "prj-e",
+      projectKey: "legacy-e",
+      projectRootPath: "/phone/app/packages/web",
+    };
+    const suggestions = buildProjectLinkSuggestions({
+      placements: [...placements, hostC, hostD, hostAClone, hostE],
+      links: [
+        {
+          id: "link-ab",
+          members: [
+            { serverId: "host-a", projectId: "prj-a" },
+            { serverId: "host-b", projectId: "prj-b" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+        },
+        {
+          id: "link-cd",
+          members: [
+            { serverId: "host-c", projectId: "prj-c" },
+            { serverId: "host-d", projectId: "prj-d" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+        },
+        {
+          id: "link-ae",
+          members: [
+            { serverId: "host-a", projectId: "prj-a-clone" },
+            { serverId: "host-e", projectId: "prj-e" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+        },
+      ],
+    });
+
+    expect(
+      suggestions.map((suggestion) => suggestion.placements.map(projectLinkPlacementKey)),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([
+          projectLinkPlacementKey({ serverId: "host-a", projectId: "prj-a" }),
+          projectLinkPlacementKey({ serverId: "host-b", projectId: "prj-b" }),
+          projectLinkPlacementKey({ serverId: "host-c", projectId: "prj-c" }),
+          projectLinkPlacementKey({ serverId: "host-d", projectId: "prj-d" }),
+        ]),
+        expect.arrayContaining([
+          projectLinkPlacementKey({ serverId: "host-a", projectId: "prj-a-clone" }),
+          projectLinkPlacementKey({ serverId: "host-e", projectId: "prj-e" }),
+          projectLinkPlacementKey({ serverId: "host-c", projectId: "prj-c" }),
+          projectLinkPlacementKey({ serverId: "host-d", projectId: "prj-d" }),
+        ]),
+      ]),
+    );
+    expect(suggestions).toHaveLength(2);
   });
 
   test("merges matching local links and drops a link when a member is unlinked", () => {

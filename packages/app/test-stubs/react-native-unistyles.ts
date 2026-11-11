@@ -37,7 +37,6 @@ const testTheme = {
       yellow: { 400: "#facc15" },
       zinc: { 600: "#52525b" },
       red: { 300: "#fca5a5" },
-      zinc: { 600: "#52525b" },
       white: "#ffffff",
     },
   },

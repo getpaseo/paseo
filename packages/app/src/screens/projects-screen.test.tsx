@@ -123,6 +123,11 @@ vi.mock("react-native-reanimated", () => ({
   useAnimatedStyle: (factory: () => unknown) => factory(),
 }));
 
+vi.mock("react-native-gesture-handler", () => ({
+  Gesture: { Pan: () => undefined },
+  GestureDetector: ({ children }: { children?: React.ReactNode }) => children,
+}));
+
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
     getItem: async () => null,
