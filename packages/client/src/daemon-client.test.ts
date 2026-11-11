@@ -753,13 +753,14 @@ class DaemonClientSession {
   private readonly daemon = new FakeDaemon();
   private readonly client: DaemonClient;
 
-  constructor() {
+  constructor(options: { livenessHeartbeat?: boolean } = {}) {
     this.client = new DaemonClient({
       url: "ws://test",
       clientId: "clsk_heartbeat_test",
       logger: noopLogger,
       reconnect: { enabled: false },
       transportFactory: () => this.daemon.transport,
+      ...options,
     });
     clients.push(this.client);
   }
@@ -3255,6 +3256,18 @@ test("starts pinging one interval after connecting and holds the cadence", async
 
   await session.advance(20_001);
   expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("a client with the liveness heartbeat off never pings on its own", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession({ livenessHeartbeat: false });
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(60_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual([]);
 });
 
 test("stops pinging once the connection is gone", async () => {

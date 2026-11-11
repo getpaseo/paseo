@@ -313,6 +313,9 @@ export function createPluginWorker(options: {
       // The runtime re-attaches a session when the daemon drops this socket.
       reconnect: { enabled: true },
       transportFactory,
+      // The channel is a pipe to the daemon (or an in-process queue for built-in plugins); its
+      // loss is reported directly, so a 10 s ping would only wake both sides.
+      livenessHeartbeat: false,
     });
     paseo = createPaseoApi(daemonClient);
     await daemonClient.connect();
@@ -643,6 +646,7 @@ export function createPluginWorker(options: {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let worker: ReturnType<typeof createPluginWorker> | null = null;
+  let closedByShutdown = false;
   const handlers = new Set<(message: PluginProcessRequest) => void>();
   const channel: PluginWorkerChannel = {
     send(message, callback) {
@@ -656,9 +660,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       };
     },
     disconnect() {
+      closedByShutdown = true;
       process.disconnect();
     },
   };
+  // The daemon worker owns this process through the IPC channel. When the channel closes without
+  // this process closing it (the worker crashed or was killed), nothing can reach the plugin any
+  // more, so exit instead of running on as an orphan. A normal shutdown closes the channel itself
+  // and lets work still in flight finish.
+  process.once("disconnect", () => {
+    if (!closedByShutdown) process.exit(0);
+  });
   process.on("message", (raw) => {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
     if (!worker && parsed.success && parsed.data.type === "initialize") {
