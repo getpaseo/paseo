@@ -3,7 +3,6 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { collectAllTabs } from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { selectNestedSubagentWorkspaceKeys } from "./nested-workspaces";
 
 type SessionState = ReturnType<typeof useSessionStore.getState>;
@@ -40,20 +39,23 @@ export function useNestedSubagentWorkspaceKeys(): ReadonlySet<string> {
   const layoutByWorkspace = useWorkspaceLayoutStore((state) =>
     enabled ? state.layoutByWorkspace : null,
   );
+  const agentTabWorkspaceKeys = useMemo(() => {
+    const keys = new Map<string, string>();
+    if (!layoutByWorkspace) return keys;
+    for (const [layoutKey, layout] of Object.entries(layoutByWorkspace)) {
+      // Layout keys are `${serverId}:${workspaceId}`, the same key a sidebar workspace row uses.
+      const serverId = layoutKey.slice(0, layoutKey.indexOf(":"));
+      if (!layout || !serverId) continue;
+      for (const tab of collectAllTabs(layout.root)) {
+        if (tab.target.kind === "agent") keys.set(`${serverId}:${tab.target.agentId}`, layoutKey);
+      }
+    }
+    return keys;
+  }, [layoutByWorkspace]);
   const keys = useMemo(() => {
-    if (!layoutByWorkspace || agentsByServerId.size === 0) return [];
-    return selectNestedSubagentWorkspaceKeys({
-      agentsByServerId,
-      hasAgentTab: (serverId, workspaceId, agentId) => {
-        const layoutKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-        const layout = layoutKey ? layoutByWorkspace[layoutKey] : undefined;
-        if (!layout) return false;
-        return collectAllTabs(layout.root).some(
-          (tab) => tab.target.kind === "agent" && tab.target.agentId === agentId,
-        );
-      },
-    });
-  }, [agentsByServerId, layoutByWorkspace]);
+    if (agentTabWorkspaceKeys.size === 0 || agentsByServerId.size === 0) return [];
+    return selectNestedSubagentWorkspaceKeys({ agentsByServerId, agentTabWorkspaceKeys });
+  }, [agentsByServerId, agentTabWorkspaceKeys]);
   const joined = keys.join("\n");
   return useMemo(() => (joined ? new Set(joined.split("\n")) : NO_KEYS), [joined]);
 }

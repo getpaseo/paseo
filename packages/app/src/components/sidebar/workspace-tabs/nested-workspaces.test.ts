@@ -16,9 +16,13 @@ function agent(
 }
 
 function select(agents: NestingAgent[], openTabs: string[] = ["p"]) {
+  const byId = new Map(agents.map((entry) => [entry.id, entry]));
   return selectNestedSubagentWorkspaceKeys({
-    agentsByServerId: new Map([["s", new Map(agents.map((entry) => [entry.id, entry]))]]),
-    hasAgentTab: (_serverId, _workspaceId, agentId) => openTabs.includes(agentId),
+    agentsByServerId: new Map([["s", byId]]),
+    // A tab sits in its agent's workspace; "main" stands in for a parent the client has no record of.
+    agentTabWorkspaceKeys: new Map(
+      openTabs.map((id) => [`s:${id}`, `s:${byId.get(id)?.workspaceId ?? "main"}`]),
+    ),
   });
 }
 
@@ -51,7 +55,11 @@ describe("selectNestedSubagentWorkspaceKeys", () => {
     ).toEqual(["s:review"]);
   });
 
-  it("keeps a workspace whose parent is archived or missing", () => {
+  it("nests under a parent the client holds no record of, found through its open tab", () => {
+    expect(select([agent("a", "review", "p")])).toEqual(["s:review"]);
+  });
+
+  it("keeps a workspace whose parent is archived or has no tab", () => {
     expect(
       select([
         agent("p", "main", undefined, { archivedAt: new Date() }),
