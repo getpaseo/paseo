@@ -16710,6 +16710,85 @@ describe("durable timeline gap recovery", () => {
     }
   });
 
+  test("completes a reply rewrite that a crash left partially on disk", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    class TruncatedReplyHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "one", messageId: "pm1" },
+        };
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "Hello world", messageId: "m1" },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new TruncatedReplyHistorySession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    const store = new RecordingTimelineStore();
+    // A crash mid-rewrite under the crash-safe ordering: the cleared chunk
+    // row reached disk but the full reply appended on the first row was torn
+    // away. The stored reply "He" still projects to a strict prefix of the
+    // provider's text, so the next recovery pass completes the rewrite
+    // instead of freezing in a partial state.
+    const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+      {
+        seq: 1,
+        timestamp: TS,
+        item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+      },
+      { seq: 2, timestamp: TS, item: { type: "assistant_message", text: "He", messageId: "m1" } },
+      { seq: 3, timestamp: TS, item: { type: "assistant_message", text: "", messageId: "m1" } },
+    ]);
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+
+      const rows = await store.getCommittedRows(agentId);
+      expect(rows.map((row) => row.seq)).toEqual([1, 2, 3]);
+      expect(rows[1]?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "m1",
+      });
+      expect(rows[2]?.item).toEqual({ type: "assistant_message", text: "", messageId: "m1" });
+
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 3]);
+      expect(timeline.at(-1)?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "m1",
+      });
+
+      // The rewrite batch clears the newest chunk first and carries the full
+      // reply on the last line, so a torn append can only leave a state that
+      // the prefix check still recognizes as truncated.
+      const isRewriteRow = (row: AgentTimelineRow): boolean =>
+        row.seq === 2 && row.item.type === "assistant_message" && row.item.text === "Hello world";
+      const rewrite = store.writes.find((batch) => batch.some(isRewriteRow));
+      expect(rewrite?.map((row) => row.seq)).toEqual([3, 2]);
+      expect(rewrite?.[0]?.item).toEqual({ type: "assistant_message", text: "", messageId: "m1" });
+      expect(rewrite?.[1]?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "m1",
+      });
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("replays only the unrecorded tail when a live row predates the provider's final text", async () => {
     const TS = "2026-01-01T00:00:00.000Z";
     // The live row holds a partial text for message m1 (a rewritten part);
@@ -16838,6 +16917,70 @@ describe("durable timeline gap recovery", () => {
         text: "p2",
         clientMessageId: "cp2",
       });
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a whole-turns tail page stops at a final page above a huge older turn", async () => {
+    const rows: AgentTimelineRow[] = [];
+    // An older turn longer than the 20,000-row scan cap, then a short current
+    // turn: the requested page (expanded to the current turn) sits inside the
+    // first 256-row batch, so the bounded scan must stop there instead of
+    // crawling the older turn to the cap and falling back to a full read.
+    rows.push({
+      seq: 1,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      item: { type: "user_message", text: "p1" },
+    });
+    for (let i = 1; i <= 20_500; i += 1) {
+      rows.push({
+        seq: i + 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "todo", items: [{ text: `old-${i}`, completed: false }] },
+      });
+    }
+    rows.push({
+      seq: 20_502,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      item: { type: "user_message", text: "p2" },
+    });
+    for (let i = 1; i <= 45; i += 1) {
+      rows.push({
+        seq: 20_502 + i,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "todo", items: [{ text: `new-${i}`, completed: false }] },
+      });
+    }
+    const store = new RecordingTimelineStore();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      new TestAgentClient(),
+      store,
+      rows,
+    );
+    const fullReadsBefore = store.fullReadCount;
+    const tailReadsBefore = store.tailReadCounts.length;
+    try {
+      const page = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "tail",
+        limit: 40,
+        wholeTurns: true,
+      });
+      expect(page.rows).toHaveLength(46);
+      expect(page.startSeq).toBe(20_502);
+      expect(page.endSeq).toBe(20_547);
+      expect(page.hasOlder).toBe(true);
+      expect(page.hasNewer).toBe(false);
+      expect(page.rows[0]?.item).toEqual({ type: "user_message", text: "p2" });
+      expect(page.rows.at(-1)?.item).toEqual({
+        type: "todo",
+        items: [{ text: "new-45", completed: false }],
+      });
+      // The page is final in the first batch: one bounded tail read, and no
+      // full read of the 20,547-row log.
+      expect(store.fullReadCount).toBe(fullReadsBefore);
+      expect(store.tailReadCounts.length).toBe(tailReadsBefore + 1);
     } finally {
       await manager.closeAgent(agentId).catch(() => undefined);
       rmSync(workdir, { recursive: true, force: true });

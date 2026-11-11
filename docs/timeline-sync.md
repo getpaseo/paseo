@@ -51,7 +51,9 @@ Evicted rows remain available to pagination, search, prompt listing, and fork co
 pages avoid loading complete history when their display anchors are known. A tail read falls back
 to full projection when an unread prefix could contain an older occurrence of an item identity.
 Whole-turn tail pages extend the bounded scan until the turn's first row is collected, falling
-back to the full read when the turn exceeds the scan cap.
+back to the full read when the turn exceeds the scan cap, but stop as soon as the selected page's
+oldest item starts inside the collected rows — that page's turn boundary is already certified, so
+a huge older turn cannot force a full read for a page that cannot change.
 Deep paging and full-history reads can parse the complete
 file on each request; there is no resident history cache. An oversized full-history request can
 therefore allocate substantially more than the retained window.
@@ -62,7 +64,9 @@ inside the saved log, so rows the daemon committed but the provider never re-emi
 its transcript omits) stay in the log; a replay the log fully contains misses nothing. A crash
 between chunk writes can leave a stored reply shorter than the provider's copy of the same message
 id; recovery rewrites those stored rows in place with the provider's text instead of re-recording
-the item. Recovery rebuilds from the provider's complete copy only when the replay cannot be
+the item. The rewrite appends the cleared chunks newest-first and the full reply last, so a torn
+append can only leave a state that still projects to a strict prefix of the reply; the next
+recovery pass completes the rewrite instead of freezing a partial one. Recovery rebuilds from the provider's complete copy only when the replay cannot be
 anchored or diverges mid-alignment. A gapped log is rebuilt
 when provider history is available; otherwise the daemon keeps the surviving durable rows. An explicit rewind remains
 authoritative, including an empty history. Provider-subagent state is replayed separately because

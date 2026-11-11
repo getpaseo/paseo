@@ -619,6 +619,27 @@ export function boundaryTurnContinues(above: AgentTimelineRow, below: AgentTimel
   return continuesTimelineTurn(above.turnId, below.turnId, isTimelineTurnTrigger(below.item));
 }
 
+/**
+ * Whether a whole-turns tail page selected from `merged` is final: the page's
+ * oldest item starts strictly inside the collected rows, so that item's turn
+ * boundary is certified by collected rows and loading older history cannot
+ * re-group the page. When the page reaches the collection's oldest row its
+ * turn may continue above the cut, so the scan must keep extending.
+ */
+export function wholeTurnPageIsFinal(
+  merged: readonly AgentTimelineRow[],
+  options: { minSeq: number; maxSeq: number; limit: number },
+): boolean {
+  const selection = new TimelineProjection(merged).selectPage({
+    bounds: { minSeq: options.minSeq, maxSeq: options.maxSeq },
+    direction: "tail",
+    limit: options.limit,
+    wholeTurns: true,
+  });
+  const oldest = selection.entries[0];
+  return oldest !== undefined && oldest.seqStart > options.minSeq;
+}
+
 export function projectTimelineRows(input: {
   rows: readonly AgentTimelineRow[];
   mode: TimelineProjectionMode;

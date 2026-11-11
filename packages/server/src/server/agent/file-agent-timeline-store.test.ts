@@ -510,4 +510,60 @@ describe("FileAgentTimelineStore", () => {
       items: [{ text: "p2-261", completed: false }],
     });
   });
+
+  it("a whole-turns tail page stops at a final page above a huge older turn", async () => {
+    class CountingStore extends FileAgentTimelineStore {
+      fullReadCount = 0;
+
+      override async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+        this.fullReadCount += 1;
+        return super.getCommittedRows(agentId);
+      }
+    }
+    const counting = new CountingStore({ directory });
+    const rows: AgentTimelineRow[] = [];
+    // An older turn longer than the 20,000-row scan cap, then a short current
+    // turn: the requested page (expanded to the current turn) sits inside the
+    // first 256-row batch, so the bounded scan must stop there instead of
+    // crawling the older turn to the cap and falling back to a full read.
+    rows.push(row(1, "p1"));
+    for (let i = 1; i <= 20_500; i += 1) {
+      rows.push({
+        seq: i + 1,
+        timestamp: TIMESTAMP,
+        item: { type: "todo", items: [{ text: `old-${i}`, completed: false }] },
+      });
+    }
+    rows.push(row(20_502, "p2"));
+    for (let i = 1; i <= 45; i += 1) {
+      rows.push({
+        seq: 20_502 + i,
+        timestamp: TIMESTAMP,
+        item: { type: "todo", items: [{ text: `new-${i}`, completed: false }] },
+      });
+    }
+    await counting.bulkInsert("a", rows);
+
+    const page = await counting.fetchCommitted("a", {
+      direction: "tail",
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(page.rows).toHaveLength(46);
+    expect(page.startSeq).toBe(20_502);
+    expect(page.endSeq).toBe(20_547);
+    expect(page.hasOlder).toBe(true);
+    expect(page.hasNewer).toBe(false);
+    expect(page.rows[0]?.item).toEqual({
+      type: "user_message",
+      text: "p2",
+      clientMessageId: "c20502",
+    });
+    expect(page.rows.at(-1)?.item).toEqual({
+      type: "todo",
+      items: [{ text: "new-45", completed: false }],
+    });
+    // The final page ends the scan in the first batch: no full read.
+    expect(counting.fullReadCount).toBe(0);
+  });
 });

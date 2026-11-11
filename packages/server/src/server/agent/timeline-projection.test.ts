@@ -7,6 +7,7 @@ import {
   projectTimelineRows,
   selectTimelineWindowByProjectedLimit,
   TimelineProjection,
+  wholeTurnPageIsFinal,
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
@@ -989,5 +990,46 @@ describe("TimelineProjection.evictBefore", () => {
     expect(projection.getRows()[0]?.item).toEqual(
       expect.objectContaining({ type: "tool_call", callId: "t1", status: "completed" }),
     );
+  });
+});
+
+describe("wholeTurnPageIsFinal", () => {
+  function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
+    return { seq, timestamp: "2026-02-13T00:00:00.000Z", item };
+  }
+
+  test("final once the page's oldest item starts inside the collected rows", () => {
+    // Turn 1 (rows 1-6) then turn 2 (rows 7-12); a 4-item page expands to
+    // turn 2's prompt at row 7, strictly inside the collection, so older
+    // rows cannot re-group the page.
+    const rows: AgentTimelineRow[] = [
+      row(1, { type: "user_message", text: "p1" }),
+      ...Array.from({ length: 5 }, (_, i) =>
+        row(i + 2, { type: "todo", items: [{ text: `a${i}`, completed: false }] }),
+      ),
+      row(7, { type: "user_message", text: "p2" }),
+      ...Array.from({ length: 5 }, (_, i) =>
+        row(i + 8, { type: "todo", items: [{ text: `b${i}`, completed: false }] }),
+      ),
+    ];
+    expect(wholeTurnPageIsFinal(rows, { minSeq: 1, maxSeq: 12, limit: 4 })).toBe(true);
+  });
+
+  test("not final when the page reaches the collection's oldest row", () => {
+    // The collection starts mid-turn (row 4) and holds fewer items than the
+    // limit, so the page includes the truncated turn: the scan must extend.
+    const rows: AgentTimelineRow[] = [
+      row(4, { type: "todo", items: [{ text: "a3", completed: false }] }),
+      row(5, { type: "todo", items: [{ text: "a4", completed: false }] }),
+      row(6, { type: "user_message", text: "p2" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        row(i + 7, { type: "todo", items: [{ text: `b${i}`, completed: false }] }),
+      ),
+    ];
+    expect(wholeTurnPageIsFinal(rows, { minSeq: 4, maxSeq: 10, limit: 40 })).toBe(false);
+  });
+
+  test("not final for an empty collection", () => {
+    expect(wholeTurnPageIsFinal([], { minSeq: 1, maxSeq: 1, limit: 40 })).toBe(false);
   });
 });

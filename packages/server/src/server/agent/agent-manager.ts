@@ -8,6 +8,7 @@ import {
   boundaryTurnContinues,
   projectTimelineRows,
   tailBoundaryRowCrosses,
+  wholeTurnPageIsFinal,
   type ProjectedTimelineRow,
 } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
@@ -1851,6 +1852,22 @@ export class AgentManager {
       // batch. A one-row probe cannot certify its display order.
       if (collectedIdentities.size > 0) return null;
       const collectionOldest = durable[0];
+      // A whole-turns page is final once its oldest item starts inside the
+      // collected rows: its turn boundary is certified by collected rows, so
+      // older history cannot re-group the page. Stop there instead of
+      // scanning to a turn boundary far above the page (a huge older turn
+      // would hit the scan cap and force a full read even though the page
+      // cannot change).
+      if (
+        wholeTurns &&
+        wholeTurnPageIsFinal([...durable, ...windowRows], {
+          minSeq: collectionOldest.seq,
+          maxSeq: nextSeq - 1,
+          limit,
+        })
+      ) {
+        break;
+      }
       const probe = await durableStore.readTailRows(id, {
         maxSeq: collectionOldest.seq - 1,
         offset: 0,
@@ -5877,6 +5894,13 @@ export class AgentManager {
    * projection merges them into the restored item instead of duplicating it.
    * Last-write-wins per seq makes the appended rows supersede the truncated
    * chunks in every later read.
+   *
+   * The rewrite appends the cleared chunks newest-first and the full reply
+   * last: a torn append leaves only a prefix of the batch on disk, and that
+   * order keeps every such prefix projecting to a strict prefix of the full
+   * reply. The next restart's recovery then completes the rewrite. Writing
+   * the full reply first could leave `full text + uncleared chunks` behind,
+   * which the prefix check can never repair.
    */
   private async restoreSeededTimelineReplies(
     agentId: string,
@@ -5888,12 +5912,12 @@ export class AgentManager {
     for (const restore of restores) {
       const [first, ...rest] = restore.rows;
       if (!first) continue;
-      rows.push({ ...first, item: restore.item });
-      for (const row of rest) {
+      for (const row of rest.toReversed()) {
         if (row.item.type === "assistant_message") {
           rows.push({ ...row, item: { ...row.item, text: "" } });
         }
       }
+      rows.push({ ...first, item: restore.item });
     }
     if (rows.length > 0) await durableStore.bulkInsert(agentId, rows);
   }

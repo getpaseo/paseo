@@ -8,6 +8,7 @@ import {
   boundaryTurnContinues,
   projectTimelineRows,
   tailBoundaryRowCrosses,
+  wholeTurnPageIsFinal,
 } from "./timeline-projection.js";
 import {
   DEFAULT_TIMELINE_FETCH_LIMIT,
@@ -167,6 +168,22 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       // identity. Full projection is required to preserve its display anchor.
       if (collectedIdentities.size > 0) return null;
       const collectionOldest = collected[0];
+      // A whole-turns page is final once its oldest item starts inside the
+      // collected rows: its turn boundary is certified by collected rows, so
+      // older history cannot re-group the page. Stop there instead of
+      // scanning to a turn boundary far above the page (a huge older turn
+      // would hit the scan cap and force a full read even though the page
+      // cannot change).
+      if (
+        wholeTurns &&
+        wholeTurnPageIsFinal(collected, {
+          minSeq: collectionOldest.seq,
+          maxSeq: collected[collected.length - 1].seq,
+          limit,
+        })
+      ) {
+        break;
+      }
       const probe = await this.readTailRows(agentId, {
         maxSeq: collectionOldest.seq - 1,
         offset: 0,
