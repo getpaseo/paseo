@@ -6338,24 +6338,13 @@ describe("Codex app-server provider", () => {
       });
       // Codex reports a child's completion on the root thread, independently
       // of whether the root model stream has recovered.
-      appServer.child.stdout.write(
-        `${JSON.stringify({
-          method: "item/started",
-          params: {
-            threadId: "thread-1",
-            turnId: "codex-turn-1",
-            item: {
-              type: "subAgentActivity",
-              id: "subagent-completed-child-turn",
-              kind: "completed",
-              agentThreadId: "child-thread",
-              agentPath: "/root/child",
-              model: null,
-              reasoningEffort: null,
-            },
-          },
-        })}\n`,
-      );
+      appServer.beginsSubAgentActivity({
+        callId: "subagent-completed-child-turn",
+        threadId: "child-thread",
+        parentThreadId: "thread-1",
+        agentPath: "/root/child",
+        kind: "completed",
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(events.map(describeStatusNotice)).toEqual(["running: Reconnecting... 1/2"]);
 
@@ -6378,6 +6367,34 @@ describe("Codex app-server provider", () => {
         event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
       );
       expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("cancels the reconnect row before closing its session", async () => {
+    const { appServer, session, events } = await startStatusNoticeTurnTest();
+    try {
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 1/2",
+        willRetry: true,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.close();
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "canceled: Reconnecting... 1/2",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      // Closing again must not publish another terminal update.
+      await session.close();
+      expect(events).toHaveLength(2);
       appServer.assertNoErrors();
     } finally {
       await session.close();
