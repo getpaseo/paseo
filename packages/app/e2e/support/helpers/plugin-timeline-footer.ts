@@ -141,6 +141,22 @@ async function captureFooterScreenshot(page: Page, info: TestInfo, name: string)
   });
 }
 
+async function expectScrollButtonAboveFooter(page: Page): Promise<void> {
+  const button = page.getByTestId("scroll-to-bottom-button");
+  const footer = page.getByTestId("plugin-timeline-footer");
+  await expect(button).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [buttonBox, footerBox] = await Promise.all([
+        button.boundingBox(),
+        footer.boundingBox(),
+      ]);
+      if (!buttonBox || !footerBox) return -Infinity;
+      return footerBox.y - (buttonBox.y + buttonBox.height);
+    })
+    .toBeGreaterThanOrEqual(8);
+}
+
 export async function expectPinnedFooter(page: Page, agent: MockAgentWorkspace): Promise<void> {
   const footer = page.getByTestId("plugin-timeline-footer");
   const history = page.getByTestId("agent-chat-scroll");
@@ -176,6 +192,8 @@ export async function scrollHistoryAndUsePinnedControls(
       return after ? Math.abs(after.y - before.y) : Infinity;
     })
     .toBeLessThan(1);
+  await expectScrollButtonAboveFooter(page);
+  await captureFooterScreenshot(page, info, "scroll-button-above-footer");
   await footer.getByRole("button", { name: "Footer clicks 0", exact: true }).click();
   await expect(footer.getByRole("button", { name: "Footer clicks 1", exact: true })).toBeVisible();
   await history.evaluate((node) => {

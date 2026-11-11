@@ -1,7 +1,7 @@
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { PluginTimelineFooterContribution } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -49,6 +49,8 @@ interface TimelineFootersProps {
   serverId: string;
   theme: PluginTheme;
   bottomOverlayClearance?: number;
+  /** Space the panel takes from the bottom of the chat, margin included; 0 when nothing is pinned. */
+  onHeightChange?: (height: number) => void;
 }
 
 function TimelineFooters({
@@ -56,19 +58,31 @@ function TimelineFooters({
   serverId,
   theme,
   bottomOverlayClearance = 0,
+  onHeightChange,
 }: TimelineFootersProps) {
   const [contentHeight, setContentHeight] = useState(0);
+  const [panelHeight, setPanelHeight] = useState(0);
   const handleContentLayout = useCallback((event: LayoutChangeEvent) => {
     setContentHeight(event.nativeEvent.layout.height);
+  }, []);
+  const handlePanelLayout = useCallback((event: LayoutChangeEvent) => {
+    setPanelHeight(event.nativeEvent.layout.height);
   }, []);
   const plugins = useInstalledPlugins();
   const footers = plugins
     .filter((plugin) => plugin.serverId === serverId)
     .flatMap((plugin) => plugin.timelineFooters.map((footer) => ({ plugin, footer })));
+  const marginBottom = contentHeight > 0 ? bottomOverlayClearance : 0;
+  const occupied = footers.length > 0 && contentHeight > 0 ? panelHeight + marginBottom : 0;
+  useEffect(() => {
+    onHeightChange?.(occupied);
+  }, [occupied, onHeightChange]);
+  useEffect(() => () => onHeightChange?.(0), [onHeightChange]);
   if (footers.length === 0) return null;
   return (
     <ScrollView
-      style={[styles.footer, { marginBottom: contentHeight > 0 ? bottomOverlayClearance : 0 }]}
+      style={[styles.footer, { marginBottom }]}
+      onLayout={handlePanelLayout}
       keyboardShouldPersistTaps="handled"
       testID="plugin-timeline-footer"
     >
