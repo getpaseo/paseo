@@ -750,12 +750,33 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
+const ImageAttachmentSchema = z.object({
+  data: z.string(), // base64 encoded image
+  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+});
+
+export const UploadedImageSchema = z.object({
+  id: z.string().regex(/^upload_[0-9a-f-]{36}$/),
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  size: z.number().int().nonnegative(),
+});
+export type UploadedImage = z.infer<typeof UploadedImageSchema>;
+
+export const AgentTimelineImageReferenceSchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{64}$/),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+});
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
     text: z.string(),
+    images: z.array(ImageAttachmentSchema).optional(),
+    imageRefs: z.array(AgentTimelineImageReferenceSchema).optional(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
   }),
@@ -1327,11 +1348,6 @@ export const ChangeRequestCheckoutSourceSchema = z.object({
   projectPath: z.string().optional(),
 });
 
-const ImageAttachmentSchema = z.object({
-  data: z.string(), // base64 encoded image
-  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
-});
-
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
@@ -1342,6 +1358,7 @@ export const SendAgentMessageSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1513,6 +1530,7 @@ export const SendAgentMessageRequestSchema = z.object({
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
 
@@ -1874,6 +1892,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
+  imageUploads: z.array(UploadedImageSchema).optional(),
   attachments: AgentAttachmentsSchema,
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
@@ -3044,6 +3063,13 @@ export const FileExplorerRequestSchema = z.object({
   maxBytes: z.number().int().positive().optional(),
 });
 
+export const AgentTimelineImageReadRequestSchema = z.object({
+  type: z.literal("agent.timeline.image.read.request"),
+  agentId: z.string(),
+  imageId: z.string().regex(/^[0-9a-f]{64}$/),
+  requestId: z.string(),
+});
+
 export const FileVersionSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ready"),
@@ -3671,6 +3697,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  AgentTimelineImageReadRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3927,6 +3954,8 @@ export const ServerInfoStatusPayloadSchema = z
         terminalCollection: z.boolean().optional(),
         // COMPAT(workspaceBaseBranch): added after v0.11.2, remove gate after 2027-10-14.
         workspaceBaseBranch: z.boolean().optional(),
+        // COMPAT(timelineImages): added in v0.15.x, remove gate after 2027-11-06.
+        timelineImages: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -6474,6 +6503,11 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const AgentTimelineImageReadResponseSchema = z.object({
+  type: z.literal("agent.timeline.image.read.response"),
+  payload: z.object({ requestId: z.string(), error: z.string().nullable() }),
+});
+
 export const FileSubscribeResponseSchema = z.object({
   type: z.literal("fs.file.subscribe.response"),
   payload: z.object({
@@ -7555,6 +7589,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  AgentTimelineImageReadResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,
@@ -8014,6 +8049,8 @@ export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttent
 export type WorkspaceMarkUnreadRequest = z.infer<typeof WorkspaceMarkUnreadRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type AgentTimelineImageReadRequest = z.infer<typeof AgentTimelineImageReadRequestSchema>;
+export type AgentTimelineImageReadResponse = z.infer<typeof AgentTimelineImageReadResponseSchema>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;

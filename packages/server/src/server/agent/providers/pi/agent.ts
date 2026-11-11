@@ -211,6 +211,7 @@ interface PiModelReference {
 }
 
 interface PiPersistenceMetadata {
+  submittedUserMessageIds?: Record<string, string>;
   cwd?: string;
   model?: string;
   thinkingOptionId?: string;
@@ -257,6 +258,7 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
+  submittedUserMessageIds?: Record<string, string>;
 }
 
 interface PiResumeConfig {
@@ -461,6 +463,13 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): PiPersis
     return {};
   }
   return {
+    ...(metadata.submittedUserMessageIds === undefined
+      ? {}
+      : {
+          submittedUserMessageIds: z
+            .record(z.string(), z.string().min(1))
+            .parse(metadata.submittedUserMessageIds),
+        }),
     ...(typeof metadata.cwd === "string" ? { cwd: metadata.cwd } : {}),
     ...(typeof metadata.model === "string" ? { model: metadata.model } : {}),
     ...(typeof metadata.thinkingOptionId === "string"
@@ -1212,6 +1221,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
+  private readonly submittedUserMessageIds: Map<string, string>;
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private compactionPromise: Promise<void> | null = null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
@@ -1247,6 +1257,7 @@ export class PiRpcAgentSession implements AgentSession {
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
+    this.submittedUserMessageIds = new Map(Object.entries(options.submittedUserMessageIds ?? {}));
     this.state = options.initialState;
     this.config.thinkingOptionId = this.state.thinkingLevel;
     this.capabilities = options.capabilities;
@@ -1464,7 +1475,11 @@ export class PiRpcAgentSession implements AgentSession {
       yield* streamPiHistory(
         this.provider,
         history.messages,
-        history.userEntries,
+        history.userEntries.map((entry) =>
+          Object.assign({}, entry, {
+            clientMessageId: this.submittedUserMessageIds.get(entry.id),
+          }),
+        ),
         {},
         // At most eight 2 MiB child files per replay; later cards retain their summaries.
         createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
@@ -1531,6 +1546,9 @@ export class PiRpcAgentSession implements AgentSession {
       nativeHandle: this.persistedSessionFile ?? this.state.sessionFile,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.submittedUserMessageIds.size > 0
+          ? { submittedUserMessageIds: Object.fromEntries(this.submittedUserMessageIds) }
+          : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.config.thinkingOptionId ? { thinkingOptionId: this.config.thinkingOptionId } : {}),
         ...(this.currentModeId ? { modeId: this.currentModeId } : {}),
@@ -2040,6 +2058,10 @@ export class PiRpcAgentSession implements AgentSession {
     const clientMessageId = pendingSteer
       ? pendingSteer.clientMessageId
       : this.activeClientMessageId;
+    if (clientMessageId) {
+      // Keep the exact live echo association in the provider handle for replay.
+      this.submittedUserMessageIds.set(entry.id, clientMessageId);
+    }
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -2739,6 +2761,7 @@ export class PiRpcAgentClient implements AgentClient {
           model: modelToId(initialState.model) ?? resumeConfig.config.model,
         },
         initialState,
+        submittedUserMessageIds: persistenceMetadata.submittedUserMessageIds,
         capabilities: capabilitiesForSession(mcp !== null),
         persistedSessionFile: sessionCopy ? sessionFile : undefined,
         cleanup: cleanupTempFiles,
