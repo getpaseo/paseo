@@ -1,5 +1,5 @@
 import { RefreshControl } from "react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
@@ -37,6 +37,7 @@ export function DraggableList<T>({
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
+  const dragData = useRef(data);
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.
@@ -65,17 +66,18 @@ export function DraggableList<T>({
   );
 
   const handleDragEnd = useCallback(
-    ({ data: newData }: { data: T[] }) => {
+    ({ data: newData, from }: { data: T[]; from: number; to: number }) => {
       setIsDragging(false);
-      onDragEnd(newData);
+      onDragEnd(newData, keyExtractor(dragData.current[from]!, from));
     },
-    [onDragEnd],
+    [onDragEnd, keyExtractor],
   );
 
   const handleDragBegin = useCallback(() => {
+    dragData.current = data;
     setIsDragging(true);
     onDragBeginProp?.();
-  }, [onDragBeginProp]);
+  }, [onDragBeginProp, data]);
 
   const handleRelease = useCallback(() => {
     setIsDragging(false);
