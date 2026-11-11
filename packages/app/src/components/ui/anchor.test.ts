@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getTransformOrigin, type Rect } from "./anchor";
+import {
+  computePosition,
+  fitSurfaceWidth,
+  getTransformOrigin,
+  holdSurfaceEdge,
+  surfaceFrameStyles,
+  type Rect,
+} from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -78,6 +85,46 @@ describe("computePosition", () => {
   });
 });
 
+/**
+ * Where a surface's edges land when its content has resized but it has not been placed again,
+ * the frame native paints before the next placement arrives. Resolves the frame styles the way
+ * layout does: a top-held surface grows down from its top, a bottom-held one up from the
+ * holder's bottom.
+ */
+function edgesBeforeReplacement(placedHeight: number, paintedHeight: number) {
+  const placed = position({ placement: "top", triggerRect: { ...TRIGGER, y: 400 } });
+  const { holder, surface } = surfaceFrameStyles(holdSurfaceEdge(placed, placedHeight));
+  const bottom =
+    typeof surface.bottom === "number"
+      ? Number(holder.height) - surface.bottom
+      : Number(surface.top) + paintedHeight;
+  return { top: bottom - paintedHeight, bottom };
+}
+
+describe("surfaceFrameStyles", () => {
+  it("keeps a surface above its trigger off the trigger when its content grows", () => {
+    // Trigger top 400, offset 4: the surface ends at 396 however tall it becomes.
+    expect(edgesBeforeReplacement(CONTENT.height, CONTENT.height)).toEqual({
+      top: 296,
+      bottom: 396,
+    });
+    expect(edgesBeforeReplacement(CONTENT.height, 260)).toEqual({ top: 136, bottom: 396 });
+  });
+
+  it("keeps a surface above its trigger against the trigger when its content shrinks", () => {
+    expect(edgesBeforeReplacement(CONTENT.height, 40)).toEqual({ top: 356, bottom: 396 });
+  });
+
+  it("holds a surface below its trigger by its top edge", () => {
+    const { surface } = surfaceFrameStyles(holdSurfaceEdge(position(), CONTENT.height));
+    expect(surface).toMatchObject({ position: "absolute", top: 124, left: 100 });
+  });
+
+  it("waits off-screen until it is placed", () => {
+    expect(surfaceFrameStyles(null).surface).toMatchObject({ top: -9999, left: -9999 });
+  });
+});
+
 describe("getTransformOrigin", () => {
   it.each([
     ["bottom", "start", [0, 0, 0]],
@@ -95,5 +142,28 @@ describe("getTransformOrigin", () => {
   ] as const)("emits a native-ready origin for %s/%s", (placement, alignment, expected) => {
     // Theme updates may reach Fabric without React Native's JS string preprocessing.
     expect(getTransformOrigin(placement, alignment)).toEqual(expected);
+  });
+});
+
+describe("fitSurfaceWidth", () => {
+  it("leaves a surface that fits the display alone, capped at the display", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180 }, 1000)).toEqual({
+      width: 240,
+      minWidth: 180,
+      maxWidth: 984,
+    });
+  });
+
+  it("shrinks a surface wider than a narrow display to the space inside its edge padding", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180, maxWidth: 320 }, 220)).toEqual({
+      width: 204,
+      minWidth: 180,
+      maxWidth: 204,
+    });
+    expect(fitSurfaceWidth({ minWidth: 180 }, 150)).toEqual({
+      width: undefined,
+      minWidth: 134,
+      maxWidth: 134,
+    });
   });
 });

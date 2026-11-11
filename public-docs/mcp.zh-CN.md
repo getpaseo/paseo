@@ -79,18 +79,18 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 
 ### Agent {#agents}
 
-| 工具                 | 功能                                                                                                 |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `create_agent`       | 创建 Agent，可用 `workspaceId` 把它放到已有的工作区。用 `initialPrompt` 开始工作；不等待完成就返回。 |
-| `send_agent_prompt`  | 用 `agentId` 和 `prompt` 发送提示词；不等待完成就返回。                                              |
-| `get_agent_status`   | 返回 Agent 的最新快照。                                                                              |
-| `list_agents`        | 以精简元数据列出最近的 Agent；`includeBackground: true` 会包含后台工作。                             |
-| `cancel_agent`       | 中止 Agent 当前的运行，但保留该 Agent。                                                              |
-| `archive_agent`      | 软删除 Agent，并把它从活动列表中移除。                                                               |
-| `kill_agent`         | 永久终止 Agent 会话。                                                                                |
-| `update_agent`       | 更新 Agent 的名称、标签或运行时设置，例如模式、模型、思考选项和功能。                                |
-| `get_agent_activity` | 以整理后的摘要返回 Agent 最近的时间线条目。                                                          |
-| `set_agent_mode`     | 切换 Agent 的会话模式。                                                                              |
+| 工具                 | 功能                                                                                                                                                                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_agent`       | 创建 Agent，可用 `workspaceId` 把它放到已有的工作区。用 `initialPrompt` 开始工作；不等待完成就返回。`background: true` 会把它从标签页、默认列表、你的子 Agent 列表和通知中隐藏；你仍会收到它的完成通知。省略时继承你自己的设置。 |
+| `send_agent_prompt`  | 用 `agentId` 和 `prompt` 发送提示词；不等待完成就返回。                                                                                                                                                                          |
+| `get_agent_status`   | 返回 Agent 的最新快照。                                                                                                                                                                                                          |
+| `list_agents`        | 以精简元数据列出最近的 Agent；`includeBackground: true` 会包含后台工作。                                                                                                                                                         |
+| `cancel_agent`       | 中止 Agent 当前的运行，但保留该 Agent。                                                                                                                                                                                          |
+| `archive_agent`      | 软删除 Agent，并把它从活动列表中移除。                                                                                                                                                                                           |
+| `kill_agent`         | 永久终止 Agent 会话。                                                                                                                                                                                                            |
+| `update_agent`       | 更新 Agent 的名称、标签或运行时设置，例如模式、模型、思考选项和功能。                                                                                                                                                            |
+| `get_agent_activity` | 以整理后的摘要返回 Agent 最近的时间线条目。                                                                                                                                                                                      |
+| `set_agent_mode`     | 切换 Agent 的会话模式。                                                                                                                                                                                                          |
 
 Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFinish: false` 可以关闭它们。外部 MCP 客户端使用 `get_agent_status` 和 `get_agent_activity` 查看结果。
 

@@ -1399,6 +1399,44 @@ export default function contribute(server: { registerProvider(provider: Provider
     }
   });
 
+  it("releases a subscription in the plugin when its subscribe times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const directory = await createPlugin(
+        "slow-subscribe",
+        `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      );
+      const child = createReloadChild("slow-subscribe", []);
+      const sent: Array<{ type: string; subscriptionId?: string }> = [];
+      const originalSend = child.send.bind(child);
+      child.send = (message, callback) => {
+        sent.push(message);
+        if (message.type !== "initialize") return originalSend(message, callback);
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({ type: "ready", methods: [], subscriptions: ["feed"], providers: [] }),
+        );
+        return true;
+      };
+      const runtime = createTestRuntime({ spawnChild: () => child });
+      await runtime.startPlugin("slow-subscribe", directory);
+
+      const subscription = runtime.startSubscription("slow-subscribe", "feed", {});
+      const rejection = subscription.ready.catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(rejection).resolves.toMatchObject({
+        message: expect.stringContaining("timed out"),
+      });
+      const subscribe = sent.find((message) => message.type === "subscribe");
+      expect(sent).toContainEqual({
+        type: "unsubscribe",
+        subscriptionId: subscribe?.subscriptionId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("escalates a plugin that ignores graceful shutdown from TERM to KILL", async () => {
     vi.useFakeTimers();
     try {
@@ -1815,7 +1853,7 @@ export function inspect() { void Surface; return {}; }`,
     await runtime.stopAll();
   });
 
-  it("rejects a handler result that does not match its RPC output schema", async () => {
+  it("forwards a handler result for the client to validate against its RPC output schema", async () => {
     const directory = await createPlugin(
       "invalid-output",
       `import { z } from "zod";
@@ -1834,7 +1872,9 @@ export default function contribute(plugin: any) {
 
     await runtime.startPlugin("invalid-output", directory);
 
-    await expect(runtime.invoke("invalid-output", "broken", {})).rejects.toThrow();
+    await expect(runtime.invoke("invalid-output", "broken", {})).resolves.toEqual({
+      value: "wrong",
+    });
     await runtime.stopAll();
   });
 
@@ -1892,6 +1932,38 @@ export default function contribute(plugin: any) {
     expect(runtime.catalog()).toEqual([]);
     expect(runtime.getLogs("crashing").map((entry) => entry.message)).toContain("before crash");
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
+      "Plugin is not available",
+    );
+  });
+
+  it("reports and removes a plugin it terminated for an invalid message", async () => {
+    const directory = await createPlugin(
+      "invalid-message",
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  setTimeout(() => process.send?.({ type: "not-a-plugin-message" }), 20);
+  return () => undefined;
+}`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    const exited = new Promise<string>((resolve) => {
+      runtime.subscribe((pluginId, error) => {
+        if (pluginId === "invalid-message" && error) resolve(error);
+      });
+    });
+    await runtime.startPlugin("invalid-message", directory);
+
+    // The runtime kills the process; it must then treat it like any other exited plugin.
+    await expect(exited).resolves.toBe("Plugin process exited: invalid-message");
+    expect(sessions.active.size).toBe(0);
+    expect(runtime.catalog()).toEqual([]);
+    expect(
+      pluginMessages(runtime, "invalid-message").some((message) =>
+        message.includes("sent an invalid message"),
+      ),
+    ).toBe(true);
+    await expect(runtime.invoke("invalid-message", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
   });
@@ -2082,7 +2154,7 @@ it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const runtime = createTestRuntime(
     { settingsDirectory },
     undefined,
-    resolveDaemonVersion(import.meta.url),
+    example === "sidebar-views" ? "0.16.0" : resolveDaemonVersion(import.meta.url),
   );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));

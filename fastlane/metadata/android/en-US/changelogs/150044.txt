@@ -1,0 +1,7 @@
+Added
+- Added Claude Fable 5.2 and Mythos 5.2 with medium default effort
+
+Notes
+- Both models require Claude Code 2.1.321 or newer; Mythos 5.2 appears only when Claude Code advertises access
+
+Full notes: https://paseo.sh/changelog

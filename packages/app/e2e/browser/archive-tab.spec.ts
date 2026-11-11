@@ -6,6 +6,7 @@ import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import {
+  closeActiveAgentWithShortcut,
   archiveAgentFromDaemon,
   archiveAgentFromSessions,
   clickSessionRow,
@@ -20,8 +21,12 @@ import {
   openWorkspaceWithAgents,
   primeAdditionalPage,
   resetSeededPageState,
+  unarchiveAgentFromConversation,
   reloadWorkspace,
 } from "../support/helpers/archive-tab";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { expectComposerDraft, fillComposerDraft, submitMessage } from "../support/helpers/composer";
+import { awaitAssistantMessage, expectAgentIdle } from "../support/helpers/agent-stream";
 import { expectAgentTabActive } from "../support/helpers/launcher";
 
 test.describe("Archive tab reconciliation", () => {
@@ -49,6 +54,34 @@ test.describe("Archive tab reconciliation", () => {
     await client?.removeProject(projectId).catch(() => undefined);
     await client?.close().catch(() => undefined);
     await tempRepo?.cleanup();
+  });
+
+  test("restoring a closed agent retains its unsent composer draft after reload", async ({
+    page,
+  }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "archived-composer-",
+      title: "Restore unsent draft",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await submitMessage(page, "A completed conversation before closing");
+      await awaitAssistantMessage(page);
+      await expectAgentIdle(page);
+      await fillComposerDraft(page, "Keep this unsent message after closing");
+      await expectComposerDraft(page, "Keep this unsent message after closing");
+      await closeActiveAgentWithShortcut(page, agent.agentId);
+      await expect.poll(() => fetchAgentArchivedAt(agent.client, agent.agentId)).not.toBeNull();
+      await page.reload();
+      await openSessions(page);
+      await expectSessionRowArchived(page, "Restore unsent draft");
+      await clickSessionRow(page, "Restore unsent draft");
+      await expectArchivedAgentFocused(page, agent.agentId);
+      await unarchiveAgentFromConversation(page);
+      await expectComposerDraft(page, "Keep this unsent message after closing");
+    } finally {
+      await agent.cleanup();
+    }
   });
 
   test("non-UI archive prunes the archived tab across open pages and reload", async ({ page }) => {

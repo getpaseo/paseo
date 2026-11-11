@@ -4,8 +4,8 @@ import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   createControlGeometry,
-  segmentedIconSize,
-  type SegmentedControlSize,
+  controlIconSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
 import type { Theme } from "@/styles/theme";
@@ -24,7 +24,7 @@ interface SegmentedControlProps<T extends string> {
   options: SegmentedControlOption<T>[];
   value: T;
   onValueChange: (value: T) => void;
-  size?: SegmentedControlSize;
+  size?: ControlSize;
   hideLabels?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -57,14 +57,13 @@ export function SegmentedControl<T extends string>({
   const containedSize = useContainedControlSize();
   const size = sizeProp ?? containedSize ?? "md";
   const sizeStyles = {
-    xs: { container: styles.containerXs, segment: styles.segmentXs, label: styles.labelXs },
     sm: { container: styles.containerSm, segment: styles.segmentSm, label: styles.labelSm },
     md: { container: styles.containerMd, segment: styles.segmentMd, label: styles.labelMd },
   }[size];
   const containerSizeStyle = sizeStyles.container;
   const segmentSizeStyle = sizeStyles.segment;
   const labelSizeStyle = sizeStyles.label;
-  const iconSize = segmentedIconSize[size];
+  const iconSize = controlIconSize[size];
 
   const containerStyle = useMemo(
     () => [styles.container, containerSizeStyle, style],
@@ -173,9 +172,6 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: "transparent",
       gap: theme.spacing[1],
     },
-    containerXs: {
-      ...geometry.segmentedContainerXs,
-    },
     containerSm: {
       ...geometry.segmentedContainerSm,
     },
@@ -188,9 +184,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: "center",
       flexShrink: 0,
       gap: theme.spacing[1],
-    },
-    segmentXs: {
-      ...geometry.segmentedSegmentXs,
     },
     segmentSm: {
       ...geometry.segmentedSegmentSm,
@@ -217,9 +210,6 @@ const styles = StyleSheet.create((theme) => {
     label: {
       color: theme.colors.foregroundMuted,
       fontWeight: theme.fontWeight.normal,
-    },
-    labelXs: {
-      ...geometry.segmentedLabelXs,
     },
     labelSm: {
       ...geometry.segmentedLabelSm,

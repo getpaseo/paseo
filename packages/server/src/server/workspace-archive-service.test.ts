@@ -15,10 +15,12 @@ import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   archiveByScope,
+  unarchiveWorkspaceAgents,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
+  WorkspaceArchiveCanceledError,
 } from "./workspace-archive-service.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 
@@ -973,8 +975,9 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async () =>
+        [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
@@ -1018,6 +1021,149 @@ describe("archiveByScope", () => {
   });
 });
 
+function gate(): {
+  wait: Promise<void>;
+  open: () => void;
+  reached: Promise<void>;
+  reach: () => void;
+} {
+  let open!: () => void;
+  let reach!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  return { wait, open, reached, reach };
+}
+
+async function canceledArchive(promise: Promise<unknown>): Promise<WorkspaceArchiveCanceledError> {
+  const error = await promise.then(
+    () => null,
+    (reason: unknown) => reason,
+  );
+  if (!(error instanceof WorkspaceArchiveCanceledError)) {
+    throw new Error(`Expected the archive to be canceled, got ${String(error)}`);
+  }
+  return error;
+}
+
+describe("archiveByScope cancellation", () => {
+  function storedAgents(
+    workspaceId: string,
+    agents: Array<{ id: string; archivedAt: string | null }>,
+  ) {
+    return {
+      listByWorkspace: async () =>
+        agents.map((agent) => ({ ...agent, workspaceId })) as StoredAgentRecord[],
+    } as Pick<AgentStorage, "listByWorkspace">;
+  }
+
+  test("an abort while agents archive keeps the workspace record active", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cancel-agents");
+    const workspaceId = "ws-cancel-agents";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.agentStorage = storedAgents(workspaceId, [
+      { id: "agent-active", archivedAt: null },
+      { id: "agent-already-archived", archivedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    const agentArchive = gate();
+    deps.agentManager.archiveSnapshot = vi.fn(async (agentId: string) => {
+      agentArchive.reach();
+      await agentArchive.wait;
+      deps.archivedSnapshotIds.push(agentId);
+      return {} as StoredAgentRecord;
+    });
+    const controller = new AbortController();
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cancel-agents",
+      signal: controller.signal,
+    });
+    await agentArchive.reached;
+    controller.abort();
+    agentArchive.open();
+    await canceledArchive(archive);
+
+    expect({
+      activeWorkspaceIds: (await deps.listActiveWorkspaces()).map((w) => w.workspaceId),
+      directoryExists: existsSync(worktree.worktreePath),
+    }).toEqual({
+      activeWorkspaceIds: [workspaceId],
+      directoryExists: true,
+    });
+    // The archiving marker never outlives a canceled archive.
+    expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
+  });
+
+  test("an abort after the record archived keeps the worktree directory", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cancel-record");
+    const workspaceId = "ws-cancel-record";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    const recordArchive = gate();
+    const archiveRecord = deps.archiveWorkspaceRecord;
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      recordArchive.reach();
+      await recordArchive.wait;
+      await archiveRecord(id);
+    };
+    const controller = new AbortController();
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cancel-record",
+      signal: controller.signal,
+    });
+    await recordArchive.reached;
+    controller.abort();
+    recordArchive.open();
+    await canceledArchive(archive);
+
+    expect({
+      activeWorkspaceIds: (await deps.listActiveWorkspaces()).map((w) => w.workspaceId),
+      directoryExists: existsSync(worktree.worktreePath),
+    }).toEqual({ activeWorkspaceIds: [], directoryExists: true });
+  });
+
+  test("an archive aborted before it starts touches nothing", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cancel-before");
+    const workspaceId = "ws-cancel-before";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+    deps.agentStorage = storedAgents(workspaceId, [{ id: "agent-active", archivedAt: null }]);
+    const controller = new AbortController();
+    controller.abort();
+
+    await canceledArchive(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-cancel-before",
+        signal: controller.signal,
+      }),
+    );
+
+    expect(deps.archivedSnapshotIds).toEqual([]);
+    expect(deps.markWorkspaceArchiving).not.toHaveBeenCalled();
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+});
+
 describe("resolveWorkspaceIdAtPath", () => {
   test("prefers the worktree-kind record on an exact cwd tie", async () => {
     const targetPath = "/worktrees/repo/feature";
@@ -1051,4 +1197,96 @@ describe("resolveWorkspaceIdAtPath", () => {
 
     expect(result).toBe("ws-nested");
   });
+});
+
+test("uses the operation timestamp for live agents, snapshots, and the workspace", async () => {
+  const { repoDir } = createGitRepo();
+  const deps = createArchiveDeps({
+    paseoHome: repoDir,
+    activeWorkspaces: [{ workspaceId: "stamped", cwd: repoDir, kind: "local_checkout" }],
+  });
+  const stamps: Array<string | undefined> = [];
+  deps.agentManager.listAgents = () => [{ id: "live", workspaceId: "stamped" }] as ManagedAgent[];
+  deps.agentManager.getAgent = () => ({ id: "live" }) as ManagedAgent;
+  deps.agentManager.archiveAgent = async (_id, stamp) => {
+    stamps.push(stamp);
+    return { archivedAt: stamp! };
+  };
+  deps.agentStorage.listByWorkspace = async () =>
+    [
+      { id: "stored", workspaceId: "stamped", archivedAt: null },
+      { id: "closed", workspaceId: "stamped", archivedAt: "2020-01-01T00:00:00.000Z" },
+    ] as StoredAgentRecord[];
+  deps.agentManager.getAgent = (id) => (id === "live" ? ({ id } as ManagedAgent) : null);
+  deps.agentManager.archiveSnapshot = async (_id, stamp) => {
+    stamps.push(stamp);
+    return {} as StoredAgentRecord;
+  };
+  deps.archiveWorkspaceRecord = async (_id, stamp) => {
+    stamps.push(stamp);
+  };
+  await archiveByScope(deps, {
+    scope: { kind: "workspace", workspaceId: "stamped" },
+    requestId: "stamp",
+  });
+  expect(stamps).toHaveLength(3);
+  expect(typeof stamps[0]).toBe("string");
+  expect(new Set(stamps).size).toBe(1);
+});
+
+test.each([
+  {
+    stamp: "2026-11-09T10:00:00.000Z",
+    agents: [
+      ["a", "2026-11-09T10:00:00.000Z"],
+      ["b", "2026-11-09T10:00:00.000Z"],
+      ["closed", "2026-11-09T09:59:50.000Z"],
+      ["rearchived", "2026-11-09T10:00:00.001Z"],
+    ],
+    expected: ["a", "b"],
+  },
+  {
+    stamp: "2026-11-09T10:00:00.000Z",
+    agents: [
+      ["a", "2026-11-09T09:59:00.000Z"],
+      ["b", "2026-11-09T09:59:59.000Z"],
+      ["closed", "2026-11-09T09:58:59.999Z"],
+      ["later", "2026-11-09T10:00:00.001Z"],
+    ],
+    expected: ["a", "b"],
+  },
+])(
+  "restores only agents belonging to the workspace archive ($expected)",
+  async ({ stamp, agents, expected }) => {
+    const restored: string[] = [];
+    await unarchiveWorkspaceAgents({
+      workspaceId: "workspace",
+      archivedAt: stamp,
+      agentStorage: {
+        listByWorkspace: async () =>
+          agents.map(([id, archivedAt]) => ({ id, archivedAt })) as StoredAgentRecord[],
+      },
+      unarchiveAgent: async (id) => {
+        restored.push(id);
+      },
+    });
+    expect(restored).toEqual(expected);
+  },
+);
+
+test("a canceled archive with no matching agents leaves earlier closed agents archived", async () => {
+  const restored: string[] = [];
+  await unarchiveWorkspaceAgents({
+    workspaceId: "workspace",
+    archivedAt: "2026-11-09T10:00:00.000Z",
+    allowLegacyFallback: false,
+    agentStorage: {
+      listByWorkspace: async () =>
+        [{ id: "closed", archivedAt: "2026-11-09T09:59:59.000Z" }] as StoredAgentRecord[],
+    },
+    unarchiveAgent: async (id) => {
+      restored.push(id);
+    },
+  });
+  expect(restored).toEqual([]);
 });

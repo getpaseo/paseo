@@ -2,15 +2,6 @@
 
 Keep completed assistant prose in one native text view so selection crosses paragraphs, headings and lists. The shared [Markdown renderer](markdown-renderer.md) owns that view.
 
-## Android inverted chat
-
-Keep selection visibility handling in `modules/paseo-scroll`. Android's visibility
-rectangles ignore list inversion. React Native decomposes Android's `scale: -1`
-into rotation with positive `scaleY`, so test the composed matrix when deciding
-whether those requests should move the viewport. Native tests must apply the
-list's transform through React Native's view manager; assigning `scaleY` directly
-misses that decomposition.
-
 ## Diagrams in lists and quotes
 
 Selection stops at a Mermaid diagram. Native extracts Mermaid fences into separate views because the library exposes no native block renderer override. A diagram inside a list or quote therefore appears outside that container, and its following prose starts a separate Markdown fragment.

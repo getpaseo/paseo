@@ -28,7 +28,7 @@ const ACP_PROVIDER = {
 
 interface ProviderCatalogDaemonClient {
   getLastServerInfoMessage(): {
-    features?: { hopliteProvider?: boolean; plugins?: boolean };
+    features?: { fxProvider?: boolean; hopliteProvider?: boolean; plugins?: boolean };
   } | null;
   connect(): Promise<void>;
   close(): Promise<void>;
@@ -56,6 +56,31 @@ test.describe("ACP provider catalog", () => {
       await client.close().catch(() => undefined);
     }
   });
+});
+
+test("adds fx from the catalog with only a config entry", async ({ page }, testInfo) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "fx-catalog-e2e",
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.fxProvider).toBe(true);
+    await client.patchDaemonConfig({ removeProviders: ["fx"] });
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, getServerId());
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await openAddProviderArea(page);
+
+    await findAcpCatalogProvider(page, "fx");
+    await page.screenshot({ path: testInfo.outputPath("fx-catalog.png") });
+    await installAcpCatalogProvider(page, "fx");
+    await expectProviderInstalledInSettings(page, "fx");
+    await page.screenshot({ path: testInfo.outputPath("fx-installed.png") });
+    expect((await client.getDaemonConfig()).config.providers?.fx).toEqual({ enabled: true });
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: ["fx"] }).catch(() => undefined);
+    await client.close().catch(() => undefined);
+  }
 });
 
 for (const theme of ["light", "dark"] as const) {
