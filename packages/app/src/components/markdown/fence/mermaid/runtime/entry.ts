@@ -97,7 +97,15 @@ function measureDiagram(host: HTMLElement, svg: SVGSVGElement | null): DiagramSi
 async function render(message: MermaidRuntimeRenderMessage): Promise<void> {
   try {
     initializeMermaid(message.colorScheme);
-    const { svg } = await mermaid.render(`paseo-mermaid-${message.revision}`, message.source);
+    const staging = document.getElementById("staging");
+    if (!staging) {
+      throw new Error("Missing Mermaid staging container");
+    }
+    const { svg } = await mermaid.render(
+      `paseo-mermaid-${message.revision}`,
+      message.source,
+      staging,
+    );
     if (message.revision !== latestRevision) {
       return;
     }
