@@ -210,12 +210,12 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
 }
 
 /**
- * Whether an agent has any subagent the track would list, without building the rows. Collapsed
+ * How many subagents the track would list for an agent, without building the rows. Collapsed
  * sidebar rows ask this on every store update, so it reuses its answer until the agent maps or
  * descriptors change, and it reads only what the client already holds: provider subagents
  * appear once something has fetched or streamed them.
  */
-export function useHasSubagents(serverId: string, parentAgentId: string | null): boolean {
+export function useSubagentCount(serverId: string, parentAgentId: string | null): number {
   const pendingArchiveIds = usePendingArchiveAgentKeys();
   const selectPaseoRows = useMemo(
     () =>
@@ -224,8 +224,8 @@ export function useHasSubagents(serverId: string, parentAgentId: string | null):
         : null,
     [serverId, parentAgentId, pendingArchiveIds],
   );
-  const hasPaseoRows = useSessionStore((state) =>
-    selectPaseoRows ? selectPaseoRows(state).length > 0 : false,
+  const paseoCount = useSessionStore((state) =>
+    selectPaseoRows ? selectPaseoRows(state).length : 0,
   );
   const supported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.providerSubagents === true,
@@ -233,15 +233,21 @@ export function useHasSubagents(serverId: string, parentAgentId: string | null):
   const nestingSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.providerSubagentNesting === true,
   );
-  const hasProviderRows = useProviderSubagentStore((state) => {
-    if (!parentAgentId || !supported) return false;
+  const providerCount = useProviderSubagentStore((state) => {
+    if (!parentAgentId || !supported) return 0;
     const prefix = `${serverId}\0${parentAgentId}\0`;
+    let count = 0;
     for (const [key, subagent] of state.descriptors) {
       if (!key.startsWith(prefix) || state.hiddenFromTrack.has(key)) continue;
       if (nestingSupported && subagent.parentSubagentId) continue;
-      return true;
+      count += 1;
     }
-    return false;
+    return count;
   });
-  return hasPaseoRows || hasProviderRows;
+  return paseoCount + providerCount;
+}
+
+/** Whether an agent has any subagent the track would list. See `useSubagentCount`. */
+export function useHasSubagents(serverId: string, parentAgentId: string | null): boolean {
+  return useSubagentCount(serverId, parentAgentId) > 0;
 }

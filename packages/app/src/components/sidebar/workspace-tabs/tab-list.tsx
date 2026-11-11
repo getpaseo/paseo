@@ -39,7 +39,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { useHasSubagents, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
+import { useSubagentCount, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
 import { useArchiveSubagent } from "@/subagents/use-archive-subagent";
 import { useDetachSubagent } from "@/subagents/use-detach-subagent";
 import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-menu";
@@ -63,7 +63,7 @@ import {
   useIsSidebarWorkspaceTabsExpanded,
 } from "./expansion";
 import {
-  hasSidebarWorkspaceTabsDisclosure,
+  resolveSidebarWorkspaceTabsDisclosure,
   isSubagentTarget,
   summarizeSidebarWorkspaceTabs,
 } from "./model";
@@ -99,7 +99,11 @@ function SidebarWorkspaceTabList({
   const sidebarTabs = useSidebarWorkspaceTabs(serverId, workspaceId);
   const { tabs, activeTabId } = sidebarTabs;
   const { soleAgentId } = summarizeSidebarWorkspaceTabs(sidebarTabs);
-  const soleTabHasSubagents = useHasSubagents(serverId, soleAgentId);
+  const soleTabSubagentCount = useSubagentCount(serverId, soleAgentId);
+  const disclosure = resolveSidebarWorkspaceTabsDisclosure({
+    tabCount: tabs.length,
+    soleTabSubagentCount,
+  });
   const activeTarget = tabs.find((tab) => tab.tabId === activeTabId)?.target ?? null;
   const tabActions = useWorkspaceTabActions(serverId);
   const { closeTabById } = useWorkspaceTabClose({
@@ -128,13 +132,37 @@ function SidebarWorkspaceTabList({
   );
   // The disclosure leaves with the second-to-last tab, unless that tab has subagents; the list
   // goes with it, and comes back expanded when the disclosure does.
-  if (!hasSidebarWorkspaceTabsDisclosure(tabs.length, soleTabHasSubagents)) return null;
+  if (disclosure.kind === "none") return null;
+  const soleTab = tabs[0];
+  const listStyle = inStatusGroup ? styles.listInStatusGroup : styles.list;
+  const renameModal = (
+    <WorkspaceTabRenameModal
+      renamingTab={rename.renamingTab}
+      onSubmit={rename.handleRenameModalSubmit}
+      onClose={rename.handleRenameModalClose}
+    />
+  );
+
+  // The lone tab is what the workspace row already opens, so its subagents are the top level.
+  if (disclosure.kind === "subagents" && soleTab && soleAgentId) {
+    return (
+      <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
+        <SidebarSoleAgentSubagents
+          parentTabId={soleTab.tabId}
+          agentId={soleAgentId}
+          activeTarget={activeTarget}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceKey={workspaceKey}
+          menuActions={menuActions}
+        />
+        {renameModal}
+      </View>
+    );
+  }
 
   return (
-    <View
-      style={inStatusGroup ? styles.listInStatusGroup : styles.list}
-      testID={`sidebar-workspace-tabs-${workspaceKey}`}
-    >
+    <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
       {topLevelTabs.map((tab) => (
         <WorkspaceTabPresentationResolver
           key={tab.key}
@@ -169,11 +197,7 @@ function SidebarWorkspaceTabList({
           }
         </WorkspaceTabPresentationResolver>
       ))}
-      <WorkspaceTabRenameModal
-        renamingTab={rename.renamingTab}
-        onSubmit={rename.handleRenameModalSubmit}
-        onClose={rename.handleRenameModalClose}
-      />
+      {renameModal}
     </View>
   );
 }
@@ -337,6 +361,43 @@ function useSidebarOrderedSubagentRows(
  * An agent tab, with its subagents behind a disclosure of their own: the same children the
  * agent's subagents track lists, one level deep. Each opened child shows its own track.
  */
+interface SidebarSubagentRowsProps {
+  rows: readonly SubagentRow[];
+  activeTarget: WorkspaceTabTarget | null;
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  parentTabId: string;
+  openInSidePane: OpenInSidePanePreferences;
+  menuActions: SidebarWorkspaceTabMenuActions;
+}
+
+function SidebarSubagentRows({ rows, activeTarget, ...rowProps }: SidebarSubagentRowsProps) {
+  return (
+    <>
+      {rows.map((row) => (
+        <SidebarSubagentRow
+          key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
+          row={row}
+          active={isSubagentTarget(activeTarget, row)}
+          {...rowProps}
+        />
+      ))}
+    </>
+  );
+}
+
+/** A workspace whose only tab is an agent lists that agent's subagents as its own rows. */
+function SidebarSoleAgentSubagents({
+  agentId,
+  ...props
+}: Omit<SidebarSubagentRowsProps, "rows" | "openInSidePane"> & { agentId: string }) {
+  const trackRows = useSubagentsForParent({ serverId: props.serverId, parentAgentId: agentId });
+  const rows = useSidebarOrderedSubagentRows(trackRows, props.serverId, props.workspaceId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  return <SidebarSubagentRows rows={rows} openInSidePane={openInSidePane} {...props} />;
+}
+
 function SidebarAgentTabEntry({
   tab,
   agentId,
@@ -412,19 +473,16 @@ function SidebarAgentTabEntry({
           style={styles.subagentList}
           testID={`sidebar-workspace-tab-subagents-${workspaceKey}-${tab.tabId}`}
         >
-          {rows.map((row) => (
-            <SidebarSubagentRow
-              key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
-              row={row}
-              active={isSubagentTarget(activeTarget, row)}
-              serverId={serverId}
-              workspaceId={workspaceId}
-              workspaceKey={workspaceKey}
-              parentTabId={tab.tabId}
-              openInSidePane={openInSidePane}
-              menuActions={menuActions}
-            />
-          ))}
+          <SidebarSubagentRows
+            rows={rows}
+            activeTarget={activeTarget}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            workspaceKey={workspaceKey}
+            parentTabId={tab.tabId}
+            openInSidePane={openInSidePane}
+            menuActions={menuActions}
+          />
         </View>
       ) : null}
     </>

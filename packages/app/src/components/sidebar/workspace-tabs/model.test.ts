@@ -7,7 +7,7 @@ import {
 import type { SubagentRow } from "@/subagents/select";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
-  hasSidebarWorkspaceTabsDisclosure,
+  resolveSidebarWorkspaceTabsDisclosure,
   selectNestedSubagentTabIds,
   selectSidebarWorkspaceTabs,
   summarizeSidebarWorkspaceTabs,
@@ -111,16 +111,36 @@ describe("toggleExpandedKey", () => {
   });
 });
 
-describe("hasSidebarWorkspaceTabsDisclosure", () => {
+describe("resolveSidebarWorkspaceTabsDisclosure", () => {
   it("offers the tabs only when there is more than one", () => {
-    expect(hasSidebarWorkspaceTabsDisclosure(0)).toBe(false);
-    expect(hasSidebarWorkspaceTabsDisclosure(1)).toBe(false);
-    expect(hasSidebarWorkspaceTabsDisclosure(2)).toBe(true);
+    expect(resolveSidebarWorkspaceTabsDisclosure({ tabCount: 0, soleTabSubagentCount: 0 })).toEqual(
+      {
+        kind: "none",
+      },
+    );
+    expect(resolveSidebarWorkspaceTabsDisclosure({ tabCount: 1, soleTabSubagentCount: 0 })).toEqual(
+      {
+        kind: "none",
+      },
+    );
+    expect(resolveSidebarWorkspaceTabsDisclosure({ tabCount: 2, soleTabSubagentCount: 0 })).toEqual(
+      {
+        kind: "tabs",
+        count: 2,
+      },
+    );
   });
 
-  it("offers a lone agent tab when that agent has subagents to list", () => {
-    expect(hasSidebarWorkspaceTabsDisclosure(1, true)).toBe(true);
-    expect(hasSidebarWorkspaceTabsDisclosure(0, true)).toBe(false);
+  it("lists a lone agent tab's subagents directly, counted as subagents", () => {
+    expect(
+      resolveSidebarWorkspaceTabsDisclosure({ tabCount: 1, soleTabSubagentCount: 12 }),
+    ).toEqual({ kind: "subagents", count: 12 });
+  });
+
+  it("keeps counting tabs once there is more than one, subagents or not", () => {
+    expect(
+      resolveSidebarWorkspaceTabsDisclosure({ tabCount: 3, soleTabSubagentCount: 12 }),
+    ).toEqual({ kind: "tabs", count: 3 });
   });
 });
 

@@ -14,11 +14,11 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import {
   selectProviderSubagentsForParent,
   selectSubagentsForParent,
-  useHasSubagents,
+  useSubagentCount,
 } from "@/subagents/select";
 import {
   EMPTY_SIDEBAR_WORKSPACE_TABS_SUMMARY,
-  hasSidebarWorkspaceTabsDisclosure,
+  resolveSidebarWorkspaceTabsDisclosure,
   selectNestedSubagentTabIds,
   selectSidebarWorkspaceTabs,
   sidebarWorkspaceTabsSummariesEqual,
@@ -98,15 +98,16 @@ export interface SidebarWorkspaceTabsDisclosureState {
 /**
  * The count a workspace row's disclosure shows, and whether a subagent under any of its tabs
  * needs input, failed unread, or is ready to review. A lone agent tab with subagents keeps the
- * disclosure, so those subagents stay reachable from the sidebar.
+ * disclosure, counting its subagents, so they stay reachable from the sidebar.
  */
 export function useSidebarWorkspaceTabsDisclosure(
   serverId: string,
   workspaceId: string,
 ): SidebarWorkspaceTabsDisclosureState {
   const { tabCount, soleAgentId, agentIds } = useSidebarWorkspaceTabsSummary(serverId, workspaceId);
-  const soleTabHasSubagents = useHasSubagents(serverId, soleAgentId);
-  const count = hasSidebarWorkspaceTabsDisclosure(tabCount, soleTabHasSubagents) ? tabCount : null;
+  const soleTabSubagentCount = useSubagentCount(serverId, soleAgentId);
+  const disclosure = resolveSidebarWorkspaceTabsDisclosure({ tabCount, soleTabSubagentCount });
+  const count = disclosure.kind === "none" ? null : disclosure.count;
   const notice = useSubagentDisclosureNotice(
     serverId,
     workspaceId,

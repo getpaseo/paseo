@@ -97,14 +97,28 @@ function sameAgentIds(left: readonly string[], right: readonly string[]): boolea
 }
 
 /**
- * A row only offers its tabs when there is a choice to make: with one tab, opening the
- * workspace already lands on it, unless that tab is an agent with subagents to list under it.
+ * What a workspace row's disclosure opens. A row offers its tabs only when there is a choice to
+ * make: with one tab, opening the workspace already lands on it. When that lone tab is an agent
+ * with subagents, the disclosure skips the tab and lists the subagents themselves, so the row
+ * reads as the agent's subagent count rather than as one tab with children under it.
  */
-export function hasSidebarWorkspaceTabsDisclosure(
-  tabCount: number,
-  soleTabHasSubagents = false,
-): boolean {
-  return tabCount > 1 || (tabCount === 1 && soleTabHasSubagents);
+export type SidebarWorkspaceTabsDisclosure =
+  | { kind: "none" }
+  | { kind: "tabs"; count: number }
+  | { kind: "subagents"; count: number };
+
+const NO_DISCLOSURE: SidebarWorkspaceTabsDisclosure = { kind: "none" };
+
+export function resolveSidebarWorkspaceTabsDisclosure(input: {
+  tabCount: number;
+  /** Subagents of the workspace's only tab, when that tab is an agent; otherwise 0. */
+  soleTabSubagentCount: number;
+}): SidebarWorkspaceTabsDisclosure {
+  if (input.tabCount > 1) return { kind: "tabs", count: input.tabCount };
+  if (input.tabCount === 1 && input.soleTabSubagentCount > 0) {
+    return { kind: "subagents", count: input.soleTabSubagentCount };
+  }
+  return NO_DISCLOSURE;
 }
 
 /** Adds the key if absent and removes it if present, returning a new set. */
