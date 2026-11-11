@@ -793,15 +793,41 @@ lines.on("line", (line) => {
   });
 
   it.each([
-    { counts: null, context: false },
-    { counts: { totalTokens: 0, inputTokens: 0, outputTokens: 0 }, context: false },
+    { counts: null, context: false, expected: [] },
+    {
+      counts: { totalTokens: 0, inputTokens: 0, outputTokens: 0 },
+      context: false,
+      expected: [
+        {
+          turnId: "acp:first",
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: undefined },
+        },
+      ],
+    },
     {
       counts: { totalTokens: 18971, inputTokens: 12152, outputTokens: 78, cachedReadTokens: 6741 },
       context: true,
+      expected: [
+        {
+          turnId: undefined,
+          usage: { contextWindowUsedTokens: 42, contextWindowMaxTokens: 100, totalCostUsd: 0.25 },
+        },
+        {
+          turnId: "acp:first",
+          usage: {
+            inputTokens: 12152,
+            outputTokens: 78,
+            cachedInputTokens: 6741,
+            contextWindowUsedTokens: 42,
+            contextWindowMaxTokens: 100,
+            totalCostUsd: 0.25,
+          },
+        },
+      ],
     },
   ])(
     "forwards prompt-result usage $counts while preserving context updates: $context",
-    async ({ counts, context }) => {
+    async ({ counts, context, expected }) => {
       const harness = connectorHarness({
         handleRequest(instance, message) {
           if (message.method !== "session/prompt") return false;
@@ -849,24 +875,10 @@ lines.on("line", (line) => {
           events,
           (event) => event.type === "session.turn" && event.state === "completed",
         );
-        const usage = events.filter((event) => event.type === "session.usage");
-        if (!counts) {
-          expect(usage).toHaveLength(0);
-          return;
-        }
-        expect(usage.at(-1)).toMatchObject({
-          sessionId: "session-1",
-          turnId: "acp:first",
-          usage: {
-            inputTokens: counts.inputTokens,
-            outputTokens: counts.outputTokens,
-            cachedInputTokens: counts.cachedReadTokens,
-            ...(context
-              ? { contextWindowUsedTokens: 42, contextWindowMaxTokens: 100, totalCostUsd: 0.25 }
-              : {}),
-          },
-        });
-        expect(usage.at(-1)?.usage.contextWindowMaxTokens).toBe(context ? 100 : undefined);
+        const usage = events.flatMap((event) =>
+          event.type === "session.usage" ? [{ turnId: event.turnId, usage: event.usage }] : [],
+        );
+        expect(usage).toEqual(expected);
         const lastUsage = events.findLastIndex((event) => event.type === "session.usage");
         const completed = events.findIndex(
           (event) => event.type === "session.turn" && event.state === "completed",
