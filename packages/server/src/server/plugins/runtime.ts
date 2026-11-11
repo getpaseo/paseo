@@ -710,6 +710,30 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.instanceId === pluginInstanceId;
   }
 
+  // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
+  // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
+  // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
+  async reattachTools(
+    request: SessionOpenWireRequest,
+    pluginIds: readonly string[],
+  ): Promise<AttachedAgentTool[]> {
+    const input: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
+    const attached: AttachedAgentTool[] = [];
+    for (const pluginId of pluginIds) {
+      const loaded = this.plugins.get(pluginId);
+      if (!loaded?.child || !loaded.hooks.includes("agent.open.before")) continue;
+      const output = await this.request(loaded, {
+        type: "hook",
+        requestId: randomUUID(),
+        name: "agent.open.before",
+        input,
+      });
+      const opened = await validateBeforeResult("agent.open.before", input, output);
+      this.collectAgentTools(attached, loaded, opened.tools);
+    }
+    return attached;
+  }
+
   detachTools(agentId: string): void {
     for (const loaded of this.plugins.values()) {
       if (loaded.child) void send(loaded.child, { type: "tools.detach", agentId }).catch(() => {});

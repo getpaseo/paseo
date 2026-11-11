@@ -1,4 +1,8 @@
-import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
+import type {
+  AttachedAgentTool,
+  PluginAgentToolsRuntime,
+  SessionOpenWireRequest,
+} from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
@@ -183,6 +187,13 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
     }
     throw new Error(`Failed to access working directory: ${cwd}`, { cause: error });
   }
+}
+
+interface PluginToolReattach {
+  runtime: PluginAgentToolsRuntime;
+  agentId: string;
+  request: SessionOpenWireRequest;
+  stale: readonly string[];
 }
 
 interface StopAgentBackgroundWorkOptions {
@@ -864,6 +875,8 @@ export class AgentManager {
   private sessionOpenGeneration = 0;
   private readonly sessionOpenGenerations = new Map<string, number>();
   private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
+  private readonly pluginOpenRequests = new Map<string, SessionOpenWireRequest>();
+  private readonly pluginToolRefreshes = new Map<string, Promise<void>>();
   private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
@@ -1037,8 +1050,57 @@ export class AgentManager {
     );
   }
 
+  /**
+   * Reattaches a live session's tools from plugins that restarted since it opened. A restart gives the plugin a
+   * new instance id, which `getPluginTools` filters out, and the session would otherwise wait for a reopen that only
+   * happens before a prompt to an idle agent. The agent MCP calls this before it builds a request's catalog.
+   */
+  async refreshPluginTools(agentId: string): Promise<void> {
+    const runtime = this.pluginAgentTools;
+    const request = this.pluginOpenRequests.get(agentId);
+    const agent = this.getAgent(agentId);
+    if (!runtime || !request || !agent || agent.lifecycle === "closed") return;
+    const pending = this.pluginToolRefreshes.get(agentId);
+    if (pending) return pending;
+    const stale = [
+      ...new Set(
+        (this.attachedPluginTools.get(agentId) ?? [])
+          .filter((tool) => !runtime.isToolPluginAvailable(tool.pluginId, tool.pluginInstanceId))
+          .map((tool) => tool.pluginId),
+      ),
+    ];
+    if (stale.length === 0) return;
+    const refresh = this.reattachPluginTools({ runtime, agentId, request, stale }).finally(() =>
+      this.pluginToolRefreshes.delete(agentId),
+    );
+    this.pluginToolRefreshes.set(agentId, refresh);
+    return refresh;
+  }
+
+  private async reattachPluginTools({
+    runtime,
+    agentId,
+    request,
+    stale,
+  }: PluginToolReattach): Promise<void> {
+    let fresh: AttachedAgentTool[];
+    try {
+      fresh = await runtime.reattachTools(request, stale);
+    } catch (err) {
+      this.logger.warn({ err, agentId, plugins: stale }, "Plugin tool reattach failed");
+      return;
+    }
+    // A reopen meanwhile attached its own tools.
+    if (this.pluginOpenRequests.get(agentId) !== request) return;
+    const kept = (this.attachedPluginTools.get(agentId) ?? []).filter(
+      (tool) => !stale.includes(tool.pluginId),
+    );
+    this.attachedPluginTools.set(agentId, [...kept, ...fresh]);
+  }
+
   private detachPluginTools(agentId: string): void {
     this.attachedPluginTools.delete(agentId);
+    this.pluginOpenRequests.delete(agentId);
     this.sessionOpenGenerations.delete(agentId);
     this.pluginAgentTools?.detachTools(agentId);
   }
@@ -6133,6 +6195,8 @@ export class AgentManager {
       env = transformed.env;
       if (request.purpose === "interactive") {
         this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
+        const { mcpServerOwners: _owners, ...opened } = transformed;
+        this.pluginOpenRequests.set(agentId, { ...opened, tools: [], mcpServers: {} });
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }

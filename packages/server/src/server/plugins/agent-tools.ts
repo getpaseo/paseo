@@ -29,6 +29,11 @@ export type SessionOpenWireRequest = Omit<PluginSessionOpenRequest, "tools"> & {
 
 export interface PluginAgentToolsRuntime {
   isToolPluginAvailable(pluginId: string, pluginInstanceId: string): boolean;
+  /** Replays a live session's open to the named plugins and returns only their tools, stamped with the running instance. */
+  reattachTools(
+    request: SessionOpenWireRequest,
+    pluginIds: readonly string[],
+  ): Promise<AttachedAgentTool[]>;
   detachTools(agentId: string): void;
   callTool(
     pluginId: string,

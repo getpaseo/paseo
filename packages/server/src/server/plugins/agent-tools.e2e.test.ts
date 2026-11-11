@@ -476,7 +476,7 @@ test("structured tool results get model-visible text when text is omitted", asyn
   }
 }, 60_000);
 
-test("reloading a plugin retires its old attachments before an agent reopens", async () => {
+test("reloading a plugin retires its old attachments, and the agent MCP reattaches them from the new instance", async () => {
   const h = await setup(true);
   try {
     const a = await h.create({ x: "y" });
@@ -484,12 +484,16 @@ test("reloading a plugin retires its old attachments before an agent reopens", a
     const oldCatalog = h.launches.at(-1)!.context!.paseoTools!;
     expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
     await h.client.reloadPlugin("tools-test");
-    expect((await mcp.listTools()).tools.map((tool) => tool.name)).not.toContain("plugin_echo");
     expect(h.daemon.daemon.agentManager.getPluginTools(a.id)).toEqual([]);
     expect(await oldCatalog.executeTool("plugin_echo", { text: "retired" })).toMatchObject({
       isError: true,
       content: [{ type: "text", text: expect.stringContaining("not available") }],
     });
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    expect(h.daemon.daemon.agentManager.getPluginTools(a.id).map((tool) => tool.name)).toEqual([
+      "plugin_echo",
+    ]);
+    expect(h.launches).toHaveLength(1);
   } finally {
     await h.close();
   }
@@ -604,6 +608,74 @@ test("a busy agent is steered after plugin reload and reopens only at its next i
       "plugin_echo",
     );
     await sendAndFinish(h, a.id, "stable prompt");
+    expect(h.launches).toHaveLength(2);
+  } finally {
+    release();
+    await h.close();
+  }
+}, 60_000);
+
+const openCounterSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+let opens = 0;
+const tool = defineAgentTool({
+  name: "other_opens", description: "How often this plugin saw the session open",
+  input: z.object({}),
+  async execute() { return { text: String(opens) }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    opens++;
+    return { ...request, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a busy agent's MCP lists and calls a restarted plugin's tools without reopening", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(false, pluginSource, undefined, {
+    beforeTurnComplete: async () => blocked,
+  });
+  try {
+    await h.install("other-hook", openCounterSource);
+    const a = await h.create({ x: "y" });
+    await h.client.sendMessage(a.id, "busy prompt", { activeTurnBehavior: "steer" });
+    await expect.poll(() => h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(true);
+    await h.client.reloadPlugin("tools-test");
+    await h.client.sendMessage(a.id, "message while busy", { activeTurnBehavior: "steer" });
+    expect(h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(true);
+
+    const mcp = await h.mcp(a.id);
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain("plugin_echo");
+    expect(names).toContain("other_opens");
+    const result = await mcp.callTool({
+      name: "plugin_echo",
+      arguments: { text: "after restart" },
+    });
+    expect(result.isError).not.toBe(true);
+    // The restarted plugin answers: its own call count starts again.
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toMatchObject({
+      agent: { id: a.id },
+      input: { text: "after restart" },
+      calls: 1,
+    });
+    // Only the restarted plugin saw the replayed open.
+    expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "1" }],
+    });
+    expect(h.launches).toHaveLength(1);
+    expect(h.events.interrupts).toBe(0);
+
+    // The session still reopens at its next idle prompt, for env and MCP servers.
+    release();
+    await expect.poll(() => h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(false);
+    await sendAndFinish(h, a.id, "idle prompt");
     expect(h.launches).toHaveLength(2);
   } finally {
     release();
