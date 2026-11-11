@@ -2,26 +2,22 @@ import type { PluginAgentSnapshot } from "@getpaseo/plugin";
 import { ScrollView, View } from "react-native";
 import { useAgents, type PluginSidebarViewProps } from "@getpaseo/plugin/client";
 import { AgentRow, Heading } from "./rows";
-
-const tasks: { title: string; indicators: PluginAgentSnapshot["indicator"][] }[] = [
-  { title: "Respond", indicators: ["needs_input"] },
-  { title: "Review", indicators: ["failed", "attention"] },
-  { title: "Wait", indicators: ["running"] },
-  { title: "Start", indicators: ["done"] },
-];
-
-function Task({
-  title,
-  indicators,
-  view,
-}: {
-  title: string;
-  indicators: PluginAgentSnapshot["indicator"][];
-  view: PluginSidebarViewProps;
-}) {
-  // Background agents are helpers the user never opens; leave them out like the sidebar does.
+export function agentTask(agent: PluginAgentSnapshot) {
+  if (agent.attentionReason === "permission") return "Respond";
+  if (agent.requiresAttention || agent.status === "error") return "Review";
+  // An agent whose turn ended still works while shells or monitors it started are live.
+  if (
+    agent.status === "running" ||
+    agent.status === "initializing" ||
+    agent.backgroundWork.count > 0
+  )
+    return "Wait";
+  return "Start";
+}
+function Task({ title, view }: { title: string; view: PluginSidebarViewProps }) {
   const agents = useAgents({
-    where: (item) => !item.background && indicators.includes(item.indicator),
+    // Background agents are helpers the user never opens; leave them out like the sidebar does.
+    where: (item) => !item.background && agentTask(item) === title,
     orderBy: ["lastActivityAt", "desc"],
   });
   return (
@@ -36,9 +32,10 @@ function Task({
 export function Agents(view: PluginSidebarViewProps) {
   return (
     <ScrollView>
-      {tasks.map((task) => (
-        <Task key={task.title} title={task.title} indicators={task.indicators} view={view} />
-      ))}
+      <Task title="Respond" view={view} />
+      <Task title="Review" view={view} />
+      <Task title="Wait" view={view} />
+      <Task title="Start" view={view} />
     </ScrollView>
   );
 }

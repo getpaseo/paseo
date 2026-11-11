@@ -20,7 +20,6 @@ export interface PluginTheme {
   };
 }
 
-/** The state Paseo shows for a workspace or agent in the sidebar. */
 export type WorkspaceIndicator = "needs_input" | "failed" | "running" | "attention" | "done";
 
 export interface PluginWorkspaceSnapshot {
@@ -61,14 +60,9 @@ export interface PluginAgentSnapshot {
   readonly id: string;
   readonly workspaceId: string;
   readonly provider: string;
-  /** Raw daemon status; prefer indicator for presentation. */
   readonly status: "initializing" | "idle" | "running" | "error" | "closed";
-  /**
-   * The state the sidebar shows for this agent. `running` during a turn and while background work
-   * the turn left behind is still live.
-   */
-  readonly indicator: WorkspaceIndicator;
-  readonly indicatorLabel: string;
+  /** Shells and monitors the agent left running after its turn. 0 when none are live. */
+  readonly backgroundWork: { readonly count: number };
   /** A helper hidden from tabs, lists and attention. Fixed at creation. */
   readonly background: boolean;
   readonly createdAt: string;

@@ -1566,50 +1566,47 @@ Workspace snapshot fields:
 
 Agent snapshot fields:
 
-| Field               | Type                                                              |
-| ------------------- | ----------------------------------------------------------------- |
-| `id`                | `string`                                                          |
-| `workspaceId`       | `string`                                                          |
-| `provider`          | `string`                                                          |
-| `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"`    |
-| `indicator`         | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
-| `indicatorLabel`    | `string`                                                          |
-| `background`        | `boolean`                                                         |
-| `createdAt`         | ISO timestamp                                                     |
-| `updatedAt`         | ISO timestamp                                                     |
-| `lastActivityAt`    | ISO timestamp                                                     |
-| `title`             | `string \| null`                                                  |
-| `cwd`               | `string`                                                          |
-| `model`             | `string \| null`                                                  |
-| `currentModeId`     | `string \| null`                                                  |
-| `thinkingOptionId`  | `string \| null`                                                  |
-| `requiresAttention` | `boolean`                                                         |
-| `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                   |
-| `parentAgentId`     | `string \| null`                                                  |
-| `labels`            | `Record<string, string>`                                          |
+| Field               | Type                                                           |
+| ------------------- | -------------------------------------------------------------- |
+| `id`                | `string`                                                       |
+| `workspaceId`       | `string`                                                       |
+| `provider`          | `string`                                                       |
+| `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
+| `createdAt`         | ISO timestamp                                                  |
+| `updatedAt`         | ISO timestamp                                                  |
+| `lastActivityAt`    | ISO timestamp                                                  |
+| `title`             | `string \| null`                                               |
+| `cwd`               | `string`                                                       |
+| `model`             | `string \| null`                                               |
+| `currentModeId`     | `string \| null`                                               |
+| `thinkingOptionId`  | `string \| null`                                               |
+| `requiresAttention` | `boolean`                                                      |
+| `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
+| `parentAgentId`     | `string \| null`                                               |
+| `labels`            | `Record<string, string>`                                       |
 
-`indicator` is the state the sidebar shows for the agent, and `indicatorLabel` is its localized
-label:
+`backgroundWork.count` is the number of shells and monitors the agent left running after its turn,
+and `0` when none are live. An agent can be `idle` with `attentionReason: "finished"` while that
+work still runs, so combine the fields the way your plugin needs:
 
 ```tsx
-const state = useAgent(agentId, ({ indicator, indicatorLabel }) => ({ indicator, indicatorLabel }));
-if (!state) return null; // The agent is unavailable.
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // The agent is unavailable.
 ```
 
-`indicator` is `running` during a turn and while background work the turn left behind, such as a
-shell or monitor, is still live; `attention` once that work is gone and the user has not read the
-finish; `done` once they have; `needs_input` while a permission is pending; `failed` while an
-error is unread. Use it to show agent
-state instead of deriving it from `status` and `requiresAttention`. `status` stays the raw daemon
-lifecycle, and `attentionReason: "finished"` means the turn finished, whether or not background
-work is still running. For the background work itself, use
+To list or stop the work itself, use
 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle).
 
 `background` is `true` for a [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent),
 a helper hidden from tabs, lists and attention. It is fixed when the agent is created. An agent in a
 background workspace reads `false` unless it was created as a background agent; read the
-workspace's own `background` for that. `indicator`, `indicatorLabel` and `background` require
-Paseo 0.16.0 or later.
+workspace's own `background` for that. `backgroundWork` and `background` require Paseo 0.16.0 or
+later.
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 

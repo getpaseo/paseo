@@ -96,6 +96,7 @@ export function AgentRow({
     [view.theme],
   );
   if (!agent) return null;
+  const tasks = agent.backgroundWork.count;
   return (
     <Pressable
       accessibilityRole="button"
@@ -106,9 +107,11 @@ export function AgentRow({
       <Text numberOfLines={1} style={style}>
         {agent.title ?? agent.provider}
       </Text>
-      <Text numberOfLines={1} style={detail}>
-        {agent.indicatorLabel}
-      </Text>
+      {tasks > 0 ? (
+        <Text numberOfLines={1} style={detail}>
+          {tasks === 1 ? "1 background task" : `${tasks} background tasks`}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
