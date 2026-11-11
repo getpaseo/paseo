@@ -92,19 +92,24 @@ export function buildWorkspaceStructureProjects(input: {
   const allocatedViewKeys = new Set(
     projectEntries.flatMap(({ project }) => (project.projectKey ? [project.projectKey] : [])),
   );
-  const projectLinkOverrides = buildProjectLinkGroupingOverrides({
-    placements: buildProjectLinkPlacements({
-      hosts: sessions.map((session) => ({
-        serverId: session.serverId,
-        serverName: "",
-        projects: session.projects,
-        workspaces: session.workspaces,
-      })),
-    }),
-    links: localProjectLinks,
-    hydratedServerIds: input.hydratedProjectLinkServerIds,
-    unhydratedServerIds: input.unhydratedProjectLinkServerIds,
-  });
+  // Git facts only participate in the structural projection when saved local links need
+  // validation. Avoid recomputing every placement for people who have never linked projects.
+  const projectLinkOverrides =
+    localProjectLinks.length === 0
+      ? new Map<string, ProjectLinkGroupingOverride>()
+      : buildProjectLinkGroupingOverrides({
+          placements: buildProjectLinkPlacements({
+            hosts: sessions.map((session) => ({
+              serverId: session.serverId,
+              serverName: "",
+              projects: session.projects,
+              workspaces: session.workspaces,
+            })),
+          }),
+          links: localProjectLinks,
+          hydratedServerIds: input.hydratedProjectLinkServerIds,
+          unhydratedServerIds: input.unhydratedProjectLinkServerIds,
+        });
   const localLinkViewKeys = allocateLocalLinkViewKeys({
     overrides: projectLinkOverrides,
     allocatedViewKeys,
