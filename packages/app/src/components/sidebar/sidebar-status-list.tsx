@@ -20,7 +20,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { SidebarWorkspaceTabs } from "@/components/sidebar/workspace-tabs/tab-list";
-import { useSidebarWorkspaceTabsDisclosureCount } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
+import { useSidebarWorkspaceTabsDisclosure } from "@/components/sidebar/workspace-tabs/use-workspace-tabs";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
@@ -953,30 +953,30 @@ function StatusWorkspaceRowInnerContent({
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
               >
-                {renderSlot ? (
-                  <StatusWorkspaceActionSlot
-                    workspace={workspace}
-                    backdrop={backdrop}
-                    trailing={trailing}
-                    trailingPresentation={trailingPresentation}
-                    showKebab={showKebabInSlot}
-                    showArchiveButton={showArchiveButton}
-                    showScrim={showScrim}
-                    reserveSlotWidth={reserveSlotWidth}
-                    isPinned={isPinned}
-                    onTogglePin={onTogglePin}
-                    onCopyPath={onCopyPath}
-                    onCopyBranchName={onCopyBranchName}
-                    onRename={onRename}
-                    onMarkAsRead={onMarkAsRead}
-                    onMarkAsUnread={onMarkAsUnread}
-                    onArchive={onArchive}
-                    archiveLabel={archiveLabel}
-                    archiveStatus={archiveStatus}
-                    archivePendingLabel={archivePendingLabel}
-                    archiveShortcutKeys={archiveShortcutKeys}
-                  />
-                ) : null}
+                <StatusWorkspaceActionSlot
+                  renderSlot={renderSlot}
+                  isTouchPlatform={isTouchPlatform}
+                  workspace={workspace}
+                  backdrop={backdrop}
+                  trailing={trailing}
+                  trailingPresentation={trailingPresentation}
+                  showKebab={showKebabInSlot}
+                  showArchiveButton={showArchiveButton}
+                  showScrim={showScrim}
+                  reserveSlotWidth={reserveSlotWidth}
+                  isPinned={isPinned}
+                  onTogglePin={onTogglePin}
+                  onCopyPath={onCopyPath}
+                  onCopyBranchName={onCopyBranchName}
+                  onRename={onRename}
+                  onMarkAsRead={onMarkAsRead}
+                  onMarkAsUnread={onMarkAsUnread}
+                  onArchive={onArchive}
+                  archiveLabel={archiveLabel}
+                  archiveStatus={archiveStatus}
+                  archivePendingLabel={archivePendingLabel}
+                  archiveShortcutKeys={archiveShortcutKeys}
+                />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
           </View>
@@ -987,6 +987,8 @@ function StatusWorkspaceRowInnerContent({
 }
 
 function StatusWorkspaceActionSlot({
+  renderSlot,
+  isTouchPlatform,
   workspace,
   backdrop,
   trailing,
@@ -1008,6 +1010,8 @@ function StatusWorkspaceActionSlot({
   archivePendingLabel,
   archiveShortcutKeys,
 }: {
+  renderSlot: boolean;
+  isTouchPlatform: boolean;
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
@@ -1030,14 +1034,17 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
-  const tabsDisclosureCount = useSidebarWorkspaceTabsDisclosureCount(
+  const tabsDisclosure = useSidebarWorkspaceTabsDisclosure(
     workspace.serverId,
     workspace.workspaceId,
   );
+  const showSubagentNotice = tabsDisclosure.notice !== null;
+  if (!renderSlot && !showSubagentNotice) return null;
   return (
     <SidebarWorkspaceTrailingActionSlot
-      reserveWidth={reserveSlotWidth}
-      reserveTabsDisclosure={tabsDisclosureCount !== null}
+      reserveWidth={reserveSlotWidth || (showSubagentNotice && isTouchPlatform)}
+      reserveTabsDisclosure={tabsDisclosure.count !== null}
+      reserveSubagentNotice={showSubagentNotice}
     >
       <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
         <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
@@ -1047,7 +1054,8 @@ function StatusWorkspaceActionSlot({
         scrimBackdrop={showScrim ? backdrop : undefined}
         workspaceKey={workspace.workspaceKey}
         onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
-        tabsDisclosureCount={tabsDisclosureCount}
+        tabsDisclosureCount={tabsDisclosure.count}
+        subagentNotice={tabsDisclosure.notice}
       >
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu

@@ -30,10 +30,23 @@ export interface SelectNestedSubagentWorkspaceKeysInput {
  * they are not listed anywhere, so they neither keep a row nor need one. Nesting is one level
  * deep, so a workspace whose parent's own workspace nests stays on its row.
  */
-export function selectNestedSubagentWorkspaceKeys({
+export interface NestedSubagentWorkspaces {
+  /** Nested workspace keys, sorted. */
+  keys: string[];
+  /** Nested workspace key → the parent workspace keys it is listed under, each sorted. */
+  parentsByKey: ReadonlyMap<string, readonly string[]>;
+}
+
+export function selectNestedSubagentWorkspaceKeys(
+  input: SelectNestedSubagentWorkspaceKeysInput,
+): string[] {
+  return selectNestedSubagentWorkspaces(input).keys;
+}
+
+export function selectNestedSubagentWorkspaces({
   agentsByServerId,
   agentTabWorkspaceKeys,
-}: SelectNestedSubagentWorkspaceKeysInput): string[] {
+}: SelectNestedSubagentWorkspaceKeysInput): NestedSubagentWorkspaces {
   const parentWorkspaceKeysByCandidate = new Map<string, Set<string> | null>();
   for (const [serverId, agents] of agentsByServerId) {
     for (const agent of agents.values()) {
@@ -55,15 +68,19 @@ export function selectNestedSubagentWorkspaceKeys({
       else parentWorkspaceKeysByCandidate.set(workspaceKey, new Set([parentKey]));
     }
   }
-  const nested: string[] = [];
+  const keys: string[] = [];
+  const parentsByKey = new Map<string, readonly string[]>();
   for (const [workspaceKey, parentWorkspaceKeys] of parentWorkspaceKeysByCandidate) {
     if (!parentWorkspaceKeys) continue;
     const parentNests = [...parentWorkspaceKeys].some((key) =>
       Boolean(parentWorkspaceKeysByCandidate.get(key)),
     );
-    if (!parentNests) nested.push(workspaceKey);
+    if (parentNests) continue;
+    keys.push(workspaceKey);
+    parentsByKey.set(workspaceKey, [...parentWorkspaceKeys].sort());
   }
-  return nested.sort();
+  keys.sort();
+  return { keys, parentsByKey };
 }
 
 function nestingParentWorkspaceKey(

@@ -51,20 +51,28 @@ export interface SidebarWorkspaceTabsSummary {
   tabCount: number;
   /** The agent of the workspace's only tab, whose subagents still earn the disclosure. */
   soleAgentId: string | null;
+  /** Agent tabs in pane order. The disclosure's notice is the union of their subagents. */
+  agentIds: readonly string[];
 }
 
 export const EMPTY_SIDEBAR_WORKSPACE_TABS_SUMMARY: SidebarWorkspaceTabsSummary = {
   tabCount: 0,
   soleAgentId: null,
+  agentIds: [],
 };
 
 export function summarizeSidebarWorkspaceTabs({
   tabs,
 }: SidebarWorkspaceTabs): SidebarWorkspaceTabsSummary {
   const sole = tabs.length === 1 ? tabs[0] : undefined;
+  const agentIds: string[] = [];
+  for (const tab of tabs) {
+    if (tab.target.kind === "agent") agentIds.push(tab.target.agentId);
+  }
   return {
     tabCount: tabs.length,
     soleAgentId: sole?.target.kind === "agent" ? sole.target.agentId : null,
+    agentIds,
   };
 }
 
@@ -72,7 +80,20 @@ export function sidebarWorkspaceTabsSummariesEqual(
   left: SidebarWorkspaceTabsSummary,
   right: SidebarWorkspaceTabsSummary,
 ): boolean {
-  return left.tabCount === right.tabCount && left.soleAgentId === right.soleAgentId;
+  return (
+    left.tabCount === right.tabCount &&
+    left.soleAgentId === right.soleAgentId &&
+    sameAgentIds(left.agentIds, right.agentIds)
+  );
+}
+
+function sameAgentIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 /**

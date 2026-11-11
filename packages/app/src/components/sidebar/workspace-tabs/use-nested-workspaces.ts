@@ -3,13 +3,21 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { collectAllTabs } from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { selectNestedSubagentWorkspaceKeys } from "./nested-workspaces";
+import { selectNestedSubagentWorkspaces, type NestedSubagentWorkspaces } from "./nested-workspaces";
 
 type SessionState = ReturnType<typeof useSessionStore.getState>;
 type AgentsByServerId = ReadonlyMap<string, ReadonlyMap<string, Agent>>;
 
 const NO_KEYS: ReadonlySet<string> = new Set();
+const NO_PARENTS: NestedSubagentWorkspaces["parentsByKey"] = new Map();
 const NO_AGENTS: AgentsByServerId = new Map();
+const NO_NESTED: NestedSubagentWorkspaceIndex = { keys: NO_KEYS, parentsByKey: NO_PARENTS };
+
+export interface NestedSubagentWorkspaceIndex {
+  keys: ReadonlySet<string>;
+  /** Nested workspace key → the parent workspace keys it is listed under. */
+  parentsByKey: ReadonlyMap<string, readonly string[]>;
+}
 
 /**
  * Reuses the previous map until a host's agent map changes, so stream ticks that leave the
@@ -29,10 +37,11 @@ function createAgentsByServerIdSelector(): (state: SessionState) => AgentsByServ
 }
 
 /**
- * Workspace keys the sidebar leaves off its own rows because they only hold subagents listed
- * under a parent's tab, while the Settings > Sidebar display toggle is on.
+ * Workspaces the sidebar lists under a parent's tab instead of on their own row, and which
+ * parent rows those workspaces belong to. The Settings > Sidebar display toggle gates it.
+ * The signature keeps the set and the parent map stable until the nesting actually changes.
  */
-export function useNestedSubagentWorkspaceKeys(): ReadonlySet<string> {
+export function useNestedSubagentWorkspaces(): NestedSubagentWorkspaceIndex {
   const enabled = useSidebarViewStore((state) => state.nestSubagentWorkspaces);
   const selectAgents = useMemo(createAgentsByServerIdSelector, []);
   const agentsByServerId = useSessionStore((state) => (enabled ? selectAgents(state) : NO_AGENTS));
@@ -52,10 +61,23 @@ export function useNestedSubagentWorkspaceKeys(): ReadonlySet<string> {
     }
     return keys;
   }, [layoutByWorkspace]);
-  const keys = useMemo(() => {
-    if (agentTabWorkspaceKeys.size === 0 || agentsByServerId.size === 0) return [];
-    return selectNestedSubagentWorkspaceKeys({ agentsByServerId, agentTabWorkspaceKeys });
+  const signature = useMemo(() => {
+    if (agentTabWorkspaceKeys.size === 0 || agentsByServerId.size === 0) return "";
+    const nested = selectNestedSubagentWorkspaces({ agentsByServerId, agentTabWorkspaceKeys });
+    return nested.keys
+      .map((key) => `${key}\0${(nested.parentsByKey.get(key) ?? []).join("\0")}`)
+      .join("\n");
   }, [agentsByServerId, agentTabWorkspaceKeys]);
-  const joined = keys.join("\n");
-  return useMemo(() => (joined ? new Set(joined.split("\n")) : NO_KEYS), [joined]);
+  return useMemo(() => nestedIndexFromSignature(signature), [signature]);
+}
+
+function nestedIndexFromSignature(signature: string): NestedSubagentWorkspaceIndex {
+  if (!signature) return NO_NESTED;
+  const parentsByKey = new Map<string, readonly string[]>();
+  for (const entry of signature.split("\n")) {
+    const [key, ...parents] = entry.split("\0");
+    if (!key) continue;
+    parentsByKey.set(key, parents);
+  }
+  return { keys: new Set(parentsByKey.keys()), parentsByKey };
 }

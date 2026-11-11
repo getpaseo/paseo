@@ -26,6 +26,8 @@ import {
   type SidebarWorkspaceTabs,
   type SidebarWorkspaceTabsSummary,
 } from "./model";
+import type { SubagentDisclosureNotice } from "./subagent-notice";
+import { useSubagentDisclosureNotice } from "./use-subagent-notice";
 
 type WorkspaceLayoutState = Parameters<Parameters<typeof useWorkspaceLayoutStore>[0]>[0];
 
@@ -84,17 +86,33 @@ function useSidebarWorkspaceTabsSummary(
   return useWorkspaceLayoutStore(selectSummary);
 }
 
+const NO_AGENT_IDS: readonly string[] = [];
+
+export interface SidebarWorkspaceTabsDisclosureState {
+  /** Null when the row has no disclosure. */
+  count: number | null;
+  /** The most urgent subagent under any agent tab that needs a person. */
+  notice: SubagentDisclosureNotice | null;
+}
+
 /**
- * The count a workspace row's disclosure shows, or null when the row has no disclosure. A lone
- * agent tab with subagents keeps it, so its subagents stay reachable from the sidebar.
+ * The count a workspace row's disclosure shows, and whether a subagent under any of its tabs
+ * needs input, failed unread, or is ready to review. A lone agent tab with subagents keeps the
+ * disclosure, so those subagents stay reachable from the sidebar.
  */
-export function useSidebarWorkspaceTabsDisclosureCount(
+export function useSidebarWorkspaceTabsDisclosure(
   serverId: string,
   workspaceId: string,
-): number | null {
-  const { tabCount, soleAgentId } = useSidebarWorkspaceTabsSummary(serverId, workspaceId);
+): SidebarWorkspaceTabsDisclosureState {
+  const { tabCount, soleAgentId, agentIds } = useSidebarWorkspaceTabsSummary(serverId, workspaceId);
   const soleTabHasSubagents = useHasSubagents(serverId, soleAgentId);
-  return hasSidebarWorkspaceTabsDisclosure(tabCount, soleTabHasSubagents) ? tabCount : null;
+  const count = hasSidebarWorkspaceTabsDisclosure(tabCount, soleTabHasSubagents) ? tabCount : null;
+  const notice = useSubagentDisclosureNotice(
+    serverId,
+    workspaceId,
+    count === null ? NO_AGENT_IDS : agentIds,
+  );
+  return useMemo(() => ({ count, notice }), [count, notice]);
 }
 
 const NO_TAB_IDS: ReadonlySet<string> = new Set();

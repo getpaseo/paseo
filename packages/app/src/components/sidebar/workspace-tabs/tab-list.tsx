@@ -35,6 +35,7 @@ import {
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { useSettings } from "@/hooks/use-settings";
 import { useSessionStore } from "@/stores/session-store";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHasSubagents, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
@@ -66,6 +67,9 @@ import {
   summarizeSidebarWorkspaceTabs,
 } from "./model";
 import { useNestedSubagentTabIds, useSidebarWorkspaceTabs } from "./use-workspace-tabs";
+import { useSubagentDisclosureNotice } from "./use-subagent-notice";
+import { orderSidebarSubagentRows, sidebarSubagentSortTime } from "./nested-sort";
+import { useAgentSortClocks, useWorkspaceSortClocks } from "./sort-clocks";
 
 interface SidebarWorkspaceTabsProps {
   serverId: string;
@@ -300,6 +304,28 @@ function SidebarWorkspaceTabRow({
 }
 
 /**
+ * The subagent track is oldest first. The sidebar's Created and Last prompt sorts are newest
+ * first, including a nested workspace's own clock. Manual keeps the track order.
+ */
+function useSidebarOrderedSubagentRows(
+  rows: readonly SubagentRow[],
+  serverId: string,
+  workspaceId: string,
+): readonly SubagentRow[] {
+  const sort = useSidebarViewStore((state) => state.workspaceSort);
+  const agents = useAgentSortClocks();
+  const workspaces = useWorkspaceSortClocks();
+  const listingWorkspaceKey = `${serverId}:${workspaceId}`;
+  return useMemo(
+    () =>
+      orderSidebarSubagentRows(rows, sort, (row) =>
+        sidebarSubagentSortTime({ row, sort, listingWorkspaceKey, agents, workspaces }),
+      ),
+    [agents, listingWorkspaceKey, rows, sort, workspaces],
+  );
+}
+
+/**
  * An agent tab, with its subagents behind a disclosure of their own: the same children the
  * agent's subagents track lists, one level deep. Each opened child shows its own track.
  */
@@ -325,7 +351,10 @@ function SidebarAgentTabEntry({
   menuActions: SidebarWorkspaceTabMenuActions;
 }) {
   const { t } = useTranslation();
-  const rows = useSubagentsForParent({ serverId, parentAgentId: agentId });
+  const trackRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
+  const rows = useSidebarOrderedSubagentRows(trackRows, serverId, workspaceId);
+  const parentAgentIds = useMemo(() => [agentId], [agentId]);
+  const notice = useSubagentDisclosureNotice(serverId, workspaceId, parentAgentIds);
   const expanded = useIsSidebarTabSubagentsExpanded(workspaceKey, tab.tabId);
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const handleToggle = useCallback(
@@ -346,6 +375,7 @@ function SidebarAgentTabEntry({
           variant="tab"
           count={rows.length}
           expanded={expanded}
+          notice={notice}
           onPress={handleToggle}
           accessibilityLabel={
             expanded
@@ -355,7 +385,7 @@ function SidebarAgentTabEntry({
           testID={`sidebar-workspace-tab-subagents-disclosure-${workspaceKey}-${tab.tabId}`}
         />
       ) : null,
-    [expanded, handleToggle, hasSubagents, rows.length, t, tab.tabId, workspaceKey],
+    [expanded, handleToggle, hasSubagents, notice, rows.length, t, tab.tabId, workspaceKey],
   );
   return (
     <>

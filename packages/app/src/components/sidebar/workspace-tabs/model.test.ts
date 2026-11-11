@@ -137,7 +137,7 @@ describe("summarizeSidebarWorkspaceTabs", () => {
       tabs: [descriptor("agent_a", { kind: "agent", agentId: "a" })],
       activeTabId: "agent_a",
     });
-    expect(summary).toEqual({ tabCount: 1, soleAgentId: "a" });
+    expect(summary).toEqual({ tabCount: 1, soleAgentId: "a", agentIds: ["a"] });
   });
 
   it("names no agent when the only tab is something else, or there are several", () => {
@@ -146,7 +146,7 @@ describe("summarizeSidebarWorkspaceTabs", () => {
         tabs: [descriptor("terminal_t", { kind: "terminal", terminalId: "t" })],
         activeTabId: null,
       }),
-    ).toEqual({ tabCount: 1, soleAgentId: null });
+    ).toEqual({ tabCount: 1, soleAgentId: null, agentIds: [] });
     expect(
       summarizeSidebarWorkspaceTabs({
         tabs: [
@@ -155,7 +155,7 @@ describe("summarizeSidebarWorkspaceTabs", () => {
         ],
         activeTabId: null,
       }),
-    ).toEqual({ tabCount: 2, soleAgentId: null });
+    ).toEqual({ tabCount: 2, soleAgentId: null, agentIds: ["a", "b"] });
   });
 });
 

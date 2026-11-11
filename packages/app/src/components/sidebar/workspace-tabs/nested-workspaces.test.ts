@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type NestingAgent, selectNestedSubagentWorkspaceKeys } from "./nested-workspaces";
+import {
+  selectNestedSubagentWorkspaceKeys,
+  selectNestedSubagentWorkspaces,
+  type NestingAgent,
+} from "./nested-workspaces";
 
 function agent(
   id: string,
@@ -76,6 +80,25 @@ describe("selectNestedSubagentWorkspaceKeys", () => {
         ["p", "c"],
       ),
     ).toEqual(["s:child"]);
+  });
+
+  it("records the parent workspace each nested workspace is listed under", () => {
+    const nested = selectNestedSubagentWorkspaces({
+      agentsByServerId: new Map([
+        [
+          "s",
+          new Map(
+            [agent("p", "main"), agent("a", "review", "p"), agent("b", "notes", "p")].map(
+              (entry) => [entry.id, entry],
+            ),
+          ),
+        ],
+      ]),
+      agentTabWorkspaceKeys: new Map([["s:p", "s:main"]]),
+    });
+    expect(nested.keys).toEqual(["s:notes", "s:review"]);
+    expect(nested.parentsByKey.get("s:review")).toEqual(["s:main"]);
+    expect(nested.parentsByKey.get("s:notes")).toEqual(["s:main"]);
   });
 });
 
