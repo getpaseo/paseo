@@ -79,3 +79,59 @@ export function createReadingAnchor() {
     },
   };
 }
+
+const LANDING_TOLERANCE_PX = 0.5;
+
+export interface CellFrame {
+  y: number;
+  height: number;
+}
+
+export type NativeReadingRow = { kind: "row"; id: string } | { kind: "live-head" } | null;
+
+/**
+ * The native list runs oldest-first: a cell's `y` grows toward newer rows, and the live head
+ * sits at the end. The reading line sits just below the visual top, under any overlay that
+ * floats over the list there.
+ */
+export interface NativeReadingRowInput {
+  frames: ReadonlyMap<string, CellFrame>;
+  offsetY: number;
+  viewportHeight: number;
+  topInset: number;
+}
+
+export function resolveNativeReadingRow(input: NativeReadingRowInput): NativeReadingRow {
+  const readingLine = input.offsetY + input.topInset + READING_POSITION_OFFSET_PX;
+  let lastEnd = Number.NEGATIVE_INFINITY;
+  let readingId: string | null = null;
+  let readingStart = Number.NEGATIVE_INFINITY;
+  // Cells outside the render window have no frame. A line over that gap reads the nearest
+  // rendered newer cell, the same row a reader leaving it upward last saw.
+  let newerId: string | null = null;
+  let newerStart = Number.POSITIVE_INFINITY;
+  for (const [id, frame] of input.frames) {
+    const end = frame.y + frame.height;
+    lastEnd = Math.max(lastEnd, end);
+    // A prompt jump lands a row's top exactly on the reading line; sub-point rounding must
+    // not hand it to the row before. Of two rows meeting the line, the newer one reads.
+    if (frame.y - LANDING_TOLERANCE_PX <= readingLine && readingLine < end) {
+      if (frame.y > readingStart) {
+        readingStart = frame.y;
+        readingId = id;
+      }
+      continue;
+    }
+    if (frame.y > readingLine && frame.y < newerStart) {
+      newerStart = frame.y;
+      newerId = id;
+    }
+  }
+  if (readingId !== null) {
+    return { kind: "row", id: readingId };
+  }
+  if (newerId !== null) {
+    return { kind: "row", id: newerId };
+  }
+  return input.frames.size > 0 && readingLine >= lastEnd ? { kind: "live-head" } : null;
+}
