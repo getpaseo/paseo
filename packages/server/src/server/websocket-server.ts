@@ -28,7 +28,7 @@ import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
-import { AdaptiveEventLoopDelayMonitor } from "./websocket/event-loop-delay.js";
+import { EventLoopDelayMonitor } from "./websocket/event-loop-delay.js";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
@@ -629,7 +629,7 @@ export class VoiceAssistantWebSocketServer {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private applicationSocketLeaseInterval: ReturnType<typeof setInterval> | null = null;
   private readonly applicationSocketLease = new ApplicationSocketLease<WebSocketLike>();
-  private eventLoopDelayMonitor: AdaptiveEventLoopDelayMonitor | null = null;
+  private eventLoopDelayMonitor: EventLoopDelayMonitor | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private unsubscribeTerminalActivity: (() => void) | null = null;
@@ -920,7 +920,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private startRuntimeMetricsInterval(): void {
-    this.eventLoopDelayMonitor = new AdaptiveEventLoopDelayMonitor();
+    this.eventLoopDelayMonitor = new EventLoopDelayMonitor();
     const runtimeMetricsInterval = setInterval(() => {
       this.flushRuntimeMetrics();
     }, WS_RUNTIME_METRICS_FLUSH_MS);
