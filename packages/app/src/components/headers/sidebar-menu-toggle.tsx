@@ -100,11 +100,15 @@ function SidebarMenuToggleButton({
 export function SidebarMenuToggle({ style, ...props }: SidebarMenuToggleProps = {}) {
   const isMobile = useIsCompactFormFactor();
   const isOpen = usePanelStore((state) => selectIsAgentListOpen(state, { isCompact: isMobile }));
+  const leftSidebarPresentation = usePanelStore((state) => state.layout.leftSidebar);
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
+  // The negative inset belongs to a docked navigation edge. An overlay leaves this header's
+  // leading edge in place, so switching the inset would move the title before the panel covers it.
+  const navigationBesideToggle = isOpen && leftSidebarPresentation === "dock";
   const resolvedStyle = useMemo(
-    () => [styles.leadingToggle, !isOpen && styles.collapsedLeadingToggle, style],
-    [isOpen, style],
+    () => [styles.leadingToggle, !navigationBesideToggle && styles.collapsedLeadingToggle, style],
+    [navigationBesideToggle, style],
   );
   const placeholderStyle = useMemo(
     () => [headerIconSlotStyle.slot, resolvedStyle],
