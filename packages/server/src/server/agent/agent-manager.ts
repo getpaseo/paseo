@@ -3184,6 +3184,9 @@ export class AgentManager {
 
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
+    // A history read of an agent whose directory exists resolves to an interactive session, so
+    // the upgrade branch below never runs for it; any foreground use still ends the read-only grace.
+    this.noteForegroundUse(agentId);
     if (this.historySessions.has(agent.session)) {
       await this.runLifecycleMutation(agentId, () =>
         this.ensureInteractiveSessionUnlocked(agentId),

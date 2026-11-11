@@ -14383,6 +14383,16 @@ test.each(["prompt", "mode change"])(
   },
 );
 
+test("an out-of-band command after a timeline read ends the read-only grace", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeDefined();
+  await h.manager.tryRunOutOfBand(agent.id, "/maintenance");
+  expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeUndefined();
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+});
+
 test("a timeline read of a resident agent keeps its configured idle period", async () => {
   const h = idleCleanupHarness();
   const agent = await h.create();
