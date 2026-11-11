@@ -370,6 +370,62 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("omits accumulated async question records from wire persistence", () => {
+    const questions = [
+      {
+        id: "q-1",
+        prompt: "Which module should be read next?",
+        answers: [{ id: "a-1", text: "src/index.ts" }],
+      },
+    ];
+    const agent = createManagedAgent({
+      provider: "codex",
+      config: { provider: "codex" },
+      persistence: {
+        provider: "codex",
+        sessionId: "persist-questions",
+        metadata: {
+          conversationId: "conversation-questions",
+          asyncQuestions: questions,
+        },
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.persistence).toEqual({
+      provider: "codex",
+      sessionId: "persist-questions",
+      metadata: { conversationId: "conversation-questions" },
+    });
+    expect(agent.persistence?.metadata?.asyncQuestions).toEqual(questions);
+
+    const record = toStoredAgentRecord(agent);
+    expect(record.persistence?.metadata?.asyncQuestions).toEqual(questions);
+    expect(buildStoredAgentPayload(record, ["codex"]).persistence?.metadata).toEqual({
+      conversationId: "conversation-questions",
+    });
+  });
+
+  it("drops persistence metadata that only held async question records", () => {
+    const payload = toAgentPayload(
+      createManagedAgent({
+        provider: "codex",
+        config: { provider: "codex" },
+        persistence: {
+          provider: "codex",
+          sessionId: "persist-questions-only",
+          metadata: { asyncQuestions: [{ id: "q-only" }] },
+        },
+      }),
+    );
+
+    expect(payload.persistence).toEqual({
+      provider: "codex",
+      sessionId: "persist-questions-only",
+    });
+  });
+
   it("strips MCP metadata from stored wire payloads while preserving private persistence", () => {
     const record = toStoredAgentRecord(
       createManagedAgent({
