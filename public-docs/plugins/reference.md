@@ -941,6 +941,7 @@ the `open` state.
 | `style`                 | `StyleProp<ViewStyle>` | —                  | Styles the full body viewport, including empty space. Use for backgrounds.        |
 | `contentContainerStyle` | `StyleProp<ViewStyle>` | Padding 24, gap 16 | Overrides the content layout. Set `padding: 0, gap: 0` for edge-to-edge rows.     |
 | `scrollable`            | `boolean`              | `true`             | The host scrolls the body. Set `false` for a bounded body with your own scroller. |
+| `desktopSizing`         | `"fill" \| "content"`  | `"fill"`           | For `scrollable={false}`, opt into a content-sized centered dialog.               |
 
 A plain `Modal.Content` is already padded and scrollable. Avoid adding a second padded wrapper
 unless you want another inset. Body styles leave the host header, drag handle, and dismissal controls
@@ -949,7 +950,9 @@ to zero removes the decorative inset, not that space. Keyboard clearance is hand
 
 With `scrollable={false}`, the body fills the available sheet height, and the centered dialog uses
 85% of the available height. Use `flex: 1, minHeight: 0` on your list. Default scrolling dialogs stay
-content-sized on wide layouts. Presentation follows window size, including narrow desktop windows
+content-sized on wide layouts. Set `desktopSizing="content"` for a caller-owned scroller that shrinks
+to its content and can shrink within the dialog's maximum height; use `flexShrink: 1, minHeight: 0`
+instead of `flex: 1` on its desktop wrappers. Compact sheets keep their normal height. Presentation follows window size, including narrow desktop windows
 and wide tablets.
 
 The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
