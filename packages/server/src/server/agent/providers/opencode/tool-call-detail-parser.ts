@@ -698,6 +698,7 @@ export function deriveOpencodeToolDetail(
       return {
         type: "plain_text",
         label,
+        title: label,
         icon: "wrench",
         ...(text ? { text } : {}),
       } satisfies ToolCallDetail;

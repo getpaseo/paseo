@@ -113,6 +113,13 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
         summary: readString(input.detail.description),
       };
     case "plain_text":
+      // A titled plain_text detail names what ran (the Code Mode tool an
+      // execute call invoked): the title replaces the raw tool name.
+      if (input.detail.title != null) {
+        return {
+          displayName: input.detail.title,
+        };
+      }
       return {
         summary: input.detail.label,
       };
