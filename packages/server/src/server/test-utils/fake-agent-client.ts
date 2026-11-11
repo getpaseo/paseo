@@ -572,6 +572,39 @@ class FakeAgentSession implements AgentSession {
     this.notifySubscribers(completed);
   }
 
+  /**
+   * Streams the reply as two chunks that share one provider message id (the
+   * Codex shape: the same id on each streamed chunk and on the saved
+   * message), while the saved history holds only the complete message under
+   * that id. Exercises crash-truncated reply recovery across a restart.
+   */
+  private async emitChunkedReplyTurn(prompt: AgentPromptInput): Promise<void> {
+    const messageId = "chunked-reply";
+    for (const text of ["Hel", "lo world"]) {
+      const chunk: AgentStreamEvent = {
+        type: "timeline",
+        provider: this.providerName,
+        item: { type: "assistant_message", text, messageId },
+      };
+      this.notifySubscribers(chunk);
+    }
+    // The provider's saved transcript holds the complete message, not the
+    // streamed chunks.
+    await this.appendHistoryEvent({
+      type: "timeline",
+      provider: this.providerName,
+      item: { type: "assistant_message", text: "Hello world", messageId },
+    });
+    await this.beforeTurnComplete?.(prompt);
+    const completed: AgentStreamEvent = {
+      type: "turn_completed",
+      provider: this.providerName,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+    await this.appendHistoryEvent(completed);
+    this.notifySubscribers(completed);
+  }
+
   private async emitLargePayloadTurn(
     largePayload: ReturnType<typeof parseLargeAgentStreamPayloadPrompt> & object,
   ): Promise<void> {
@@ -806,6 +839,11 @@ class FakeAgentSession implements AgentSession {
       const largePayload = parseLargeAgentStreamPayloadPrompt(textPrompt);
       if (largePayload !== null) {
         await this.emitLargePayloadTurn(largePayload);
+        return;
+      }
+
+      if (textPrompt === "emit a chunked reply") {
+        await this.emitChunkedReplyTurn(prompt);
         return;
       }
 

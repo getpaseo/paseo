@@ -5,6 +5,7 @@ import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
 import {
   TimelineProjection,
+  boundaryTurnContinues,
   projectTimelineRows,
   tailBoundaryRowCrosses,
   type ProjectedTimelineRow,
@@ -425,6 +426,7 @@ interface TailBackfillPageOptions {
   limit: number;
   nextSeq: number;
   windowRows: readonly AgentTimelineRow[];
+  wholeTurns: boolean;
 }
 
 export interface AgentManagerOptions {
@@ -795,6 +797,36 @@ function timelineItemsCorrespond(seeded: AgentTimelineItem, replay: AgentTimelin
   // Identity-less, text-less items (todos, structured details) correspond by
   // exact content; without this a replay of such an item could never align.
   return JSON.stringify(seeded) === JSON.stringify(replay);
+}
+
+/**
+ * Whether the provider's replay completes a stored streamed reply. The pair
+ * already aligned by message id; the question is whether the stored copy is
+ * complete. A crash mid-stream leaves the first chunks on disk, so the
+ * stored text is a strict prefix of the provider's saved text — the
+ * signature this checks. A rewrite (different text) does not complete, and a
+ * provider copy truncated by the per-item cap is shorter, not longer, than
+ * a full stored reply; in both cases the stored copy stands.
+ */
+function replayCompletesStoredReply(seeded: AgentTimelineItem, replay: AgentTimelineItem): boolean {
+  if (seeded.type !== "assistant_message" || replay.type !== "assistant_message") return false;
+  const seededId = seeded.messageId;
+  if (seededId === undefined || seededId !== replay.messageId) return false;
+  return seeded.text.length < replay.text.length && replay.text.startsWith(seeded.text);
+}
+
+interface SeededTimelineReplyRestore {
+  /** The stored chunk rows of the incomplete reply, in log order. */
+  rows: AgentTimelineRow[];
+  /** The provider's complete reply item. */
+  item: AgentTimelineItem;
+}
+
+interface SeededTimelineRecovery {
+  /** Replay items past the last aligned seeded item: a tail that never reached disk. */
+  missed: Extract<AgentStreamEvent, { type: "timeline" }>[];
+  /** Stored replies the provider's replay completes in place. */
+  restores: SeededTimelineReplyRestore[];
 }
 
 /**
@@ -1664,6 +1696,46 @@ export class AgentManager {
     }
   }
 
+  /**
+   * A bounded tail scans the durable log from the end instead of
+   * materializing the full history; above the scan cap the full read takes
+   * over, so this returns null whenever the bounded scan cannot answer.
+   */
+  private async tryBoundedTailBackfillPage(
+    id: string,
+    input: {
+      epoch: string;
+      nextSeq: number;
+      windowRows: readonly AgentTimelineRow[];
+      fetchOptions?: AgentTimelineFetchOptions;
+      staleCursor: boolean;
+    },
+  ): Promise<AgentTimelineFetchResult | null> {
+    const { epoch, nextSeq, windowRows, fetchOptions, staleCursor } = input;
+    const limit = fetchOptions?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
+    if (fetchOptions?.direction !== "tail" || limit <= 0) return null;
+    const bounded = await this.fetchTailPageWithBoundedBackfill(id, {
+      limit,
+      nextSeq,
+      windowRows,
+      wholeTurns: fetchOptions?.wholeTurns ?? false,
+    });
+    if (bounded === null) return null;
+    return {
+      epoch,
+      direction: "tail",
+      reset: staleCursor,
+      staleCursor,
+      gap: false,
+      window: bounded.window,
+      hasOlder: bounded.hasOlder,
+      hasNewer: false,
+      startSeq: bounded.startSeq,
+      endSeq: bounded.endSeq,
+      rows: bounded.rows,
+    };
+  }
+
   private async readTimelineBackfillPage(
     id: string,
     input: TimelineBackfillPageOptions,
@@ -1673,31 +1745,14 @@ export class AgentManager {
     const limit = fetchOptions?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
     const cursor = fetchOptions?.cursor;
     const staleCursor = cursor !== undefined && cursor.epoch !== epoch;
-    // A bounded tail scans the durable log from the end instead of
-    // materializing the full history; above the scan cap the full read below
-    // takes over.
-    if (direction === "tail" && limit > 0) {
-      const bounded = await this.fetchTailPageWithBoundedBackfill(id, {
-        limit,
-        nextSeq,
-        windowRows,
-      });
-      if (bounded !== null) {
-        return {
-          epoch,
-          direction,
-          reset: staleCursor,
-          staleCursor,
-          gap: false,
-          window: bounded.window,
-          hasOlder: bounded.hasOlder,
-          hasNewer: false,
-          startSeq: bounded.startSeq,
-          endSeq: bounded.endSeq,
-          rows: bounded.rows,
-        };
-      }
-    }
+    const bounded = await this.tryBoundedTailBackfillPage(id, {
+      epoch,
+      nextSeq,
+      windowRows,
+      fetchOptions,
+      staleCursor,
+    });
+    if (bounded !== null) return bounded;
     const mergedRows = await this.getMergedTimelineRows(id, windowRows);
     // Appends after the snapshot belong to the next page.
     const rows = mergedRows.filter((row) => row.seq < nextSeq);
@@ -1754,7 +1809,7 @@ export class AgentManager {
     endSeq: number | null;
     rows: ProjectedTimelineRow[];
   } | null> {
-    const { limit, nextSeq, windowRows } = options;
+    const { limit, nextSeq, windowRows, wholeTurns } = options;
     const durableStore = this.durableTimelineStore;
     if (!durableStore) return null;
     const floor = windowRows[0]?.seq;
@@ -1814,6 +1869,12 @@ export class AgentManager {
       ) {
         continue;
       }
+      // A whole-turns page must start at the turn's first row. A stable cut
+      // inside the turn would serve a truncated turn that re-groups when the
+      // client loads the older history across the cut.
+      if (wholeTurns && boundaryTurnContinues(probe.rows[0], collectionOldest)) {
+        continue;
+      }
       // A stable cut keeps the collected entries final, but the page is only
       // complete once the collected rows project to at least `limit` items:
       // chunk-heavy history packs many rows per item, and stopping at the
@@ -1826,7 +1887,25 @@ export class AgentManager {
       }
     }
 
-    const merged = [...durable, ...windowRows];
+    return this.buildBoundedTailBackfillPage([...durable, ...windowRows], {
+      nextSeq,
+      reachedStart,
+      limit,
+      wholeTurns,
+    });
+  }
+
+  private buildBoundedTailBackfillPage(
+    merged: readonly AgentTimelineRow[],
+    options: { nextSeq: number; reachedStart: boolean; limit: number; wholeTurns: boolean },
+  ): {
+    window: AgentTimelineWindow;
+    hasOlder: boolean;
+    startSeq: number | null;
+    endSeq: number | null;
+    rows: ProjectedTimelineRow[];
+  } {
+    const { nextSeq, reachedStart, limit, wholeTurns } = options;
     const projected = projectTimelineRows({ rows: merged, mode: "projected" });
     const minSeq = merged.length > 0 ? merged[0].seq : 0;
     if (projected.length === 0) {
@@ -1842,6 +1921,7 @@ export class AgentManager {
       bounds: { minSeq, maxSeq: nextSeq - 1 },
       direction: "tail",
       limit,
+      wholeTurns,
     });
     return {
       window: { minSeq, maxSeq: nextSeq - 1, nextSeq },
@@ -5570,14 +5650,14 @@ export class AgentManager {
     }
 
     if (this.timelineStore.getCanonicalRows(agent.id).length === 0) {
-      let missed: Extract<AgentStreamEvent, { type: "timeline" }>[] | null;
+      let recovery: SeededTimelineRecovery | null;
       try {
-        missed = await this.findMissedTailEvents(agent.id, historyEvents);
+        recovery = await this.findMissedTailEvents(agent.id, historyEvents);
       } catch (error) {
         this.logger.warn({ err: error, agentId: agent.id }, "Failed to verify seeded timeline");
         return;
       }
-      if (missed === null) {
+      if (recovery === null) {
         // Stream rows and replay items have different granularity. Without a
         // checked item boundary, rebuild from the provider's complete copy.
         await this.rebuildTimelineFromProjectedProviderHistory(
@@ -5592,11 +5672,25 @@ export class AgentManager {
         });
         return;
       }
+      // A crash between chunk writes can leave a stored reply shorter than
+      // the provider's copy of the same message id. Rewrite the stored rows
+      // in place so the conversation holds the full text; the rows keep the
+      // log's numbering. The window is empty here, so the durable log is the
+      // only copy to fix, and a replacement signal makes clients drop any
+      // cached page that holds the partial text.
+      if (recovery.restores.length > 0) {
+        await this.restoreSeededTimelineReplies(agent.id, recovery.restores);
+        this.dispatch({
+          type: "timeline_replacement",
+          agentId: agent.id,
+          epoch: this.getTimelineEpoch(agent.id),
+        });
+      }
       // The provider holds timeline items that never reached disk: a crash
       // between an append and its durable write. Replay the missing tail
       // onto the seeded seqs; the rows keep the log's numbering and their
       // durable writes enqueue normally.
-      for (const event of missed) {
+      for (const event of recovery.missed) {
         this.recordTimeline(
           agent.id,
           event.item,
@@ -5705,7 +5799,10 @@ export class AgentManager {
    * the projected seeded items with the replay items instead: by identity
    * where one exists (message ids, tool call ids), by text otherwise. The
    * missed tail is the replay suffix past the last aligned item, and it
-   * always ends at the provider's newest item.
+   * always ends at the provider's newest item. An aligned reply whose stored
+   * text is a strict prefix of the provider's text (a crash mid-stream left
+   * only the first chunks) comes back in `restores` for an in-place
+   * content rewrite instead of a re-record.
    *
    * The alignment anchors the first replay item inside the seeded log rather
    * than at its start: the log may begin with rows the provider never
@@ -5717,14 +5814,13 @@ export class AgentManager {
   private async findMissedTailEvents(
     agentId: string,
     historyEvents: readonly Extract<AgentStreamEvent, { type: "timeline" }>[],
-  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[] | null> {
+  ): Promise<SeededTimelineRecovery | null> {
     const durableStore = this.durableTimelineStore;
     // An unavailable provider transcript must not erase the surviving log.
-    if (!durableStore || historyEvents.length === 0) return [];
+    if (!durableStore || historyEvents.length === 0) return { missed: [], restores: [] };
     const seededRows = await durableStore.getCommittedRows(agentId);
-    const seededItems = projectTimelineRows({ rows: seededRows, mode: "projected" }).map(
-      (entry) => entry.item,
-    );
+    const seededEntries = projectTimelineRows({ rows: seededRows, mode: "projected" });
+    const seededItems = seededEntries.map((entry) => entry.item);
     // The replay can start mid-log: the durable log may begin with rows the
     // provider never re-emits (a daemon-committed prompt echo its transcript
     // omits). Anchor the first replay item in the seeded log before aligning,
@@ -5735,12 +5831,23 @@ export class AgentManager {
       ? seededItems.findIndex((item) => timelineItemsCorrespond(item, firstReplayItem))
       : 0;
     if (seededIndex === -1) return null;
+    const restores: SeededTimelineReplyRestore[] = [];
     let replayIndex = 0;
     let index = seededIndex;
     while (index < seededItems.length) {
       const candidate =
         replayIndex < historyEvents.length ? historyEvents[replayIndex]?.item : undefined;
       if (candidate !== undefined && timelineItemsCorrespond(seededItems[index], candidate)) {
+        // An identity match settles alignment position, not completeness: a
+        // crash mid-stream can leave the first chunks of a reply on disk
+        // while the provider holds the full text under the same message id.
+        const entry = seededEntries[index];
+        if (entry && replayCompletesStoredReply(seededItems[index], candidate)) {
+          restores.push({
+            rows: seededRows.filter((row) => row.seq >= entry.seqStart && row.seq <= entry.seqEnd),
+            item: candidate,
+          });
+        }
         index += 1;
         replayIndex += 1;
         continue;
@@ -5753,12 +5860,42 @@ export class AgentManager {
       }
       // The replay ran out of items before the log did: the provider's copy
       // is fully contained in the surviving log, so nothing was lost.
-      if (candidate === undefined) return [];
+      if (candidate === undefined) return { missed: [], restores };
       break;
     }
     // The log ran out at or before the replay: the replay suffix past the log
     // is a tail that never reached disk.
-    return index === seededItems.length ? historyEvents.slice(replayIndex) : null;
+    return index === seededItems.length
+      ? { missed: historyEvents.slice(replayIndex), restores }
+      : null;
+  }
+
+  /**
+   * Rewrite the stored rows of a crash-truncated streamed reply with the
+   * provider's complete text. The group's first row carries the reply; the
+   * surviving chunk rows keep their seqs and turn but contribute no text, so
+   * projection merges them into the restored item instead of duplicating it.
+   * Last-write-wins per seq makes the appended rows supersede the truncated
+   * chunks in every later read.
+   */
+  private async restoreSeededTimelineReplies(
+    agentId: string,
+    restores: readonly SeededTimelineReplyRestore[],
+  ): Promise<void> {
+    const durableStore = this.durableTimelineStore;
+    if (!durableStore || restores.length === 0) return;
+    const rows: AgentTimelineRow[] = [];
+    for (const restore of restores) {
+      const [first, ...rest] = restore.rows;
+      if (!first) continue;
+      rows.push({ ...first, item: restore.item });
+      for (const row of rest) {
+        if (row.item.type === "assistant_message") {
+          rows.push({ ...row, item: { ...row.item, text: "" } });
+        }
+      }
+    }
+    if (rows.length > 0) await durableStore.bulkInsert(agentId, rows);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(

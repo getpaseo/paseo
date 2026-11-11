@@ -16644,6 +16644,72 @@ describe("durable timeline gap recovery", () => {
     }
   });
 
+  test("restores the provider's full reply when a crash truncated the stored chunks", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    class TruncatedReplyHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "one", messageId: "pm1" },
+        };
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "Hello world", messageId: "m1" },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new TruncatedReplyHistorySession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    const store = new RecordingTimelineStore();
+    // A crash after the first two chunk writes: the stored reply "Hello" is
+    // a strict prefix of the provider's "Hello world" under the same id.
+    const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+      {
+        seq: 1,
+        timestamp: TS,
+        item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+      },
+      { seq: 2, timestamp: TS, item: { type: "assistant_message", text: "Hel", messageId: "m1" } },
+      { seq: 3, timestamp: TS, item: { type: "assistant_message", text: "lo", messageId: "m1" } },
+    ]);
+    try {
+      const epochBefore = manager.getTimelineEpoch(agentId);
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+
+      // The rows keep their seqs: the first chunk row carries the full reply
+      // and the surviving chunk row merges into it without duplicating text.
+      const rows = await store.getCommittedRows(agentId);
+      expect(rows.map((row) => row.seq)).toEqual([1, 2, 3]);
+      expect(rows[1]?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "m1",
+      });
+      expect(rows[2]?.item).toEqual({ type: "assistant_message", text: "", messageId: "m1" });
+
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 3]);
+      expect(timeline.at(-1)?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "m1",
+      });
+      expect(manager.getTimelineEpoch(agentId)).toBe(epochBefore);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("replays only the unrecorded tail when a live row predates the provider's final text", async () => {
     const TS = "2026-01-01T00:00:00.000Z";
     // The live row holds a partial text for message m1 (a rewritten part);
@@ -16719,6 +16785,58 @@ describe("durable timeline gap recovery", () => {
         type: "assistant_message",
         text: "a101 b101",
         messageId: "m101",
+      });
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a post-restart whole-turns tail page holds the turn's start below the scan floor", async () => {
+    const rows: AgentTimelineRow[] = [];
+    // Two turns of a prompt trigger plus identity-less updates that project
+    // 1:1 (301 items each): the current turn starts 300 rows below the
+    // newest batch, so the bounded scan's first stable cuts sit mid-turn.
+    for (const [prompt, start] of [
+      ["p1", 1],
+      ["p2", 302],
+    ] as const) {
+      rows.push({
+        seq: start,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "user_message", text: prompt, clientMessageId: `c${prompt}` },
+      });
+      for (let i = 1; i <= 300; i += 1) {
+        rows.push({
+          seq: start + i,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          item: { type: "todo", items: [{ text: `${prompt}-${i}`, completed: false }] },
+        });
+      }
+    }
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      new TestAgentClient(),
+      new RecordingTimelineStore(),
+      rows,
+    );
+    try {
+      // The app's first fetch after a restart: a 40-item whole-turns tail.
+      // The scan must extend past its mid-turn stable cuts until it holds
+      // the turn's start, instead of serving the last 40 items of the turn.
+      const page = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "tail",
+        limit: 40,
+        wholeTurns: true,
+      });
+      expect(page.rows).toHaveLength(301);
+      expect(page.startSeq).toBe(302);
+      expect(page.endSeq).toBe(602);
+      expect(page.hasOlder).toBe(true);
+      expect(page.hasNewer).toBe(false);
+      expect(page.rows[0]?.item).toEqual({
+        type: "user_message",
+        text: "p2",
+        clientMessageId: "cp2",
       });
     } finally {
       await manager.closeAgent(agentId).catch(() => undefined);

@@ -453,4 +453,61 @@ describe("FileAgentTimelineStore", () => {
       messageId: "m101",
     });
   });
+
+  it("a whole-turns tail page scans past stable cuts to the turn's first row", async () => {
+    const rows: AgentTimelineRow[] = [];
+    // Two turns of a prompt trigger plus identity-less updates that project
+    // 1:1 (301 items each): no 256-row batch holds a whole turn, so the
+    // first stable cuts of a bounded scan sit mid-turn.
+    for (const [prompt, start] of [
+      ["p1", 1],
+      ["p2", 302],
+    ] as const) {
+      rows.push({
+        seq: start,
+        timestamp: TIMESTAMP,
+        item: { type: "user_message", text: prompt, clientMessageId: `c${prompt}` },
+      });
+      for (let i = 1; i <= 300; i += 1) {
+        rows.push({
+          seq: start + i,
+          timestamp: TIMESTAMP,
+          item: { type: "todo", items: [{ text: `${prompt}-${i}`, completed: false }] },
+        });
+      }
+    }
+    await store.bulkInsert("a", rows);
+
+    // The whole current turn (301 items, prompt first) is served even though
+    // the page size is 40: the scan extends past each mid-turn stable cut
+    // until it holds the turn's start.
+    const page = await store.fetchCommitted("a", {
+      direction: "tail",
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(page.rows).toHaveLength(301);
+    expect(page.startSeq).toBe(302);
+    expect(page.endSeq).toBe(602);
+    expect(page.rows[0]?.item).toEqual({
+      type: "user_message",
+      text: "p2",
+      clientMessageId: "cp2",
+    });
+    expect(page.rows.at(-1)?.item).toEqual({
+      type: "todo",
+      items: [{ text: "p2-300", completed: false }],
+    });
+    expect(page.hasOlder).toBe(true);
+    expect(page.hasNewer).toBe(false);
+
+    // Without the preference the same request cuts at the item limit, inside
+    // the turn.
+    const plain = await store.fetchCommitted("a", { direction: "tail", limit: 40 });
+    expect(plain.rows).toHaveLength(40);
+    expect(plain.rows[0]?.item).toEqual({
+      type: "todo",
+      items: [{ text: "p2-261", completed: false }],
+    });
+  });
 });

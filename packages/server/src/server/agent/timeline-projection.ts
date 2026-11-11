@@ -609,6 +609,16 @@ export function tailBoundaryRowCrosses(input: {
   return probeIdentity !== null && collectedIdentities.has(probeIdentity);
 }
 
+/**
+ * Whether the turn of the row below a candidate cut also holds in the row
+ * directly above it. Whole-turns tail scans extend while this is true, so
+ * the collected suffix includes the turn's first row instead of stopping at
+ * a stable cut mid-turn.
+ */
+export function boundaryTurnContinues(above: AgentTimelineRow, below: AgentTimelineRow): boolean {
+  return continuesTimelineTurn(above.turnId, below.turnId, isTimelineTurnTrigger(below.item));
+}
+
 export function projectTimelineRows(input: {
   rows: readonly AgentTimelineRow[];
   mode: TimelineProjectionMode;

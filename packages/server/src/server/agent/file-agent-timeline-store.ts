@@ -5,6 +5,7 @@ import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 
 import {
   TimelineProjection,
+  boundaryTurnContinues,
   projectTimelineRows,
   tailBoundaryRowCrosses,
 } from "./timeline-projection.js";
@@ -91,7 +92,10 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     // directions and limit 0 keep the full read (they ask for more than a
     // tail can answer).
     if (direction === "tail" && limit > 0) {
-      const bounded = await this.fetchCommittedTail(agentId, limit);
+      const bounded = await this.fetchCommittedTail(agentId, {
+        limit,
+        wholeTurns: options?.wholeTurns ?? false,
+      });
       if (bounded !== null) return bounded;
     }
     const rows = await this.getCommittedRows(agentId);
@@ -123,16 +127,18 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
    * Serve a tail page from a backward scan: batches of rows read from the
    * end of the log, each followed by a single-row probe of the row directly
    * above the collected suffix; the scan extends while that row can still
-   * merge into the suffix, and stops at a stable cut once the collected rows
-   * project to the requested page size (chunk-heavy logs pack many rows per
-   * item, so a stable cut can sit well below `limit` projected items). The
-   * first batch has no seq bound, so it covers the file. Returns null when
-   * the scan exceeds the cap so the caller falls back to the full read.
+   * merge into the suffix (and, for whole-turns pages, while the turn
+   * continues across the cut), and stops at a stable cut once the collected
+   * rows project to the requested page size (chunk-heavy logs pack many rows
+   * per item, so a stable cut can sit well below `limit` projected items).
+   * The first batch has no seq bound, so it covers the file. Returns null
+   * when the scan exceeds the cap so the caller falls back to the full read.
    */
   private async fetchCommittedTail(
     agentId: string,
-    limit: number,
+    options: { limit: number; wholeTurns: boolean },
   ): Promise<AgentTimelineFetchResult | null> {
+    const { limit, wholeTurns } = options;
     const collected: AgentTimelineRow[] = [];
     const collectedIdentities = new Set<string>();
     let offset = 0;
@@ -179,6 +185,12 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       ) {
         continue;
       }
+      // A whole-turns page must start at the turn's first row. A stable cut
+      // inside the turn would serve a truncated turn that re-groups when the
+      // client loads the older history across the cut.
+      if (wholeTurns && boundaryTurnContinues(probe.rows[0], collectionOldest)) {
+        continue;
+      }
       // A stable cut keeps the collected entries final, but the page is only
       // complete once the collected rows project to at least `limit` items:
       // chunk-heavy history packs many rows per item, and stopping at the
@@ -208,6 +220,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       bounds: { minSeq, maxSeq },
       direction: "tail",
       limit,
+      wholeTurns,
     });
     return {
       epoch: "",

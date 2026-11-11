@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -167,6 +167,75 @@ describe("daemon E2E - timeline retention", () => {
       expect(itemType(restored.entries[0]?.item)).toBe("user_message");
       expect(todoText(restored.entries[1]?.item)).toBe("stress-update-0");
       expect(todoText(restored.entries.at(-1)?.item)).toBe(`stress-update-${STRESS_UPDATES - 1}`);
+      await secondClient.close();
+    } finally {
+      await secondDaemon?.close();
+      await rm(paseoHomeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("restores a crash-truncated reply from the provider history after a daemon restart", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-timeline-restart-"));
+    const firstDaemon = await createTestPaseoDaemon({
+      agentClients: createTestAgentClients(),
+      paseoHomeRoot,
+      cleanup: false,
+    });
+    let secondDaemon: TestPaseoDaemon | null = null;
+    try {
+      const firstClient = new DaemonClient({ url: `ws://127.0.0.1:${firstDaemon.port}/ws` });
+      await firstClient.connect();
+      await firstClient.fetchAgents({ subscribe: {} });
+      const agent = await firstClient.createAgent({
+        provider: "codex",
+        cwd: "/tmp",
+        title: "truncated-reply",
+      });
+      // The reply streams as two chunks sharing one provider message id; the
+      // provider's saved transcript holds the complete message under it.
+      await firstClient.sendMessage(agent.id, "emit a chunked reply");
+      await firstClient.waitForFinish(agent.id, 120_000);
+      await firstDaemon.daemon.agentManager.flush();
+
+      // Simulate a crash between the chunk writes: only the prompt row and
+      // the first chunk reached the durable log.
+      const durablePath = path.join(firstDaemon.paseoHome, "timeline-rows", `${agent.id}.jsonl`);
+      const savedLines = (await readFile(durablePath, "utf8"))
+        .split("\n")
+        .filter((l) => l.length > 0);
+      expect(savedLines).toHaveLength(3);
+      const kept = savedLines
+        .map((line) => JSON.parse(line) as { seq: number; item: { type: string; text: string } })
+        .filter((row) => row.seq <= 2)
+        .map((row) => JSON.stringify(row));
+      expect(kept).toHaveLength(2);
+      expect(kept[1]).toContain("chunked-reply");
+      await writeFile(durablePath, kept.join("\n") + "\n", "utf8");
+
+      await firstClient.close();
+      await firstDaemon.close();
+
+      secondDaemon = await createTestPaseoDaemon({
+        agentClients: createTestAgentClients(),
+        paseoHomeRoot,
+        cleanup: false,
+      });
+      const secondClient = new DaemonClient({ url: `ws://127.0.0.1:${secondDaemon.port}/ws` });
+      await secondClient.connect();
+      const restored = await secondClient.fetchAgentTimeline(agent.id, {
+        direction: "tail",
+        limit: 0,
+      });
+      expect(restored.error).toBeNull();
+      // The prompt row survives and the reply comes back complete from the
+      // provider's copy instead of the truncated chunks on disk.
+      expect(restored.entries).toHaveLength(2);
+      expect(itemType(restored.entries[0]?.item)).toBe("user_message");
+      expect(restored.entries[1]?.item).toEqual({
+        type: "assistant_message",
+        text: "Hello world",
+        messageId: "chunked-reply",
+      });
       await secondClient.close();
     } finally {
       await secondDaemon?.close();
