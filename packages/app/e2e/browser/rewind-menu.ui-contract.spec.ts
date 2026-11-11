@@ -215,14 +215,14 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expect(userMessage(page, secondPrompt)).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
-      await expectUserMessageCount(page, 1);
+      await expectUserMessageCount(page, 0);
       await expectComposerDraft(page, firstPrompt);
 
       await submitMessage(page, replacementPrompt);
       await expectUserMessageVisible(page, replacementPrompt);
       await expect(userMessage(page, secondPrompt)).toHaveCount(0);
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
-      await expectUserMessageCount(page, 2);
+      await expectUserMessageCount(page, 1);
 
       await fillComposerDraft(page, "");
       await composerLocator(page).evaluate((element) => element.blur());
@@ -232,7 +232,7 @@ test.describe("Rewind sheet", () => {
       await selectRewindOption(page, "Rewind files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, "");
-      await expectUserMessageCount(page, 2);
+      await expectUserMessageCount(page, 1);
 
       const preservedDraft = "Keep this human draft after rewind.";
       await fillComposerDraft(page, preservedDraft);
@@ -243,7 +243,7 @@ test.describe("Rewind sheet", () => {
       await selectRewindOption(page, "Rewind files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, preservedDraft);
-      await expectUserMessageCount(page, 2);
+      await expectUserMessageCount(page, 1);
 
       await fillComposerDraft(page, "");
       await composerLocator(page).evaluate((element) => element.blur());
@@ -253,7 +253,7 @@ test.describe("Rewind sheet", () => {
       await selectRewindOption(page, "Rewind conversation and files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, replacementPrompt);
-      await expectUserMessageCount(page, 1);
+      await expectUserMessageCount(page, 0);
     } finally {
       await session.cleanup();
     }
