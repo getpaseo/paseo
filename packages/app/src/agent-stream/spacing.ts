@@ -11,12 +11,16 @@ export function getAssistantMessageSpacing(params: {
 }
 
 const isUserMessageItem = (item?: StreamItem | null) => item?.kind === "user_message";
+// Plugin items projected from a tool call, thought, or todo list take part in the tool
+// sequence, so a plugin that renders those items keeps the native stacking and spacing.
+export function isToolSequenceItem(item?: StreamItem | null): boolean {
+  const kind = item?.kind === "plugin" ? item.sourceKind : item?.kind;
+  return kind === "tool_call" || kind === "thought" || kind === "todo_list";
+}
+
 /** A row of the agent's work, including the summary row that stands in for a folded turn's. */
 const isWorkItem = (item?: StreamItem | null) =>
-  item?.kind === "tool_call" ||
-  item?.kind === "thought" ||
-  item?.kind === "todo_list" ||
-  item?.kind === "turn_summary";
+  isToolSequenceItem(item) || item?.kind === "turn_summary";
 
 export function getGapBetweenStreamItems(
   item: StreamItem | null,
