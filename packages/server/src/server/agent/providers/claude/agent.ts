@@ -3651,6 +3651,7 @@ class ClaudeAgentSession implements AgentSession {
       {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
+        logger: this.logger,
         queryFactory: this.queryFactory,
         onChildProcess: (child) => {
           this.childProcess = child;

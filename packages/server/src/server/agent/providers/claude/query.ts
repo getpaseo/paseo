@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, type Options, type Query, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { Logger } from "pino";
 
 import {
   createProviderEnvSpec,
@@ -19,8 +20,11 @@ export type ClaudeOptions = Options;
 export type ClaudeQueryInput = Parameters<typeof query>[0] & { options: ClaudeOptions };
 export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 
+export type ClaudeQueryLogger = Pick<Logger, "warn">;
+
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
+  logger?: ClaudeQueryLogger;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
   spawnProcess?: typeof defaultSpawnProcess;
@@ -57,7 +61,10 @@ function resolveClaudeSpawnCommand(
   };
 }
 
-function materializeInlineMcpConfig(args: string[]): { args: string[]; cleanup?: () => void } {
+function materializeInlineMcpConfig(
+  args: string[],
+  logger?: ClaudeQueryLogger,
+): { args: string[]; cleanup?: () => void } {
   const configFlagIndex = args.findIndex(
     (arg, index) => arg === "--mcp-config" && args[index + 1]?.trimStart().startsWith("{"),
   );
@@ -67,7 +74,19 @@ function materializeInlineMcpConfig(args: string[]): { args: string[]; cleanup?:
 
   const dir = mkdtempSync(join(tmpdir(), "paseo-claude-mcp-"));
   const configPath = join(dir, "mcp.json");
-  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  let cleanupStarted = false;
+  // Removal can fail while another process still holds the file open (Windows).
+  // These listeners run in the daemon's child-process callbacks, so a throw here
+  // reaches the fatal handler and takes the daemon down with it.
+  const cleanup = () => {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      logger?.warn({ err: error, dir }, "failed to remove Claude MCP config");
+    }
+  };
   try {
     writeFileSync(configPath, args[configFlagIndex + 1]!, { encoding: "utf8", mode: 0o600 });
   } catch (error) {
@@ -87,6 +106,7 @@ function applyRuntimeSettingsToClaudeOptions(
     runtimeSettings,
     launchEnv,
     onChildProcess,
+    logger,
     spawnProcess = defaultSpawnProcess,
   } = context;
   return {
@@ -113,7 +133,7 @@ function applyRuntimeSettingsToClaudeOptions(
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       // The SDK serializes MCP config inline. Use a file so headers never enter process argv.
-      const mcpConfig = materializeInlineMcpConfig(selfNodeCommand?.args ?? resolved.args);
+      const mcpConfig = materializeInlineMcpConfig(selfNodeCommand?.args ?? resolved.args, logger);
       const args = mcpConfig.args;
       let child: ChildProcess;
       try {
@@ -132,9 +152,14 @@ function applyRuntimeSettingsToClaudeOptions(
         throw error;
       }
       if (mcpConfig.cleanup) {
-        child.once("exit", mcpConfig.cleanup);
-        child.once("error", mcpConfig.cleanup);
-        spawnOptions.signal.addEventListener("abort", mcpConfig.cleanup, { once: true });
+        const cleanup = mcpConfig.cleanup;
+        const cleanupAfterChild = () => {
+          spawnOptions.signal.removeEventListener("abort", cleanup);
+          cleanup();
+        };
+        child.once("exit", cleanupAfterChild);
+        child.once("error", cleanupAfterChild);
+        spawnOptions.signal.addEventListener("abort", cleanup, { once: true });
       }
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {

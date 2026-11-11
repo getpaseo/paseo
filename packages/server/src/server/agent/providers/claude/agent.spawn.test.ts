@@ -1,13 +1,14 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   Options,
   Query,
   SpawnOptions as ClaudeSpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, test } from "vitest";
+import pino from "pino";
+import { describe, expect, test, vi } from "vitest";
 
 import { isPlatform } from "../../../../test-utils/platform.js";
 import { claudeQuery, type ClaudeQueryContext, type ClaudeQueryInput } from "./query.js";
@@ -56,13 +57,17 @@ function createSpawnRecorder(child: ChildProcess): SpawnRecorder {
 
 function createSpawnHarness(
   spawnProcess: SpawnProcess,
+  context: Partial<ClaudeQueryContext> = {},
 ): NonNullable<Options["spawnClaudeCodeProcess"]> {
   let spawn: Options["spawnClaudeCodeProcess"];
   const queryFactory = ({ options }: ClaudeQueryInput) => {
     spawn = options.spawnClaudeCodeProcess;
     return createQueryStub();
   };
-  claudeQuery({ prompt: "spawn regression", options: {} }, { queryFactory, spawnProcess });
+  claudeQuery(
+    { prompt: "spawn regression", options: {} },
+    { queryFactory, spawnProcess, ...context },
+  );
   if (!spawn) {
     throw new Error("Claude spawn callback was not configured");
   }
@@ -187,4 +192,45 @@ describe("Claude spawn override", () => {
       rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
     }
   });
+
+  // chmod does not block removal on Windows, and root ignores directory modes.
+  test.skipIf(isPlatform("win32") || process.getuid?.() === 0)(
+    "does not throw from the exit or error listener when MCP config removal fails",
+    () => {
+      const records: Record<string, unknown>[] = [];
+      const logger = pino(
+        { level: "warn" },
+        { write: (line: string) => records.push(JSON.parse(line) as Record<string, unknown>) },
+      );
+      const child = createChildProcessStub();
+      const recorder = createSpawnRecorder(child);
+      const spawn = createSpawnHarness(recorder.spawnProcess, { logger });
+      const controller = new AbortController();
+      const detachAbortListener = vi.spyOn(controller.signal, "removeEventListener");
+
+      spawn(spawnOptions(controller.signal));
+      const [, args] = findClaudeSpawnCall(recorder.calls);
+      const mcpConfigPath = args[args.indexOf("--mcp-config") + 1]!;
+      const configDir = dirname(mcpConfigPath);
+      // Without write permission on the directory the recursive removal fails.
+      chmodSync(configDir, 0o500);
+      try {
+        expect(() => child.emit("exit", 0, null)).not.toThrow();
+        expect(records).toContainEqual(
+          expect.objectContaining({
+            level: pino.levels.values.warn,
+            msg: "failed to remove Claude MCP config",
+          }),
+        );
+        expect(detachAbortListener).toHaveBeenCalledWith("abort", expect.any(Function));
+        // A second event must not retry the removal once permissions are back.
+        chmodSync(configDir, 0o755);
+        expect(() => child.emit("error", new Error("synthetic child error"))).not.toThrow();
+        expect(existsSync(mcpConfigPath)).toBe(true);
+      } finally {
+        chmodSync(configDir, 0o755);
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
