@@ -717,7 +717,8 @@ export class PluginRuntime {
   // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
   // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
   // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
-  // A plugin that is stopped or mid-restart is left out of the result, so the caller keeps it eligible for a retry.
+  // A plugin that is stopped, mid-restart, or fails the replay is left out of the result, so the caller keeps it
+  // eligible for a retry.
   async reattachTools(
     request: SessionOpenWireRequest,
     pluginIds: readonly string[],
@@ -743,13 +744,11 @@ export class PluginRuntime {
         this.collectAgentTools(tools, loaded, opened.tools);
         replayed.push({ pluginId, tools });
       } catch (error) {
-        // It exited during the replay: retry once it is back.
-        if (this.plugins.get(pluginId) !== loaded) continue;
+        // Left out like a stopped plugin, so a later request retries it.
         this.logger.warn(
           { err: error, pluginId, agentId: request.agentId },
           "Plugin tool reattach failed",
         );
-        replayed.push({ pluginId, tools: [] });
       }
     }
     return replayed;

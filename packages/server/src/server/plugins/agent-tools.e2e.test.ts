@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -705,17 +706,20 @@ test("an agent MCP request while a plugin is stopped keeps its tools eligible fo
   }
 }, 60_000);
 
-// Each open names its tool after its count. Once armed, a process's first open waits for the gate file.
-const gatedOpenSource = (arm: string, gate: string) => `
-import { existsSync } from "node:fs";
+// Each open names its tool after its count. Once armed, a process's first open marks that it started and waits
+// for the gate file.
+const gatedOpenSource = (arm: string, entered: string, gate: string) => `
+import { existsSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { defineAgentTool } from "@getpaseo/plugin/server";
 let opens = 0;
 export default function contribute(server) {
   server.addHook("agent.open.before", async ({ request }) => {
     const open = ++opens;
-    if (open === 1 && existsSync(${JSON.stringify(arm)}))
+    if (open === 1 && existsSync(${JSON.stringify(arm)})) {
+      writeFileSync(${JSON.stringify(entered)}, "");
       while (!existsSync(${JSON.stringify(gate)})) await new Promise((r) => setTimeout(r, 20));
+    }
     const tool = defineAgentTool({
       name: "which_open", description: "open " + open,
       input: z.object({}),
@@ -730,15 +734,18 @@ export default function contribute(server) {
 test("a reopen during a tool replay keeps the reopen's tool definitions in the plugin", async () => {
   const h = await setup();
   const arm = path.join(h.directory, "replay-arm");
+  const entered = path.join(h.directory, "replay-entered");
   const gate = path.join(h.directory, "replay-gate");
   try {
-    await h.install("gated", gatedOpenSource(arm, gate));
+    await h.install("gated", gatedOpenSource(arm, entered, gate));
     const a = await h.create();
     await writeFile(arm, "");
     await h.client.reloadPlugin("gated");
-    // The restarted process counts from zero, so its first open is the replay, held at the gate.
+    // The restarted process counts from zero, so its first open is the replay. Hold it at the gate.
     const replaying = h.mcp(a.id);
+    await expect.poll(() => existsSync(entered)).toBe(true);
     const reopening = sendAndFinish(h, a.id, "idle prompt");
+    // Room for an unguarded reopen to reach the plugin first. A guarded one waits, so this cannot change the result.
     await new Promise((resolve) => setTimeout(resolve, 500));
     await writeFile(gate, "");
     const mcp = await replaying;
@@ -754,6 +761,36 @@ test("a reopen during a tool replay keeps the reopen's tool definitions in the p
     await mcp.close();
   } finally {
     await h.close();
+  }
+}, 60_000);
+
+const failFirstReplaySource = (arm: string) =>
+  pluginSource
+    .replace(
+      'import { z } from "zod";',
+      'import { existsSync } from "node:fs";\nimport { z } from "zod";',
+    )
+    .replace("let calls = 0;", "let calls = 0;\nlet opens = 0;")
+    .replace(
+      'if (request.labels.x !== "y") return;',
+      `if (request.labels.x !== "y") return;
+    if (++opens === 1 && existsSync(${JSON.stringify(arm)})) throw new Error("replay failed once");`,
+    );
+
+test("a failed tool replay is retried on the agent's next MCP request", async () => {
+  const armDirectory = await mkdtemp(path.join(tmpdir(), "paseo-replay-arm-"));
+  const arm = path.join(armDirectory, "arm");
+  const h = await setup(false, failFirstReplaySource(arm));
+  try {
+    const a = await h.create({ x: "y" });
+    await writeFile(arm, "");
+    await h.client.reloadPlugin("tools-test");
+    // The MCP connect's first request hits the failing replay; a later request retries it.
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("plugin_echo");
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+    await rm(armDirectory, { recursive: true, force: true });
   }
 }, 60_000);
 
