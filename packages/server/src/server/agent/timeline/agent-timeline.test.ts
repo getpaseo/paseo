@@ -208,6 +208,7 @@ describe.each(
     expect(await timeline.describe(child)).toBeNull();
     expect(await timeline.describe(root("a"))).toEqual({
       epoch: "parent",
+      seq: 1,
       size: 1,
       retirementCount: 0,
       rewind: null,
@@ -765,6 +766,7 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)(
       expect(texts(backend.retiredRows(scope))).toEqual(["b", "tool_call", "B"]);
       expect(await timeline.describe(scope)).toEqual({
         epoch: "e",
+        seq: 8,
         size: 4,
         retirementCount: 1,
         rewind: null,

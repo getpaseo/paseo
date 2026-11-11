@@ -283,6 +283,7 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
   private describe(state: MemoryTimelineState): TimelineHead {
     return {
       epoch: state.epoch,
+      seq: state.nextSeq - 1,
       size: state.projection.size,
       retirementCount: state.retirementCount,
       rewind: state.rewind ? { ...state.rewind } : null,

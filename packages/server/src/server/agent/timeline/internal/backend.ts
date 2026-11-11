@@ -32,6 +32,8 @@ export interface TimelineSeed {
 
 export interface TimelineHead {
   epoch: string;
+  /** The last sequence number committed, a retirement's included; 0 before any commit. */
+  seq: number;
   /** Projected (displayed) row count. */
   size: number;
   /** Rewinds applied since the history was created. */

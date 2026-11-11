@@ -85,6 +85,7 @@ import {
   AgentTimeline,
   type TimelineAppendResult,
   type TimelineCommit,
+  type TimelineHead,
   type TimelineEntry,
   type TimelineIngestResult,
   type TimelineRetirementCommit,
@@ -1449,20 +1450,10 @@ export class AgentManager {
     return await this.timeline.readRows({ agentId: id });
   }
 
-  /**
-   * The timeline head of a loaded agent, or null when this agent is not loaded. Never loads.
-   * `seq` is the last committed sequence number, a retirement's included.
-   */
-  async getLoadedTimelineHead(
-    id: string,
-  ): Promise<{ epoch: string; seq: number; retirementCount: number } | null> {
+  /** The timeline head of a loaded agent, or null when this agent is not loaded. Never loads. */
+  async getLoadedTimelineHead(id: string): Promise<TimelineHead | null> {
     if (!this.getAgent(id)) return null;
-    const page = await this.timeline.fetch({ agentId: id }, { direction: "tail", limit: 0 });
-    return {
-      epoch: page.epoch,
-      seq: page.window.nextSeq - 1,
-      retirementCount: page.retirementCount,
-    };
+    return await this.timeline.describe({ agentId: id });
   }
 
   async fetchTimeline(
