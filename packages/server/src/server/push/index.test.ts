@@ -29,31 +29,53 @@ describe("push notifications", () => {
 
   test("sends production and development app tokens in separate Expo requests", async () => {
     const requests: unknown[] = [];
-    const request: typeof fetch = async (_url, init) => {
-      if (typeof init?.body !== "string") throw new Error("Expected a JSON request body");
+    const pendingResponses: Array<(response: Response) => void> = [];
+    let releaseBothStarted: () => void = () => {
+      throw new Error("Push fetches started before the test installed the gate");
+    };
+    const bothStarted = new Promise<void>((resolve) => {
+      releaseBothStarted = resolve;
+    });
+    const request: typeof fetch = (_url, init) => {
+      if (typeof init?.body !== "string") {
+        return Promise.reject(new Error("Expected a JSON request body"));
+      }
       const messages: unknown = JSON.parse(init.body);
       requests.push(messages);
-      if (!Array.isArray(messages) || messages.length !== 1) {
-        return Response.json(
-          { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] },
-          { status: 400 },
-        );
+      const singleToken = Array.isArray(messages) && messages.length === 1;
+      if (!singleToken || requests.length >= 2) {
+        releaseBothStarted();
       }
-      return Response.json({ data: [{ status: "ok", id: "accepted" }] });
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(resolve);
+      });
     };
     const revoked: string[] = [];
-    const service = new PushService(createLogger(), (token) => revoked.push(token), request);
+    const service = new PushService({
+      logger: createLogger(),
+      revokeToken: (token) => revoked.push(token),
+      request,
+    });
     const payload = { title: "Agent finished", body: "Done", data: { agentId: "agent-1" } };
 
-    await service.sendPush(
+    const send = service.sendPush(
       ["ExponentPushToken[production]", "ExponentPushToken[development]"],
       payload,
     );
 
-    expect(requests).toEqual([
-      [{ to: "ExponentPushToken[production]", ...payload, sound: "default" }],
-      [{ to: "ExponentPushToken[development]", ...payload, sound: "default" }],
-    ]);
+    try {
+      await bothStarted;
+      expect(requests).toEqual([
+        [{ to: "ExponentPushToken[production]", ...payload, sound: "default" }],
+        [{ to: "ExponentPushToken[development]", ...payload, sound: "default" }],
+      ]);
+      expect(pendingResponses).toHaveLength(2);
+    } finally {
+      for (const resolve of pendingResponses) {
+        resolve(Response.json({ data: [{ status: "ok", id: "accepted" }] }));
+      }
+    }
+    await send;
     expect(revoked).toEqual([]);
   });
 
@@ -69,7 +91,11 @@ describe("push notifications", () => {
       return Response.json({ data: [{ status: "ok", id: "accepted" }] });
     };
     const revoked: string[] = [];
-    const service = new PushService(createLogger(), (token) => revoked.push(token), request);
+    const service = new PushService({
+      logger: createLogger(),
+      revokeToken: (token) => revoked.push(token),
+      request,
+    });
 
     await service.sendPush(["ExponentPushToken[uninstalled]", "ExponentPushToken[active]"], {
       title: "Agent finished",

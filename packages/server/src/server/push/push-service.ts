@@ -22,6 +22,13 @@ interface ExpoPushTicket {
 }
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const EXPO_PUSH_REQUEST_CONCURRENCY = 4;
+
+export interface PushServiceOptions {
+  logger: pino.Logger;
+  revokeToken: (token: string) => void;
+  request?: typeof fetch;
+}
 
 /**
  * Service for sending Expo push notifications.
@@ -32,14 +39,10 @@ export class PushService {
   private readonly revokeToken: (token: string) => void;
   private readonly request: typeof fetch;
 
-  constructor(
-    logger: pino.Logger,
-    revokeToken: (token: string) => void,
-    request: typeof fetch = fetch,
-  ) {
-    this.logger = logger.child({ component: "push-service" });
-    this.revokeToken = revokeToken;
-    this.request = request;
+  constructor(options: PushServiceOptions) {
+    this.logger = options.logger.child({ component: "push-service" });
+    this.revokeToken = options.revokeToken;
+    this.request = options.request ?? fetch;
   }
 
   async sendPush(tokens: string[], payload: PushPayload): Promise<void> {
@@ -57,8 +60,10 @@ export class PushService {
 
     // Tokens are opaque and can belong to different Expo projects. Mixing projects
     // in one request makes Expo reject every notification in that request.
-    for (const message of messages) {
-      await this.sendBatch([message]);
+    // allSettled: one rejected request must not skip the tokens still in flight.
+    for (let offset = 0; offset < messages.length; offset += EXPO_PUSH_REQUEST_CONCURRENCY) {
+      const inFlight = messages.slice(offset, offset + EXPO_PUSH_REQUEST_CONCURRENCY);
+      await Promise.allSettled(inFlight.map((message) => this.sendBatch([message])));
     }
   }
 
