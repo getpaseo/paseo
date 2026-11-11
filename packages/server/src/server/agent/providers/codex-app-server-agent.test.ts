@@ -31,6 +31,7 @@ import {
   normalizeCodexOutputSchema,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
+import { AgentTimeline, type TimelineEntry } from "../timeline/index.js";
 
 describe("mapCodexPlanUpdateToTodo", () => {
   test("preserves checklist progress without creating a plan card", () => {
@@ -2602,6 +2603,89 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("a steered prompt's rewind reports the native turn the fork removed, and the timeline keeps what Codex kept", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
+      "thread/read": () => ({
+        thread: { id: "thread-1", historyMode: "legacy", turns: [] },
+      }),
+      "thread/rollback": () => ({
+        __jsonRpcError: {
+          code: -32600,
+          message: "Invalid request: unknown variant `thread/rollback`",
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember zero");
+    emitCodexUserMessage(appServer, {
+      id: "codex-zero",
+      text: "remember zero",
+      turnId: "turn-zero",
+    });
+    appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
+    // A steer joins the running native turn.
+    emitCodexUserMessage(appServer, {
+      id: "codex-second",
+      text: "remember second",
+      turnId: "turn-first",
+    });
+    appServer.completeTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const cut = await session.revertConversation({ messageId: "codex-second" });
+
+    expect(
+      appServer
+        .requests()
+        .filter((request) => request.method === "thread/fork")
+        .map((request) => (request.params as { beforeTurnId?: string }).beforeTurnId),
+    ).toEqual(["turn-first"]);
+    expect(cut).toEqual({ kind: "after", retainedMessageId: "codex-zero" });
+
+    const timeline = new AgentTimeline();
+    const scope = { agentId: "agent" };
+    await timeline.create(scope);
+    await timeline.append(scope, [
+      prompt("zero"),
+      { item: { type: "assistant_message", text: "reply zero" } },
+      prompt("first"),
+      prompt("second"),
+      { item: { type: "assistant_message", text: "reply second" } },
+    ]);
+    const intent = await timeline.beginRewind(scope, "second");
+    await timeline.recordRewindCut(scope, intent.id, cut);
+    await timeline.completeRewind(scope, intent.id);
+    expect((await timeline.readRows(scope)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: "zero", messageId: "zero" },
+      { type: "assistant_message", text: "reply zero" },
+    ]);
+    appServer.assertNoErrors();
+    await session.close();
+
+    function prompt(name: string): TimelineEntry {
+      return {
+        item: { type: "user_message", text: name, messageId: name },
+        providerMessageId: `codex-${name}`,
+      };
+    }
   });
 
   test("keeps a background terminal controllable on its original thread after rewind", async () => {

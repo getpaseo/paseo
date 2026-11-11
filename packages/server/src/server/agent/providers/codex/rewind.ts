@@ -9,6 +9,7 @@ import {
   parseCodexThreadRollbackResponse,
 } from "./app-server-transport.js";
 import { readCodexThreadHistoryMode } from "./thread-history.js";
+import type { ConversationRewindCut } from "../../agent-sdk-types.js";
 
 export interface CodexRewindClient {
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
@@ -16,9 +17,48 @@ export interface CodexRewindClient {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
 }
 
+export interface CodexUserMessageTurn {
+  messageId: string;
+  /** The native turn the message started or joined; null when Codex did not say. */
+  turnId: string | null;
+}
+
 export interface CodexUserMessageTurnIndex {
   resolve(messageId: string): { index: number; turnId: string | null } | null;
   count(): number;
+  /** The thread's user messages, in order. A steered message shares its native turn's id. */
+  list(): readonly CodexUserMessageTurn[];
+}
+
+/**
+ * What the provider kept, given the first user message the rewind removed. Codex removes whole
+ * native turns, so a steered target takes the earlier messages of its turn with it.
+ */
+function rewindCut(
+  messages: readonly CodexUserMessageTurn[],
+  targetIndex: number,
+  firstRemoved: number,
+): ConversationRewindCut {
+  if (firstRemoved === targetIndex) return { kind: "at_target" };
+  return { kind: "after", retainedMessageId: messages[firstRemoved - 1]?.messageId ?? null };
+}
+
+/** The index of the first message in the native turn of `messages[index]`. */
+function turnStart(messages: readonly CodexUserMessageTurn[], index: number): number {
+  const turnId = messages[index]?.turnId ?? null;
+  if (turnId === null) return index;
+  let start = index;
+  while (start > 0 && messages[start - 1]!.turnId === turnId) start -= 1;
+  return start;
+}
+
+/** The index of the first message a rollback of the last `numTurns` native turns removes. */
+function rollbackStart(messages: readonly CodexUserMessageTurn[], numTurns: number): number {
+  let start = messages.length;
+  for (let turns = 0; turns < numTurns && start > 0; turns += 1) {
+    start = turnStart(messages, start - 1);
+  }
+  return start;
 }
 
 async function forkCodexThread(
@@ -52,7 +92,7 @@ export async function revertCodexConversation(input: {
   userMessageTurns: CodexUserMessageTurnIndex;
   threadRollbackAvailable: boolean;
   setThreadId: (threadId: string) => void | Promise<void>;
-}): Promise<void> {
+}): Promise<ConversationRewindCut> {
   if (!input.threadId) {
     throw new Error("Codex thread is not ready for rewind");
   }
@@ -62,6 +102,7 @@ export async function revertCodexConversation(input: {
     throw new Error(`Codex could not find user message ${input.messageId} in the current thread`);
   }
 
+  const messages = input.userMessageTurns.list();
   const currentUserTurnCount = input.userMessageTurns.count();
   const numTurns = currentUserTurnCount - targetTurn.index;
   if (numTurns < 0) {
@@ -93,7 +134,7 @@ export async function revertCodexConversation(input: {
       beforeTurnId: targetTurn.turnId,
     });
     await input.setThreadId(forked.thread.id);
-    return;
+    return rewindCut(messages, targetTurn.index, turnStart(messages, targetTurn.index));
   }
 
   // Legacy threads on Codex before 0.156 fork and then roll back. Fork is
@@ -109,4 +150,5 @@ export async function revertCodexConversation(input: {
     numTurns,
   });
   await input.setThreadId(rolledBack.thread.id);
+  return rewindCut(messages, targetTurn.index, rollbackStart(messages, numTurns));
 }

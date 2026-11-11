@@ -42,6 +42,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
   type ConversationRewindCut,
+  type ConversationRewindResult,
   RewindNotAppliedError,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
@@ -4691,6 +4692,11 @@ export class CodexAppServerAgentSession implements AgentSession {
           : { index, turnId: this.userMessageProviderTurnIds.get(messageId) ?? null };
       },
       count: () => this.userMessageTurnIds.length,
+      list: () =>
+        this.userMessageTurnIds.map((messageId) => ({
+          messageId,
+          turnId: this.userMessageProviderTurnIds.get(messageId) ?? null,
+        })),
     };
   }
 
@@ -5128,7 +5134,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       : null;
   }
 
-  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindResult> {
     let threadBefore: string | null;
     let client: CodexAppServerClient;
     try {
@@ -5151,8 +5157,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     // The rewind forks; the thread it started from stays as it was. It happened once this session
     // continues the fork.
     let failure: unknown = null;
+    let cut: ConversationRewindCut | null = null;
     try {
-      await revertCodexConversation({
+      cut = await revertCodexConversation({
         client,
         threadId: threadBefore,
         messageId: input.messageId,
@@ -5182,7 +5189,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (failure) {
       this.logger.warn({ err: failure }, "Codex rewound the conversation but failed afterwards");
     }
-    return { kind: "at_target" };
+    // A failure after the switch leaves what the fork kept unreported; the resumed history shows it.
+    return cut ?? { kind: "unreported" };
   }
 
   async interrupt(): Promise<void> {
