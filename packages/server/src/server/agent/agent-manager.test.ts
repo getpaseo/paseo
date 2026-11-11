@@ -2038,6 +2038,27 @@ test("require-idle stream admission accepts idle and rejects every non-idle life
     expect(() =>
       manager.streamAgent("00000000-0000-4000-8000-000000000999", "missing", requireIdle),
     ).toThrow("Unknown agent");
+
+    const collecting = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    createdIds.push(collecting.id);
+    const internals = manager as unknown as {
+      agents: Map<string, ManagedAgent>;
+      collectingRuntimes: Set<string>;
+    };
+    const liveCollecting = internals.agents.get(collecting.id);
+    internals.collectingRuntimes.add(collecting.id);
+    try {
+      // Collecting runtimes stay in the live map, but admitting one would wait for the
+      // close and then reload the stored session.
+      expect(() => manager.streamAgent(collecting.id, "collecting", requireIdle)).toThrow(
+        "not idle (closing)",
+      );
+      expect(internals.agents.get(collecting.id)).toBe(liveCollecting);
+    } finally {
+      internals.collectingRuntimes.delete(collecting.id);
+    }
   } finally {
     for (const id of createdIds) await manager.closeAgent(id).catch(() => undefined);
     await manager.flush().catch(() => undefined);

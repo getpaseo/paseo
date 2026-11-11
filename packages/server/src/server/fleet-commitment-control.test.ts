@@ -241,6 +241,7 @@ describe("FleetCommitmentControlService", () => {
 
   it.each([
     ["running", "agent_busy"],
+    ["closing", "agent_busy"],
     ["error", "portfolio_agent_error"],
     ["initializing", "portfolio_agent_initializing"],
   ] as const)("durably rejects Portfolio lifecycle %s", async (lifecycle, code) => {

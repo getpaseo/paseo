@@ -6281,6 +6281,12 @@ export class AgentManager {
   }
 
   private assertStreamAdmissionIdle(agentId: string): void {
+    // A runtime being collected stays in the live map until its close finishes. Admitting a
+    // lazy stream here would wait for that close and then reload the stored session, which
+    // resumes an agent the caller only accepted while it was already idle.
+    if (this.collectingRuntimes.has(agentId)) {
+      throw new Error(`Agent ${agentId} is not idle (closing)`);
+    }
     const agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       throw new Error(`Agent ${agentId} is not idle (archived)`);
