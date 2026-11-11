@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, test } from "vitest";
-import { withExclusiveFileLock, writeFileAtomic, writeJsonFileAtomic } from "./atomic-file.js";
+import {
+  withExclusiveFileLock,
+  writeFileAtomic,
+  writeJsonFileAtomic,
+  fileLockRecoveryClaimPath,
+} from "./atomic-file.js";
 
 let directory: string;
 const lockDirectories: string[] = [];
@@ -175,6 +180,10 @@ async function abandonLock(lockPath: string): Promise<void> {
   expect({ code, signal }).toEqual({ code: 0, signal: null });
 }
 
+async function abandonedLockOwner(lockPath: string): Promise<{ token: string }> {
+  return JSON.parse(await fs.readFile(lockPath, "utf8")) as { token: string };
+}
+
 test("recovers a main lock abandoned by a dead child process", async () => {
   const { lockPath } = await fixture();
   await abandonLock(lockPath);
@@ -188,10 +197,11 @@ test("recovers a main lock abandoned by a dead child process", async () => {
   await expect(fs.readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test("recovers recovery ownership abandoned by a dead child process", async () => {
+test("recovers a recovery claim abandoned by a dead child process", async () => {
   const { lockPath } = await fixture();
   await abandonLock(lockPath);
-  await abandonLock(`${lockPath}.recovery`);
+  const claimPath = fileLockRecoveryClaimPath(lockPath, (await abandonedLockOwner(lockPath)).token);
+  await abandonLock(claimPath);
 
   let entered = false;
   await withExclusiveFileLock(lockPath, async () => {
@@ -199,14 +209,14 @@ test("recovers recovery ownership abandoned by a dead child process", async () =
   });
 
   expect(entered).toBe(true);
-  await expect(fs.readFile(`${lockPath}.recovery`, "utf8")).rejects.toMatchObject({
-    code: "ENOENT",
-  });
+  await expect(fs.readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.readFile(claimPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test("fails closed while recovery ownership is live", async () => {
+test("fails closed while another recoverer holds the claim for the same dead lock", async () => {
   const { lockPath } = await fixture();
   await abandonLock(lockPath);
+  const claimPath = fileLockRecoveryClaimPath(lockPath, (await abandonedLockOwner(lockPath)).token);
   let signalEntered!: () => void;
   let release!: () => void;
   const entered = new Promise<void>((resolve) => {
@@ -215,29 +225,127 @@ test("fails closed while recovery ownership is live", async () => {
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const held = withExclusiveFileLock(`${lockPath}.recovery`, async () => {
+  const held = withExclusiveFileLock(claimPath, async () => {
     signalEntered();
     await gate;
   });
   await entered;
   try {
-    await expect(withExclusiveFileLock(lockPath, async () => undefined)).rejects.toThrow(
-      "file_lock_recovery_busy",
-    );
+    await expect(
+      withExclusiveFileLock(lockPath, async () => undefined, {
+        sleep: async () => Promise.resolve(),
+      }),
+    ).rejects.toThrow("file_lock_recovery_busy");
   } finally {
     release();
     await held;
   }
 });
 
-test("fails closed on malformed recovery ownership", async () => {
+test("fails closed on malformed recovery claim ownership", async () => {
   const { lockPath } = await fixture();
   await abandonLock(lockPath);
-  await fs.writeFile(`${lockPath}.recovery`, "not lock metadata");
+  const claimPath = fileLockRecoveryClaimPath(lockPath, (await abandonedLockOwner(lockPath)).token);
+  await fs.writeFile(claimPath, "not lock metadata");
 
   await expect(withExclusiveFileLock(lockPath, async () => undefined)).rejects.toThrow(
     "file_lock_invalid",
   );
+});
+
+test("does not let two recoverers discard the same dead lock", async () => {
+  const { lockPath } = await fixture();
+  await abandonLock(lockPath);
+  const victim = await abandonedLockOwner(lockPath);
+
+  let inside = 0;
+  let maxInside = 0;
+  const writer = async (): Promise<void> => {
+    inside++;
+    maxInside = Math.max(maxInside, inside);
+    inside--;
+  };
+
+  let signalClaim!: () => void;
+  let releaseRecoverer!: () => void;
+  const claimed = new Promise<void>((resolve) => {
+    signalClaim = resolve;
+  });
+  const recovererGate = new Promise<void>((resolve) => {
+    releaseRecoverer = resolve;
+  });
+  let claimPath: string | undefined;
+
+  const first = withExclusiveFileLock(lockPath, writer, {
+    onRecoveryClaim: async (details) => {
+      claimPath = details.claimPath;
+      signalClaim();
+      await recovererGate;
+    },
+  });
+  await claimed;
+  expect(claimPath).toBe(fileLockRecoveryClaimPath(lockPath, victim.token));
+
+  // This recoverer read the same dead owner before the first one removed it.
+  await expect(
+    withExclusiveFileLock(lockPath, writer, { sleep: async () => Promise.resolve() }),
+  ).rejects.toThrow("file_lock_recovery_busy");
+  expect(maxInside).toBe(0);
+  expect(await abandonedLockOwner(lockPath)).toEqual(victim);
+
+  releaseRecoverer();
+  await first;
+  expect(maxInside).toBe(1);
+  await expect(fs.readFile(claimPath ?? "", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+  let recovered = false;
+  await withExclusiveFileLock(lockPath, async () => {
+    recovered = true;
+  });
+  expect(recovered).toBe(true);
+});
+
+test("never removes a live replacement that appeared after the dead owner was read", async () => {
+  const { lockPath } = await fixture();
+  await abandonLock(lockPath);
+  const replacement = {
+    pid: process.pid,
+    processStartedAt: "2000-01-01T00:00:00.000Z",
+    token: "live-replacement",
+    createdAt: "2000-01-01T00:00:01.000Z",
+  };
+
+  await expect(
+    withExclusiveFileLock(lockPath, async () => undefined, {
+      sleep: async () => Promise.resolve(),
+      onRecoveryClaim: async () => {
+        await fs.writeFile(lockPath, JSON.stringify(replacement));
+      },
+    }),
+  ).rejects.toThrow("file_lock_busy");
+
+  expect(JSON.parse(await fs.readFile(lockPath, "utf8"))).toEqual(replacement);
+  expect(await fs.readdir(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
+});
+
+test("serializes two writers recovering the same abandoned lock", async () => {
+  const { lockPath } = await fixture();
+  await abandonLock(lockPath);
+
+  let inside = 0;
+  let maxInside = 0;
+  const writer = async (): Promise<void> => {
+    inside++;
+    maxInside = Math.max(maxInside, inside);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inside--;
+  };
+  await Promise.all([
+    withExclusiveFileLock(lockPath, writer),
+    withExclusiveFileLock(lockPath, writer),
+  ]);
+
+  expect(maxInside).toBe(1);
 });
 
 test("process-instance identity participates in release ownership", async () => {
