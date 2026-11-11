@@ -130,7 +130,11 @@ export async function startLocalBrowserProxy(
       const target = parseAbsoluteHttpTarget(req.url);
       log("http.extra-request-refused", { host: target?.host ?? null, port: target?.port ?? null });
       req.resume();
-      sendProxyError(res, 400, "Bad Request", "One request per connection.");
+      sendProxyError(res, {
+        status: 400,
+        title: "Bad Request",
+        detail: "One request per connection.",
+      });
       return;
     }
     handleHttpRequest({
@@ -159,7 +163,7 @@ export async function startLocalBrowserProxy(
   // Chromium tunnels ws:// through CONNECT; an Upgrade on a plain proxy request is
   // never ours to forward.
   server.on("upgrade", (_req, socket) => {
-    writeRawResponse(socket as Socket, 501, "Not Implemented");
+    writeRawResponse(socket as Socket, { status: 501, title: "Not Implemented" });
   });
   server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
     if (error.code === "ECONNRESET" || !socket.writable) {
@@ -167,11 +171,10 @@ export async function startLocalBrowserProxy(
       return;
     }
     const status = error.code === "HPE_HEADER_OVERFLOW" ? 431 : 400;
-    writeRawResponse(
-      socket as Socket,
+    writeRawResponse(socket as Socket, {
       status,
-      status === 431 ? "Request Header Fields Too Large" : "Bad Request",
-    );
+      title: status === 431 ? "Request Header Fields Too Large" : "Bad Request",
+    });
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -283,16 +286,26 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function errorPage(status: number, title: string, detail: string): string {
+interface ProxyStatusLine {
+  status: number;
+  title: string;
+}
+
+interface ProxyErrorPage extends ProxyStatusLine {
+  detail: string;
+}
+
+function errorPage({ status, title, detail }: ProxyErrorPage): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${status} ${escapeHtml(title)}</title></head><body><h1>${status} ${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></body></html>`;
 }
 
-function sendProxyError(res: ServerResponse, status: number, title: string, detail: string): void {
+function sendProxyError(res: ServerResponse, page: ProxyErrorPage): void {
   if (res.headersSent) {
     res.destroy();
     return;
   }
-  const body = errorPage(status, title, detail);
+  const { status, title } = page;
+  const body = errorPage(page);
   // The explicit reason replaces any reason a refused server head left on res.
   res.writeHead(status, title, {
     "Content-Type": "text/html; charset=utf-8",
@@ -304,7 +317,7 @@ function sendProxyError(res: ServerResponse, status: number, title: string, deta
   res.end(body);
 }
 
-function writeRawResponse(socket: Socket, status: number, title: string): void {
+function writeRawResponse(socket: Socket, { status, title }: ProxyStatusLine): void {
   if (socket.destroyed) return;
   const extra = status === 407 ? `Proxy-Authenticate: Basic realm="${PROXY_AUTH_REALM}"\r\n` : "";
   socket.end(
@@ -523,12 +536,20 @@ function handleHttpRequest(
 ): void {
   const { req, res, isAuthorized, openStream, log } = input;
   if (!isAuthorized(req)) {
-    sendProxyError(res, 407, "Proxy Authentication Required", "This proxy is private to Paseo.");
+    sendProxyError(res, {
+      status: 407,
+      title: "Proxy Authentication Required",
+      detail: "This proxy is private to Paseo.",
+    });
     return;
   }
   const target = parseAbsoluteHttpTarget(req.url);
   if (!target) {
-    sendProxyError(res, 400, "Bad Request", "Only absolute http:// requests are accepted.");
+    sendProxyError(res, {
+      status: 400,
+      title: "Bad Request",
+      detail: "Only absolute http:// requests are accepted.",
+    });
     return;
   }
   if (target.host === BROWSER_PROXY_WARMUP_HOST) {
@@ -540,12 +561,11 @@ function handleHttpRequest(
   const duplex = new TunnelDuplex(input.diagnostics);
   const handle = openStream({ host: target.host, port: target.port }, duplex.sink);
   if (!handle) {
-    sendProxyError(
-      res,
-      503,
-      "Service Unavailable",
-      "The host is not connected to this browser profile.",
-    );
+    sendProxyError(res, {
+      status: 503,
+      title: "Service Unavailable",
+      detail: "The host is not connected to this browser profile.",
+    });
     return;
   }
   duplex.attach(handle);
@@ -587,12 +607,11 @@ function handleHttpRequest(
         port: target.port,
         status: upstreamRes.statusCode,
       });
-      sendProxyError(
-        res,
-        502,
-        "Bad Gateway",
-        `${target.host}:${target.port} sent a response the browser cannot receive.`,
-      );
+      sendProxyError(res, {
+        status: 502,
+        title: "Bad Gateway",
+        detail: `${target.host}:${target.port} sent a response the browser cannot receive.`,
+      });
       upstreamRes.on("error", () => {});
       upstream.destroy();
       return;
@@ -613,7 +632,11 @@ function handleHttpRequest(
       error instanceof TunnelStreamError ? error.reason : TunnelCloseReason.GeneralError;
     const status = httpStatusForTunnelCloseReason(reason);
     log("http.upstream-error", { host: target.host, port: target.port, reason, status });
-    sendProxyError(res, status, titleForStatus(status), detailForReason(target, reason));
+    sendProxyError(res, {
+      status,
+      title: titleForStatus(status),
+      detail: detailForReason(target, reason),
+    });
   });
   res.on("error", () => {});
   res.on("close", () => {
@@ -652,12 +675,12 @@ function handleConnect(
   const { req, socket, head, isAuthorized, openStream, log } = input;
   socket.on("error", () => {});
   if (!isAuthorized(req)) {
-    writeRawResponse(socket, 407, "Proxy Authentication Required");
+    writeRawResponse(socket, { status: 407, title: "Proxy Authentication Required" });
     return;
   }
   const target = parseConnectTarget(req.url);
   if (!target) {
-    writeRawResponse(socket, 400, "Bad Request");
+    writeRawResponse(socket, { status: 400, title: "Bad Request" });
     return;
   }
 
@@ -670,7 +693,7 @@ function handleConnect(
     if (!connected) {
       const status = httpStatusForTunnelCloseReason(reason);
       log("connect.failed", { host: target.host, port: target.port, reason, status });
-      writeRawResponse(socket, status, titleForStatus(status));
+      writeRawResponse(socket, { status, title: titleForStatus(status) });
       return;
     }
     // Discard remaining upload bytes so the readable side can also reach EOF.
@@ -696,7 +719,7 @@ function handleConnect(
     onClose: handleClosed,
   });
   if (!handle) {
-    writeRawResponse(socket, 503, "Service Unavailable");
+    writeRawResponse(socket, { status: 503, title: "Service Unavailable" });
     return;
   }
   const stream = handle;

@@ -235,7 +235,7 @@ function isPortOpen(port: number): Promise<boolean> {
 describe("BrowserRoutingManager", () => {
   test("routed guests and popups disable unproxied WebRTC even after routing is disabled", async () => {
     const h = await createHarness();
-    await h.manager.setEnabled("host-a", true);
+    await h.manager.setEnabled({ serverId: "host-a", enabled: true });
     const session = h.sessions.get(browserRoutingPartitionForServer("host-a"));
     if (!session) throw new Error("routed session missing");
     const policies: string[] = [];
@@ -245,7 +245,7 @@ describe("BrowserRoutingManager", () => {
     };
     h.manager.configureWebRTC(guest);
     h.manager.configureWebRTC({ ...guest });
-    await h.manager.setEnabled("host-a", false);
+    await h.manager.setEnabled({ serverId: "host-a", enabled: false });
     h.manager.configureWebRTC({ ...guest });
     expect(policies).toEqual([
       "disable_non_proxied_udp",
@@ -256,7 +256,7 @@ describe("BrowserRoutingManager", () => {
 
   test("shared browser sessions retain their WebRTC policy", async () => {
     const h = await createHarness();
-    await h.manager.setEnabled("host-a", true);
+    await h.manager.setEnabled({ serverId: "host-a", enabled: true });
     const policies: string[] = [];
     h.manager.configureWebRTC({
       session: {},
@@ -277,10 +277,12 @@ describe("BrowserRoutingManager", () => {
         }
       },
     });
-    const older = h.manager.setEnabled("server-a", true);
+    const older = h.manager.setEnabled({ serverId: "server-a", enabled: true });
     await firstStarted.promise;
-    expect(await h.manager.setEnabled("server-a", false)).toEqual({ ok: true });
-    const newer = h.manager.setEnabled("server-a", true);
+    expect(await h.manager.setEnabled({ serverId: "server-a", enabled: false })).toEqual({
+      ok: true,
+    });
+    const newer = h.manager.setEnabled({ serverId: "server-a", enabled: true });
     firstWarmUp.reject(new Error("first warm-up failed"));
     const [oldResult, newResult] = await Promise.all([older, newer]);
     expect(oldResult.ok).toBe(false);
@@ -304,9 +306,9 @@ describe("BrowserRoutingManager", () => {
 
   test("announces only the newest choice when overlapping enables finish", async () => {
     const h = await createHarness({ holdWarmUp: true });
-    const older = h.manager.setEnabled("server-a", true);
+    const older = h.manager.setEnabled({ serverId: "server-a", enabled: true });
     await h.warmUpGate.started;
-    const newer = h.manager.setEnabled("server-a", true);
+    const newer = h.manager.setEnabled({ serverId: "server-a", enabled: true });
     h.warmUpGate.release();
     expect(await Promise.all([older, newer])).toEqual([{ ok: true }, { ok: true }]);
     expect(
@@ -335,7 +337,7 @@ describe("BrowserRoutingManager", () => {
   test("enabling a host starts its proxy, configures the session, and warms the credential before answering", async () => {
     const { manager, sessions, warmUps, events, userDataPath } = await createHarness();
 
-    const result = await manager.setEnabled("server-a", true);
+    const result = await manager.setEnabled({ serverId: "server-a", enabled: true });
 
     expect(result).toEqual({ ok: true });
     const partition = browserRoutingPartitionForServer("server-a");
@@ -383,7 +385,7 @@ describe("BrowserRoutingManager", () => {
   test("creates the session only once its proxy listens and points it there before the warm-up", async () => {
     const first = await createHarness();
 
-    await first.manager.setEnabled("server-a", true);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
     expect(first.sequence).toEqual(ROUTE_SETUP_SEQUENCE);
 
     // "Clear browser data": the session and proxy survive; only the credential is redone.
@@ -403,7 +405,7 @@ describe("BrowserRoutingManager", () => {
     const { manager, failWarmUp, events, sessions } = await createHarness();
     failWarmUp.value = true;
 
-    const result = await manager.setEnabled("server-a", true);
+    const result = await manager.setEnabled({ serverId: "server-a", enabled: true });
 
     expect(result).toEqual({
       ok: false,
@@ -421,7 +423,7 @@ describe("BrowserRoutingManager", () => {
 
   test("disabling closes the provider and leaves the session behind a proxy that denies everything", async () => {
     const { manager, sessions, events } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     const partition = browserRoutingPartitionForServer("server-a");
     const port = proxyPortOf(sessions.get(partition)!);
     const registration = manager.bridge.register(1, {
@@ -434,7 +436,9 @@ describe("BrowserRoutingManager", () => {
     });
     expect(registration.ok).toBe(true);
 
-    expect(await manager.setEnabled("server-a", false)).toEqual({ ok: true });
+    expect(await manager.setEnabled({ serverId: "server-a", enabled: false })).toEqual({
+      ok: true,
+    });
 
     expect(manager.bridge.hasProvider("server-a")).toBe(false);
     expect(await isPortOpen(port)).toBe(true);
@@ -468,9 +472,9 @@ describe("BrowserRoutingManager", () => {
 
   test("initialize brings persisted hosts back up with a fresh credential", async () => {
     const first = await createHarness();
-    await first.manager.setEnabled("server-a", true);
-    await first.manager.setEnabled("server-b", true);
-    await first.manager.setEnabled("server-b", false);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: false });
     const firstCredential = first.warmUps[0].credential;
     await first.manager.shutdown();
     managers.delete(first.manager);
@@ -490,9 +494,9 @@ describe("BrowserRoutingManager", () => {
 
   test("clearing data after a restart prepares a disabled host's session behind a denying proxy", async () => {
     const first = await createHarness();
-    await first.manager.setEnabled("server-a", true);
-    await first.manager.setEnabled("server-b", true);
-    await first.manager.setEnabled("server-b", false);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: false });
     await first.manager.shutdown();
     managers.delete(first.manager);
     const partitionA = browserRoutingPartitionForServer("server-a");
@@ -524,7 +528,9 @@ describe("BrowserRoutingManager", () => {
     second.sequence.length = 0;
     expect(await second.manager.listPersistedSessions()).toEqual(listed);
     expect(second.sequence).toEqual([]);
-    expect(await second.manager.setEnabled("server-b", true)).toEqual({ ok: true });
+    expect(await second.manager.setEnabled({ serverId: "server-b", enabled: true })).toEqual({
+      ok: true,
+    });
     expect(second.sequence).toEqual(["session.proxied", "credential.warmed", "route.ready"]);
     expect(proxyPortOf(sessionB)).toBe(portB);
     expect(second.manager.isReadyRoutedPartition(partitionB)).toBe(true);
@@ -532,7 +538,7 @@ describe("BrowserRoutingManager", () => {
 
   test("clearing data during startup waits for the setup in progress instead of touching the session", async () => {
     const first = await createHarness();
-    await first.manager.setEnabled("server-a", true);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
     await first.manager.shutdown();
     managers.delete(first.manager);
     const partition = browserRoutingPartitionForServer("server-a");
@@ -556,8 +562,8 @@ describe("BrowserRoutingManager", () => {
 
   test("rewarms every ready route after the auth cache is cleared", async () => {
     const { manager, warmUps } = await createHarness();
-    await manager.setEnabled("server-a", true);
-    await manager.setEnabled("server-b", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
+    await manager.setEnabled({ serverId: "server-b", enabled: true });
 
     await manager.rewarmCredentials();
 
@@ -568,7 +574,7 @@ describe("BrowserRoutingManager", () => {
 
   test("a failed rewarm drops readiness, rejects, and recovers on the next successful warm-up", async () => {
     const { manager, warmUps, failWarmUp } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     const partition = browserRoutingPartitionForServer("server-a");
 
     failWarmUp.value = true;
@@ -587,19 +593,19 @@ describe("BrowserRoutingManager", () => {
 
   test("answers a proxy login once per request and cancels a repeated challenge", async () => {
     const { manager, sessions } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     const partition = browserRoutingPartitionForServer("server-a");
     const port = Number(/:(\d+)$/.exec(sessions.get(partition)!.proxyConfigs[0].proxyRules)?.[1]);
     const authInfo = { isProxy: true, scheme: "basic", host: "127.0.0.1", port, realm: "Paseo" };
     const request = { authInfo, requestKey: "7|http://intranet.invalid/" };
 
-    expect(manager.decideProxyLogin(request, 1_000)).toMatchObject({ kind: "answer" });
-    expect(manager.decideProxyLogin(request, 1_100)).toEqual({ kind: "cancel" });
-    expect(manager.decideProxyLogin(request, 1_200)).toMatchObject({ kind: "answer" });
+    expect(manager.decideProxyLogin({ ...request, now: 1_000 })).toMatchObject({ kind: "answer" });
+    expect(manager.decideProxyLogin({ ...request, now: 1_100 })).toEqual({ kind: "cancel" });
+    expect(manager.decideProxyLogin({ ...request, now: 1_200 })).toMatchObject({ kind: "answer" });
     expect(
-      manager.decideProxyLogin({ authInfo, requestKey: "8|http://intranet.invalid/" }, 1_300),
+      manager.decideProxyLogin({ authInfo, requestKey: "8|http://intranet.invalid/", now: 1_300 }),
     ).toMatchObject({ kind: "answer" });
-    expect(manager.decideProxyLogin(request, 20_000)).toMatchObject({ kind: "answer" });
+    expect(manager.decideProxyLogin({ ...request, now: 20_000 })).toMatchObject({ kind: "answer" });
     expect(
       manager.decideProxyLogin({ authInfo: { ...authInfo, realm: "Other" }, requestKey: "x" }),
     ).toEqual({ kind: "ignore" });
@@ -607,10 +613,10 @@ describe("BrowserRoutingManager", () => {
 
   test("shutting down during a clear-data setup stops it and opens no further proxy", async () => {
     const first = await createHarness();
-    await first.manager.setEnabled("server-a", true);
-    await first.manager.setEnabled("server-a", false);
-    await first.manager.setEnabled("server-b", true);
-    await first.manager.setEnabled("server-b", false);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-a", enabled: false });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: true });
+    await first.manager.setEnabled({ serverId: "server-b", enabled: false });
     await first.manager.shutdown();
     managers.delete(first.manager);
 
@@ -637,7 +643,7 @@ describe("BrowserRoutingManager", () => {
 
   test("shutting down during a warm-up never publishes readiness and closes the proxy", async () => {
     const first = await createHarness();
-    await first.manager.setEnabled("server-a", true);
+    await first.manager.setEnabled({ serverId: "server-a", enabled: true });
     await first.manager.shutdown();
     managers.delete(first.manager);
 
@@ -671,7 +677,7 @@ describe("BrowserRoutingManager", () => {
 
   test("a renderer going away closes its providers and their streams", async () => {
     const { manager, events } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     const registration = manager.bridge.register(9, {
       serverId: "server-a",
       subscriptionId: "sub",
@@ -711,7 +717,7 @@ describe("BrowserRoutingManager", () => {
 
   test("registering and unregistering a provider is announced to the other windows only", async () => {
     const { manager, events } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     manager.noteTrustedRenderer(9);
     manager.noteTrustedRenderer(10);
     const eventCount = events.length;
@@ -741,7 +747,7 @@ describe("BrowserRoutingManager", () => {
 
   test("a renderer going away hands its hosts over exactly once", async () => {
     const { manager, events } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     manager.noteTrustedRenderer(9);
     manager.noteTrustedRenderer(10);
     manager.bridge.register(9, providerInput);
@@ -760,13 +766,13 @@ describe("BrowserRoutingManager", () => {
 
   test("disabling a host closes its provider without announcing a handoff", async () => {
     const { manager, events } = await createHarness();
-    await manager.setEnabled("server-a", true);
+    await manager.setEnabled({ serverId: "server-a", enabled: true });
     manager.noteTrustedRenderer(9);
     manager.noteTrustedRenderer(10);
     manager.bridge.register(9, providerInput);
     const eventCount = events.length;
 
-    await manager.setEnabled("server-a", false);
+    await manager.setEnabled({ serverId: "server-a", enabled: false });
 
     expect(manager.bridge.hasProvider("server-a")).toBe(false);
     expect(events.slice(eventCount).filter((event) => event.senderId === 10)).toEqual([]);

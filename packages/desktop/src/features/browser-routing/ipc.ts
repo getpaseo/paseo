@@ -72,7 +72,7 @@ export function createBrowserRoutingCommandHandlers(
       enabled: await manager.isEnabled(input.serverId),
     })),
     browser_routing_set_enabled: guarded(RoutingSetEnabledSchema, (_senderId, input) =>
-      manager.setEnabled(input.serverId, input.enabled),
+      manager.setEnabled(input),
     ),
     browser_routing_resolve_partition: guarded(RoutingTargetSchema, (_senderId, input) =>
       manager.resolvePartition(input.serverId),

@@ -34,6 +34,18 @@ export interface ProxyLoginAuthInfo {
   realm: string;
 }
 
+export interface ProxyLoginRequest {
+  authInfo: ProxyLoginAuthInfo;
+  requestKey: string;
+  /** Defaults to the current time; tests pass their own clock. */
+  now?: number;
+}
+
+export interface RoutingChange {
+  serverId: string;
+  enabled: boolean;
+}
+
 export type ProxyLoginDecision =
   | { kind: "answer"; credential: ProxyCredential }
   | { kind: "cancel" }
@@ -145,7 +157,7 @@ export class BrowserRoutingManager {
     return this.hosts[serverId]?.enabled === true;
   }
 
-  public async setEnabled(serverId: string, enabled: boolean): Promise<SetEnabledResult> {
+  public async setEnabled({ serverId, enabled }: RoutingChange): Promise<SetEnabledResult> {
     const version = (this.changeVersionsByServerId.get(serverId) ?? 0) + 1;
     this.changeVersionsByServerId.set(serverId, version);
     const isCurrent = () => this.changeVersionsByServerId.get(serverId) === version;
@@ -267,10 +279,7 @@ export class BrowserRoutingManager {
    * repeat for the same request means the answer was refused, so it is cancelled
    * instead of fed back into Chromium's retry loop.
    */
-  public decideProxyLogin(
-    input: { authInfo: ProxyLoginAuthInfo; requestKey: string },
-    now: number = Date.now(),
-  ): ProxyLoginDecision {
+  public decideProxyLogin({ now = Date.now(), ...input }: ProxyLoginRequest): ProxyLoginDecision {
     const credential = this.resolveProxyCredential(input.authInfo);
     if (!credential) {
       return { kind: "ignore" };
