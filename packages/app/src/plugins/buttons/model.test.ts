@@ -104,6 +104,7 @@ describe("plugin buttons", () => {
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.key)).toEqual([first.key, first.key + 1]);
     expect(buttons.getSnapshot()[0].button.label).toBe("3 reviews");
+    expect(buttons.getSnapshot()[0].behaviorRevision).toBe(0);
     header.remove();
     header.remove();
     header.update({ visible: true });
@@ -215,6 +216,30 @@ describe("plugin buttons", () => {
     await buttons.run(key, ["nested", "run"]);
     expect(calls).toBe(2);
   });
+
+  it("keeps an open menu across a label update and closes it when behavior is replaced", () => {
+    const buttons = store();
+    const registration = buttons.addHeaderButton(installation(), {
+      id: "review",
+      workspaceId: "workspace",
+      button: button(),
+    });
+    const key = buttons.getSnapshot()[0].key;
+    buttons.setOpen(key, true);
+    const before = buttons.getSnapshot()[0];
+    registration.update({ label: "3 reviews" });
+    const labeled = buttons.getSnapshot()[0];
+    expect(labeled.button.behavior).not.toBe(before.button.behavior);
+    expect(labeled.button.label).toBe("3 reviews");
+    expect(labeled.open).toBe(true);
+    expect(labeled.behaviorRevision).toBe(before.behaviorRevision);
+    registration.update({
+      behavior: { kind: "action", onPress() {} },
+    });
+    const replaced = buttons.getSnapshot()[0];
+    expect(replaced.open).toBe(false);
+    expect(replaced.behaviorRevision).toBe(before.behaviorRevision + 1);
+  });
 });
 
 it("updates translated tooltips and nested menu labels without closing open content", () => {
@@ -263,16 +288,22 @@ it("updates translated tooltips and nested menu labels without closing open cont
   for (const listener of listeners) listener();
   const translated = buttons.getSnapshot()[0];
   expect(translated.key).toBe(original.key);
+  expect(translated.button.behavior).not.toBe(original.button.behavior);
   expect(translated.open).toBe(true);
+  expect(translated.behaviorRevision).toBe(original.behaviorRevision);
   expect(translated.button.title).toBe("笔记");
   expect(translated.button.behavior).toMatchObject({
     kind: "menu",
     items: [{ title: "打开笔记" }],
   });
   registration.update({ disabled: false });
+  expect(buttons.getSnapshot()[0].open).toBe(true);
+  expect(buttons.getSnapshot()[0].behaviorRevision).toBe(original.behaviorRevision);
   locale = "en";
   for (const listener of listeners) listener();
   expect(buttons.getSnapshot()[0].button.title).toBe("Notes");
+  expect(buttons.getSnapshot()[0].open).toBe(true);
+  expect(buttons.getSnapshot()[0].behaviorRevision).toBe(original.behaviorRevision);
   registration.remove();
   plugin.i18n.dispose();
   expect(listeners.size).toBe(0);

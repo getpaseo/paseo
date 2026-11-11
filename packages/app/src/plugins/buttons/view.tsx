@@ -305,8 +305,13 @@ function ButtonControl({ view }: { view: ButtonView }) {
   const press = useCallback(() => pressButton(view, []), [view]);
   // Each placement renders its own button. Sharing `entry.open` lets a hidden copy's menu
   // surface close the one on screen, because MenuSurface calls onOpenChange(false) when its
-  // panel is inactive.
-  const [open, setOpen] = usePluginButtonMenuOpen(button);
+  // panel is inactive. Close this copy from `behaviorRevision`, not behavior identity:
+  // validation rebuilds the behavior object on label and locale updates.
+  const [open, setOpen] = usePluginButtonMenuOpen({
+    visible: button.visible,
+    disabled: button.disabled,
+    behaviorRevision: entry.behaviorRevision,
+  });
   const buttonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
       placementButtonStyle(entry.placement, props.layout.compact, disabled, {

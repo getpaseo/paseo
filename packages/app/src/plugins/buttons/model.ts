@@ -32,6 +32,8 @@ export interface RegisteredPluginButton {
   button: ResolvedPluginButton;
   pending: boolean;
   open: boolean;
+  /** Increments only when the plugin replaces behavior. Label and locale updates keep it. */
+  behaviorRevision: number;
 }
 
 function resolveAction(
@@ -128,8 +130,10 @@ export class PluginButtonStore {
         button: initialButton,
         pending: false,
         open: false,
+        behaviorRevision: 0,
       },
     ]);
+    // A locale refresh rebuilds behavior text and must not bump behaviorRevision.
     const unsubscribe = installation.i18n.subscribe(() => {
       this.replace(key, {
         button: validateButton(sourceButton, this.validation, installation.i18n.resolve),
@@ -142,8 +146,12 @@ export class PluginButtonStore {
         const nextSource = { ...sourceButton, ...patch };
         const button = validateButton(nextSource, this.validation, installation.i18n.resolve);
         sourceButton = nextSource;
-        const close = !button.visible || button.disabled || patch.behavior !== undefined;
-        this.replace(key, { button, open: close ? false : entry.open });
+        const behaviorChanged = patch.behavior !== undefined;
+        const close = !button.visible || button.disabled || behaviorChanged;
+        const behaviorRevision = behaviorChanged
+          ? entry.behaviorRevision + 1
+          : entry.behaviorRevision;
+        this.replace(key, { button, open: close ? false : entry.open, behaviorRevision });
       },
       remove: () => {
         unsubscribe();
@@ -175,7 +183,9 @@ export class PluginButtonStore {
 
   private replace(
     key: number,
-    patch: Partial<Pick<RegisteredPluginButton, "button" | "open" | "pending">>,
+    patch: Partial<
+      Pick<RegisteredPluginButton, "button" | "open" | "pending" | "behaviorRevision">
+    >,
   ): void {
     if (!this.entries.some((entry) => entry.key === key)) return;
     this.publish(this.entries.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));
