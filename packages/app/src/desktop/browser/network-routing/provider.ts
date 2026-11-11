@@ -33,6 +33,18 @@ interface StreamState {
   cancelled: boolean;
   queue: Promise<void>;
 }
+/** What the renderer reports to main about one stream, with the field each report carries. */
+type StreamOperation =
+  | { operation: "connected" }
+  | { operation: "data"; data: Uint8Array }
+  | { operation: "credit"; credit: number }
+  | { operation: "close"; reason: number };
+type StreamReport = { state: StreamState; streamId: string } & StreamOperation;
+interface LocalStreamClose {
+  state: StreamState;
+  streamId: string;
+  reason: number;
+}
 export interface TunnelProvider {
   close(): Promise<void>;
   onClosed(listener: () => void): () => void;
@@ -101,18 +113,14 @@ export async function openTunnelProvider(input: {
       input.onError?.(cleanupError);
     }
   }
-  function closeLocalStream(state: StreamState, streamId: string, reason: number) {
+  function closeLocalStream({ state, streamId, reason }: LocalStreamClose) {
     if (state.cancelled) return;
     state.cancelled = true;
     if (streams.get(streamId) === state) streams.delete(streamId);
     state.stream?.close(reason);
   }
-  function send(
-    state: StreamState,
-    streamId: string,
-    operation: string,
-    payload: Record<string, unknown> = {},
-  ) {
+  function send(report: StreamReport) {
+    const { state, streamId, operation, ...fields } = report;
     if (++state.pending > maxPendingIpcInvocations) {
       void fail(new Error("Tunnel IPC queue exceeded its window"));
       return;
@@ -125,15 +133,15 @@ export async function openTunnelProvider(input: {
             serverId: input.serverId,
             providerId,
             streamId,
-            ...payload,
+            ...fields,
           }),
         );
         if (!result.ok && result.error.code === "unknown_stream") {
-          closeLocalStream(state, streamId, 0);
+          closeLocalStream({ state, streamId, reason: 0 });
           return;
         }
         if (!result.ok && result.error.code === "protocol_error") {
-          closeLocalStream(state, streamId, 8);
+          closeLocalStream({ state, streamId, reason: 8 });
           return;
         }
         requireIpcSuccess(result);
@@ -167,7 +175,7 @@ export async function openTunnelProvider(input: {
             if (stopped || state.cancelled) return;
             if (state.connected) return fail(new Error("Duplicate tunnel Connected"));
             state.connected = true;
-            send(state, event.streamId, "connected");
+            send({ state, streamId: event.streamId, operation: "connected" });
           },
           onData(data) {
             if (stopped || state.cancelled) return;
@@ -179,7 +187,7 @@ export async function openTunnelProvider(input: {
             )
               return fail(new Error("Invalid tunnel receive credit"));
             state.incoming -= data.byteLength;
-            send(state, event.streamId, "data", { data });
+            send({ state, streamId: event.streamId, operation: "data", data });
           },
           onCredit(credit) {
             if (stopped || state.cancelled) return;
@@ -191,20 +199,20 @@ export async function openTunnelProvider(input: {
             )
               return fail(new Error("Invalid tunnel send credit"));
             state.outgoing += credit;
-            send(state, event.streamId, "credit", { credit });
+            send({ state, streamId: event.streamId, operation: "credit", credit });
           },
           onClose(reason) {
             if (stopped || streams.get(event.streamId) !== state) return;
-            send(state, event.streamId, "close", { reason });
+            send({ state, streamId: event.streamId, operation: "close", reason });
             streams.delete(event.streamId);
           },
         },
       );
     } catch (error) {
       const previous = streams.get(event.streamId);
-      if (previous) closeLocalStream(previous, event.streamId, 1);
+      if (previous) closeLocalStream({ state: previous, streamId: event.streamId, reason: 1 });
       const reason = error instanceof NetworkTunnelError && error.code === "stream_limit" ? 7 : 1;
-      send(state, event.streamId, "close", { reason });
+      send({ state, streamId: event.streamId, operation: "close", reason });
     }
   }
   async function listen(event: string, handler: (payload: unknown) => void): Promise<void> {
@@ -253,7 +261,7 @@ export async function openTunnelProvider(input: {
           const state = streams.get(event.streamId);
           if (!state?.stream) return; // Frames already in flight when a stream closed.
           if ("reason" in event) {
-            closeLocalStream(state, event.streamId, event.reason);
+            closeLocalStream({ state, streamId: event.streamId, reason: event.reason });
             return;
           }
           if (!state.connected) throw new Error("Tunnel data before Connected");
