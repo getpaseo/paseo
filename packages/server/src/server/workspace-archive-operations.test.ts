@@ -19,10 +19,9 @@ function deferred<T = void>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function archived(newlyArchivedAgentIds: string[]): ArchiveResult {
+function archived(agentIds: string[]): ArchiveResult {
   return {
-    archivedAgentIds: newlyArchivedAgentIds,
-    newlyArchivedAgentIds,
+    archivedAgentIds: agentIds,
     archivedWorkspaceIds: ["ws"],
     removedDirectory: false,
   };
@@ -46,7 +45,7 @@ function parkedArchive(agentIds: string[]) {
       signal = runSignal;
       started.resolve();
       await release.promise;
-      if (runSignal.aborted) throw new WorkspaceArchiveCanceledError(agentIds, false);
+      if (runSignal.aborted) throw new WorkspaceArchiveCanceledError("stamp");
       return archived(agentIds);
     },
   };
@@ -56,33 +55,33 @@ describe("WorkspaceArchiveOperations", () => {
   test("an undo during a running archive aborts it and restores the agents it took down", async () => {
     const operations = new WorkspaceArchiveOperations();
     const archive = parkedArchive(["agent-a", "agent-b"]);
-    const restored: string[][] = [];
+    const restored: Array<string | undefined> = [];
 
     const archiveDone = operations.archive("ws", archive.run);
     await archive.started;
-    const undoDone = operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+    const undoDone = operations.undo("ws", async ({ archivedAt }) => {
+      restored.push(archivedAt);
     });
 
     expect(archive.aborted).toBe(true);
     expect(restored).toEqual([]);
     archive.release();
 
-    await expect(archiveDone).resolves.toEqual({ kind: "canceled" });
+    await expect(archiveDone).resolves.toEqual({ kind: "canceled", archivedAt: "stamp" });
     await undoDone;
-    expect(restored).toEqual([["agent-a", "agent-b"]]);
+    expect(restored).toEqual(["stamp"]);
   });
 
-  test("an undo after the archive finished restores the agents that archive took down", async () => {
+  test("an undo after archive completion delegates restoration to persisted state", async () => {
     const operations = new WorkspaceArchiveOperations();
     await operations.archive("ws", async () => archived(["agent-a"]));
 
-    const restored: string[][] = [];
-    await operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+    const restored: Array<string | undefined> = [];
+    await operations.undo("ws", async ({ archivedAt }) => {
+      restored.push(archivedAt);
     });
 
-    expect(restored).toEqual([["agent-a"]]);
+    expect(restored).toEqual([undefined]);
   });
 
   test("restore runs only after the aborted archive has stopped", async () => {
@@ -153,21 +152,21 @@ describe("WorkspaceArchiveOperations", () => {
   test("archive, undo, archive in quick succession leaves the workspace archived", async () => {
     const operations = new WorkspaceArchiveOperations();
     const first = parkedArchive(["agent-a"]);
-    const restored: string[][] = [];
+    const restored: Array<string | undefined> = [];
 
     const firstDone = operations.archive("ws", first.run);
     await first.started;
-    const undoDone = operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+    const undoDone = operations.undo("ws", async ({ archivedAt }) => {
+      restored.push(archivedAt);
     });
     // The re-archive must not join the archive the undo just aborted.
     const secondDone = operations.archive("ws", async () => archived(["agent-a"]));
     first.release();
 
-    await expect(firstDone).resolves.toEqual({ kind: "canceled" });
+    await expect(firstDone).resolves.toEqual({ kind: "canceled", archivedAt: "stamp" });
     await undoDone;
     await expect(secondDone).resolves.toMatchObject({ kind: "archived" });
-    expect(restored).toEqual([["agent-a"]]);
+    expect(restored).toEqual(["stamp"]);
   });
 
   test("a second undo while one runs joins it", async () => {
@@ -188,7 +187,7 @@ describe("WorkspaceArchiveOperations", () => {
     expect(restores).toBe(1);
   });
 
-  test("a failed restore keeps the agents for a retry", async () => {
+  test("a failed restore frees the lane for retry", async () => {
     const operations = new WorkspaceArchiveOperations();
     await operations.archive("ws", async () => archived(["agent-a"]));
 
@@ -198,56 +197,51 @@ describe("WorkspaceArchiveOperations", () => {
       }),
     ).rejects.toThrow("worktree recreation failed");
 
-    const restored: string[][] = [];
-    await operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+    const restored: Array<string | undefined> = [];
+    await operations.undo("ws", async ({ archivedAt }) => {
+      restored.push(archivedAt);
     });
-    expect(restored).toEqual([["agent-a"]]);
+    expect(restored).toEqual([undefined]);
   });
 
-  test("an archive of an already archived workspace keeps the earlier archive's agents for undo", async () => {
+  test("a repeat archive still delegates undo to persisted state", async () => {
     const operations = new WorkspaceArchiveOperations();
     await operations.archive("ws", async () => archived(["agent-a"]));
     await operations.archive("ws", async () => ({
       archivedAgentIds: ["agent-a"],
-      newlyArchivedAgentIds: [],
       archivedWorkspaceIds: [],
       removedDirectory: false,
     }));
-    const restored: string[][] = [];
+    const restored: Array<string | undefined> = [];
 
-    await operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+    await operations.undo("ws", async ({ archivedAt }) => {
+      restored.push(archivedAt);
     });
 
-    expect(restored).toEqual([["agent-a"]]);
+    expect(restored).toEqual([undefined]);
   });
 
-  test("an undo restores the archive's agents once; a repeat undo restores none", async () => {
+  test("each completed undo reads the current persisted state", async () => {
     const operations = new WorkspaceArchiveOperations();
     await operations.archive("ws", async () => archived(["agent-a"]));
-    const restored: string[][] = [];
-    const restore = async ({ agentIds }: { agentIds: string[] }) => {
-      restored.push(agentIds);
+    const restored: Array<string | undefined> = [];
+    const restore = async ({ archivedAt }: { archivedAt?: string }) => {
+      restored.push(archivedAt);
     };
 
     await operations.undo("ws", restore);
     await operations.undo("ws", restore);
 
-    expect(restored).toEqual([["agent-a"], []]);
+    expect(restored).toEqual([undefined, undefined]);
   });
 
-  test("an undo after the retention window restores the workspace without agents", async () => {
-    let now = 0;
-    const operations = new WorkspaceArchiveOperations({ undoRetentionMs: 1000, now: () => now });
-    await operations.archive("ws", async () => archived(["agent-a"]));
-    now = 1000;
-
-    const restored: string[][] = [];
-    await operations.undo("ws", async ({ agentIds }) => {
-      restored.push(agentIds);
+  test("a fresh daemon delegates undo to persisted workspace state", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    const inputs: unknown[] = [];
+    await operations.undo("ws", async (input) => {
+      inputs.push(input);
     });
-    expect(restored).toEqual([[]]);
+    expect(inputs).toEqual([{ archivedAt: undefined }]);
   });
 
   test("workspaces have independent lanes", async () => {
