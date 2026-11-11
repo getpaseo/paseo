@@ -152,6 +152,89 @@ describe("whole-message Markdown presentation", () => {
 });
 
 describe("stream presentation through installed plugins", () => {
+  it.each([
+    { name: "grouped native tools", transform: undefined, arrivals: [3000] },
+    {
+      name: "plugin tool rows",
+      transform: installedTransform(installProbe("tool_call")),
+      arrivals: [2000, 3000],
+    },
+  ])("retains the latest lifecycle boundary through $name", ({ transform, arrivals }) => {
+    const read = {
+      type: "tool_call",
+      name: "Read",
+      error: null,
+      detail: { type: "read", filePath: "/tmp/read.txt" },
+    } as const;
+    const source = hydrateStreamState([
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "user_message", text: "Read both", messageId: "user" },
+        },
+        timestamp: new Date(0),
+      },
+      { event: assistant("Reading", "assistant"), timestamp: new Date(1000) },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { ...read, callId: "first", status: "running" },
+        },
+        timestamp: new Date(2000),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { ...read, callId: "second", status: "running" },
+        },
+        timestamp: new Date(3000),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { ...read, callId: "second", status: "completed" },
+        },
+        timestamp: new Date(30000),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { ...read, callId: "first", status: "canceled" },
+        },
+        timestamp: new Date(60000),
+      },
+    ]);
+    const presented = createStreamPresentation()({
+      ...presentationOptions,
+      tail: source,
+      head: [],
+      transform,
+      isTurnActive: false,
+    });
+    const model = buildAgentStreamRenderModel({
+      tail: presented.tail,
+      head: presented.head,
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    expect(model.turnTiming.byItemId.get("assistant")).toEqual({
+      completedAt: new Date(60000),
+      durationMs: 60000,
+    });
+    expect(
+      presented.tail
+        .filter((item) => item.kind === "tool_call" || item.kind === "plugin")
+        .map((item) => item.timestamp.getTime()),
+    ).toEqual(arrivals);
+  });
+
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
     const rendered = createStreamPresentation()({

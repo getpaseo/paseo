@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { deriveStreamTurnTiming } from "./turn-time";
-import type { StreamItem } from "@/types/stream";
+import { applyStreamEvent, hydrateStreamState, type StreamItem } from "@/types/stream";
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 
 function user(id: string, timestamp: Date): StreamItem {
   return {
@@ -21,7 +22,129 @@ function assistant(id: string, timestamp: Date, text = id): StreamItem {
   };
 }
 
+function update(
+  item: AgentTimelineItem,
+  at: number,
+  turnId = "turn-1",
+): Parameters<typeof hydrateStreamState>[0][number] {
+  return { event: { type: "timeline", provider: "claude", turnId, item }, timestamp: new Date(at) };
+}
+
+function tool(
+  callId: string,
+  status: "running" | "completed" | "canceled",
+  at: number,
+): Parameters<typeof hydrateStreamState>[0][number] {
+  return update(
+    {
+      type: "tool_call",
+      callId,
+      name: "Read",
+      status,
+      error: null,
+      detail: { type: "read", filePath: `/tmp/${callId}.txt` },
+    },
+    at,
+  );
+}
+
+function liveStream(updates: Parameters<typeof hydrateStreamState>[0]) {
+  let tail: StreamItem[] = [];
+  let head: StreamItem[] = [];
+  for (const entry of updates) {
+    ({ tail, head } = applyStreamEvent({ tail, head, ...entry }));
+  }
+  return { tail, head };
+}
+
 describe("deriveStreamTurnTiming", () => {
+  it("includes a long-running tool canceled after assistant text in completed turn timing", () => {
+    const updates: Parameters<typeof hydrateStreamState>[0] = [
+      update({ type: "user_message", text: "Read", messageId: "user" }, 0),
+      update({ type: "assistant_message", text: "Reading", messageId: "assistant" }, 1000),
+      tool("read", "running", 2000),
+      tool("read", "canceled", 62000),
+      {
+        event: { type: "turn_canceled", provider: "claude", turnId: "turn-1", reason: "user stop" },
+        timestamp: new Date(62000),
+      },
+    ];
+    const { tail, head } = liveStream(updates);
+    const timing = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head,
+    });
+    assert.deepEqual(timing.byItemId.get("assistant"), {
+      completedAt: new Date(62000),
+      durationMs: 62000,
+    });
+    assert.deepEqual(hydrateStreamState(updates, { source: "canonical" }), tail);
+    assert.equal(tail.at(-1)?.timestamp.getTime(), 2000);
+  });
+
+  it.each(["first", "second"])(
+    "includes the latest parallel lifecycle when %s finishes first",
+    (firstDone) => {
+      const lastDone = firstDone === "first" ? "second" : "first";
+      const updates = [
+        update({ type: "user_message", text: "Read both", messageId: "user" }, 0),
+        update({ type: "assistant_message", text: "Reading both", messageId: "assistant" }, 1000),
+        tool("first", "running", 2000),
+        tool("second", "running", 3000),
+        tool(firstDone, "completed", 30000),
+        tool(lastDone, "completed", 60000),
+      ];
+      const { tail, head } = liveStream(updates);
+      const timing = deriveStreamTurnTiming({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail,
+        head,
+      });
+      assert.deepEqual(timing.byItemId.get("assistant"), {
+        completedAt: new Date(60000),
+        durationMs: 60000,
+      });
+      assert.deepEqual(
+        tail.slice(2).map((item) => item.timestamp.getTime()),
+        [2000, 3000],
+      );
+      assert.deepEqual(hydrateStreamState(updates, { source: "canonical" }), tail);
+    },
+  );
+
+  it("resets the lifecycle maximum at a new canonical turn without a visible prompt", () => {
+    const { tail } = liveStream([
+      update({ type: "user_message", text: "Read", messageId: "user" }, 0),
+      update({ type: "assistant_message", text: "Reading", messageId: "assistant" }, 1000),
+      tool("read", "running", 2000),
+      tool("read", "completed", 60000),
+    ]);
+    const head = hydrateStreamState([
+      update(
+        { type: "assistant_message", text: "New turn", messageId: "next-assistant" },
+        11000,
+        "turn-2",
+      ),
+    ]);
+    const timing = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head,
+    });
+    assert.deepEqual(timing.byItemId.get("assistant"), {
+      completedAt: new Date(60000),
+      durationMs: 60000,
+    });
+    assert.deepEqual(timing.byItemId.get("next-assistant"), {
+      completedAt: new Date(11000),
+      durationMs: null,
+    });
+  });
+
   it("starts elapsed time from the submitted prompt", () => {
     const submittedAt = new Date("2026-05-15T00:00:00.000Z");
 
@@ -238,9 +361,13 @@ it("times a heartbeat that ends with tools and no assistant text", () => {
       },
     },
   };
-  const tool: StreamItem = { ...trigger, id: "last", timestamp: new Date("2026-05-15T00:00:05Z") };
+  const lastTool: StreamItem = {
+    ...trigger,
+    id: "last",
+    timestamp: new Date("2026-05-15T00:00:05Z"),
+  };
   const timing = deriveStreamTurnTiming({
-    tail: [trigger, tool],
+    tail: [trigger, lastTool],
     head: [],
     isTurnActive: false,
     activeTurnStartedAt: null,
