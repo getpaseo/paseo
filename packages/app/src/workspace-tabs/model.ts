@@ -66,3 +66,17 @@ export function buildWorkspaceTabPersistenceKey(input: {
   }
   return `${serverId}:${workspaceId}`;
 }
+
+export interface PaneTabOrderInput {
+  paneId: string;
+  tabIds: string[];
+  movedTabId: string;
+}
+export interface WorkspacePaneTabOrderInput extends PaneTabOrderInput {
+  workspaceKey: string;
+}
+export interface WorkspaceTabOrderInput {
+  workspaceKey: string;
+  tabIds: string[];
+  movedTabId: string;
+}
