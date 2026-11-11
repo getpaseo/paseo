@@ -15,7 +15,6 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
-import { htmlImageBox, splitHtmlImageBlocks } from "./html-image-blocks";
 
 it("recognizes complete known commands in inline code", () => {
   const names = new Set(["code-review", "review:fast"]);
@@ -780,100 +779,6 @@ describe("GitHub comment HTML normalization", () => {
   });
 });
 
-describe("HTML image blocks", () => {
-  // A README screenshot row; GitHub shows its cells side by side at the declared width.
-  const gallery = [
-    "<table>",
-    "  <tr>",
-    '    <td><img src="shots/one.png" width="120" alt="One"></td>',
-    '    <td><img src="shots/two.png" width="120" alt="Two"></td>',
-    "  </tr>",
-    "</table>",
-  ].join("\n");
-
-  it("lays out a README screenshot table as one row of images", () => {
-    expect(splitHtmlImageBlocks(`- Feature\n\n${gallery}\n\n## Next`)).toEqual([
-      { kind: "markdown", id: "0", source: "- Feature\n\n" },
-      {
-        kind: "images",
-        id: "1",
-        rows: [
-          {
-            id: "0",
-            align: "left",
-            images: [
-              { id: "0", src: "shots/one.png", alt: "One", width: 120 },
-              { id: "1", src: "shots/two.png", alt: "Two", width: 120 },
-            ],
-          },
-        ],
-      },
-      { kind: "markdown", id: "2", source: "\n\n## Next" },
-    ]);
-  });
-
-  it("keeps the alignment, links, and rows of a centered badge block", () => {
-    const badges = [
-      '<p align="center">',
-      '  <a href="https://example.com/ci"><img src="ci.svg" alt="CI"></a>&nbsp;',
-      '  <a href="docs/guide.md"><img src="docs.png" height="20px" alt="Docs"></a><br>',
-      '  <picture><source srcset="dark.png"><img src="light.png" width="64"></picture>',
-      "</p>",
-    ].join("\n");
-    expect(splitHtmlImageBlocks(badges)).toEqual([
-      {
-        kind: "images",
-        id: "0",
-        rows: [
-          {
-            id: "0",
-            align: "center",
-            images: [
-              { id: "0", src: "ci.svg", alt: "CI", href: "https://example.com/ci" },
-              { id: "1", src: "docs.png", alt: "Docs", href: "docs/guide.md", height: 20 },
-            ],
-          },
-          { id: "1", align: "center", images: [{ id: "0", src: "light.png", alt: "", width: 64 }] },
-        ],
-      },
-    ]);
-  });
-
-  it.each([
-    ["text beside the images", '<div><img src="a.png"> Caption</div>'],
-    ["a heading", '<p align="center"><b>Title</b></p>'],
-    ["a collapsed section", '<details><summary>Shots</summary><img src="a.png"></details>'],
-    ["an image without a source", '<p><img alt="Missing"></p>'],
-    ["inline HTML in a paragraph", 'See <img src="a.png"> here'],
-    ["a table inside a list item", `- Shots\n\n${gallery.replace(/^/gm, "  ")}`],
-  ])("leaves %s to the Markdown engine", (_name, source) => {
-    expect(splitHtmlImageBlocks(source)).toEqual([{ kind: "markdown", id: "0", source }]);
-  });
-
-  it("gives every Markdown fragment the document's link definitions", () => {
-    const blocks = splitHtmlImageBlocks(
-      'See [guide].\n\n<p><img src="a.png"></p>\n\n[More][guide]\n\n[guide]: /docs/guide.md',
-    );
-    expect(blocks.map((block) => (block.kind === "markdown" ? block.source : "images"))).toEqual([
-      "[guide]: </docs/guide.md>\n\nSee [guide].\n\n",
-      "images",
-      "[guide]: </docs/guide.md>\n\n\n\n[More][guide]\n\n[guide]: /docs/guide.md",
-    ]);
-  });
-
-  it.each([
-    ["both dimensions", { width: 120, height: 60 }, { width: 200, height: 200 }, 120, 2],
-    ["a width", { width: 120 }, { width: 200, height: 100 }, 120, 2],
-    ["a width before decoding", { width: 120 }, undefined, 120, 1],
-    ["a height", { height: 20 }, { width: 100, height: 20 }, 100, 5],
-    ["no dimensions", {}, { width: 1600, height: 800 }, 640, 2],
-    ["no dimensions on a small image", {}, { width: 100, height: 50 }, 100, 2],
-    ["no dimensions before decoding", {}, undefined, 0, 1],
-  ])("sizes an image with %s", (_name, declared, natural, width, aspectRatio) => {
-    expect(htmlImageBox(declared, natural)).toEqual({ width, aspectRatio });
-  });
-});
-
 describe("indented HTML blocks", () => {
   // A README screenshot row: GitHub ignores the indentation of the nested tags.
   const gallery = [
@@ -897,6 +802,7 @@ describe("indented HTML blocks", () => {
   }
 
   it.each([
+    ["a standalone table", gallery.join("\n"), ["Document", "Image blob:one", "Image blob:two"]],
     [
       "the document",
       ["Intro", "", ...gallery].join("\n"),
@@ -925,6 +831,23 @@ describe("indented HTML blocks", () => {
       latexMath: false,
     });
     expect(blocks(tree)).toEqual(expected);
+  });
+
+  it("keeps HTML table images inside their blockquote", async () => {
+    const prepared = prepareMarkdownSource(gallery.map((line) => `> ${line}`).join("\n"));
+    expect(prepared.images.map((image) => image.source)).toEqual([
+      "shots/one.png",
+      "shots/two.png",
+    ]);
+    const tree = await parseMarkdown(prepared.render(urls), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    expect(tree.children?.every((node) => node.type === "Blockquote")).toBe(true);
+    expect(tree.children?.flatMap((node) => node.children ?? []).map(blocks)).toEqual([
+      "Image blob:one",
+      "Image blob:two",
+    ]);
   });
 
   it.each([
@@ -1041,7 +964,7 @@ it("retries transient image decoding failures instead of caching an unavailable 
         else success(20, 20);
       }),
   });
-  expect(decoded).toEqual({ width: 20, height: 20 });
+  expect(decoded).toBe(true);
   expect(attempts).toBe(2);
   client.clear();
 });
@@ -1256,3 +1179,19 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("HTML indentation preserves Markdown content", () => {
+  it("keeps nested Markdown list depth inside details", () => {
+    const source = "<details>\n<summary>Steps</summary>\n- Parent\n  - Child\n</details>";
+    const tree = fromMarkdown(normalizeMarkdownHtml(source));
+    const list = tree.children.find((node) => node.type === "list");
+    expect(list?.children).toHaveLength(1);
+    expect(list?.children[0].children[1]?.type).toBe("list");
+  });
+
+  it("keeps nested preformatted text indentation", () => {
+    const source = "<div><pre>\n    first\n        second\n</pre></div>";
+    const tree = fromMarkdown(normalizeMarkdownHtml(source));
+    expect(tree.children).toMatchObject([{ type: "code", value: "first\n    second" }]);
+  });
+});

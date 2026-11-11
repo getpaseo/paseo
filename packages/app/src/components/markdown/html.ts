@@ -9,8 +9,11 @@ const HTML = new RegExp(
   String.raw`(?<!\\)(?:<!--[\s\S]*?-->|<code\b[^>]*>[\s\S]*?<\/code\s*>|<summary\b[^>]*>[\s\S]*?<\/summary\s*>|${TAG})`,
   "gi",
 );
-// Inside HTML blocks, also match each line's container prefix and indentation.
-const HTML_OR_LINE_INDENT = new RegExp(String.raw`${HTML.source}|(?:^|(?<=[\r\n]))[ \t>]+`, "gi");
+// HTML tag-leading lines carry layout indentation, unlike embedded Markdown text.
+const HTML_OR_LINE_INDENT = new RegExp(
+  String.raw`${HTML.source}|(?:^|(?<=[\r\n]))[ \t>]+(?=<)`,
+  "gi",
+);
 const FLOW_CONTAINERS = new Set(["root", "blockquote", "listItem"]);
 const BLOCK_TAGS = new Set([
   "div",
@@ -68,9 +71,8 @@ export function normalizeMarkdownHtml(source: string): string {
   let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number, indent = 0): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
-    // HTML ignores the indentation of nested tags, but once the tags are gone
-    // four leading spaces would start a Markdown code block. Keep the prefix that
-    // places the line in its quote or list item and drop the rest.
+    // Removing tags must not leave layout spaces that start Markdown code.
+    // Preserve the quote/list prefix and all indentation on Markdown text lines.
     if (!raw.startsWith("<"))
       return raw.slice(0, indent) + raw.slice(indent).replace(/^[ \t]+/, "");
     if (raw.startsWith("<!--")) return "";

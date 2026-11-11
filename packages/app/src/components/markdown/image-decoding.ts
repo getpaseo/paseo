@@ -4,17 +4,12 @@ type ImageDecoder = (
   failure: (error: unknown) => void,
 ) => void;
 
-export interface MarkdownImageSize {
-  width: number;
-  height: number;
-}
-
-export function decodeMarkdownImage(uri: string, decode: ImageDecoder): Promise<MarkdownImageSize> {
+export function decodeMarkdownImage(uri: string, decode: ImageDecoder): Promise<true> {
   return new Promise((resolve, reject) => {
     decode(
       uri,
       (width, height) => {
-        if (width > 0 && height > 0) resolve({ width, height });
+        if (width > 0 && height > 0) resolve(true);
         else reject(new Error("Image has no decodable dimensions"));
       },
       reject,

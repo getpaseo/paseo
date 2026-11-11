@@ -110,15 +110,8 @@ function fileReadCount(
 async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
   const image = page.getByRole("button", { name, exact: true });
   await expect(image).toBeVisible();
-  // Markdown images are the <img> itself; HTML image rows wrap one in a pressable.
   await expect
-    .poll(() =>
-      image.evaluate(
-        (element) =>
-          (element instanceof HTMLImageElement ? element : element.querySelector("img"))
-            ?.naturalWidth ?? 0,
-      ),
-    )
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBeGreaterThan(0);
 }
 
@@ -799,9 +792,9 @@ test.describe("CodeMirror workspace file editing", () => {
         "",
         "![hero](../data/cache/hero.png?v=2#preview)",
         "",
-        "- Screenshots",
+        "Screenshots",
         "",
-        // A README screenshot row: GitHub shows the cells side by side at their declared width.
+        // Nested HTML indentation must not turn the image markup into a code block.
         "<table>",
         "  <tr>",
         '    <td><img src="sibling.png" width="120" alt="table sibling"></td>',
@@ -824,16 +817,6 @@ test.describe("CodeMirror workspace file editing", () => {
     await expectMarkdownImageLoaded(page, "hero");
     await expectMarkdownImageLoaded(page, "table sibling");
     await expectMarkdownImageLoaded(page, "table hero");
-    const tableSibling = await page
-      .getByRole("button", { name: "table sibling", exact: true })
-      .boundingBox();
-    const tableHero = await page
-      .getByRole("button", { name: "table hero", exact: true })
-      .boundingBox();
-    expect(tableSibling!.width).toBeCloseTo(120, 0);
-    expect(tableHero!.width).toBeCloseTo(120, 0);
-    expect(tableHero!.y).toBeCloseTo(tableSibling!.y, 0);
-    expect(tableHero!.x).toBeGreaterThan(tableSibling!.x + tableSibling!.width);
     await visibleFilePane.screenshot({
       path: test.info().outputPath("markdown-relative-images.png"),
     });
