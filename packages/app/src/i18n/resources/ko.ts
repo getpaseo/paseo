@@ -1276,6 +1276,11 @@ export const ko: TranslationResources = {
       closeSidebar: "사이드바 닫기",
       moreActions: "추가 작업",
     },
+    nav: {
+      more: "더보기",
+      moreItems: "더보기 메뉴 항목",
+      resize: "메뉴 크기 조절",
+    },
     footer: {
       usage: "사용량",
     },

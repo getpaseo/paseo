@@ -1299,6 +1299,11 @@ export const fr: TranslationResources = {
       closeSidebar: "Fermer la barre latérale",
       moreActions: "Plus d’actions",
     },
+    nav: {
+      more: "Plus",
+      moreItems: "Plus d’éléments du menu",
+      resize: "Redimensionner le menu",
+    },
     footer: {
       usage: "Utilisation",
     },

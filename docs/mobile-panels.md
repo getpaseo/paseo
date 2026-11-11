@@ -57,9 +57,10 @@ appearance keys; see [Unistyles appearance boundaries](unistyles.md#runtime-them
 
 Both transforms and both backdrop opacities are derived from the same normalized position. Panel
 width is only a projection input: the window width on the right, and on the left the width
-`MobilePanelsProvider` resolves (the full window on compact layouts, the saved sidebar width
-clamped to the viewport on wide ones). The dock, the overlay, and their gestures read that one
-value. Rotation changes the projection, not the panel state.
+`MobilePanelsProvider` resolves (the saved mobile sidebar width on compact layouts, which fills
+the window until the user narrows it, and the saved sidebar width clamped to the viewport on
+wide ones). The dock, the overlay, and their gestures read that one value. Rotation changes the
+projection, not the panel state.
 
 This makes these invalid states unrepresentable:
 

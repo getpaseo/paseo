@@ -1261,6 +1261,11 @@ export const zhCN: TranslationResources = {
       closeSidebar: "关闭侧边栏",
       moreActions: "更多操作",
     },
+    nav: {
+      more: "更多",
+      moreItems: "更多菜单项",
+      resize: "调整菜单大小",
+    },
     footer: {
       usage: "使用情况",
     },

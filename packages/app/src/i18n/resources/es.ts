@@ -1305,6 +1305,11 @@ export const es: TranslationResources = {
       closeSidebar: "Cerrar barra lateral",
       moreActions: "Más acciones",
     },
+    nav: {
+      more: "Más",
+      moreItems: "Más elementos del menú",
+      resize: "Redimensionar el menú",
+    },
     footer: {
       usage: "Uso",
     },

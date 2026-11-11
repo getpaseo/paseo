@@ -12,10 +12,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { MenuTrigger } from "@/components/ui/menu";
+import { MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { SidebarPopoverRoot, SidebarPopoverSurface } from "@/components/sidebar/sidebar-popover";
 import { DensityIcon } from "@/components/ui/density-icon";
-import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { Shortcut } from "@/components/ui/shortcut";
+import { SidebarHeaderRow, type SidebarRowIcon } from "@/components/sidebar/sidebar-header-row";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -37,6 +39,8 @@ import {
 
 interface SidebarNavRowProps {
   onBeforeNavigate?: () => void;
+  /** Inside the More surface this row is a menu item, so arrow keys can move between entries. */
+  menu?: boolean;
 }
 
 interface SidebarNavRowsProps extends SidebarNavRowProps {
@@ -58,6 +62,7 @@ export function SidebarNavRows({
   firstRowTrailing,
   maxRows,
 }: SidebarNavRowsProps) {
+  const { t } = useTranslation();
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
@@ -74,7 +79,8 @@ export function SidebarNavRows({
 
   if (visibleItems.length === 0 && !firstRowTrailing) return null;
 
-  const renderRow = (item: (typeof visibleItems)[number], overflow = false) => {
+  const renderRow = (item: (typeof visibleItems)[number], menu = false) => {
+    const beforeNavigate = menu ? closeOverflowAndNavigate : onBeforeNavigate;
     if (item.kind === "plugin") {
       return (
         <PluginSidebarItem
@@ -82,17 +88,13 @@ export function SidebarNavRows({
           group={item.group}
           section="header"
           fallbackAnchorRef={groupRef}
-          onBeforeNavigate={overflow ? closeOverflowAndNavigate : onBeforeNavigate}
+          menu={menu}
+          onBeforeNavigate={beforeNavigate}
         />
       );
     }
     const Row = BUILTIN_ROWS[item.id];
-    return (
-      <Row
-        key={item.key}
-        onBeforeNavigate={overflow ? closeOverflowAndNavigate : onBeforeNavigate}
-      />
-    );
+    return <Row key={item.key} menu={menu} onBeforeNavigate={beforeNavigate} />;
   };
   const rows = visibleItems.slice(0, rowLimit).map((item) => renderRow(item));
   if (overflowItems.length) {
@@ -100,14 +102,18 @@ export function SidebarNavRows({
       <SidebarPopoverRoot key="overflow" open={overflowOpen} onOpenChange={setOverflowOpen}>
         <MenuTrigger
           accessibilityRole="button"
-          accessibilityLabel="More menu items"
+          accessibilityLabel={t("sidebar.nav.moreItems")}
           testID="sidebar-nav-overflow"
           style={styles.overflowTrigger}
         >
           <DensityIcon icon={Ellipsis} size="sm" color="foregroundMuted" />
-          <Text style={styles.overflowLabel}>More</Text>
+          <Text style={styles.overflowLabel}>{t("sidebar.nav.more")}</Text>
         </MenuTrigger>
-        <SidebarPopoverSurface section="header" title="More" testID="sidebar-nav-overflow-menu">
+        <SidebarPopoverSurface
+          section="header"
+          title={t("sidebar.nav.more")}
+          testID="sidebar-nav-overflow-menu"
+        >
           {overflowItems.map((item) => renderRow(item, true))}
         </SidebarPopoverSurface>
       </SidebarPopoverRoot>,
@@ -130,8 +136,87 @@ export function SidebarNavRows({
   );
 }
 
+function SidebarNavMenuItem({
+  icon,
+  label,
+  onPress,
+  isActive,
+  testID,
+  shortcutKeys,
+}: {
+  icon: SidebarRowIcon;
+  label: string;
+  onPress: () => void;
+  isActive: boolean;
+  testID: string;
+  shortcutKeys: ShortcutKey[][] | null;
+}) {
+  const leading = useMemo(
+    () => <DensityIcon icon={icon} size="sm" color="foregroundMuted" />,
+    [icon],
+  );
+  const trailing = useMemo(() => {
+    if (!shortcutKeys) return null;
+    return <Shortcut chord={shortcutKeys} />;
+  }, [shortcutKeys]);
+  return (
+    <MenuItem
+      leading={leading}
+      trailing={trailing}
+      onSelect={onPress}
+      active={isActive}
+      testID={testID}
+    >
+      {label}
+    </MenuItem>
+  );
+}
+
+function SidebarNavEntry({
+  menu = false,
+  icon,
+  label,
+  onPress,
+  isActive = false,
+  testID,
+  shortcutKeys = null,
+}: {
+  menu?: boolean;
+  icon: SidebarRowIcon;
+  label: string;
+  onPress: () => void;
+  isActive?: boolean;
+  testID: string;
+  shortcutKeys?: ShortcutKey[][] | null;
+}) {
+  if (menu) {
+    return (
+      <SidebarNavMenuItem
+        icon={icon}
+        label={label}
+        onPress={onPress}
+        isActive={isActive}
+        testID={testID}
+        shortcutKeys={shortcutKeys}
+      />
+    );
+  }
+  return (
+    <SidebarHeaderRow
+      icon={icon}
+      label={label}
+      onPress={onPress}
+      isActive={isActive}
+      testID={testID}
+      variant="compact"
+      shortcutKeys={shortcutKeys}
+    />
+  );
+}
+
 const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
   onBeforeNavigate,
+  menu = false,
 }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("new-workspace"));
@@ -166,18 +251,18 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
   }, [activeWorkspace, activeWorkspaceServerId, canUseActiveWorkspaceContext, onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={Plus}
       label={t(builtinSidebarNavLabelKey("new-workspace"))}
       onPress={handlePress}
       testID="sidebar-global-new-workspace"
-      variant="compact"
       shortcutKeys={shortcutKeys}
     />
   );
 });
 
-function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarHistoryRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
   const handlePress = useCallback(() => {
@@ -186,18 +271,18 @@ function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   }, [onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={History}
       label={t(builtinSidebarNavLabelKey("history"))}
       onPress={handlePress}
       isActive={pathname.includes("/sessions")}
       testID="sidebar-sessions"
-      variant="compact"
     />
   );
 }
 
-function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarSearchRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
@@ -207,18 +292,18 @@ function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
   }, [onBeforeNavigate, setCommandCenterOpen]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={Search}
       label={t(builtinSidebarNavLabelKey("search"))}
       onPress={handlePress}
       testID="sidebar-search"
-      variant="compact"
       shortcutKeys={shortcutKeys}
     />
   );
 }
 
-function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarSchedulesRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
   const handlePress = useCallback(() => {
@@ -227,13 +312,13 @@ function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
   }, [onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={CalendarClock}
       label={t(builtinSidebarNavLabelKey("schedules"))}
       onPress={handlePress}
       isActive={pathname.includes("/schedules")}
       testID="sidebar-schedules"
-      variant="compact"
     />
   );
 }

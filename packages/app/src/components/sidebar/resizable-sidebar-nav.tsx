@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { useTranslation } from "react-i18next";
 import { View, useWindowDimensions, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS, useSharedValue } from "react-native-reanimated";
@@ -9,6 +10,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { SidebarNavRows } from "./sidebar-nav-rows";
 
 export function ResizableSidebarNav(props: Omit<ComponentProps<typeof SidebarNavRows>, "maxRows">) {
+  const { t } = useTranslation();
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { items } = useSidebarNavItems("header");
@@ -77,7 +79,7 @@ export function ResizableSidebarNav(props: Omit<ComponentProps<typeof SidebarNav
         <View
           style={styles.divider}
           testID="sidebar-nav-resize-handle"
-          accessibilityLabel="Resize menu"
+          accessibilityLabel={t("sidebar.nav.resize")}
           accessibilityRole="adjustable"
           accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
           onAccessibilityAction={handleAccessibilityAction}

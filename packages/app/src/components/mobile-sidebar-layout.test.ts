@@ -20,7 +20,10 @@ describe("mobile sidebar layout", () => {
   });
 
   it("settles near-full widths back to filling the window", () => {
-    expect(resolveMobileSidebarPersistedWidth({ width: 380, windowWidth: 390 })).toBeNull();
-    expect(resolveMobileSidebarPersistedWidth({ width: 300, windowWidth: 390 })).toBe(300);
+    const windowWidth = 390;
+    const persisted = resolveMobileSidebarPersistedWidth({ width: 380, windowWidth });
+    expect(persisted).toBeNull();
+    expect(resolveMobileSidebarWidth({ requestedWidth: persisted, windowWidth })).toBe(windowWidth);
+    expect(resolveMobileSidebarPersistedWidth({ width: 300, windowWidth })).toBe(300);
   });
 });

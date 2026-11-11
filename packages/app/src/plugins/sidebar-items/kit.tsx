@@ -1,9 +1,11 @@
 import type { SidebarRowProps } from "@getpaseo/plugin/client/ui";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { isValidElement, useCallback, useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarSeparator as AppSidebarSeparator } from "@/components/sidebar/sidebar-separator";
+import { DensityIcon } from "@/components/ui/density-icon";
+import { MenuItem } from "@/components/ui/menu";
 import { parsePluginIcon, pluginIconComponent } from "../icons";
 import { useSidebarItemFrame } from "./frame";
 
@@ -35,15 +37,43 @@ export function SidebarRow({ id, icon, label, onPress, active, trailing }: Sideb
     anchorTo(rowRef.current);
     onPress();
   }, [anchorTo, onPress]);
+  let testID = frame.testID;
+  if (id) {
+    testID = `${frame.testID}-${id}`;
+  }
+  const rowLabel = label ?? frame.title;
+  const leading = useMemo(() => {
+    if (!iconComponent) return null;
+    return <DensityIcon icon={iconComponent} size="sm" color="foregroundMuted" />;
+  }, [iconComponent]);
+  const menuTrailing = useMemo(() => {
+    if (!isValidElement(trailing)) return null;
+    return trailing;
+  }, [trailing]);
+  if (frame.menu) {
+    return (
+      <View ref={rowRef} collapsable={false} onStartShouldSetResponderCapture={anchorHere}>
+        <MenuItem
+          leading={leading}
+          trailing={menuTrailing}
+          onSelect={handlePress}
+          active={active}
+          testID={testID}
+        >
+          {rowLabel}
+        </MenuItem>
+      </View>
+    );
+  }
   return (
     <View ref={rowRef} collapsable={false} onStartShouldSetResponderCapture={anchorHere}>
       <SidebarHeaderRow
         icon={iconComponent}
-        label={label ?? frame.title}
+        label={rowLabel}
         onPress={handlePress}
         isActive={active}
         trailing={trailing}
-        testID={id ? `${frame.testID}-${id}` : frame.testID}
+        testID={testID}
         variant={frame.section === "footer" ? "inline" : "compact"}
       />
     </View>

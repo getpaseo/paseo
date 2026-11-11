@@ -715,7 +715,15 @@ function MobileSidebar({
           });
         })
         .onEnd(() => {
-          scheduleOnRN(commitWidth, resizeWidth.value);
+          const width = resizeWidth.value;
+          // A near-full release stores null. When that null is already stored, nothing else
+          // moves the shared width off the size the finger let go of.
+          const persisted = resolveMobileSidebarPersistedWidth({ width, windowWidth });
+          resizeWidth.value = resolveMobileSidebarWidth({
+            requestedWidth: persisted,
+            windowWidth,
+          });
+          scheduleOnRN(commitWidth, width);
         })
         .onFinalize(() => {
           scheduleOnRN(hideResizeGrip);
