@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Archive,
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
@@ -10,6 +11,7 @@ import {
   Ellipsis,
   Pencil,
   RotateCw,
+  Unlink,
   X,
 } from "lucide-react-native";
 import {
@@ -31,6 +33,8 @@ const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedX = withUnistyles(X);
+const ThemedUnlink = withUnistyles(Unlink);
+const ThemedArchive = withUnistyles(Archive);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -62,6 +66,10 @@ function MobileTabDropdownMenuItem({
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
+      case "unlink":
+        return <ThemedUnlink size={16} uniProps={mutedColorMapping} />;
+      case "archive":
+        return <ThemedArchive size={16} uniProps={mutedColorMapping} />;
       default:
         return undefined;
     }
