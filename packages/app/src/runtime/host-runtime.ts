@@ -568,14 +568,21 @@ function findConnectionById(host: HostProfile, connectionId: string | null): Hos
   return host.connections.find((connection) => connection.id === connectionId) ?? null;
 }
 
-function probeIntervalForConnection(
-  firstSeenAt: number,
-  isActiveOnline: boolean,
-  hasActiveOnlineConnection: boolean,
-  inactiveOnlineIntervalMs: number,
-  isLearnedDirect: boolean,
-  now: number,
-): number {
+function probeIntervalForConnection({
+  firstSeenAt,
+  isActiveOnline,
+  hasActiveOnlineConnection,
+  inactiveOnlineIntervalMs,
+  isLearnedDirect,
+  now,
+}: {
+  firstSeenAt: number;
+  isActiveOnline: boolean;
+  hasActiveOnlineConnection: boolean;
+  inactiveOnlineIntervalMs: number;
+  isLearnedDirect: boolean;
+  now: number;
+}): number {
   if (isActiveOnline) {
     return PROBE_STEADY_MS;
   }
@@ -1063,14 +1070,14 @@ export class HostRuntimeController {
       }
       const firstSeen = this.connectionFirstSeenAt.get(connection.id) ?? now;
       const isActiveOnline = isOnline && connection.id === activeConnectionId;
-      const interval = probeIntervalForConnection(
-        firstSeen,
+      const interval = probeIntervalForConnection({
+        firstSeenAt: firstSeen,
         isActiveOnline,
         hasActiveOnlineConnection,
         inactiveOnlineIntervalMs,
-        connection.type === "directTcp" && !!connection.learnedFromConnectionId,
+        isLearnedDirect: connection.type === "directTcp" && !!connection.learnedFromConnectionId,
         now,
-      );
+      });
       return now - lastProbed >= interval;
     });
 
