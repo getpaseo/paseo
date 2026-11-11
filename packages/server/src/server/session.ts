@@ -223,6 +223,7 @@ import type { PushNotifications } from "./push/index.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
+  unarchiveWorkspaceAgents,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
@@ -1019,6 +1020,13 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: (request) =>
+        unarchiveWorkspaceAgents({
+          ...request,
+          agentStorage: this.agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
+          sessionLogger: this.sessionLogger,
+        }),
       withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
@@ -4109,6 +4117,7 @@ export class Session {
       const removedWorkspaceIds: string[] = [];
       try {
         for (const workspaceId of activeWorkspaceIds) {
+          const archivedAt = new Date().toISOString();
           await archiveWorkspaceContents(
             {
               agentManager: this.agentManager,
@@ -4118,8 +4127,9 @@ export class Session {
               sessionLogger: this.sessionLogger,
             },
             workspaceId,
+            archivedAt,
           );
-          await this.archiveWorkspaceRecord(workspaceId);
+          await this.archiveWorkspaceRecord(workspaceId, archivedAt);
           removedWorkspaceIds.push(workspaceId);
         }
 
@@ -5713,7 +5723,8 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+          this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -8054,7 +8065,8 @@ export class Session {
               findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
               getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+                this.archiveWorkspaceRecord(workspaceId, archivedAt),
               emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
                 this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
               markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -8165,19 +8177,8 @@ export class Session {
     }
     if (workspace.archivedAt) {
       await this.workspaceRecovery.restore(workspaceId);
-    }
-    const results = await Promise.allSettled(
-      input.agentIds.map((agentId) =>
-        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
-      ),
-    );
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected") {
-        this.sessionLogger.warn(
-          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
-          "Failed to unarchive agent while undoing workspace archive",
-        );
-      }
+    } else if (input.archivedAt) {
+      await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace, input.archivedAt);
     }
     await this.publishRecoveredWorkspace(workspaceId);
   }

@@ -1,5 +1,5 @@
 import { mkdir, rename, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -55,31 +55,53 @@ async function withGitHubFixture(repository: string, run: () => Promise<void>): 
   }
 }
 
-describe("managed Git plugin sources", () => {
-  it("does not expose Git URL credentials when cloning fails", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
-    roots.push(home);
-    const sources = new ManagedPluginSources(home);
-
-    // Own the failure response instead of relying on a closed port and OS connect timing.
-    const server = createServer((_request, response) => {
-      response.writeHead(500, { "Content-Type": "text/plain" });
-      response.end("clone rejected for oauth2:super-secret\n");
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address() as { port: number };
+// These HTTP fixtures supply credentials in the URL. Ambient helpers can persist
+// them and mutate shared Git config while other test files read it.
+function withoutCredentialHelpers(run: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    // Credentialed clones replace GIT_CONFIG_COUNT for their URL rewrite. Parameters
+    // survive that overlay and the empty helper resets Git's inherited helper list.
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'credential.helper='"]
+      .filter(Boolean)
+      .join(" ");
     try {
-      const failure = sources.prepareInstall({
-        source: `git:http://oauth2:super-secret@127.0.0.1:${address.port}/missing.git`,
-      });
-      await expect(failure).rejects.toThrow("500");
-      await expect(failure).rejects.toThrow("clone rejected for [redacted]:[redacted]");
-      await expect(failure).rejects.not.toThrow(/oauth2|super-secret/);
+      await run();
     } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
     }
-  });
+  };
+}
+
+describe("managed Git plugin sources", () => {
+  it(
+    "does not expose Git URL credentials when cloning fails",
+    withoutCredentialHelpers(async () => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
+      roots.push(home);
+      const sources = new ManagedPluginSources(home);
+
+      // Own the failure response instead of relying on a closed port and OS connect timing.
+      const server = createServer((_request, response) => {
+        response.writeHead(500, { "Content-Type": "text/plain" });
+        response.end("clone rejected for oauth2:super-secret\n");
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address() as { port: number };
+      try {
+        const failure = sources.prepareInstall({
+          source: `git:http://oauth2:super-secret@127.0.0.1:${address.port}/missing.git`,
+        });
+        await expect(failure).rejects.toThrow("500");
+        await expect(failure).rejects.toThrow("clone rejected for [redacted]:[redacted]");
+        await expect(failure).rejects.not.toThrow(/oauth2|super-secret/);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }),
+  );
 
   it("normalizes explicit GitHub and Git identifiers to the same Git source", async () => {
     const repository = await createRepository();
@@ -227,70 +249,109 @@ describe("managed Git plugin sources", () => {
       await restarted.preview(id, updated.directory, { kind: "git", ref: initial.slice(0, 8) }),
     ).toMatchObject({ target: { commit: initial } });
   }, 30_000);
-  it("uses retained acquisition remote when credential rewriting changes origin, preserving nested identity", async () => {
-    const repository = await createRepository();
-    const nested = path.join(repository, "plugins", "review");
-    await mkdir(nested, { recursive: true });
-    for (const name of ["paseo-plugin.json", "index.server.ts"])
-      await rename(path.join(repository, name), path.join(nested, name));
-    await commitAll(repository, "nested plugin");
-    await runGitCommand(["update-server-info"], { cwd: repository });
-    const server = createServer((request, response) => {
-      const pathname = new URL(request.url!, "http://localhost").pathname;
-      const file = path.resolve(repository, ".git", `.${pathname}`);
-      if (!file.startsWith(path.join(repository, ".git") + path.sep)) {
-        response.writeHead(404).end();
-        return;
-      }
-      try {
-        response.end(readFileSync(file));
-      } catch {
-        response.writeHead(404).end();
-      }
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Expected HTTP port");
-    const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/`;
-    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-"));
-    roots.push(home);
-    try {
-      const sources = new ManagedPluginSources(home);
-      const candidate = await sources.place(
-        "nested",
-        await sources.prepareInstall({ source: remote, pluginPath: "plugins/review" }),
-      );
-      sources.commit("nested", candidate.record);
-      expect(
-        (
-          await runGitCommand(["remote", "get-url", "origin"], { cwd: candidate.directory })
-        ).stdout.trim(),
-      ).toBe("https://paseo.invalid/plugin.git");
-      const before = await sources.describe("nested", candidate.directory);
-      expect(before.identity).toEqual({
-        kind: "git",
-        remote: `http://127.0.0.1:${address.port}/`,
-        pluginPath: "plugins/review",
-      });
-      await writeFile(path.join(nested, "revision.txt"), "new");
-      const latest = await commitAll(repository, "advance");
+  it(
+    "uses retained acquisition remote when credential rewriting changes origin, preserving nested identity",
+    withoutCredentialHelpers(async () => {
+      const repository = await createRepository();
+      const nested = path.join(repository, "plugins", "review");
+      await mkdir(nested, { recursive: true });
+      for (const name of ["paseo-plugin.json", "index.server.ts"])
+        await rename(path.join(repository, name), path.join(nested, name));
+      await commitAll(repository, "nested plugin");
       await runGitCommand(["update-server-info"], { cwd: repository });
-      const restarted = new ManagedPluginSources(home);
-      const preview = await restarted.preview("nested", candidate.directory);
-      expect(preview.target).toEqual({ kind: "git", commit: latest });
-      const updated = await restarted.place(
-        "nested",
-        await restarted.prepareUpdate(preview.proposal!, candidate.directory),
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-"));
+      roots.push(home);
+      const helper = path.join(home, "credential-helper.cjs");
+      const helperCalls = path.join(home, "credential-helper-calls");
+      const globalConfig = path.join(home, "gitconfig");
+      await writeFile(
+        helper,
+        'require("node:fs").writeFileSync(process.argv[2], process.argv[3]);\n',
       );
-      expect(await restarted.describe("nested", updated.directory)).toEqual({
-        identity: before.identity,
-        currentRevision: latest,
+      const helperCommand =
+        "!" +
+        [process.execPath, helper, helperCalls]
+          .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
+          .join(" ");
+      await writeFile(globalConfig, "");
+      await runGitCommand(["config", "--file", globalConfig, "credential.helper", ""], {
+        cwd: repository,
       });
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  }, 30_000);
+      await runGitCommand(
+        ["config", "--file", globalConfig, "--add", "credential.helper", helperCommand],
+        { cwd: repository },
+      );
+      const server = createServer((request, response) => {
+        const pathname = new URL(request.url!, "http://localhost").pathname;
+        const file = path.resolve(repository, ".git", `.${pathname}`);
+        if (!file.startsWith(path.join(repository, ".git") + path.sep)) {
+          response.writeHead(404).end();
+          return;
+        }
+        try {
+          response.end(readFileSync(file));
+        } catch {
+          response.writeHead(404).end();
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/`;
+      const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+      process.env.GIT_CONFIG_GLOBAL = globalConfig;
+      try {
+        const sources = new ManagedPluginSources(home);
+        const candidate = await sources.place(
+          "nested",
+          await sources.prepareInstall({ source: remote, pluginPath: "plugins/review" }),
+        );
+        sources.commit("nested", candidate.record);
+        expect(
+          (
+            await runGitCommand(["remote", "get-url", "origin"], { cwd: candidate.directory })
+          ).stdout.trim(),
+        ).toBe("https://paseo.invalid/plugin.git");
+        const before = await sources.describe("nested", candidate.directory);
+        expect(before.identity).toEqual({
+          kind: "git",
+          remote: `http://127.0.0.1:${address.port}/`,
+          pluginPath: "plugins/review",
+        });
+        await writeFile(path.join(nested, "revision.txt"), "new");
+        const latest = await commitAll(repository, "advance");
+        await runGitCommand(["update-server-info"], { cwd: repository });
+        const restarted = new ManagedPluginSources(home);
+        const preview = await restarted.preview("nested", candidate.directory);
+        expect(preview.target).toEqual({ kind: "git", commit: latest });
+        const updated = await restarted.place(
+          "nested",
+          await restarted.prepareUpdate(preview.proposal!, candidate.directory),
+        );
+        expect(await restarted.describe("nested", updated.directory)).toEqual({
+          identity: before.identity,
+          currentRevision: latest,
+        });
+        expect(
+          existsSync(helperCalls),
+          "HTTP fixture must not invoke ambient credential helpers",
+        ).toBe(false);
+        // Verify the sentinel can run on this platform, so a broken executable
+        // cannot make the no-invocation assertion pass without a working guard.
+        await runGitCommand(["-c", `credential.helper=${helperCommand}`, "credential", "approve"], {
+          cwd: repository,
+          input: "protocol=http\nhost=127.0.0.1\nusername=fixture\npassword=fake-secret\n\n",
+        });
+        expect(await readFile(helperCalls, "utf8")).toBe("store");
+      } finally {
+        if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+        else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }),
+    30_000,
+  );
 });
 
 describe("registry plugin sources", () => {

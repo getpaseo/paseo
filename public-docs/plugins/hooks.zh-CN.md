@@ -74,6 +74,7 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
   metadata: Record<string, JsonValue>;
 }
 
@@ -94,6 +95,7 @@ type PluginTurnOutcome =
 
 | 字段         | 结构 / 含义                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------- |
+| `background` | [后台 Agent](#background-agents) 为 `true`                                               |
 | `turnId`     | Provider 报告的 `string` 或 `null`；在会话恢复后仍保持唯一                               |
 | `timeline`   | 已弃用，始终为 `[]`；通过 SDK 获取历史。                                                 |
 | `request`    | SDK 的 `AgentPermissionRequest`；`kind` 为 `tool`、`plan`、`question`、`mode` 或 `other` |
@@ -299,6 +301,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
   "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
@@ -313,6 +316,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | ------------- | -------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | 字符串或 `null`                                                                                          |
 | `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
+| `background`  | 只读；[后台 Agent](#background-agents) 为 `true`。在创建时确定。                                         |
 | `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
 | `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                  |
 | `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
@@ -344,7 +348,7 @@ server.addHook("agent.open.before", async ({ request }) => {
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -418,6 +422,7 @@ const agent = await paseo.agents.create({
 | Provider   | `request.provider === "codex"`               |
 | 工作区     | `request.workspaceId === "workspace-456"`    |
 | 单个 Agent | `request.agentId === chosenAgentId`          |
+| 后台 Agent | `request.background`                         |
 
 每个插件的 `request.tools` 都从空数组开始。同一插件中的后续回调会看到前面回调返回的工具；
 替换数组即可添加或移除工具。返回 `undefined` 会保留请求。`purpose: "history"` 时会忽略工具。
@@ -606,7 +611,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
+## 后台 Agent {#background-agents}
+
 Agent 钩子不包括 daemon 的私有临时辅助 Agent。后台 Agent 和后台工作区中的 Agent 使用相同钩子。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 是不出现在标签页、列表和提醒中的辅助 Agent。对后台 Agent，每个钩子的 `agent.background` 以及 `agent.open.before` 请求的 `background` 都为 `true`，无需额外查询即可跳过它：
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` 在创建 Agent 时确定，钩子无法修改。在后台工作区中创建但没有传 `background: true` 的 Agent 读取到 `false`。早于 0.16.0 的主机不发送该字段，读取结果为 `undefined`。
 
 ## 顺序与返回值 {#ordering-and-returned-values}
 
