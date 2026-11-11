@@ -50,73 +50,64 @@ async function readClipboard(page: Page): Promise<string> {
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
-test.describe("Workspace terminal tab rename", () => {
-  test("right-click copy terminal id writes the terminal id to the clipboard", async ({
-    context,
-    page,
-  }) => {
-    test.setTimeout(60_000);
+function terminalTab(page: Page, terminalId: string) {
+  return page.getByTestId(`workspace-tab-terminal_${terminalId}`).first();
+}
 
-    const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-copy-id-" });
-    let terminalId: string | null = null;
+async function copyTerminalId(page: Page, terminalId: string): Promise<void> {
+  const tab = terminalTab(page, terminalId);
+  await expect(tab).toBeVisible({ timeout: 15_000 });
+  await tab.click({ button: "right" });
+  const copy = page.getByRole("menuitem", { name: /^Copy terminal id/ });
+  await expect(copy).toBeVisible({ timeout: 10_000 });
+  await copy.click();
+}
 
-    try {
-      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-      await gotoWorkspace(page, workspace.workspaceId);
-      await clickNewTerminal(page);
-      terminalId = await waitForCreatedTerminalId(workspace);
+async function renameTerminalTab(page: Page, terminalId: string, title: string): Promise<void> {
+  const tab = terminalTab(page, terminalId);
+  await expect(tab).toBeVisible({ timeout: 15_000 });
+  await tab.click({ button: "right" });
+  const rename = page.getByRole("menuitem", { name: "Rename", exact: true });
+  await expect(rename).toBeVisible({ timeout: 10_000 });
+  await rename.click();
 
-      const tab = page.getByTestId(`workspace-tab-terminal_${terminalId}`).first();
-      await expect(tab).toBeVisible({ timeout: 15_000 });
+  const modalPrefix = `workspace-tab-rename-modal-terminal-${terminalId}`;
+  const input = renameModalInput(page, modalPrefix);
+  await expect(input).toBeVisible({ timeout: 10_000 });
+  await input.fill(title);
+  await renameModalSubmit(page, modalPrefix).click();
+  await expect(input).toHaveCount(0, { timeout: 15_000 });
+}
 
-      await tab.click({ button: "right" });
-      const copyTerminalId = page.getByRole("menuitem", {
-        name: /^Copy terminal id/,
+test("terminal context menu copies its ID and persists a renamed title", async ({
+  context,
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-rename-" });
+  let terminalId: string | null = null;
+
+  try {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await gotoWorkspace(page, workspace.workspaceId);
+    await clickNewTerminal(page);
+    const createdTerminalId = await waitForCreatedTerminalId(workspace);
+    terminalId = createdTerminalId;
+
+    await test.step("copy the terminal ID from its tab", async () => {
+      await copyTerminalId(page, createdTerminalId);
+      await expect.poll(() => readClipboard(page)).toBe(createdTerminalId);
+    });
+
+    await test.step("rename the same terminal and read back its saved title", async () => {
+      await renameTerminalTab(page, createdTerminalId, "My Renamed Terminal");
+      await expect(terminalTab(page, createdTerminalId)).toContainText("My Renamed Terminal", {
+        timeout: 15_000,
       });
-      await expect(copyTerminalId).toBeVisible({ timeout: 10_000 });
-      await copyTerminalId.click();
-
-      await expect.poll(() => readClipboard(page)).toBe(terminalId);
-    } finally {
-      await cleanupTerminal(workspace, terminalId);
-    }
-  });
-
-  test("right-click rename persists the terminal title and updates the tab label", async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
-
-    const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-rename-" });
-    let terminalId: string | null = null;
-
-    try {
-      await gotoWorkspace(page, workspace.workspaceId);
-      await clickNewTerminal(page);
-      terminalId = await waitForCreatedTerminalId(workspace);
-
-      const tab = page.getByTestId(`workspace-tab-terminal_${terminalId}`).first();
-      await expect(tab).toBeVisible({ timeout: 15_000 });
-
-      await tab.click({ button: "right" });
-      const renameItem = page.getByRole("menuitem", { name: "Rename", exact: true });
-      await expect(renameItem).toBeVisible({ timeout: 10_000 });
-      await renameItem.click();
-
-      const modalPrefix = `workspace-tab-rename-modal-terminal-${terminalId}`;
-      const input = renameModalInput(page, modalPrefix);
-      await expect(input).toBeVisible({ timeout: 10_000 });
-
-      await input.fill("My Renamed Terminal");
-      await renameModalSubmit(page, modalPrefix).click();
-
-      await expect(input).toHaveCount(0, { timeout: 15_000 });
-      await expect(tab).toContainText("My Renamed Terminal", { timeout: 15_000 });
       await expect
-        .poll(() => fetchTerminalTitle(workspace, terminalId!))
+        .poll(() => fetchTerminalTitle(workspace, createdTerminalId))
         .toBe("My Renamed Terminal");
-    } finally {
-      await cleanupTerminal(workspace, terminalId);
-    }
-  });
+    });
+  } finally {
+    await cleanupTerminal(workspace, terminalId);
+  }
 });

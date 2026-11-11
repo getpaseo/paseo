@@ -71,6 +71,8 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   /** Data plugins stored on the agent. Paseo never reads a key. */
   metadata: Record<string, JsonValue>;
 }
@@ -83,6 +85,8 @@ export interface PluginSessionOpenRequest {
   reason: "create" | "resume" | "refresh" | "import";
   purpose: "interactive" | "history";
   readonly title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
   tools: AgentToolDefinition[];
@@ -134,7 +138,9 @@ export interface PluginHookRequests {
 
 /** What a hook may return. An omitted `metadata` stays as it was. */
 type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
-  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata"> & {
+  // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
+  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
+    readonly background?: boolean;
     metadata?: Readonly<Record<string, JsonValue>>;
   };
 };
@@ -184,7 +190,7 @@ export interface PluginLifecycleRegistration {
     handler: (
       input: { request: PluginBeforeRequests[Name] },
       context: PluginHookContext,
-    ) => PluginBeforeRequests[Name] | void | Promise<PluginBeforeRequests[Name] | void>,
+    ) => PluginBeforeResults[Name] | void | Promise<PluginBeforeResults[Name] | void>,
   ): () => void;
 }
 
@@ -228,6 +234,9 @@ export type PluginLifecycleEvents = {
 };
 export type PluginBeforeRequests = {
   [Name in keyof typeof legacyRequests]: PluginHookRequests[(typeof legacyRequests)[Name]];
+};
+type PluginBeforeResults = {
+  [Name in keyof typeof legacyRequests]: PluginHookRequestResults[(typeof legacyRequests)[Name]];
 };
 
 /** @internal SDK adapter for the daemon's hook registry. */

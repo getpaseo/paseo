@@ -14,7 +14,7 @@ interface FakeSubAgentActivity {
   callId: string;
   threadId: string;
   agentPath: string;
-  kind: "started" | "interacted" | "interrupted";
+  kind: "started" | "interacted" | "interrupted" | "completed";
   parentThreadId?: string;
 }
 interface FakeLegacyCommand {
@@ -79,6 +79,14 @@ export interface FakeCodexAppServer {
     status?: "completed" | "failed" | "interrupted";
     error?: { message: string } | null;
   }): void;
+  reportsTurnError(params: {
+    threadId: string;
+    turnId: string;
+    message: string;
+    additionalDetails?: string;
+    willRetry: boolean;
+  }): void;
+  warns(params: { threadId: string | null; message: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -436,6 +444,21 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    reportsTurnError(params) {
+      writeNotification("error", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        willRetry: params.willRetry,
+        error: {
+          message: params.message,
+          codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+          additionalDetails: params.additionalDetails ?? null,
+        },
+      });
+    },
+    warns(params) {
+      writeNotification("warning", { threadId: params.threadId, message: params.message });
     },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });

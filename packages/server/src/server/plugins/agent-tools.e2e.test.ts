@@ -82,7 +82,7 @@ const tool = defineAgentTool({
 export default function contribute(server) {
   server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x !== "y") return;
-    return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, reason: request.reason }) }, tools: [...request.tools, tool] };
+    return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, metadata: request.metadata, background: request.background, reason: request.reason }) }, tools: [...request.tools, tool] };
   });
   return () => {};
 }
@@ -170,6 +170,8 @@ test("session hooks attach tools only to matching agents over MCP, with validate
     expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toEqual({
       title: "Chosen title",
       labels: { x: "y" },
+      metadata: {},
+      background: false,
       reason: "create",
     });
     const mcpA = await h.mcp();
@@ -252,6 +254,8 @@ test("resume uses the stored title and labels, and close removes the attachment"
     expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toEqual({
       title: "Stored title",
       labels: { x: "y" },
+      metadata: {},
+      background: false,
       reason: "resume",
     });
     expect(h.launches.at(-1)!.context!.paseoTools!.getTool("plugin_echo")?.name).toBe(
@@ -635,7 +639,12 @@ test("a plugin can reload an agent through the SDK and rerun session hooks with 
       id: a.id,
     });
     expect(h.launches).toHaveLength(2);
-    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO).reason).toBe("refresh");
+    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toMatchObject({
+      labels: { x: "y" },
+      metadata: {},
+      background: false,
+      reason: "refresh",
+    });
     expect(h.launches.at(-1)!.context!.paseoTools!.getTool("plugin_echo")?.name).toBe(
       "plugin_echo",
     );
