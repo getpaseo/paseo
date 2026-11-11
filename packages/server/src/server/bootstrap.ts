@@ -145,7 +145,7 @@ import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
-import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { createAgentMcpServer, normalizeMcpProtocolVersionHeader } from "./agent/mcp-server.js";
 import {
   createPaseoToolCatalog,
   createPaseoAgentToolManifest,
@@ -1711,6 +1711,9 @@ export async function createPaseoDaemon(
         } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
           callerAgentId = callerAgentIdRaw[0];
         }
+        // Clients newer than the pinned MCP SDK send protocol versions the SDK
+        // transport rejects outright. Negotiate them down before it sees them.
+        normalizeMcpProtocolVersionHeader(req);
         const { server, transport } = await createAgentMcpSession(callerAgentId);
         res.on("close", () => {
           void transport.close();
