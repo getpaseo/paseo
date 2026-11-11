@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0-beta.1 - 2026-11-10
+## 0.16.0-beta.2 - 2026-11-11
 
 - **后台任务**：Paseo 现在会在 Composer 上方显示 Agent 正在运行的后台任务，例如 shell 和监视器，每项都带“停止”按钮。支持 Claude Code、Codex 和 OpenCode v2。 ([#6220](https://github.com/getpaseo/paseo/pull/6220), [#9162](https://github.com/getpaseo/paseo/pull/9162)，贡献者：[@fxlelouarn](https://github.com/fxlelouarn))
 - **插件侧边栏视图**：插件可以用自己的布局替换侧边栏内容，展示所有已连接主机上的工作区、Agent、项目和终端。在“设置 → 侧边栏”中为每台设备选择视图；Paseo 的侧边栏页眉和页脚保持不变。 ([#8906](https://github.com/getpaseo/paseo/pull/8906))
@@ -30,6 +30,8 @@
 - 斜杠命令菜单现在显示加载和错误状态并提供“重试”，且不再默认选中 `/exit` ([#8905](https://github.com/getpaseo/paseo/pull/8905))
 - 文件浏览器（Explorer）或分屏使工作区变窄时，工作区页眉和标签页改用紧凑控件 ([#8740](https://github.com/getpaseo/paseo/pull/8740), [#9088](https://github.com/getpaseo/paseo/pull/9088)，贡献者：[@zeyugao](https://github.com/zeyugao))
 - 向进程已退出的 Pi Agent 发送消息时立即失败，并提示重新加载该 Agent ([#8718](https://github.com/getpaseo/paseo/pull/8718))
+- 在桌面端和宽屏网页布局中，侧边栏的“重命名 workspace”改为在原处编辑标题，不再打开对话框 ([#9280](https://github.com/getpaseo/paseo/pull/9280))
+- “更新内容”和网站更新日志改为先显示每个版本的亮点，完整列表收在“显示全部变更”之后 ([#9281](https://github.com/getpaseo/paseo/pull/9281))
 
 ### 修复
 
@@ -37,6 +39,7 @@
 - 修复包含较短折叠轮次的聊天打开时留有空白、需滚动后才填满的问题 ([#8358](https://github.com/getpaseo/paseo/pull/8358), [#9083](https://github.com/getpaseo/paseo/pull/9083))
 - 修复空闲的 Claude、Codex 或 OpenCode Agent 恢复后，“折叠轮次”把较早的回复藏进后一轮摘要行的问题 ([#9098](https://github.com/getpaseo/paseo/pull/9098))
 - 修复提示词与其下方的回复或折叠轮次摘要行之间缺少间距的问题 ([#9009](https://github.com/getpaseo/paseo/pull/9009))
+- 修复聊天打开时，较长的用户消息有一帧不显示渐隐效果和“展开”的问题 ([#9302](https://github.com/getpaseo/paseo/pull/9302))
 - 修复紧跟在段落之后、中间没有空行的 Markdown 表格显示为原始竖线的问题 ([#8485](https://github.com/getpaseo/paseo/pull/8485)，贡献者：[@ragokan](https://github.com/ragokan)、[@suk-6](https://github.com/suk-6)、[@thsrite](https://github.com/thsrite))
 - 修复网页版和桌面端中与文字同行的带链接徽章图片被渲染成整行宽度的问题 ([#8530](https://github.com/getpaseo/paseo/pull/8530))
 - 修复“查看源码”后点击“查看图表”会打开全屏、而不是回到内联 Mermaid 图表的问题 ([#8932](https://github.com/getpaseo/paseo/pull/8932)，贡献者：[@luoph](https://github.com/luoph))
@@ -48,6 +51,7 @@
 - 修复从侧边栏和“新建工作区”点击“添加主机”会跳转到“设置”的问题 ([#8512](https://github.com/getpaseo/paseo/pull/8512))
 - 修复打开失败的 Agent 或选择 Mark as read 后，其红点和“失败”分组仍留在侧边栏的问题 ([#8831](https://github.com/getpaseo/paseo/pull/8831))
 - 修复在 Agent 运行时已关闭的情况下清除未读后，工作区的未读指示仍然亮着的问题 ([#9087](https://github.com/getpaseo/paseo/pull/9087))
+- 修复取消归档工作区时未恢复随之归档的 Agent 的问题 ([#9210](https://github.com/getpaseo/paseo/pull/9210))
 - 修复流式回复期间聊天一滚动上下文窗口浮层就自行关闭的问题 ([#8742](https://github.com/getpaseo/paseo/pull/8742)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
 - 修复侧边栏用量摘要只在打开“使用情况”时才更新的问题 ([#7806](https://github.com/getpaseo/paseo/pull/7806)，贡献者：[@ragokan](https://github.com/ragokan))
 - 修复 Android 上位于触发元素上方的提示和菜单在打开后内容变多时短暂盖住触发元素的问题 ([#9247](https://github.com/getpaseo/paseo/pull/9247))
@@ -73,11 +77,13 @@
 - 修复 Codex 的“Apply file changes”审批在你接受之前不显示文件名和 diff 的问题 ([#8585](https://github.com/getpaseo/paseo/pull/8585)，贡献者：[@ragokan](https://github.com/ragokan))
 - 修复 Codex 在一个补丁中编辑多个文件时，时间线只显示第一个文件的 diff 的问题 ([#8613](https://github.com/getpaseo/paseo/pull/8613)，贡献者：[@ragokan](https://github.com/ragokan))
 - 修复多个 Codex 操作同时启动时，Codex 会话发现和启动偶发 SQLite 初始化错误的问题 ([#9008](https://github.com/getpaseo/paseo/pull/9008)，贡献者：[@colonelpanic8](https://github.com/colonelpanic8)、[@michaelmwu](https://github.com/michaelmwu))
+- 修复 Codex 的重连尝试和警告未显示在时间线中的问题 ([#9370](https://github.com/getpaseo/paseo/pull/9370)，贡献者：[@whatamelon](https://github.com/whatamelon))
 - 修复 daemon 重启时正处于轮次中的 OpenCode 对话显示为空闲并忽略“停止”的问题 ([#8698](https://github.com/getpaseo/paseo/pull/8698))
 - 修复审批待处理期间你发送消息时，OpenCode 被告知你拒绝了工具调用的问题 ([#8477](https://github.com/getpaseo/paseo/pull/8477))
 - 修复重新打开的 Pi 对话缺少上下文压缩之前的消息的问题 ([#8523](https://github.com/getpaseo/paseo/pull/8523))
 - 修复工作文件夹被移除后，已归档的 Pi 聊天因 `spawn pi ENOENT` 无法打开的问题 ([#8442](https://github.com/getpaseo/paseo/pull/8442)，贡献者：[@DAnaeto](https://github.com/DAnaeto))
 - 修复关闭空闲运行时清理的情况下，读取已归档的 Pi 聊天会遗留一个 Pi 进程的问题 ([#8554](https://github.com/getpaseo/paseo/pull/8554)，贡献者：[@rylwin](https://github.com/rylwin))
+- 修复恢复的 pi-subagents 运行未出现在 Subagent 栏中的问题 ([#9261](https://github.com/getpaseo/paseo/pull/9261)，贡献者：[@xxachangxx](https://github.com/xxachangxx))
 - 修复向进程已退出的 ACP Agent 发送提示词后一直停留在运行中、而不是报错失败的问题 ([#8406](https://github.com/getpaseo/paseo/pull/8406)，贡献者：[@DAnaeto](https://github.com/DAnaeto))
 - 修复 ACP Agent 放弃审批请求并结束轮次后一直卡在“waiting for permission”的问题 ([#8548](https://github.com/getpaseo/paseo/pull/8548)，贡献者：[@3ae3ae](https://github.com/3ae3ae))
 - 修复 ACP Agent 发送配置更新后，更改其模式因 `invalid_params` 失败的问题 ([#8912](https://github.com/getpaseo/paseo/pull/8912)，贡献者：[@a-sh](https://github.com/a-sh))
@@ -109,10 +115,13 @@
 ### 插件
 
 - 新增插件订阅，可将 daemon 的实时事件流式推送到插件面板；插件 RPC 和事件支持二进制（`Uint8Array`）负载 ([#8527](https://github.com/getpaseo/paseo/pull/8527))
+- 插件的 Agent 快照新增后台任务数量（`backgroundWork.count`）和 `background` 标记，Agent 钩子新增 `background` 标记 ([#9362](https://github.com/getpaseo/paseo/pull/9362))
 - “设置 → 插件”改为通过齿轮按钮打开插件设置，每个设置页面对应一个标签页 ([#8675](https://github.com/getpaseo/paseo/pull/8675))
 - 为会打开菜单或浮层的插件 Composer 胶囊按钮新增向上的箭头 ([#8673](https://github.com/getpaseo/paseo/pull/8673))
 - daemon 启动时改为并发启动已配置的插件，不再逐个启动 ([#8427](https://github.com/getpaseo/paseo/pull/8427)，贡献者：[@DAnaeto](https://github.com/DAnaeto))
 - 修复主机的 npm 使用镜像源时，从插件库安装插件因“npm artifact changed since review”失败的问题 ([#8756](https://github.com/getpaseo/paseo/pull/8756)，贡献者：[@tlipoca9](https://github.com/tlipoca9))
+- 修复 daemon 因无效消息终止插件后，该插件仍留在列表中且未报告退出的问题 ([#9285](https://github.com/getpaseo/paseo/pull/9285)，贡献者：[@Brandon168](https://github.com/Brandon168))
+- 修复 ACP Provider 插件丢弃 Agent 在提示词响应中报告的 token 用量的问题 ([#9396](https://github.com/getpaseo/paseo/pull/9396)，贡献者：[@Myasuka](https://github.com/Myasuka))
 - 修复已发布的 `@getpaseo/*` npm 包未声明许可证的问题；现在声明为 Apache-2.0 ([#7816](https://github.com/getpaseo/paseo/pull/7816)，贡献者：[@mdlawson](https://github.com/mdlawson)、[@ragokan](https://github.com/ragokan))
 - 修复插件更新了自己的某张时间线卡片后，从较早的回复分叉因“This checkpoint changed after it was created”失败的问题 ([#8746](https://github.com/getpaseo/paseo/pull/8746)，贡献者：[@monarchmaisuriya](https://github.com/monarchmaisuriya))
 - 修复由插件渲染最终回复时，“折叠轮次”让轮次保持展开或折叠到较早回复的问题 ([#8811](https://github.com/getpaseo/paseo/pull/8811)，贡献者：[@geoqiao](https://github.com/geoqiao))
