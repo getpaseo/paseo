@@ -18,6 +18,50 @@ function createLogger(): pino.Logger {
   return logger as unknown as pino.Logger;
 }
 
+interface HeldExpoFetches {
+  request: typeof fetch;
+  /** Resolves with the parsed bodies once `count` requests are in flight. */
+  requestsOnceStarted: () => Promise<unknown[]>;
+  releaseOk: () => void;
+}
+
+function holdExpoFetches(count: number): HeldExpoFetches {
+  const requests: unknown[] = [];
+  const pending: Array<(response: Response) => void> = [];
+  let markStarted: () => void = () => {
+    throw new Error("Push fetches started before the gate was installed");
+  };
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const request: typeof fetch = (_url, init) => {
+    if (typeof init?.body !== "string") {
+      return Promise.reject(new Error("Expected a JSON request body"));
+    }
+    const messages: unknown = JSON.parse(init.body);
+    requests.push(messages);
+    const singleToken = Array.isArray(messages) && messages.length === 1;
+    if (!singleToken || requests.length >= count) {
+      markStarted();
+    }
+    return new Promise<Response>((resolve) => {
+      pending.push(resolve);
+    });
+  };
+  return {
+    request,
+    async requestsOnceStarted() {
+      await started;
+      return requests;
+    },
+    releaseOk() {
+      for (const resolve of pending.splice(0)) {
+        resolve(Response.json({ data: [{ status: "ok", id: "accepted" }] }));
+      }
+    },
+  };
+}
+
 describe("push notifications", () => {
   const homes: string[] = [];
 
@@ -28,33 +72,12 @@ describe("push notifications", () => {
   });
 
   test("sends production and development app tokens in separate Expo requests", async () => {
-    const requests: unknown[] = [];
-    const pendingResponses: Array<(response: Response) => void> = [];
-    let releaseBothStarted: () => void = () => {
-      throw new Error("Push fetches started before the test installed the gate");
-    };
-    const bothStarted = new Promise<void>((resolve) => {
-      releaseBothStarted = resolve;
-    });
-    const request: typeof fetch = (_url, init) => {
-      if (typeof init?.body !== "string") {
-        return Promise.reject(new Error("Expected a JSON request body"));
-      }
-      const messages: unknown = JSON.parse(init.body);
-      requests.push(messages);
-      const singleToken = Array.isArray(messages) && messages.length === 1;
-      if (!singleToken || requests.length >= 2) {
-        releaseBothStarted();
-      }
-      return new Promise<Response>((resolve) => {
-        pendingResponses.push(resolve);
-      });
-    };
+    const fetches = holdExpoFetches(2);
     const revoked: string[] = [];
     const service = new PushService({
       logger: createLogger(),
       revokeToken: (token) => revoked.push(token),
-      request,
+      request: fetches.request,
     });
     const payload = { title: "Agent finished", body: "Done", data: { agentId: "agent-1" } };
 
@@ -64,16 +87,12 @@ describe("push notifications", () => {
     );
 
     try {
-      await bothStarted;
-      expect(requests).toEqual([
+      expect(await fetches.requestsOnceStarted()).toEqual([
         [{ to: "ExponentPushToken[production]", ...payload, sound: "default" }],
         [{ to: "ExponentPushToken[development]", ...payload, sound: "default" }],
       ]);
-      expect(pendingResponses).toHaveLength(2);
     } finally {
-      for (const resolve of pendingResponses) {
-        resolve(Response.json({ data: [{ status: "ok", id: "accepted" }] }));
-      }
+      fetches.releaseOk();
     }
     await send;
     expect(revoked).toEqual([]);
