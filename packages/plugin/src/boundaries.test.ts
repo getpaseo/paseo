@@ -440,6 +440,12 @@ describe("lifecycle hook SDK types", () => {
         // @ts-expect-error A prepare handler must return the whole request or undefined.
         server.addHook("agent.create.before", async () => ({ invalid: true }));
         server.before("agent.session_open", ({ request }) => request);
+        server.before("agent.session_open", ({ request }) => ({
+          agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+          cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+          labels: request.labels, metadata: request.metadata, tools: request.tools, env: request.env,
+          mcpServers: request.mcpServers,
+        }));
         server.on("agent.turn_ended", () => {});
         return () => {};
       }

@@ -190,7 +190,7 @@ export interface PluginLifecycleRegistration {
     handler: (
       input: { request: PluginBeforeRequests[Name] },
       context: PluginHookContext,
-    ) => PluginBeforeRequests[Name] | void | Promise<PluginBeforeRequests[Name] | void>,
+    ) => PluginBeforeResults[Name] | void | Promise<PluginBeforeResults[Name] | void>,
   ): () => void;
 }
 
@@ -234,6 +234,9 @@ export type PluginLifecycleEvents = {
 };
 export type PluginBeforeRequests = {
   [Name in keyof typeof legacyRequests]: PluginHookRequests[(typeof legacyRequests)[Name]];
+};
+type PluginBeforeResults = {
+  [Name in keyof typeof legacyRequests]: PluginHookRequestResults[(typeof legacyRequests)[Name]];
 };
 
 /** @internal SDK adapter for the daemon's hook registry. */
