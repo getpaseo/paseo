@@ -480,6 +480,8 @@ export type ProviderToolCallDetail =
       type: "sub_agent";
       subAgentType?: string;
       description?: string;
+      /** The task text the parent handed the subagent, verbatim. */
+      prompt?: string;
       childSessionId?: string;
       log: string;
       actions?: Array<{ index: number; toolName: string; summary?: string }>;
@@ -1153,6 +1155,7 @@ const toolCallDetailSchema: z.ZodType<ProviderToolCallDetail> = z.discriminatedU
       type: z.literal("sub_agent"),
       subAgentType: z.string().optional(),
       description: z.string().optional(),
+      prompt: z.string().optional(),
       childSessionId: z.string().optional(),
       log: z.string(),
       actions: z

@@ -28,6 +28,7 @@ interface SubAgentActivityState {
   name?: string;
   subAgentType?: string;
   description?: string;
+  prompt?: string;
   /** The child's tool calls awaiting results, which carry no input of their own. */
   runningCalls: Map<string, SubAgentChildCall>;
   completedActionKeys: Set<string>;
@@ -47,6 +48,10 @@ function readTrimmedString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
@@ -137,6 +142,7 @@ export class ClaudeSidechainTracker {
       type: "sub_agent",
       ...(state.subAgentType ? { subAgentType: state.subAgentType } : {}),
       ...(state.description ? { description: state.description } : {}),
+      ...(state.prompt ? { prompt: state.prompt } : {}),
       // COMPAT(subagent-log): remove after 2027-04-30.
       log: "",
       actions: [],
@@ -322,6 +328,9 @@ export class ClaudeSidechainTracker {
     const nextName = this.normalizeSubAgentText(taskInput?.name);
     const nextSubAgentType = this.normalizeSubAgentText(taskInput?.subagent_type);
     const nextDescription = this.normalizeSubAgentText(taskInput?.description);
+    // The prompt is shown in full, so it keeps its line breaks and length. This card replaces the
+    // one built at declaration, so it has to carry the prompt too or the card loses it.
+    const nextPrompt = readNonEmptyString(taskInput?.prompt);
 
     let changed = false;
     if (nextName && nextName !== state.name) {
@@ -334,6 +343,10 @@ export class ClaudeSidechainTracker {
     }
     if (nextDescription && nextDescription !== state.description) {
       state.description = nextDescription;
+      changed = true;
+    }
+    if (nextPrompt && nextPrompt !== state.prompt) {
+      state.prompt = nextPrompt;
       changed = true;
     }
     return changed;

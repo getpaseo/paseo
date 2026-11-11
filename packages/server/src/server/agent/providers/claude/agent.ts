@@ -353,6 +353,7 @@ interface ClaudeReplayOwnership {
 interface ClaudeSubagentCardFacts {
   title?: string;
   description?: string;
+  prompt?: string;
 }
 
 interface PersistedTimelineEntry {
@@ -6290,6 +6291,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
+    ...(facts.prompt ? { prompt: facts.prompt } : {}),
     // COMPAT(subagent-log): remove after 2027-04-30.
     log: "",
     actions: [],
@@ -6318,7 +6320,7 @@ function labelReplayedSubagentCard(
 async function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
 ): Promise<ClaudeReplayParentFacts> {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  const toolCalls = new Map<string, ClaudeSubagentCardFacts>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
@@ -6357,12 +6359,25 @@ async function readClaudeReplayParentFacts(
   };
 }
 
+function readClaudeSubagentCardFacts(value: unknown): ClaudeSubagentCardFacts {
+  const input = toObjectRecord(value);
+  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
+  const description = readNonEmptyString(input?.description);
+  // Keep original whitespace; only whitespace-only prompts are absent.
+  const prompt = readNonEmptyString(input?.prompt);
+  return {
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(prompt ? { prompt } : {}),
+  };
+}
+
 function readClaudeReplayTaskDeclaration(
   entryType: unknown,
   block: Record<string, unknown> | undefined,
 ): {
   id: string;
-  identity: { title?: string; description?: string };
+  identity: ClaudeSubagentCardFacts;
 } | null {
   if (
     entryType !== "assistant" ||
@@ -6371,12 +6386,9 @@ function readClaudeReplayTaskDeclaration(
     typeof block.id !== "string"
   )
     return null;
-  const input = toObjectRecord(block.input);
-  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-  const description = readNonEmptyString(input?.description);
   return {
     id: block.id,
-    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
+    identity: readClaudeSubagentCardFacts(block.input),
   };
 }
 

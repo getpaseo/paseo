@@ -640,6 +640,7 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       type: z.literal("sub_agent"),
       subAgentType: z.string().optional(),
       description: z.string().optional(),
+      prompt: z.string().optional(),
       childSessionId: z.string().optional(),
       // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. A sub-agent card is a
       // launch marker; apps before v0.14.1 required `log`, so daemons still send it empty.
