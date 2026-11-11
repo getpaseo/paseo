@@ -242,6 +242,10 @@ Worktree setup can copy ignored files and use plugin-defined locations before ag
 - Agent recovery is off by default; turn on **Resume agents after restart** in Host settings → Agents to send `Resume working.` or your own prompt
 - Before downgrading to 0.14.0, restore a backed-up `config.json` or remove the saved agent-resume and usage-check settings
 
+Fixed:
+
+- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8269](https://github.com/getpaseo/paseo/pull/8269))
+
 ## 0.14.0 - 2026-10-29
 
 Plugins can now add tools to individual agents and configure their MCP servers when sessions open.
