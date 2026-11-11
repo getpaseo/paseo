@@ -78,7 +78,7 @@ export class ChatFindModel {
   private resultEpoch: string | null = null;
   /** The latest rewind applied to the history. A rewind keeps the epoch and retires messages. */
   private rewindSeq: number | null = null;
-  /** The latest rewind when the current search started; undefined while no search runs or holds results. */
+  /** The latest rewind when the current result set's search started; undefined until a search starts. */
   private searchedRewindSeq: number | null | undefined = undefined;
   private locations: Location[] = [];
   private resolved = new Map<Location, Target>();
@@ -99,7 +99,6 @@ export class ChatFindModel {
     this.listeners.forEach((listener) => listener());
   }
   private cancel() {
-    this.searchedRewindSeq = undefined;
     this.abort.abort();
     this.abort = new AbortController();
     clearTimeout(this.timer);
@@ -118,6 +117,7 @@ export class ChatFindModel {
     this.cancel();
     this.locations = [];
     this.resultEpoch = null;
+    this.searchedRewindSeq = undefined;
     this.resolved.clear();
     this.current = -1;
     this.inMessage = { occurrence: 0, count: 0 };

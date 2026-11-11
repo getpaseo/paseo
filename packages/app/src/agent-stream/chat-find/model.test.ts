@@ -281,6 +281,79 @@ it("stops a search still receiving pages when a rewind lands between them", asyn
   }
 });
 
+it.each([
+  ["Next", "next"],
+  ["Previous", "previous"],
+] as const)("reports a rewind after %s as a changed history", async (_label, step) => {
+  const model = new ChatFindModel({
+    async search() {
+      return response([
+        { seq: 1, role: "assistant" },
+        { seq: 2, role: "assistant" },
+      ]);
+    },
+    async load() {},
+    async reveal() {
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", [message(1), message(2)], null);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    model[step]();
+    await expect.poll(() => model.getSnapshot().selectedItemId).toBe("row-2");
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    model.updateHistory("epoch", [message(1)], 3);
+    expect(model.getSnapshot()).toMatchObject({
+      phase: "error",
+      failure: "historyChanged",
+      selectedItemId: null,
+    });
+  } finally {
+    model.close();
+  }
+});
+
+it("stops a pending Next when a rewind lands before it reveals", async () => {
+  let reveals = 0;
+  let revealSecond!: () => void;
+  const secondReveal = new Promise<void>((resolve) => {
+    revealSecond = resolve;
+  });
+  const model = new ChatFindModel({
+    async search() {
+      return response([
+        { seq: 1, role: "assistant" },
+        { seq: 2, role: "assistant" },
+      ]);
+    },
+    async load() {},
+    async reveal() {
+      reveals += 1;
+      if (reveals > 1) await secondReveal;
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", [message(1), message(2)], null);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    model.next();
+    await expect.poll(() => reveals).toBe(2);
+    model.updateHistory("epoch", [message(1)], 3);
+    revealSecond();
+    await expect.poll(() => model.getSnapshot().failure).toBe("historyChanged");
+    expect(model.getSnapshot()).toMatchObject({ phase: "error", selectedItemId: null });
+  } finally {
+    model.close();
+  }
+});
+
 it("can load a search location before the initial chat history has arrived", async () => {
   const model = new ChatFindModel({
     async search() {
