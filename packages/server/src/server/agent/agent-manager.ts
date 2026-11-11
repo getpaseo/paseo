@@ -3262,12 +3262,12 @@ export class AgentManager {
     options?: AgentRunOptions,
     promptStart?: ForegroundPromptStart,
   ): AsyncGenerator<AgentStreamEvent> {
+    // Callers that require an exactly idle agent must not be handed a lazy path that
+    // loads history or a runtime first; reject synchronously before any of them.
+    if (options?.requireIdle) this.assertStreamAdmissionIdle(agentId);
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options, promptStart);
     const existingAgent = this.requireSessionAgent(agentId);
-    if (options?.requireIdle && existingAgent.lifecycle !== "idle") {
-      throw new Error(`Agent ${agentId} is not idle (${existingAgent.lifecycle})`);
-    }
     if (this.historySessions.has(existingAgent.session))
       return this.streamAfterHistoryLoad(agentId, prompt, options, promptStart);
     this.logger.trace(
@@ -6401,6 +6401,16 @@ export class AgentManager {
       throw new Error(`Unknown agent '${normalizedId}'`);
     }
     return agent;
+  }
+
+  private assertStreamAdmissionIdle(agentId: string): void {
+    const agent = this.requireSessionAgent(agentId);
+    if (this.historySessions.has(agent.session)) {
+      throw new Error(`Agent ${agentId} is not idle (archived)`);
+    }
+    if (agent.lifecycle !== "idle") {
+      throw new Error(`Agent ${agentId} is not idle (${agent.lifecycle})`);
+    }
   }
 
   private requireSessionAgent(id: string): ActiveManagedAgent {

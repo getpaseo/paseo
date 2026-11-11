@@ -152,10 +152,12 @@ it("creates parent directories and replaces binary and JSON files through the de
   await writeJsonFileAtomic(file, { state: "completed" });
   expect(await fs.readFile(file, "utf8")).toBe('{\n  "state": "completed"\n}');
   expect(await fs.readdir(path.dirname(file))).toEqual(["file"]);
-async function fixture(): Promise<{ directory: string; lockPath: string }> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-atomic-file-lock-"));
-  lockDirectories.push(directory);
-  return { directory, lockPath: path.join(directory, "resource.lock") };
+});
+
+async function fixture(): Promise<{ lockRoot: string; lockPath: string }> {
+  const lockRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-atomic-file-lock-"));
+  lockDirectories.push(lockRoot);
+  return { lockRoot, lockPath: path.join(lockRoot, "resource.lock") };
 }
 
 async function abandonLock(lockPath: string): Promise<void> {
@@ -197,7 +199,9 @@ test("recovers recovery ownership abandoned by a dead child process", async () =
   });
 
   expect(entered).toBe(true);
-  await expect(fs.readFile(`${lockPath}.recovery`, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.readFile(`${lockPath}.recovery`, "utf8")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 test("fails closed while recovery ownership is live", async () => {
@@ -282,8 +286,8 @@ test("fails closed when a live PID has a different process-instance identity", a
 test.skipIf(process.platform === "win32")(
   "preserves requested source permissions and ownership during replacement",
   async () => {
-    const { directory } = await fixture();
-    const filePath = path.join(directory, "ledger.md");
+    const { lockRoot } = await fixture();
+    const filePath = path.join(lockRoot, "ledger.md");
     await fs.writeFile(filePath, "before");
     await fs.chmod(filePath, 0o600);
     const before = await fs.stat(filePath);
