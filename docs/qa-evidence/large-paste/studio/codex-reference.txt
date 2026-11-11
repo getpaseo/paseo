@@ -1,0 +1,5 @@
+Locally inspected installed app: Codex 26.1027.61615
+Archive: /Applications/ChatGPT.app/Contents/Resources/app.asar
+Asset: webview/assets/app-initial-18b189e867e7.js
+Observed paste predicate: c.length>0&&Math.max(c.length,g?.length??0)>=5e3
+For ordinary pure text, this is text.length >= 5000 UTF-16 code units. Rich-text/markdown conversion is outside this patch.

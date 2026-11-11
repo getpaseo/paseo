@@ -21,6 +21,7 @@ import {
   uploadFileAttachments,
   cancelComposerAgent,
   dispatchComposerAgentMessage,
+  disposeUploadedFileSource,
   editQueuedComposerMessage,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
@@ -1122,4 +1123,94 @@ describe("file upload preparation", () => {
       expect(sends).toBe(0);
     },
   );
+
+  it("retains the source on upload failure for retry and disposes it on success or removal", async () => {
+    let disposed = false;
+    const source = {
+      fileName: "pasted-text-1.txt",
+      mimeType: "text/plain",
+      readBytes: async () => {
+        if (disposed) throw new Error("source deleted");
+        return new Uint8Array([97, 98, 99]);
+      },
+      dispose: () => {
+        disposed = true;
+      },
+    };
+    let shouldFail = true;
+    const client: ComposerSendClient = {
+      sendAgentMessage: async () => {},
+      uploadFile: async (file) =>
+        shouldFail
+          ? { requestId: "req-1", file: null, error: "upload failed" }
+          : {
+              requestId: "req-2",
+              file: {
+                type: "uploaded_file",
+                id: "file-1",
+                fileName: file.fileName,
+                mimeType: file.mimeType,
+                size: file.bytes.byteLength,
+                path: "/uploads/pasted-text-1.txt",
+              },
+              error: null,
+            },
+    };
+
+    await expect(uploadFileAttachments({ client, files: [source] })).rejects.toThrow(
+      "upload failed",
+    );
+    expect(disposed).toBe(false);
+
+    shouldFail = false;
+    await expect(uploadFileAttachments({ client, files: [source] })).resolves.toHaveLength(1);
+    expect(disposed).toBe(true);
+
+    let removed = false;
+    await disposeUploadedFileSource({
+      ...source,
+      dispose: () => {
+        removed = true;
+      },
+    });
+    expect(removed).toBe(true);
+  });
+
+  it("records a cleanup failure without failing the upload that already succeeded", async () => {
+    const cleanupError = new Error("keep this draft");
+    const source = {
+      fileName: "pasted-text-1.txt",
+      mimeType: "text/plain",
+      readBytes: async () => new Uint8Array([97, 98, 99]),
+      dispose: async () => {
+        throw cleanupError;
+      },
+    };
+    const client: ComposerSendClient = {
+      sendAgentMessage: async () => {},
+      uploadFile: async (file) => ({
+        requestId: "req-1",
+        file: {
+          type: "uploaded_file",
+          id: "file-1",
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          size: file.bytes.byteLength,
+          path: "/uploads/pasted-text-1.txt",
+        },
+        error: null,
+      }),
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(uploadFileAttachments({ client, files: [source] })).resolves.toHaveLength(1);
+      expect(logged).toHaveBeenCalledWith(
+        "[Composer] Failed to dispose file source:",
+        "pasted-text-1.txt",
+        cleanupError,
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
 });
