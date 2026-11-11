@@ -56,7 +56,8 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
 import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
-import { SidebarCountDisclosure } from "./disclosure";
+import { SidebarCountDisclosure, SidebarNoticeDot } from "./disclosure";
+import { subagentRowNotice } from "./subagent-notice";
 import {
   toggleSidebarTabSubagents,
   useIsSidebarTabSubagentsExpanded,
@@ -68,7 +69,8 @@ import {
   summarizeSidebarWorkspaceTabs,
 } from "./model";
 import { useNestedSubagentTabIds, useSidebarWorkspaceTabs } from "./use-workspace-tabs";
-import { useSubagentDisclosureNotice } from "./use-subagent-notice";
+import { useSubagentDisclosureNotice, useSubagentRowNotice } from "./use-subagent-notice";
+import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 import { orderSidebarSubagentRows, sidebarSubagentSortTime } from "./nested-sort";
 import { useAgentSortClocks, useWorkspaceSortClocks } from "./sort-clocks";
 
@@ -363,6 +365,7 @@ function useSidebarOrderedSubagentRows(
  */
 interface SidebarSubagentRowsProps {
   rows: readonly SubagentRow[];
+  parentAgentId: string;
   activeTarget: WorkspaceTabTarget | null;
   serverId: string;
   workspaceId: string;
@@ -391,11 +394,20 @@ function SidebarSubagentRows({ rows, activeTarget, ...rowProps }: SidebarSubagen
 function SidebarSoleAgentSubagents({
   agentId,
   ...props
-}: Omit<SidebarSubagentRowsProps, "rows" | "openInSidePane"> & { agentId: string }) {
+}: Omit<SidebarSubagentRowsProps, "rows" | "openInSidePane" | "parentAgentId"> & {
+  agentId: string;
+}) {
   const trackRows = useSubagentsForParent({ serverId: props.serverId, parentAgentId: agentId });
   const rows = useSidebarOrderedSubagentRows(trackRows, props.serverId, props.workspaceId);
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
-  return <SidebarSubagentRows rows={rows} openInSidePane={openInSidePane} {...props} />;
+  return (
+    <SidebarSubagentRows
+      rows={rows}
+      parentAgentId={agentId}
+      openInSidePane={openInSidePane}
+      {...props}
+    />
+  );
 }
 
 function SidebarAgentTabEntry({
@@ -475,6 +487,7 @@ function SidebarAgentTabEntry({
         >
           <SidebarSubagentRows
             rows={rows}
+            parentAgentId={agentId}
             activeTarget={activeTarget}
             serverId={serverId}
             workspaceId={workspaceId}
@@ -534,6 +547,7 @@ function openSidebarSubagent(input: {
 
 function SidebarSubagentRow({
   row,
+  parentAgentId,
   active,
   serverId,
   workspaceId,
@@ -543,6 +557,7 @@ function SidebarSubagentRow({
   menuActions,
 }: {
   row: SubagentRow;
+  parentAgentId: string;
   active: boolean;
   serverId: string;
   workspaceId: string;
@@ -556,6 +571,17 @@ function SidebarSubagentRow({
   const presentation = useSubagentRowPresentation(row, rowServerId);
   const label =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
+  // Provider subagents only ever mark a failure, which their icon already shows.
+  const notice = subagentRowNotice(
+    useSubagentRowNotice({
+      serverId,
+      workspaceId,
+      parentAgentId,
+      childServerId: rowServerId,
+      childId: row.kind === "paseo" ? row.id : "",
+    }),
+  );
+  const accessibilityLabel = notice ? `${label}, ${getStatusBucketLabel(notice, t)}` : label;
   const handlePress = useCallback(
     () => openSidebarSubagent({ serverId, workspaceId, parentTabId, row, openInSidePane }),
     [serverId, workspaceId, parentTabId, row, openInSidePane],
@@ -583,12 +609,21 @@ function SidebarSubagentRow({
             />
           </View>
           <View style={styles.subagentText}>
-            <Text
-              numberOfLines={1}
-              style={emphasized ? styles.subagentLabelEmphasized : styles.subagentLabel}
-            >
-              {label}
-            </Text>
+            <View style={styles.subagentTitleLine}>
+              <Text
+                numberOfLines={1}
+                style={emphasized ? styles.subagentLabelEmphasized : styles.subagentLabel}
+              >
+                {label}
+              </Text>
+              {notice ? (
+                <SidebarNoticeDot
+                  notice={notice}
+                  placement="inline"
+                  testID={`sidebar-workspace-subagent-notice-${workspaceKey}-${row.id}`}
+                />
+              ) : null}
+            </View>
             {row.kind === "paseo" ? (
               <PaseoSubagentFacts serverId={rowServerId} agentId={row.id} />
             ) : (
@@ -601,7 +636,17 @@ function SidebarSubagentRow({
         </>
       );
     },
-    [highlighted, label, presentation, row.kind, row.id, rowServerId, ownWorkspace],
+    [
+      highlighted,
+      label,
+      notice,
+      presentation,
+      row.kind,
+      row.id,
+      rowServerId,
+      ownWorkspace,
+      workspaceKey,
+    ],
   );
   const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
@@ -633,7 +678,7 @@ function SidebarSubagentRow({
         accessibilityRole={isWeb ? undefined : "button"}
         accessibilityState={accessibilityState}
         aria-selected={highlighted}
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel}
         testID={`sidebar-workspace-subagent-${workspaceKey}-${row.id}`}
       >
         {renderContent}
@@ -911,11 +956,19 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
     },
+    // The label shrinks before the dot does, so a long task name still shows its mark.
+    subagentTitleLine: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+    },
     subagentLabel: {
+      flexShrink: 1,
       fontSize: theme.fontSize.sm,
       color: theme.colors.foregroundMuted,
     },
     subagentLabelEmphasized: {
+      flexShrink: 1,
       fontSize: theme.fontSize.sm,
       color: theme.colors.foreground,
     },

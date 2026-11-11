@@ -109,11 +109,7 @@ export function SidebarCountDisclosure({
         </Text>
         <Chevron uniProps={hovered ? iconHoveredProps : iconProps} />
         {notice ? (
-          <View
-            pointerEvents="none"
-            testID={`${testID}-notice`}
-            style={[styles.noticeDot, noticeDotStyle(notice)]}
-          />
+          <SidebarNoticeDot notice={notice} placement="corner" testID={`${testID}-notice`} />
         ) : null}
       </>
     ),
@@ -133,6 +129,31 @@ export function SidebarCountDisclosure({
     >
       {renderContent}
     </PressHighlight>
+  );
+}
+
+/**
+ * The mark for a subagent state that needs a person. A disclosure wears it on its chevron's
+ * corner for everything it hides; a subagent row wears it beside its title for itself.
+ */
+export function SidebarNoticeDot({
+  notice,
+  placement,
+  testID,
+}: {
+  notice: SubagentDisclosureNotice;
+  placement: "corner" | "inline";
+  testID: string;
+}) {
+  return (
+    <View
+      pointerEvents="none"
+      testID={testID}
+      style={[
+        placement === "corner" ? styles.noticeDotCorner : styles.noticeDot,
+        noticeDotStyle(notice),
+      ]}
+    />
   );
 }
 
@@ -192,8 +213,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontVariant: ["tabular-nums"],
   },
-  // Sits on the chevron's corner so the reserved footprint does not grow.
   noticeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    flexShrink: 0,
+  },
+  // Sits on the chevron's corner so the reserved footprint does not grow.
+  noticeDotCorner: {
     position: "absolute",
     top: 0,
     right: 0,

@@ -6,6 +6,7 @@ import { useProviderSubagentStore } from "@/subagents/provider-store";
 import {
   indexDisclosureChildren,
   moreUrgentDisclosureNotice,
+  noticeForIndexedChild,
   noticeForIndexedChildren,
   providerDisclosureNotice,
   type DisclosureNoticeAgent,
@@ -139,4 +140,50 @@ function useProviderDisclosureNotice(
     };
   }, [nestingSupported, parentAgentIds, parentKey, serverId]);
   return useProviderSubagentStore(selectNotice);
+}
+
+interface SubagentRowNoticeInput {
+  /** The workspace whose list shows the row. */
+  serverId: string;
+  workspaceId: string;
+  parentAgentId: string;
+  /** The subagent's own address, which can be on another host than the list. */
+  childServerId: string;
+  childId: string;
+}
+
+/**
+ * One Paseo subagent's notice, for its row: the same rule the disclosure folds over all of them,
+ * so the row the dot points at is the row that carries it. Reads the shared child index, and
+ * returns a primitive, so a row re-renders only when its own notice changes.
+ */
+export function useSubagentRowNotice(
+  input: SubagentRowNoticeInput,
+): SubagentDisclosureNotice | null {
+  const { serverId, workspaceId, parentAgentId, childServerId, childId } = input;
+  const selectNotice = useMemo(() => {
+    let lastChildren: ReadonlyMap<string, readonly IndexedDisclosureChild[]> | null = null;
+    let lastStatuses: ReadonlyMap<string, SidebarStateBucket> | null = null;
+    let lastNotice: SubagentDisclosureNotice | null = null;
+    return (state: SessionState): SubagentDisclosureNotice | null => {
+      const children = selectIndexedDisclosureChildren(state);
+      const statuses = selectWorkspaceStatusBuckets(state);
+      if (children === lastChildren && statuses === lastStatuses) return lastNotice;
+      lastChildren = children;
+      lastStatuses = statuses;
+      const child = children
+        .get(`${serverId}:${parentAgentId}`)
+        ?.find((candidate) => candidate.id === childId && candidate.serverId === childServerId);
+      lastNotice = child
+        ? noticeForIndexedChild(child, {
+            listingServerId: serverId,
+            listingWorkspaceId: workspaceId,
+            workspaceStatus: (statusServerId, statusWorkspaceId) =>
+              statuses.get(`${statusServerId}:${statusWorkspaceId}`) ?? null,
+          })
+        : null;
+      return lastNotice;
+    };
+  }, [childId, childServerId, parentAgentId, serverId, workspaceId]);
+  return useSessionStore(selectNotice);
 }

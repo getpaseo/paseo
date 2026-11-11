@@ -122,6 +122,40 @@ export function indexDisclosureChildren(
   return byParent;
 }
 
+export interface DisclosureNoticeListing {
+  listingServerId: string;
+  listingWorkspaceId: string;
+  workspaceStatus: (serverId: string, workspaceId: string) => SidebarStateBucket | null;
+}
+
+/**
+ * One subagent's notice: its agent's own, or its workspace's when it runs in a workspace of its
+ * own, which nests under the listing one and so cannot show its status on its own row.
+ */
+export function noticeForIndexedChild(
+  child: IndexedDisclosureChild,
+  listing: DisclosureNoticeListing,
+): SubagentDisclosureNotice | null {
+  const workspaceId = child.workspaceId;
+  const ownWorkspace =
+    workspaceId !== undefined &&
+    (child.serverId !== listing.listingServerId || workspaceId !== listing.listingWorkspaceId);
+  const workspaceNotice = ownWorkspace
+    ? asDisclosureNotice(listing.workspaceStatus(child.serverId, workspaceId))
+    : null;
+  return moreUrgentDisclosureNotice(child.notice, workspaceNotice);
+}
+
+/**
+ * What a subagent row marks beside its title: the states its status icon cannot show. Failed is
+ * left to the icon, which already draws it.
+ */
+export function subagentRowNotice(
+  notice: SubagentDisclosureNotice | null,
+): Exclude<SubagentDisclosureNotice, "failed"> | null {
+  return notice === "failed" ? null : notice;
+}
+
 export function noticeForIndexedChildren(input: {
   listingServerId: string;
   listingWorkspaceId: string;
@@ -136,17 +170,7 @@ export function noticeForIndexedChildren(input: {
     if (!children) continue;
     for (const child of children) {
       if (input.pendingArchiveIds.has(`${child.serverId}:${child.id}`)) continue;
-      const workspaceId = child.workspaceId;
-      const ownWorkspace =
-        workspaceId !== undefined &&
-        (child.serverId !== input.listingServerId || workspaceId !== input.listingWorkspaceId);
-      const workspaceNotice = ownWorkspace
-        ? asDisclosureNotice(input.workspaceStatus(child.serverId, workspaceId))
-        : null;
-      notice = moreUrgentDisclosureNotice(
-        notice,
-        moreUrgentDisclosureNotice(child.notice, workspaceNotice),
-      );
+      notice = moreUrgentDisclosureNotice(notice, noticeForIndexedChild(child, input));
     }
   }
   return notice;

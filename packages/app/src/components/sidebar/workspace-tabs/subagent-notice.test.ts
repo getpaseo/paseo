@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   moreUrgentDisclosureNotice,
+  noticeForIndexedChild,
   noticeForPaseoAgent,
   noticeForProviderSubagent,
   paseoDisclosureNotice,
   providerDisclosureNotice,
+  subagentRowNotice,
   type DisclosureNoticeAgent,
 } from "./subagent-notice";
 
@@ -143,5 +145,35 @@ describe("providerDisclosureNotice", () => {
         nestingSupported: false,
       }),
     ).toBeNull();
+  });
+});
+
+describe("noticeForIndexedChild", () => {
+  const listing = {
+    listingServerId: "s",
+    listingWorkspaceId: "main",
+    workspaceStatus: (serverId: string, workspaceId: string) =>
+      `${serverId}:${workspaceId}` === "s:review" ? ("attention" as const) : null,
+  };
+
+  it("names the one subagent that finished unread, among siblings that did not", () => {
+    const finished = { id: "a", serverId: "s", workspaceId: "main", notice: "attention" as const };
+    const read = { id: "b", serverId: "s", workspaceId: "main", notice: null };
+    expect(noticeForIndexedChild(finished, listing)).toBe("attention");
+    expect(noticeForIndexedChild(read, listing)).toBeNull();
+  });
+
+  it("carries a nested workspace's unread mark onto its subagent", () => {
+    const nested = { id: "c", serverId: "s", workspaceId: "review", notice: null };
+    expect(noticeForIndexedChild(nested, listing)).toBe("attention");
+  });
+});
+
+describe("subagentRowNotice", () => {
+  it("marks what a row's icon cannot show and leaves failed to the icon", () => {
+    expect(subagentRowNotice("attention")).toBe("attention");
+    expect(subagentRowNotice("needs_input")).toBe("needs_input");
+    expect(subagentRowNotice("failed")).toBeNull();
+    expect(subagentRowNotice(null)).toBeNull();
   });
 });
