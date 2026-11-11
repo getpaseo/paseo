@@ -575,6 +575,38 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     expect(shellCompleted).toBeDefined();
     expect(await h.canStopRuntime()).toBe(true);
 
+    // Subsequent foreground prompt must suppress agy's stale pre-user_message_chunk catch-up replay
+    const eventsBeforeFollowup = h.events.length;
+    await h.prompt("FOLLOWUP_AFTER_WAKEUP");
+    const followupEvents = h.events.slice(eventsBeforeFollowup);
+    expect(
+      followupEvents.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("WAKEUP_SHELL_TOOL_OK"),
+      ),
+    ).toBe(false);
+    expect(
+      followupEvents.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "tool_call" &&
+          e.item.id === "wakeup-shell-1",
+      ),
+    ).toBe(false);
+    expect(
+      followupEvents.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text === "FRESH_FOLLOWUP_RESPONSE",
+      ),
+    ).toBe(true);
+
     const allLaunches = (await h.records()).filter(
       (r) => Array.isArray(r.args) && r.args.includes("acp"),
     );

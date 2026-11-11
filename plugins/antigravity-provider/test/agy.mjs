@@ -228,6 +228,7 @@ const PROMPT_ROUTES = [
   ["PROMPT_CACHED_USAGE", (id) => handlePromptCachedUsage(id)],
   ["BG_RUN_COMMAND_WAKEUP", (id) => handleBgRunCommandWakeup(id)],
   ["BG_WAKEUP_SHELL_TOOL", (id) => handleBgWakeupShellTool(id)],
+  ["FOLLOWUP_AFTER_WAKEUP", (id, text) => handleFollowupAfterWakeup(id, text)],
   ["BG_SCHEDULE_ONESHOT_WAKEUP", (id) => handleBgScheduleOneshotWakeup(id)],
   ["BG_SCHEDULE_DAEMON_WAKEUP", (id) => handleBgScheduleDaemonWakeup(id)],
   ["KILL_DAEMON_SCHEDULE", (id) => handleKillDaemonSchedule(id)],
@@ -249,6 +250,13 @@ async function handlePrompt(id, params) {
     .map((part) => part.text)
     .join("\n");
   record({ input: { message: { content: text } } });
+
+  if (!text.includes("FOLLOWUP_AFTER_WAKEUP") && !text.trimStart().startsWith("/")) {
+    notifyUpdate({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text },
+    });
+  }
 
   for (const [marker, handler] of PROMPT_ROUTES) {
     if (text.includes(marker)) {
@@ -640,6 +648,42 @@ function handleBgWakeupShellTool(id) {
       content: "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50",
     });
   }, 160);
+}
+
+function handleFollowupAfterWakeup(id, text) {
+  // Simulate real agy ACP stream catch-up: when the next foreground session/prompt starts,
+  // agy streams all post-turn wakeup steps accumulated since the previous prompt BEFORE
+  // emitting the new turn's user_message_chunk.
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "Timer fired; checking wall-clock time." },
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "wakeup-shell-1",
+    title: "date '+%Y-%m-%d %H:%M:%S'",
+    kind: "execute",
+    status: "completed",
+    rawInput: { CommandLine: "date '+%Y-%m-%d %H:%M:%S'" },
+    rawOutput: { output: "2026-11-11 17:01:50\n" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "stale-wakeup-msg",
+    content: { type: "text", text: "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50" },
+  });
+
+  // Now agy reaches the new USER_INPUT step and streams the fresh turn response:
+  notifyUpdate({
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "fresh-followup-msg",
+    content: { type: "text", text: "FRESH_FOLLOWUP_RESPONSE" },
+  });
+  respond(id, { stopReason: "end_turn" });
 }
 
 function handleBgScheduleOneshotWakeup(id) {

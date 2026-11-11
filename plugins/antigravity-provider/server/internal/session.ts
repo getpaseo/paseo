@@ -68,6 +68,8 @@ const INTERRUPT_GRACE_MS = 350;
 const ROOT_TRANSCRIPT_POLL_MS = 180;
 const AUTONOMOUS_ACP_SETTLE_MS = 320;
 const AUTONOMOUS_TRANSCRIPT_SETTLE_MS = 120;
+const POST_TURN_CATCHUP_SLASH_FALLBACK_MS = 200;
+const POST_TURN_CATCHUP_FALLBACK_MS = 400;
 const AUTONOMOUS_TOOL_STALL_TIMEOUT_MS = 15_000;
 const AUTONOMOUS_PLANNER_TIMEOUT_MS = 90_000;
 
@@ -113,6 +115,7 @@ export class Session {
   private readonly turnTools = new Map<string, AcpToolCallPayload>();
   private readonly activeBackgroundTasks = new Map<string, { persistent: boolean }>();
   private readonly seenRootSteps = new Set<number>();
+  private readonly synthesizedWakeupToolIds = new Set<string>();
   private readonly foregroundTranscriptTools: AcpToolCallPayload[] = [];
   private readonly subagents: SubagentManager;
   private readonly dataDir: string;
@@ -135,6 +138,9 @@ export class Session {
   private autonomousTurn: AutonomousTurn | null = null;
   private shouldReplayOnLoad: boolean;
   private replayWindow: "replay" | "skip" | null = null;
+  private hasUnstreamedPostTurnSteps = false;
+  private awaitingPostTurnCatchupFence = false;
+  private catchupFenceTimer: NodeJS.Timeout | null = null;
   private turnSeq = 0;
   private wakeupSeq = 0;
   private chunkEpoch = 0;
@@ -344,6 +350,7 @@ export class Session {
     };
     this.turn = turn;
     this.resetTurnState();
+    this.armPostTurnCatchupFence(encoded.nativeText);
     this.ensureRootMonitor();
 
     this.options.emit({
@@ -454,6 +461,7 @@ export class Session {
   async close(): Promise<void> {
     this.closed = true;
     this.stopRootMonitor();
+    this.clearPostTurnCatchupState();
     if (this.turn) this.turn.interrupted = true;
     if (this.autonomousTurn) {
       this.clearAutonomousTimers(this.autonomousTurn);
@@ -509,6 +517,7 @@ export class Session {
     } catch (error) {
       this.handleForegroundTurnFailure(turn, error);
     } finally {
+      this.releasePostTurnCatchupFence();
       turn.resolveSettled();
     }
   }
@@ -726,6 +735,7 @@ export class Session {
   }
 
   private async openOrLoadAcpSession(driver: DriverProcess) {
+    this.clearPostTurnCatchupState();
     const mcpServers = toAcpMcpServers(this.options.config.mcpServers);
     const systemPrompt = this.options.config.systemPrompt?.trim();
     const meta = systemPrompt
@@ -947,6 +957,7 @@ export class Session {
 
   private emitAutonomousPlannerTextAndUsage(auto: AutonomousTurn, step: TranscriptStep): void {
     if (step.thinking?.trim()) {
+      this.hasUnstreamedPostTurnSteps = true;
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,
@@ -959,6 +970,7 @@ export class Session {
       });
     }
     if (step.content?.trim()) {
+      this.hasUnstreamedPostTurnSteps = true;
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,
@@ -1004,6 +1016,8 @@ export class Session {
       };
       auto.pendingTranscriptTools.push(payload);
       if (!auto.receivedAcpUpdates) {
+        this.hasUnstreamedPostTurnSteps = true;
+        this.synthesizedWakeupToolIds.add(payload.toolCallId);
         this.options.emit({
           type: "timeline.item",
           sessionId: this.id,
@@ -1043,6 +1057,8 @@ export class Session {
       ...(output !== undefined ? { rawOutput: isFailed ? { error: output } : { output } } : {}),
     };
     if (!auto.receivedAcpUpdates) {
+      this.hasUnstreamedPostTurnSteps = true;
+      this.synthesizedWakeupToolIds.add(updatedPayload.toolCallId);
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,
@@ -1283,6 +1299,7 @@ export class Session {
     }
 
     if (this.replayWindow === "skip") return;
+    if (this.shouldSuppressPostTurnCatchup(update)) return;
 
     const isPostTurnLive = this.turn === null && this.replayWindow === null;
 
@@ -1678,8 +1695,58 @@ export class Session {
     });
   }
 
+  private shouldSuppressPostTurnCatchup(update: AcpSessionUpdate): boolean {
+    if (this.replayWindow !== null) return false;
+    if (update.sessionUpdate === "user_message_chunk") {
+      this.releasePostTurnCatchupFence();
+      return false;
+    }
+    if (
+      (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
+      this.synthesizedWakeupToolIds.has(update.toolCallId)
+    ) {
+      return true;
+    }
+    return this.turn !== null && this.awaitingPostTurnCatchupFence;
+  }
+
+  private armPostTurnCatchupFence(nativeText: string): void {
+    this.clearCatchupFenceTimer();
+    if (!this.hasUnstreamedPostTurnSteps) {
+      this.awaitingPostTurnCatchupFence = false;
+      return;
+    }
+    this.awaitingPostTurnCatchupFence = true;
+    const timeoutMs = nativeText.trimStart().startsWith("/")
+      ? POST_TURN_CATCHUP_SLASH_FALLBACK_MS
+      : POST_TURN_CATCHUP_FALLBACK_MS;
+    this.catchupFenceTimer = setTimeout(() => {
+      this.releasePostTurnCatchupFence();
+    }, timeoutMs);
+    this.catchupFenceTimer.unref?.();
+  }
+
+  private releasePostTurnCatchupFence(): void {
+    this.clearCatchupFenceTimer();
+    this.awaitingPostTurnCatchupFence = false;
+    this.hasUnstreamedPostTurnSteps = false;
+  }
+
+  private clearPostTurnCatchupState(): void {
+    this.releasePostTurnCatchupFence();
+    this.synthesizedWakeupToolIds.clear();
+  }
+
+  private clearCatchupFenceTimer(): void {
+    if (this.catchupFenceTimer) {
+      clearTimeout(this.catchupFenceTimer);
+      this.catchupFenceTimer = null;
+    }
+  }
+
   private async retireDriver(): Promise<void> {
     this.stopRootMonitor();
+    this.clearPostTurnCatchupState();
     const driver = this.driver;
     this.driver = null;
     if (driver) await driver.stop();
