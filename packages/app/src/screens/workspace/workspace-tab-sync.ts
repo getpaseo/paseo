@@ -42,7 +42,10 @@ import {
  * - Closing an agent's last tab archives the agent, whichever client closed it:
  *   a local user close and a received tombstone both end in one archive
  *   request, so a client that converged on a remote close does not leave a
- *   closed tab pointing at a live agent. The request goes through the caller's
+ *   closed tab pointing at a live agent. Only a close that actually happened
+ *   here may request it: the label outlives the gesture, so a stale tombstone
+ *   never archives an agent that someone restarted. The request goes through
+ *   the caller's
  *   `archiveAgent` (the app wires `useArchiveAgent`), which owns cache updates
  *   and rollback; the engine only decides *when*.
  *
@@ -61,10 +64,11 @@ import {
 const PENDING_LABEL_TTL_MS = 15_000;
 const SWEEP_INTERVAL_MS = 30_000;
 const LAYOUT_PUBLISH_DEBOUNCE_MS = 150;
-/** Retries an archive request that failed. The sweep and every `agent_state`
- * converge pass call the same request, so the cap only bounds a persistent
- * daemon failure instead of hammering it. */
-const CLOSE_ARCHIVE_MAX_ATTEMPTS = 5;
+/** A failed archive is retried from the original close only: retrying on a
+ * later converge pass would archive an agent that was restarted in between,
+ * because the close label outlives the gesture. */
+const CLOSE_ARCHIVE_MAX_ATTEMPTS = 3;
+const CLOSE_ARCHIVE_RETRY_MS = 4000;
 
 /** Archive an agent whose last tab was closed. */
 export interface WorkspaceTabCloseArchiveRequest {
@@ -351,25 +355,37 @@ function findAgentTabCopies(
 }
 
 /**
- * Archive the agent behind a tab that is really closed.
+ * Archive the agent behind a tab this client just closed.
  *
- * Called after the layout settled, from the user-close hook and from the
- * tombstone path of the enforcer, so "the last tab is gone" means the same
- * thing whichever client closed it. Guards keep it from firing on the cases
- * that close a tab but keep the agent: a moved tab still exists somewhere, a
- * subagent tab is layout-only (the upstream close policy archives only root
- * agents), and an already archived agent needs nothing.
+ * Only a close that happened here may request it: the caller passes
+ * `origin: "user"` from the store close hook and `origin: "tombstone"` when
+ * this pass closed the agent's tabs because of a received tombstone. A
+ * tombstone with no tab left here is *not* a close — the label outlives the
+ * gesture, so an agent restarted elsewhere (`send_agent_prompt` unarchives it
+ * and starts a turn without clearing `paseo.tab-closed`) must not be archived
+ * from a stale label. For the same reason the tombstone path leaves a running
+ * agent alone: the new turn is live work, and stopping it is the daemon's
+ * decision, not a tab-layout side effect.
+ *
+ * Guards keep it from firing on the cases that close a tab but keep the agent:
+ * a moved tab still exists somewhere, a subagent tab is layout-only (the close
+ * policy archives only root agents), and an already archived agent needs
+ * nothing. A failure is retried a few times from the original close, then the
+ * tombstone stays in place and the archive is left to the user.
  */
-function requestArchiveAfterClose(serverId: string, agentId: string): void {
-  const archive = closeArchive;
-  if (!archive) {
-    return;
-  }
+function requestArchiveAfterClose(
+  serverId: string,
+  agentId: string,
+  origin: "user" | "tombstone",
+): void {
   const key = pendingKey(serverId, agentId);
   if (closeArchiveInFlight.has(key)) {
     return;
   }
   if ((closeArchiveAttempts.get(key) ?? 0) >= CLOSE_ARCHIVE_MAX_ATTEMPTS) {
+    return;
+  }
+  if (!closeArchive) {
     return;
   }
   const agent =
@@ -378,23 +394,32 @@ function requestArchiveAfterClose(serverId: string, agentId: string): void {
   if (!agent || agent.archivedAt || agent.parentAgentId) {
     return;
   }
+  if (origin === "tombstone" && agent.status === "running") {
+    return;
+  }
   if (findAgentTabCopies(serverId, agentId).workspaceKeysWithTab.length > 0) {
     return;
   }
   closeArchiveInFlight.add(key);
-  closeArchiveAttempts.set(key, (closeArchiveAttempts.get(key) ?? 0) + 1);
+  const attempt = (closeArchiveAttempts.get(key) ?? 0) + 1;
+  closeArchiveAttempts.set(key, attempt);
   void (async () => {
     try {
-      await archive({ serverId, agentId });
+      await closeArchive?.({ serverId, agentId });
       closeArchiveAttempts.delete(key);
     } catch (error) {
       // The tombstone stays in place, so the tab does not reopen anywhere and
-      // the next converge pass retries instead of losing the intent.
+      // a later restart keeps working; the archive is retried from this close.
       console.warn("[workspace-tab-sync] failed to archive a closed agent", {
         serverId,
         agentId,
         error,
       });
+      if (attempt < CLOSE_ARCHIVE_MAX_ATTEMPTS) {
+        setTimeout(() => {
+          requestArchiveAfterClose(serverId, agentId, origin);
+        }, CLOSE_ARCHIVE_RETRY_MS);
+      }
     } finally {
       closeArchiveInFlight.delete(key);
     }
@@ -464,9 +489,8 @@ function enforceSyncedAgent(serverId: string, agentId: string, agent?: Agent): v
     closed,
   });
   if (plan.closeIn.length === 0 && !plan.ensureIn && closed) {
-    // Nothing left to close here, but a tombstoned agent with no tab must
-    // still be archived: this is the retry path for a failed request.
-    requestArchiveAfterClose(serverId, agentId);
+    // A tombstone with no tab here is not a close: it may be a label left over
+    // from an earlier gesture, with the agent restarted since.
     return;
   }
   const store = activeWorkspaceLayoutStore.getState();
@@ -496,10 +520,10 @@ function enforceSyncedAgent(serverId: string, agentId: string, agent?: Agent): v
   } finally {
     internalSync = false;
   }
-  if (closed) {
+  if (closed && plan.closeIn.length > 0) {
     // The tab the user closed on another client just closed here: archive the
     // agent too, or this client converges on the close but keeps the agent.
-    requestArchiveAfterClose(serverId, agentId);
+    requestArchiveAfterClose(serverId, agentId, "tombstone");
   }
 }
 
@@ -884,7 +908,7 @@ function installStoreHooks(): void {
           if (closedAgent?.target.kind === "agent") {
             const serverId = workspaceKey.slice(0, workspaceKey.indexOf(":"));
             if (serverId) {
-              requestArchiveAfterClose(serverId, closedAgent.target.agentId);
+              requestArchiveAfterClose(serverId, closedAgent.target.agentId, "user");
             }
           }
         } catch {

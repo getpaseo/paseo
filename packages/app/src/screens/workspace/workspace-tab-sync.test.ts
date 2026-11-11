@@ -697,6 +697,7 @@ describe("workspace tab sync", () => {
     });
 
     it("requests the archive when another client's tombstone closes the tab", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), status: "idle" });
       openAgentOne();
       setAgentLabels("agent-1", {
         [TAB_WORKSPACE_LABEL]: "ws-a",
@@ -704,6 +705,28 @@ describe("workspace tab sync", () => {
       });
       expect(agentTabIdsIn("ws-a")).toEqual([]);
       expect(archiveAgent).toHaveBeenCalledWith({ serverId: SERVER, agentId: "agent-1" });
+    });
+
+    it("does not archive from a stale tombstone when no tab closed here", async () => {
+      // `send_agent_prompt` unarchives a restarted agent and starts a turn
+      // without clearing the close label; a later echo must not archive it.
+      setAgentLabels("agent-1", {
+        [TAB_WORKSPACE_LABEL]: "ws-a",
+        [TAB_CLOSED_LABEL]: "1",
+      });
+      await flushPromises();
+      expect(agentTabIdsIn("ws-a")).toEqual([]);
+      expect(archiveAgent).not.toHaveBeenCalled();
+    });
+
+    it("closes a running agent's tab from a tombstone without archiving it", async () => {
+      openAgentOne();
+      setAgentLabels("agent-1", {
+        [TAB_WORKSPACE_LABEL]: "ws-a",
+        [TAB_CLOSED_LABEL]: "1",
+      });
+      expect(agentTabIdsIn("ws-a")).toEqual([]);
+      expect(archiveAgent).not.toHaveBeenCalled();
     });
 
     it("does not archive when the close is a move to another workspace", async () => {
@@ -734,7 +757,7 @@ describe("workspace tab sync", () => {
       expect(archiveAgent).not.toHaveBeenCalled();
     });
 
-    it("retries a failed archive on the next converge pass, capped", async () => {
+    it("retries a failed archive from the original close, capped", async () => {
       archiveAgent.mockRejectedValue(new Error("daemon refused"));
       const warn = vi.spyOn(console, "warn").mockImplementation(noop);
       const tabId = openAgentOne();
@@ -742,17 +765,13 @@ describe("workspace tab sync", () => {
       await flushPromises();
       expect(archiveAgent).toHaveBeenCalledTimes(1);
 
-      // Every later agent_state converge pass keeps the tombstone and retries
-      // until the cap, so a persistent daemon failure cannot spin forever.
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        setAgentLabels("agent-1", {
-          [TAB_WORKSPACE_LABEL]: "ws-a",
-          [TAB_CLOSED_LABEL]: "1",
-          [TAB_ORDER_LABEL]: String(attempt).padStart(6, "0"),
-        });
+      // A retry is tied to this close, not to a later converge pass, and the
+      // cap keeps a persistent daemon failure from spinning.
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        vi.advanceTimersByTime(4000);
         await flushPromises();
       }
-      expect(archiveAgent).toHaveBeenCalledTimes(5);
+      expect(archiveAgent).toHaveBeenCalledTimes(3);
       expect(warn).toHaveBeenCalled();
       warn.mockRestore();
     });
@@ -764,19 +783,14 @@ describe("workspace tab sync", () => {
       await flushPromises();
       expect(archiveAgent).toHaveBeenCalledTimes(1);
 
-      setAgentLabels("agent-1", {
-        [TAB_WORKSPACE_LABEL]: "ws-a",
-        [TAB_CLOSED_LABEL]: "1",
-        [TAB_ORDER_LABEL]: "000001",
-      });
+      archiveAgent.mockResolvedValue(undefined);
+      vi.advanceTimersByTime(4000);
       await flushPromises();
       expect(archiveAgent).toHaveBeenCalledTimes(2);
-      archiveAgent.mockResolvedValue(undefined);
-      setAgentLabels("agent-1", {
-        [TAB_WORKSPACE_LABEL]: "ws-a",
-        [TAB_CLOSED_LABEL]: "1",
-        [TAB_ORDER_LABEL]: "000002",
-      });
+
+      // The budget was cleared by the success, so the next close can archive.
+      const nextTabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), nextTabId);
       await flushPromises();
       expect(archiveAgent).toHaveBeenCalledTimes(3);
     });
