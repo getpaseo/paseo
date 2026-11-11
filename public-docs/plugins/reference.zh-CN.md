@@ -80,6 +80,7 @@ my-plugin/
 | `translations` | 否       | 其他语言的展示文本，由注册表读取，Paseo 会忽略它。见[其他语言](/docs/plugins/publishing#other-languages)。 |
 | `requirements` | 否       | 支持的 Paseo 版本，见下文。                                                                                |
 | `build`        | 否       | 准备命令，见 CLI 参考。                                                                                    |
+| `gitFiles`     | 否       | Git 安装需要的文件和目录，见插件来源。                                                                     |
 
 路径相对于 `paseo-plugin.json`，使用正斜杠，并且不能包含 `..` 片段。即使 `media` 在运行时 manifest 中是可选的，可视化插件的注册表展示页仍然需要一张界面图片。接受的格式和展示页要求见[图标和截图](/docs/plugins/publishing#icons-and-screenshots)。Paseo 会校验这些引用，但不会打开本地资源或获取 URL。
 
@@ -2489,6 +2490,27 @@ paseo plugin install npm:@acme/plugins@^1.2.0:plugins/review
 
 `--ref` 只适用于 Git，接受用于这次安装的分支、标签或提交。没有它时，Paseo 安装远程的默认 HEAD。安装时的
 选择器不会约束之后的更新。旧版的 `--path relative/plugin/path` 选项等同于子目录后缀，对 npm 也是如此。
+
+### Git 安装文件 {#git-installation-files}
+
+Git 插件可以在 `paseo-plugin.json` 中声明安装所需的文件和目录：
+
+```json
+{
+  "id": "review",
+  "gitFiles": ["index.server.ts", "src", "package.json", "package-lock.json", "scripts"]
+}
+```
+
+每项都是相对于插件 manifest 的字面文件或目录路径，使用正斜杠。不能使用空路径、`.` 或 `..` 路径段、
+Git 元数据路径、通配符或末尾斜杠。目录会递归包含其内容。manifest 本身和仓库根目录的 `.gitmodules`
+（如果存在）会自动包含。请列出插件所需的全部源码、资源、配置和构建输入；若所选提交中不存在声明的路径，
+安装会失败。遗漏必需文件也可能导致准备或编译失败。
+
+Paseo 先确定已审阅的提交，再根据该提交的 manifest 获取和检出声明的路径。安装、更新和仓库子目录中的插件
+均适用；目录来源和 npm 来源不受影响。未声明 `gitFiles` 的插件仍完整检出。为了保持现有 Git 来源兼容，
+manifest 是符号链接或位于子模块中时也会完整检出。下载量能否减少取决于 Git 服务器是否支持 partial clone；
+旧版 Paseo 可能忽略此字段并完整检出。
 
 ### npm 安装与发布 {#npm-installation-and-publishing}
 
