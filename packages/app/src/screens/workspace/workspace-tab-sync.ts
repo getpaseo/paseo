@@ -354,6 +354,13 @@ function findAgentTabCopies(
   return { workspaceKeysWithTab, tabIdByWorkspaceKey };
 }
 
+function agentIsRunning(agent: Agent): boolean {
+  if (agent.status === "running") {
+    return true;
+  }
+  return agent.turn?.phase !== undefined && agent.turn.phase !== "idle";
+}
+
 /**
  * Archive the agent behind a tab this client just closed.
  *
@@ -394,7 +401,10 @@ function requestArchiveAfterClose(
   if (!agent || agent.archivedAt || agent.parentAgentId) {
     return;
   }
-  if (origin === "tombstone" && agent.status === "running") {
+  // A retry must never stop work that started after the close: the agent may
+  // have been restarted (or prompted) while the first attempt was failing.
+  const isRetry = (closeArchiveAttempts.get(key) ?? 0) > 0;
+  if ((origin === "tombstone" || isRetry) && agentIsRunning(agent)) {
     return;
   }
   if (findAgentTabCopies(serverId, agentId).workspaceKeysWithTab.length > 0) {

@@ -758,6 +758,7 @@ describe("workspace tab sync", () => {
     });
 
     it("retries a failed archive from the original close, capped", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), status: "idle" });
       archiveAgent.mockRejectedValue(new Error("daemon refused"));
       const warn = vi.spyOn(console, "warn").mockImplementation(noop);
       const tabId = openAgentOne();
@@ -776,7 +777,26 @@ describe("workspace tab sync", () => {
       warn.mockRestore();
     });
 
+    it("does not retry an archive once the agent is running again", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), status: "idle" });
+      archiveAgent.mockRejectedValue(new Error("daemon refused"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(noop);
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(1);
+
+      // Someone restarted the agent while the first attempt was failing: a
+      // delayed retry must not stop the new turn.
+      replaceAgent({ ...makeAgent("agent-1"), status: "running" });
+      vi.advanceTimersByTime(4000);
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+
     it("clears the retry budget once the archive succeeds", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), status: "idle" });
       archiveAgent.mockRejectedValueOnce(new Error("transient"));
       const tabId = openAgentOne();
       layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
