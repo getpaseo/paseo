@@ -6327,6 +6327,63 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("keeps one root reconnect row while a child completes", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+    try {
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 1/2",
+        willRetry: true,
+      });
+      // Codex reports a child's completion on the root thread, independently
+      // of whether the root model stream has recovered.
+      appServer.child.stdout.write(
+        `${JSON.stringify({
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            turnId: "codex-turn-1",
+            item: {
+              type: "subAgentActivity",
+              id: "subagent-completed-child-turn",
+              kind: "completed",
+              agentThreadId: "child-thread",
+              agentPath: "/root/child",
+              model: null,
+              reasoningEffort: null,
+            },
+          },
+        })}\n`,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events.map(describeStatusNotice)).toEqual(["running: Reconnecting... 1/2"]);
+
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 2/2",
+        willRetry: true,
+      });
+      appServer.says({ threadId: "thread-1", itemId: "reply", text: "Root recovered." });
+      appServer.completeTurn();
+      await terminalEvent;
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "running: Reconnecting... 2/2",
+        "completed: Reconnected",
+        "turn_completed",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("fails the reconnect status line with the turn when Codex stops retrying", async () => {
     const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
 

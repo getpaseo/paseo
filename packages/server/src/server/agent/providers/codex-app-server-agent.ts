@@ -5919,12 +5919,16 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.dispatchSubAgentNotification(parsed, route.callId);
       return;
     }
-    // Model output after a reconnect means the stream is back; a steering message does not.
+    // Root model output means the stream is back. Steering messages and asynchronous
+    // child activity arrive independently of the root stream, so neither proves recovery.
+    const startedItemType =
+      parsed.kind === "item_started" ? normalizeCodexThreadItemType(parsed.item.type) : null;
     if (
       parsed.kind === "agent_message_delta" ||
       parsed.kind === "reasoning_delta" ||
       (parsed.kind === "item_started" &&
-        normalizeCodexThreadItemType(parsed.item.type) !== "userMessage")
+        startedItemType !== "userMessage" &&
+        startedItemType !== "subAgentActivity")
     ) {
       this.settleStreamRetry({ status: "completed" });
     }
