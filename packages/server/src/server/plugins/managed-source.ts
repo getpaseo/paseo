@@ -189,8 +189,8 @@ export class ManagedPluginSources {
         const commit = await resolveRequestedRef(sourceRoot, input.ref);
         if (target?.kind === "git" && commit !== target.commit)
           throw new Error("Git target changed since review");
-        await configureGitFiles(sourceRoot, commit, pluginPath, remote);
-        await checkout(sourceRoot, commit, remote);
+        await configureGitFiles({ checkoutRoot: sourceRoot, commit, pluginPath, remote });
+        await checkout({ checkoutRoot: sourceRoot, commit, remote });
         record = { kind: "git", remote };
       }
       const directory = path.resolve(sourceRoot, pluginPath);
@@ -544,7 +544,15 @@ function redactRemoteError(error: unknown, remote: string): Error {
   return new Error(message);
 }
 
-async function checkout(checkoutRoot: string, commit: string, remote: string): Promise<void> {
+async function checkout({
+  checkoutRoot,
+  commit,
+  remote,
+}: {
+  checkoutRoot: string;
+  commit: string;
+  remote: string;
+}): Promise<void> {
   const { envOverlay } = gitRemote(remote);
   try {
     await runGitCommand(["checkout", "--detach", commit], {
@@ -562,12 +570,17 @@ async function checkout(checkoutRoot: string, commit: string, remote: string): P
   }
 }
 
-async function configureGitFiles(
-  checkoutRoot: string,
-  commit: string,
-  pluginPath: string,
-  remote: string,
-): Promise<void> {
+async function configureGitFiles({
+  checkoutRoot,
+  commit,
+  pluginPath,
+  remote,
+}: {
+  checkoutRoot: string;
+  commit: string;
+  pluginPath: string;
+  remote: string;
+}): Promise<void> {
   const { envOverlay } = gitRemote(remote);
   const relativePlugin = pluginPath.split(path.sep).join("/");
   const manifestPath = path.posix.join(relativePlugin, "paseo-plugin.json");

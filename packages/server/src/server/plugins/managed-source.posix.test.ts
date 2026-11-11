@@ -38,12 +38,17 @@ async function commitAll(repository: string, message: string): Promise<string> {
   return stdout.trim();
 }
 
-async function serveGitHttp(
-  request: IncomingMessage,
-  response: ServerResponse,
-  root: string,
-  traffic: { bytes: number },
-) {
+async function serveGitHttp({
+  request,
+  response,
+  root,
+  traffic,
+}: {
+  request: IncomingMessage;
+  response: ServerResponse;
+  root: string;
+  traffic: { bytes: number };
+}) {
   const url = new URL(request.url!, "http://localhost");
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk as Buffer);
@@ -82,7 +87,15 @@ async function serveGitHttp(
   response.end(responseBody);
 }
 
-function createGitFixtureServer(root: string, posts: string[], traffic = { bytes: 0 }) {
+function createGitFixtureServer({
+  root,
+  posts,
+  traffic = { bytes: 0 },
+}: {
+  root: string;
+  posts: string[];
+  traffic?: { bytes: number };
+}) {
   return createServer((request, response) => {
     if (
       request.headers.authorization !==
@@ -93,7 +106,9 @@ function createGitFixtureServer(root: string, posts: string[], traffic = { bytes
     }
     const url = new URL(request.url!, "http://localhost");
     if (request.method === "POST") posts.push(url.pathname);
-    void serveGitHttp(request, response, root, traffic).catch(() => response.writeHead(500).end());
+    void serveGitHttp({ request, response, root, traffic }).catch(() =>
+      response.writeHead(500).end(),
+    );
   });
 }
 
@@ -459,7 +474,7 @@ describe("managed Git plugin sources", () => {
       cwd: path.join(root, "plugin.git"),
     });
     const traffic = { bytes: 0 };
-    const server = createGitFixtureServer(root, [], traffic);
+    const server = createGitFixtureServer({ root, posts: [], traffic });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected HTTP port");
@@ -502,7 +517,7 @@ describe("managed Git plugin sources", () => {
     const bare = path.join(root, "plugin.git");
     await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: bare });
     const posts: string[] = [];
-    const server = createGitFixtureServer(root, posts);
+    const server = createGitFixtureServer({ root, posts });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected HTTP port");
