@@ -17,6 +17,19 @@ async function launchRelationship(): Promise<HubRelationshipHarness> {
   return launched;
 }
 
+test("Hub permission changes publish fresh server info without reconnecting", async () => {
+  const hub = await launchRelationship();
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
+  await hub.grantPermission("workspace.manage");
+  await expect
+    .poll(() => hub.serverInfoPermissions().map((permissions) => permissions.toSorted()))
+    .toEqual([["hub.execute"], ["hub.execute", "workspace.manage"]]);
+  await hub.revokePermission("workspace.manage");
+  await expect
+    .poll(() => hub.serverInfoPermissions().map((permissions) => permissions.toSorted()))
+    .toEqual([["hub.execute"], ["hub.execute", "workspace.manage"], ["hub.execute"]]);
+});
+
 function createdAgentWorkspaceId(message: SessionOutboundMessage): string {
   if (message.type !== "status" || message.payload.status !== "agent_created")
     throw new Error("Agent was not created");
