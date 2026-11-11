@@ -69,12 +69,13 @@ export function normalizeMarkdownHtml(source: string): string {
   protectCode(tree);
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
-  const convert = (raw: string, offset: number, indent = 0): string => {
+  let preDepth = 0;
+  const convert = (raw: string, offset: number, indent: number): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
     // Removing tags must not leave layout spaces that start Markdown code.
     // Preserve the quote/list prefix and all indentation on Markdown text lines.
     if (!raw.startsWith("<"))
-      return raw.slice(0, indent) + raw.slice(indent).replace(/^[ \t]+/, "");
+      return preDepth > 0 ? raw : raw.slice(0, indent) + raw.slice(indent).replace(/^[ \t]+/, "");
     if (raw.startsWith("<!--")) return "";
     const summary = /^<summary\b[^>]*>([\s\S]*?)<\/summary\s*>$/i.exec(raw);
     if (summary) {
@@ -95,6 +96,7 @@ export function normalizeMarkdownHtml(source: string): string {
       );
     const closing = raw.startsWith("</");
     const name = /^<\/?([\w-]+)/.exec(raw)?.[1].toLowerCase() ?? "";
+    if (name === "pre") preDepth = Math.max(0, preDepth + (closing ? -1 : 1));
     // Each gap is inspected once, rather than searching the complete prefix
     // for a preceding tag on every table row or nested block.
     const startsAfterBoundary = previousTag
@@ -123,7 +125,7 @@ export function normalizeMarkdownHtml(source: string): string {
     result += source
       .slice(range.start, end)
       .replace(range.indent === undefined ? HTML : HTML_OR_LINE_INDENT, (raw, offset) =>
-        convert(raw, range.start + offset, range.indent),
+        convert(raw, range.start + offset, range.indent ?? 0),
       );
     cursor = end;
   }

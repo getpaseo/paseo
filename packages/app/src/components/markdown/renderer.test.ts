@@ -1195,3 +1195,9 @@ describe("HTML indentation preserves Markdown content", () => {
     expect(tree.children).toMatchObject([{ type: "code", value: "first\n    second" }]);
   });
 });
+
+it("keeps code-tag lines preformatted inside nested HTML", () => {
+  const source = "<div><pre>\n    <code>first</code>\n        second\n</pre></div>";
+  const tree = fromMarkdown(normalizeMarkdownHtml(source));
+  expect(tree.children).toMatchObject([{ type: "code", value: "`first`\n    second" }]);
+});
