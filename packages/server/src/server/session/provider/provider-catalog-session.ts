@@ -13,15 +13,12 @@ import {
 } from "../../agent/provider-snapshot-manager.js";
 import {
   filterSelectableAgentModels,
-  type AgentOptionControl,
+  type AgentFeature,
   type AgentProvider,
   type AgentSessionConfig,
   type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
-import { featuresFromControls } from "@getpaseo/protocol/option-controls";
-import { foldFeatureValues } from "../../agent/option-controls.js";
-import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { expandTilde } from "../../../utils/path.js";
 
 // COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
@@ -52,9 +49,7 @@ export interface ProviderCatalogSessionHost {
   supportsProviderSnapshotReferences(): boolean;
   publishSnapshot(project: () => SessionOutboundMessage | null): void;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
-  listDraftControls(
-    config: AgentSessionConfig,
-  ): Promise<{ controls: AgentOptionControl[]; options: ProviderOptions }>;
+  listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
 }
 
 export interface ProviderCatalogSessionOptions {
@@ -345,59 +340,29 @@ export class ProviderCatalogSession {
     model?: string;
     thinkingOptionId?: string;
     featureValues?: Record<string, unknown>;
-    providerOptions?: ProviderOptions;
   }): AgentSessionConfig {
-    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-    const { providerOptions } = foldFeatureValues(draftConfig);
     return {
       provider: draftConfig.provider,
       cwd: expandTilde(draftConfig.cwd),
       ...(draftConfig.modeId ? { modeId: draftConfig.modeId } : {}),
       ...(draftConfig.model ? { model: draftConfig.model } : {}),
       ...(draftConfig.thinkingOptionId ? { thinkingOptionId: draftConfig.thinkingOptionId } : {}),
-      ...(providerOptions ? { providerOptions } : {}),
+      ...(draftConfig.featureValues ? { featureValues: draftConfig.featureValues } : {}),
     };
   }
 
-  async handleProviderControlsListRequest(
-    msg: Extract<SessionInboundMessage, { type: "provider.controls.list.request" }>,
-  ): Promise<void> {
-    const fetchedAt = new Date().toISOString();
-    const provider = msg.draftConfig.provider;
-    try {
-      const { controls, options } = await this.host.listDraftControls(
-        this.buildDraftAgentSessionConfig(msg.draftConfig),
-      );
-      this.host.emit({
-        type: "provider.controls.list.response",
-        payload: { provider, controls, options, error: null, fetchedAt, requestId: msg.requestId },
-      });
-    } catch (error) {
-      this.logger.error(
-        { err: error, provider, draftConfig: msg.draftConfig },
-        `Failed to list controls for ${provider}`,
-      );
-      this.host.emit({
-        type: "provider.controls.list.response",
-        payload: { provider, error: getErrorMessage(error), fetchedAt, requestId: msg.requestId },
-      });
-    }
-  }
-
-  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Answered from controls.
   async handleListProviderFeaturesRequest(
     msg: Extract<SessionInboundMessage, { type: "list_provider_features_request" }>,
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
     try {
-      const { controls, options } = await this.host.listDraftControls(
-        this.buildDraftAgentSessionConfig(msg.draftConfig),
-      );
+      const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
+      const features = await this.host.listDraftFeatures(sessionConfig);
       this.host.emit({
         type: "list_provider_features_response",
         payload: {
           provider: msg.draftConfig.provider,
-          features: featuresFromControls({ controls, options }),
+          features,
           error: null,
           fetchedAt,
           requestId: msg.requestId,

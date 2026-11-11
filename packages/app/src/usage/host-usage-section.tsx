@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useUsageDisplay } from "./display";
+import { useUsagePreferences } from "./display";
 import { useHostUsage } from "./queries";
 import { UsageSection } from "./usage-section";
 
@@ -7,7 +7,7 @@ import { UsageSection } from "./usage-section";
 export function HostUsageSection({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { view, refresh } = useHostUsage(serverId);
-  const { display } = useUsageDisplay(view.kind === "ready" ? view.reports : []);
+  const { display } = useUsagePreferences(serverId);
   return (
     <UsageSection
       serverId={serverId}

@@ -216,19 +216,17 @@ export function ModelProviderGlyph({
   provider,
   serverId,
   size,
-  strokeWidth,
   tone = "muted",
 }: {
   provider: string;
   serverId: string | null;
   size: number;
-  strokeWidth?: number;
   tone?: ProviderGlyphTone;
 }) {
   const Icon = useProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
-  return <Icon size={size} strokeWidth={strokeWidth} color={color} />;
+  return <Icon size={size} color={color} />;
 }
 
 function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
@@ -1237,7 +1235,7 @@ function ProviderErrorEmptyState({
       <ThemedAlertTriangle size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
       <Text style={styles.emptyStateText}>{message}</Text>
       {onRetryProvider ? (
-        <Button variant="default" onPress={handleRetry} disabled={isRetryingProvider}>
+        <Button variant="default" size="sm" onPress={handleRetry} disabled={isRetryingProvider}>
           {isRetryingProvider ? t("modelSelector.retrying") : t("modelSelector.retry")}
         </Button>
       ) : null}
@@ -1694,7 +1692,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   emptyState: {
-    padding: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
     alignItems: "center",
     gap: theme.spacing[2],
   },

@@ -70,14 +70,6 @@
           },
           "additionalProperties": {}
         },
-        "usage": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          }
-        },
         "browserTools": {
           "type": "object",
           "properties": {
@@ -176,13 +168,6 @@
                 },
                 "additionalProperties": {}
               },
-              "options": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
               "notes": {
                 "type": "string"
               }
@@ -272,6 +257,48 @@
     "providers": {
       "type": "object",
       "properties": {
+        "openai": {
+          "type": "object",
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "baseUrl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stt": {
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "tts": {
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "local": {
           "type": "object",
           "properties": {
@@ -525,15 +552,6 @@
             }
           }
         },
-        "idleRuntimeCleanup": {
-          "type": "boolean"
-        },
-        "resumeOnStartup": {
-          "type": "boolean"
-        },
-        "resumePrompt": {
-          "type": "string"
-        },
         "catalogRefreshTimeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,
@@ -618,57 +636,24 @@
               "type": "boolean"
             },
             "stt": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "local"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
                 },
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "openai"
-                    },
-                    "apiKey": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "baseUrl": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "confidenceThreshold": {
-                      "type": "number"
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "confidenceThreshold": {
+                  "type": "number"
                 }
-              ]
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -693,57 +678,21 @@
               "additionalProperties": false
             },
             "stt": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "local"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
                 },
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "openai"
-                    },
-                    "apiKey": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "baseUrl": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "confidenceThreshold": {
-                      "type": "number"
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1
                 }
-              ]
+              },
+              "additionalProperties": false
             },
             "turnDetection": {
               "type": "object",
@@ -755,58 +704,29 @@
               "additionalProperties": false
             },
             "tts": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "local"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "speakerId": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    "speed": {
-                      "type": "number"
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
                 },
-                {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string",
-                      "const": "openai"
-                    },
-                    "apiKey": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "baseUrl": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "voice": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": ["provider"],
-                  "additionalProperties": false
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "voice": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "speakerId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "speed": {
+                  "type": "number"
                 }
-              ]
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

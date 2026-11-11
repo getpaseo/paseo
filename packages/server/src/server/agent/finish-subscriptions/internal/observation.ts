@@ -13,8 +13,6 @@ import type { FinishObservation } from "../index.js";
 export function createFinishObservation(input: {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  /** A child chosen for restart recovery reports its state only after its resume was sent. */
-  waitForResume(agentId: string, signal: AbortSignal): Promise<void>;
   messages(): AgentMessageDelivery;
   hosts(): ToolHosts;
   serverId: string;
@@ -26,7 +24,6 @@ export function createFinishObservation(input: {
     hosts: input.hosts,
     local: {
       async wait(agentId, signal) {
-        await input.waitForResume(agentId, signal);
         await input.messages().waitForDispatch(agentId, signal);
         signal.throwIfAborted();
         const live = agentManager.getAgent(agentId);
@@ -34,11 +31,7 @@ export function createFinishObservation(input: {
           const stored = await agentStorage.get(agentId);
           return {
             status: stored?.lastStatus === "error" ? "error" : "idle",
-            final: stored
-              ? buildStoredAgentPayload(stored, [stored.provider], (provider, own) =>
-                  agentManager.effectiveOptionsFor(provider, own),
-                )
-              : null,
+            final: stored ? buildStoredAgentPayload(stored, [stored.provider]) : null,
             lastMessage: await agentManager.getLastAssistantMessage(agentId),
             error: stored?.lastError ?? null,
           };
@@ -59,7 +52,6 @@ export function createFinishObservation(input: {
         };
       },
       async observe(agentId, handler, signal, onError) {
-        await input.waitForResume(agentId, signal);
         const stored = await agentStorage.get(agentId);
         let updates = Promise.resolve();
         const publish = (snapshot: AgentSnapshotPayload | null, event?: AgentStreamEvent) => {
@@ -97,14 +89,7 @@ export function createFinishObservation(input: {
             type: "turn_started",
             provider: current.provider,
           });
-        else
-          publish(
-            stored
-              ? buildStoredAgentPayload(stored, [stored.provider], (provider, own) =>
-                  agentManager.effectiveOptionsFor(provider, own),
-                )
-              : null,
-          );
+        else publish(stored ? buildStoredAgentPayload(stored, [stored.provider]) : null);
         const stop = () => unsubscribe();
         signal.addEventListener("abort", stop, { once: true });
         return async () => {

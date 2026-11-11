@@ -25,7 +25,6 @@ import { vscodiumTarget } from "./targets/vscodium.js";
 import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
-import { xcodeTarget } from "./targets/xcode.js";
 import { zedTarget } from "./targets/zed.js";
 
 export const EDITOR_TARGETS: readonly EditorTarget[] = [
@@ -38,7 +37,6 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   zedTarget,
   antigravityTarget,
   androidStudioTarget,
-  xcodeTarget,
   intellijIdeaTarget,
   aquaTarget,
   clionTarget,
@@ -56,33 +54,15 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   fileManagerTarget,
 ];
 
-export interface ListEditorTargetsOptions {
-  /**
-   * Absolute workspace root. Without it, targets that declare
-   * `supportsWorkspace` are left out — there is nothing to match them against.
-   */
-  workspacePath?: string;
-}
-
 export async function listAvailableEditorTargets(
   runtime: EditorTargetRuntime,
   targets: readonly EditorTarget[] = EDITOR_TARGETS,
-  options: ListEditorTargetsOptions = {},
 ): Promise<EditorTargetDescriptor[]> {
-  const workspacePath =
-    options.workspacePath && runtime.isAbsolutePath(options.workspacePath)
-      ? options.workspacePath
-      : null;
   const descriptors: EditorTargetDescriptor[] = [];
   for (const target of targets) {
-    if (!(await target.isInstalled(runtime))) continue;
-    if (!target.supportsWorkspace) {
+    if (await target.isInstalled(runtime)) {
       descriptors.push(await target.describe(runtime));
-      continue;
     }
-    if (!workspacePath) continue;
-    if (!(await target.supportsWorkspace(workspacePath, runtime))) continue;
-    descriptors.push(await target.describe(runtime));
   }
   return descriptors;
 }
@@ -97,16 +77,10 @@ export function getEditorTarget(
 }
 
 export async function openEditorTarget(
-  request: EditorTargetLaunchInput & { editorId: string },
+  input: EditorTargetLaunchInput & { editorId: string },
   runtime: EditorTargetRuntime,
   targets: readonly EditorTarget[] = EDITOR_TARGETS,
 ): Promise<void> {
-  // Assistant replies name folders like `~/Downloads/x`; expand them before the absolute-path guard.
-  const input = {
-    ...request,
-    workspacePath: runtime.expandHomePath(request.workspacePath),
-    filePath: request.filePath === undefined ? undefined : runtime.expandHomePath(request.filePath),
-  };
   if (!runtime.isAbsolutePath(input.workspacePath)) {
     throw new Error("Editor target workspace path must be an absolute local path");
   }

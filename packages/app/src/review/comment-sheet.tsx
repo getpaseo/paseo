@@ -53,6 +53,7 @@ function OpenReviewCommentSheet({
     () => (
       <View style={styles.actions}>
         <Button
+          size="md"
           variant="secondary"
           accessibilityLabel={t("review.comment.cancelAccessibility")}
           onPress={onCancelEditor}
@@ -60,6 +61,7 @@ function OpenReviewCommentSheet({
           {t("review.comment.cancel")}
         </Button>
         <Button
+          size="md"
           variant="default"
           accessibilityLabel={t("review.comment.saveAccessibility")}
           disabled={!canSave}
@@ -83,6 +85,7 @@ function OpenReviewCommentSheet({
     >
       <FormTextInput
         key={editor.target.key + (editor.commentId ?? "new")}
+        size="md"
         multiline
         accessibilityLabel={t("review.comment.label")}
         placeholder={t("review.comment.placeholder")}

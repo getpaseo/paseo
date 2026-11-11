@@ -19,8 +19,9 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { ComboboxItem } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
-import { createControlGeometry, type ControlSize } from "@/components/ui/control-geometry";
+import { createControlGeometry, type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
 import { useProviderIcon } from "@/components/provider-icons";
@@ -238,7 +239,7 @@ function OpenScheduleFormSheet({
   mode,
   schedule,
 }: ScheduleFormSheetProps & { onDismiss: () => void }): ReactElement {
-  const controlSize: ControlSize = "md";
+  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const { projects } = useProjects();
   const hostProfiles = useHosts();
   const hosts = useStoreWithEqualityFn(
@@ -459,7 +460,7 @@ interface ScheduleFormFieldsProps {
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
-  controlSize: ControlSize;
+  controlSize: FieldControlSize;
   cadenceError: string | null;
   mutationServerId: string;
 }
@@ -556,7 +557,7 @@ interface ScheduleTargetFieldsProps {
   state: ScheduleFormState;
   providerSnapshot: ReturnType<typeof useScheduleFormProviderSnapshot>;
   agentTargetLabel: string | null;
-  controlSize: ControlSize;
+  controlSize: FieldControlSize;
   mutationServerId: string;
 }
 
@@ -818,7 +819,7 @@ function ScheduleIsolationField({
 }: {
   model: ScheduleFormModel;
   state: ScheduleFormState;
-  size: ControlSize;
+  size: FieldControlSize;
 }): ReactElement {
   const options = useMemo<SelectFieldOption<"local" | "worktree">[]>(
     () => [
@@ -891,7 +892,7 @@ function ScheduleAgentTargetField({
   size,
 }: {
   label: string | null;
-  size: ControlSize;
+  size: FieldControlSize;
 }): ReactElement {
   const fieldStyle = useMemo(
     () => [styles.readonlyField, size === "sm" ? styles.readonlyFieldSm : styles.readonlyFieldMd],

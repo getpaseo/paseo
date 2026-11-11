@@ -45,15 +45,7 @@ describe("createTestPaseoDaemon", () => {
       createTestPaseoDaemon({ listenPort: takenPort, cleanup: false, mcpEnabled: false }),
     ).rejects.toMatchObject({ code: "EADDRINUSE" });
 
-    // A home under this scratch dir is too long for a unix socket path, so the terminal worker
-    // listens in the per-user `paseo-<uid>` directory of the temp root. Like tmux's, that
-    // owner-only directory is shared by every worker and outlives them; it must be empty.
-    const sharedSocketDir = `paseo-${process.getuid?.() ?? 0}`;
-    const leftovers = await readdir(scratchTmp);
-    expect(leftovers.filter((name) => name !== sharedSocketDir)).toEqual([]);
-    if (leftovers.includes(sharedSocketDir)) {
-      expect(await readdir(path.join(scratchTmp, sharedSocketDir))).toEqual([]);
-    }
+    expect(await readdir(scratchTmp)).toEqual([]);
   }, 60_000);
 });
 

@@ -6,7 +6,10 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 export interface WorkspaceAgentVisibility {
   activeAgentIds: Set<string>;
   autoOpenAgentIds: Set<string>;
-  foreignAgentIds: Set<string>;
+}
+
+function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
+  return normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId;
 }
 
 export function deriveWorkspaceAgentVisibility(input: {
@@ -16,58 +19,30 @@ export function deriveWorkspaceAgentVisibility(input: {
 }): WorkspaceAgentVisibility {
   const { sessionAgents, agentDetails } = input;
   const workspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);
-  if (!workspaceId) {
+  if ((!sessionAgents && !agentDetails) || !workspaceId) {
     return {
       activeAgentIds: new Set<string>(),
       autoOpenAgentIds: new Set<string>(),
-      foreignAgentIds: new Set<string>(),
     };
   }
 
   const activeAgentIds = new Set<string>();
   const autoOpenAgentIds = new Set<string>();
-  const foreignAgentIds = new Set<string>();
   for (const agent of sessionAgents?.values() ?? []) {
-    const ownerId = normalizeWorkspaceOpaqueId(agent.workspaceId);
-    if (ownerId !== workspaceId) {
-      if (ownerId) {
-        foreignAgentIds.add(agent.id);
-      }
+    if (!agentBelongsToWorkspace(agent, workspaceId)) {
       continue;
     }
     if (!agent.archivedAt) {
-      // A background agent stays active so a tab opened by id isn't pruned, but never auto-opens.
       activeAgentIds.add(agent.id);
-      if (shouldAutoOpenAgent({ agent, sessionAgents, agentDetails })) {
+      const parentAgent = agent.parentAgentId
+        ? (sessionAgents?.get(agent.parentAgentId) ?? agentDetails?.get(agent.parentAgentId))
+        : undefined;
+      if (isWorkspaceRootAgent(agent, parentAgent)) {
         autoOpenAgentIds.add(agent.id);
       }
     }
   }
-  for (const agent of agentDetails?.values() ?? []) {
-    if (sessionAgents?.has(agent.id)) {
-      continue;
-    }
-    const ownerId = normalizeWorkspaceOpaqueId(agent.workspaceId);
-    if (ownerId && ownerId !== workspaceId) {
-      foreignAgentIds.add(agent.id);
-    }
-  }
-  return { activeAgentIds, autoOpenAgentIds, foreignAgentIds };
-}
-
-function shouldAutoOpenAgent(input: {
-  agent: Agent;
-  sessionAgents: Map<string, Agent> | undefined;
-  agentDetails: Map<string, Agent> | undefined;
-}): boolean {
-  const { agent, sessionAgents, agentDetails } = input;
-  if (agent.background) {
-    return false;
-  }
-  const parentAgent = agent.parentAgentId
-    ? (sessionAgents?.get(agent.parentAgentId) ?? agentDetails?.get(agent.parentAgentId))
-    : undefined;
-  return isWorkspaceRootAgent(agent, parentAgent);
+  return { activeAgentIds, autoOpenAgentIds };
 }
 
 interface AgentMapsSnapshot {
@@ -124,7 +99,6 @@ export function buildWorkspaceTabSnapshot(input: {
     terminalsHydrated: input.terminalsHydrated,
     activeAgentIds: input.agentVisibility.activeAgentIds,
     autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
-    foreignAgentIds: input.agentVisibility.foreignAgentIds,
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
@@ -139,8 +113,7 @@ export function workspaceAgentVisibilityEqual(
   return (
     a === b ||
     (setsEqual(a.activeAgentIds, b.activeAgentIds) &&
-      setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds) &&
-      setsEqual(a.foreignAgentIds, b.foreignAgentIds))
+      setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds))
   );
 }
 

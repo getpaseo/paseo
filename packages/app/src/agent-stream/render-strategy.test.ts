@@ -12,6 +12,7 @@ import {
   isNearBottomForStreamRenderStrategy,
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
+  resolveBottomAnchorTransportBehavior,
 } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
@@ -63,6 +64,8 @@ describe("resolveStreamRenderStrategy", () => {
     });
 
     expect(strategy.shouldUseVirtualizedList()).toBe(false);
+    expect(strategy.getFlatListInverted()).toBe(false);
+    expect(strategy.getOverlayScrollbarInverted()).toBe(false);
     expect(strategy.shouldAnchorBottomOnContentSizeChange()).toBe(true);
     expect(strategy.getBottomAnchorTransportBehavior()).toEqual({
       verificationDelayFrames: 0,
@@ -70,26 +73,56 @@ describe("resolveStreamRenderStrategy", () => {
     });
   });
 
-  it("uses a virtualized forward stream on native", () => {
+  it("uses inverted_stream on native", () => {
     const strategy = resolveStreamRenderStrategy({
       platform: "ios",
       isMobileBreakpoint: false,
     });
 
     expect(strategy.shouldUseVirtualizedList()).toBe(true);
+    expect(strategy.getFlatListInverted()).toBe(true);
+    expect(strategy.getOverlayScrollbarInverted()).toBe(true);
     expect(strategy.shouldAnchorBottomOnContentSizeChange()).toBe(false);
     expect(strategy.getBottomAnchorTransportBehavior()).toEqual({
       verificationDelayFrames: 2,
       verificationRetryMode: "recheck",
     });
   });
+
+  it("delays native verification while viewport settling is in flight", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      resolveBottomAnchorTransportBehavior({
+        strategy,
+        isViewportSettling: true,
+      }),
+    ).toEqual({
+      verificationDelayFrames: 4,
+      verificationRetryMode: "recheck",
+    });
+  });
+
+  it("does not inflate forward-stream verification delays during web resize", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      resolveBottomAnchorTransportBehavior({
+        strategy,
+        isViewportSettling: true,
+      }),
+    ).toEqual({
+      verificationDelayFrames: 0,
+      verificationRetryMode: "rescroll",
+    });
+  });
 });
-
-const PLATFORMS = ["web", "ios", "android"] as const;
-
-function strategyFor(platform: (typeof PLATFORMS)[number]) {
-  return resolveStreamRenderStrategy({ platform, isMobileBreakpoint: false });
-}
 
 describe("stream ordering", () => {
   const streamItems: StreamItem[] = [
@@ -98,8 +131,11 @@ describe("stream ordering", () => {
     assistantMessage("a2", "assistant-2", 3),
   ];
 
-  it.each(PLATFORMS)("keeps oldest-to-newest order for tail and head on %s", (platform) => {
-    const strategy = strategyFor(platform);
+  it("keeps forward_stream order unchanged for tail and head", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
 
     const tail = orderTailForStreamRenderStrategy({ strategy, streamItems });
     const head = orderHeadForStreamRenderStrategy({ strategy, streamHead: streamItems });
@@ -107,42 +143,84 @@ describe("stream ordering", () => {
     expect(tail.map((item) => item.id)).toEqual(["u1", "a1", "a2"]);
     expect(head.map((item) => item.id)).toEqual(["u1", "a1", "a2"]);
   });
+
+  it("reverses inverted_stream order for tail and head", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+
+    const tail = orderTailForStreamRenderStrategy({ strategy, streamItems });
+    const head = orderHeadForStreamRenderStrategy({ strategy, streamHead: streamItems });
+
+    expect(tail.map((item) => item.id)).toEqual(["a2", "a1", "u1"]);
+    expect(head.map((item) => item.id)).toEqual(["a2", "a1", "u1"]);
+  });
 });
 
 describe("neighbor and traversal semantics", () => {
-  it.each(PLATFORMS)("maps above/below indices on %s", (platform) => {
-    const strategy = strategyFor(platform);
+  it("maps above/below indices for forward and inverted streams", () => {
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
 
-    expect(getStreamNeighborIndex({ strategy, index: 3, relation: "above" })).toBe(2);
-    expect(getStreamNeighborIndex({ strategy, index: 3, relation: "below" })).toBe(4);
+    expect(getStreamNeighborIndex({ strategy: forward, index: 3, relation: "above" })).toBe(2);
+    expect(getStreamNeighborIndex({ strategy: forward, index: 3, relation: "below" })).toBe(4);
+    expect(getStreamNeighborIndex({ strategy: inverted, index: 3, relation: "above" })).toBe(4);
+    expect(getStreamNeighborIndex({ strategy: inverted, index: 3, relation: "below" })).toBe(2);
   });
 
-  it.each(PLATFORMS)("collects assistant response content on %s", (platform) => {
+  it("collects assistant response content with strategy traversal direction", () => {
     const chronological: StreamItem[] = [
       userMessage("u1", "user-1", 1),
       assistantMessage("a1", "assistant-1", 2),
       assistantMessage("a2", "assistant-2", 3),
       userMessage("u2", "user-2", 4),
     ];
-    const strategy = strategyFor(platform);
-    const items = orderTailForStreamRenderStrategy({ strategy, streamItems: chronological });
 
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const forwardStartIndex = chronological.findIndex((item) => item.id === "a2");
     expect(
       collectAssistantResponseContentForStreamRenderStrategy({
-        strategy,
-        items,
-        startIndex: items.findIndex((item) => item.id === "a2"),
+        strategy: forward,
+        items: chronological,
+        startIndex: forwardStartIndex,
+      }),
+    ).toBe("assistant-1\n\nassistant-2");
+
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+    const invertedItems = orderTailForStreamRenderStrategy({
+      strategy: inverted,
+      streamItems: chronological,
+    });
+    const invertedStartIndex = invertedItems.findIndex((item) => item.id === "a2");
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy: inverted,
+        items: invertedItems,
+        startIndex: invertedStartIndex,
       }),
     ).toBe("assistant-1\n\nassistant-2");
   });
 
-  it("keeps copied content within the canonical turn without a visible prompt", () => {
+  it("collects copy content across adjacent turns without a visible prompt", () => {
     const chronological: StreamItem[] = [
       { ...assistantMessage("a1", "first turn", 1), turnId: "turn-1" },
       { ...toolCall("tool", 2), turnId: "turn-2" },
       { ...assistantMessage("a2", "second turn", 3), turnId: "turn-2" },
     ];
-    const strategy = strategyFor("web");
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
 
     expect(
       collectAssistantResponseContentForStreamRenderStrategy({
@@ -150,21 +228,41 @@ describe("neighbor and traversal semantics", () => {
         items: chronological,
         startIndex: 2,
       }),
-    ).toBe("second turn");
+    ).toBe("first turn\n\nsecond turn");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {
-    const strategy = strategyFor("web");
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
     const items: StreamItem[] = [userMessage("u1", "user-1", 1)];
 
-    expect(getStreamNeighborItem({ strategy, items, index: 0, relation: "above" })).toBeUndefined();
-    expect(getStreamNeighborItem({ strategy, items, index: 0, relation: "below" })).toBeUndefined();
+    expect(
+      getStreamNeighborItem({
+        strategy: forward,
+        items,
+        index: 0,
+        relation: "above",
+      }),
+    ).toBeUndefined();
+    expect(
+      getStreamNeighborItem({
+        strategy: forward,
+        items,
+        index: 0,
+        relation: "below",
+      }),
+    ).toBeUndefined();
   });
 });
 
 describe("scroll/bottom calculations", () => {
-  it.each(PLATFORMS)("computes near-bottom from the distance to the end on %s", (platform) => {
-    const strategy = strategyFor(platform);
+  it("computes near-bottom using forward_stream distance-from-bottom math", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
 
     expect(
       isNearBottomForStreamRenderStrategy({
@@ -186,10 +284,48 @@ describe("scroll/bottom calculations", () => {
     ).toBe(false);
   });
 
-  it.each(PLATFORMS)("maps scroll-to-bottom to the max offset on %s", (platform) => {
+  it("computes near-bottom and scroll-to-bottom offset for inverted_stream", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      isNearBottomForStreamRenderStrategy({
+        strategy,
+        offsetY: 12,
+        viewportHeight: 300,
+        contentHeight: 1000,
+        threshold: 24,
+      }),
+    ).toBe(true);
+    expect(
+      isNearBottomForStreamRenderStrategy({
+        strategy,
+        offsetY: 40,
+        viewportHeight: 300,
+        contentHeight: 1000,
+        threshold: 24,
+      }),
+    ).toBe(false);
     expect(
       getBottomOffsetForStreamRenderStrategy({
-        strategy: strategyFor(platform),
+        strategy,
+        viewportHeight: 300,
+        contentHeight: 1000,
+      }),
+    ).toBe(0);
+  });
+
+  it("maps scroll-to-bottom to max offset for forward_stream", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+
+    expect(
+      getBottomOffsetForStreamRenderStrategy({
+        strategy,
         viewportHeight: 320,
         contentHeight: 1000,
       }),
@@ -198,14 +334,35 @@ describe("scroll/bottom calculations", () => {
 });
 
 describe("edge slot semantics", () => {
-  it.each(PLATFORMS)("uses the footer slot on %s", (platform) => {
+  it("uses footer slot for forward_stream and header slot for inverted_stream", () => {
     const EdgeSlot = () => null;
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
 
-    expect(
-      getStreamEdgeSlotProps({ strategy: strategyFor(platform), component: EdgeSlot, gapSize: 4 }),
-    ).toEqual({
+    const forwardProps = getStreamEdgeSlotProps({
+      strategy: forward,
+      component: EdgeSlot,
+      gapSize: 4,
+    });
+    const invertedProps = getStreamEdgeSlotProps({
+      strategy: inverted,
+      component: EdgeSlot,
+      gapSize: 4,
+    });
+
+    expect(forwardProps).toEqual({
       ListFooterComponent: EdgeSlot,
       ListFooterComponentStyle: { marginTop: 4 },
+    });
+    expect(invertedProps).toEqual({
+      ListHeaderComponent: EdgeSlot,
+      ListHeaderComponentStyle: { marginBottom: 4 },
     });
   });
 });
@@ -216,31 +373,81 @@ describe("layout strategy edges", () => {
     assistantMessage("a1", "assistant-1", 2),
   ];
 
-  it.each(PLATFORMS)(
-    "uses the newest history edge as the history/live boundary on %s",
-    (platform) => {
-      const strategy = strategyFor(platform);
-      const history = orderTailForStreamRenderStrategy({ strategy, streamItems });
+  it("uses the newest history edge as the history/live boundary", () => {
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
 
-      expect(getHistoryLiveBoundaryIndexForStreamRenderStrategy({ strategy, history })).toBe(1);
-    },
-  );
+    const forwardHistory = orderTailForStreamRenderStrategy({ strategy: forward, streamItems });
+    const invertedHistory = orderTailForStreamRenderStrategy({ strategy: inverted, streamItems });
 
-  it.each(PLATFORMS)(
-    "uses the oldest live-head edge as the live-head/history boundary on %s",
-    (platform) => {
-      const strategy = strategyFor(platform);
-      const liveHead = orderHeadForStreamRenderStrategy({ strategy, streamHead: streamItems });
+    expect(
+      getHistoryLiveBoundaryIndexForStreamRenderStrategy({
+        strategy: forward,
+        history: forwardHistory,
+      }),
+    ).toBe(1);
+    expect(
+      getHistoryLiveBoundaryIndexForStreamRenderStrategy({
+        strategy: inverted,
+        history: invertedHistory,
+      }),
+    ).toBe(0);
+  });
 
-      expect(getLiveHeadHistoryBoundaryIndexForStreamRenderStrategy({ strategy, liveHead })).toBe(
-        0,
-      );
-    },
-  );
+  it("uses the oldest live-head edge as the live-head/history boundary", () => {
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
 
-  it.each(PLATFORMS)("renders a cell's content before its footer on %s", (platform) => {
-    expect(getFrameChildOrderForStreamRenderStrategy({ strategy: strategyFor(platform) })).toBe(
+    const forwardHead = orderHeadForStreamRenderStrategy({
+      strategy: forward,
+      streamHead: streamItems,
+    });
+    const invertedHead = orderHeadForStreamRenderStrategy({
+      strategy: inverted,
+      streamHead: streamItems,
+    });
+
+    expect(
+      getLiveHeadHistoryBoundaryIndexForStreamRenderStrategy({
+        strategy: forward,
+        liveHead: forwardHead,
+      }),
+    ).toBe(0);
+    expect(
+      getLiveHeadHistoryBoundaryIndexForStreamRenderStrategy({
+        strategy: inverted,
+        liveHead: invertedHead,
+      }),
+    ).toBe(1);
+  });
+
+  it("names the frame child order needed by native inverted cells", () => {
+    const forward = resolveStreamRenderStrategy({
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    const inverted = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+
+    expect(getFrameChildOrderForStreamRenderStrategy({ strategy: forward })).toBe(
       "content-then-footer",
+    );
+    expect(getFrameChildOrderForStreamRenderStrategy({ strategy: inverted })).toBe(
+      "footer-then-content",
     );
   });
 });

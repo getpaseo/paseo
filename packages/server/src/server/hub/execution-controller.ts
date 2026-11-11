@@ -13,7 +13,6 @@ import {
 } from "../agent/provider-options.js";
 
 import type { HubExecutionAgents, OwnedAgentEvent } from "./daemon-executions.js";
-import { foldFeatureValues } from "../agent/option-controls.js";
 
 interface HubExecutionControllerOptions {
   agents: HubExecutionAgents;
@@ -168,8 +167,8 @@ export class HubExecutionController {
         model: message.model,
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,
-        // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-        providerOptions: foldFeatureValues(message).providerOptions,
+        featureValues: message.featureValues,
+        providerOptions: message.providerOptions,
         toolPolicy: message.toolPolicy,
         env: message.env,
         mcpServers: message.mcpServers,

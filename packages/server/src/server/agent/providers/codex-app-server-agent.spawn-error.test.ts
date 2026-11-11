@@ -35,14 +35,15 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
   });
 
   test("fetchCatalog settles when the refresh deadline aborts an unanswered initialize", async () => {
-    const child = createCodexAppServerChildProcess();
-    const kill = vi.spyOn(child, "kill");
-    const client = new CodexAppServerAgentClient(logger, undefined, {
-      appServerProcess: {
-        resolvePrefix: async () => ({ command: "codex", args: [] }),
-        spawn: () => child,
+    const client = new CodexAppServerAgentClient(logger, {
+      command: {
+        mode: "replace",
+        argv: ["/nonexistent/codex-binary-that-does-not-exist"],
       },
     });
+    const child = createCodexAppServerChildProcess();
+    const kill = vi.spyOn(child, "kill");
+    Object.assign(client, { spawnAppServer: async () => child });
 
     await expect(
       runProviderRefreshWithDeadline({

@@ -1,12 +1,4 @@
-import { buildStoredAgentPayload } from "./agent/agent-projections.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
-import { Session as InspectorSession } from "node:inspector/promises";
-import type { HeapProfiler } from "node:inspector";
-import {
-  FileBackedWorkspaceRegistry,
-  createPersistedWorkspaceRecord,
-} from "./workspace-registry.js";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -81,10 +73,7 @@ class WorkspaceStatus {
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
-    workspaceRegistry: {
-      listActive: async () => this.workspaces.filter((w) => !w.archivedAt),
-      get: async (id) => this.workspaces.find((w) => w.workspaceId === id) ?? null,
-    },
+    workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
     workspaceLastUserMessageTimes: async () => {
       const times = new Map<string, string>();
@@ -273,8 +262,6 @@ interface AgentState {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
-  backgroundWork?: AgentSnapshotPayload["backgroundWork"];
-  background?: boolean;
 }
 
 function createAgent(
@@ -286,7 +273,6 @@ function createAgent(
     provider: "codex",
     cwd: input.cwd,
     ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-    ...(input.background ? { background: true } : {}),
     model: null,
     thinkingOptionId: null,
     effectiveThinkingOptionId: null,
@@ -294,7 +280,6 @@ function createAgent(
     updatedAt: NOW,
     lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status,
-    backgroundWork: input.backgroundWork,
     capabilities: {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -326,17 +311,6 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
-  test("treats background work as running without changing foreground status", async () => {
-    const workspace = new WorkspaceStatus();
-    workspace.hasRootAgent({
-      id: "root-agent",
-      status: "idle",
-      backgroundWork: { count: 1 },
-      requiresAttention: true,
-      attentionReason: "finished",
-    });
-    await expect(workspace.workspaceStatus()).resolves.toBe("running");
-  });
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -354,30 +328,6 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
-  });
-
-  test("an errored root agent shows failed only until its error is read", async () => {
-    const unread = new WorkspaceStatus();
-    unread.hasRootAgent({
-      id: "root-agent",
-      status: "error",
-      requiresAttention: true,
-      attentionReason: "error",
-    });
-    await expect(unread.workspaceStatus()).resolves.toBe("failed");
-
-    const read = new WorkspaceStatus();
-    read.hasRootAgent({ id: "root-agent", status: "error", requiresAttention: false });
-    await expect(read.workspaceStatus()).resolves.toBe("done");
-  });
-
-  test("a running background agent does not make its workspace running", async () => {
-    const workspace = new WorkspaceStatus();
-
-    workspace.hasRootAgent({ id: "root-agent", status: "idle" });
-    workspace.hasRootAgent({ id: "classifier", status: "running", background: true });
-
-    await expect(workspace.workspaceStatus()).resolves.toBe("done");
   });
 
   test("same-cwd workspaces attribute agent status only to the owner", async () => {
@@ -625,10 +575,7 @@ describe("WorkspaceDirectory empty projects", () => {
     return new WorkspaceDirectory({
       logger: createTestLogger(),
       projectRegistry: { list: async () => input.projects },
-      workspaceRegistry: {
-        listActive: async () => input.workspaces.filter((w) => !w.archivedAt),
-        get: async (id) => input.workspaces.find((w) => w.workspaceId === id) ?? null,
-      },
+      workspaceRegistry: { list: async () => input.workspaces },
       listAgentPayloads: async () => [],
       workspaceLastUserMessageTimes: async () => new Map(),
       listProviderSubagentActivity: async () => [],
@@ -787,9 +734,9 @@ test("Git observation targets exclude archived records without hydrating app des
     logger: createTestLogger(),
     projectRegistry: { list: async () => [project("active"), project("archived", NOW)] },
     workspaceRegistry: {
-      get: async () => null,
-      listActive: async () => [
+      list: async () => [
         workspace("observed", "active"),
+        workspace("hidden", "active", NOW),
         workspace("hidden-project", "archived"),
       ],
     },
@@ -852,22 +799,13 @@ test("prompt recency reads archived records without projecting agents or exposin
       lastUserMessageAt: "2026-03-05T00:00:00.000Z",
     });
     await storage.upsert({ ...base, id: "output", lastActivityAt: "2026-03-06T00:00:00.000Z" });
-    await storage.upsert({ ...base, id: "live", lastUserMessageAt: "2026-03-09T00:00:00.000Z" });
     const unexpectedProjection = (): never => {
       throw new Error("Prompt sorting projected an agent payload");
     };
     const directory = new AgentDirectory({
       storage,
-      manager: {
-        listAgents: () => [
-          {
-            id: "live",
-            workspaceId: "w",
-            lastUserMessageAt: new Date("2026-03-02T00:00:00.000Z"),
-          } as ManagedAgent,
-        ],
-      },
-      workspaces: { get: async () => null },
+      manager: { listAgents: () => [] },
+      workspaces: { get: async () => null, list: async () => [] },
       projectLive: unexpectedProjection,
       projectStored: unexpectedProjection,
       isProviderVisible: () => false,
@@ -880,149 +818,3 @@ test("prompt recency reads archived records without projecting agents or exposin
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("scoped descriptor builds allocate independently of archived history", async () => {
-  const home = await mkdtemp(join(tmpdir(), "descriptor-history-"));
-  try {
-    const logger = createTestLogger();
-    const agentsPath = join(home, "agents");
-    await mkdir(agentsPath);
-    const records = Array.from({ length: 10001 }, (_, i) =>
-      createPersistedWorkspaceRecord({
-        workspaceId: `w${i}`,
-        projectId: "p",
-        cwd: home,
-        kind: "directory",
-        displayName: "workspace",
-        createdAt: NOW,
-        updatedAt: NOW,
-        archivedAt: i ? NOW : null,
-      }),
-    );
-    await writeFile(join(home, "workspaces.json"), JSON.stringify(records));
-    for (let offset = 0; offset < 10000; offset += 100)
-      await Promise.all(
-        Array.from({ length: 100 }, (_, i) => {
-          const id = `a${offset + i}`;
-          return writeFile(
-            join(agentsPath, `${id}.json`),
-            JSON.stringify({
-              id,
-              provider: "codex",
-              cwd: home,
-              workspaceId: "w1",
-              createdAt: NOW,
-              updatedAt: NOW,
-              labels: {},
-              archivedAt: NOW,
-              lastUserMessageAt: NOW,
-            }),
-          );
-        }),
-      );
-    const storage = new AgentStorage(agentsPath, logger);
-    const registry = new FileBackedWorkspaceRegistry(join(home, "workspaces.json"), logger);
-    await storage.initialize();
-    await storage.upsert({
-      id: "parent",
-      provider: "codex",
-      cwd: home,
-      workspaceId: "w2",
-      createdAt: NOW,
-      updatedAt: NOW,
-    });
-    await storage.upsert({
-      id: "child",
-      provider: "codex",
-      cwd: home,
-      workspaceId: "w0",
-      createdAt: NOW,
-      updatedAt: NOW,
-      lastStatus: "running",
-      labels: { "paseo.parent-agent-id": "parent" },
-    });
-    await registry.initialize();
-    const agents = new AgentDirectory({
-      storage,
-      workspaces: registry,
-      manager: { listAgents: () => [] },
-      projectLive: async () => {
-        throw new Error("Unexpected live projection");
-      },
-      projectStored: (record) =>
-        buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
-      isProviderVisible: () => true,
-      isStoredProviderAvailable: () => true,
-    });
-    const directory = new WorkspaceDirectory({
-      logger,
-      workspaceRegistry: registry,
-      projectRegistry: {
-        list: async () => [
-          {
-            projectId: "p",
-            rootPath: home,
-            kind: "non_git",
-            displayName: "project",
-            createdAt: NOW,
-            updatedAt: NOW,
-            archivedAt: null,
-          },
-        ],
-      },
-      listAgentPayloads: (workspaceIds) =>
-        agents.list({ workspaceIds, includeBackground: true, includeAncestors: true }),
-      workspaceLastUserMessageTimes: (workspaceIds) =>
-        agents.workspaceLastUserMessageTimes(workspaceIds),
-      listProviderSubagentActivity: async () => [],
-      listTerminalActivityContributions: async () => [],
-      isProviderVisibleToClient: () => true,
-      buildWorkspaceDescriptor: async ({ workspace }) => ({
-        id: workspace.workspaceId,
-        projectId: "p",
-        projectDisplayName: "project",
-        projectRootPath: home,
-        projectKind: "non_git",
-        workspaceDirectory: home,
-        workspaceKind: "directory",
-        name: "workspace",
-        status: "done",
-        activityAt: null,
-        diffStat: null,
-        scripts: [],
-        gitRuntime: null,
-        githubRuntime: null,
-      }),
-    });
-    const scoped = await directory.buildDescriptorMap({
-      workspaceIds: new Set(["w0"]).values(),
-      includeGitData: false,
-    });
-    expect(scoped.get("w0")?.status).toBe("running");
-    const inspector = new InspectorSession();
-    inspector.connect();
-    let bytes = 0;
-    try {
-      await inspector.post("HeapProfiler.startSampling", {
-        samplingInterval: 16384,
-        includeObjectsCollectedByMajorGC: true,
-        includeObjectsCollectedByMinorGC: true,
-      });
-      for (let i = 0; i < 100; i++)
-        await directory.buildDescriptorMap({
-          workspaceIds: new Set(["w0"]).values(),
-          includeGitData: false,
-        });
-      const { profile } = await inspector.post("HeapProfiler.stopSampling");
-      function sum(node: HeapProfiler.SamplingHeapProfileNode): number {
-        return node.selfSize + node.children.reduce((total, child) => total + sum(child), 0);
-      }
-      bytes = sum(profile.head);
-    } finally {
-      inspector.disconnect();
-    }
-    expect(bytes).toBeLessThan(8 * 1024 * 1024);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-}, 30000);

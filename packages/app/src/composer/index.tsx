@@ -31,19 +31,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import {
-  controlSizingForLayout,
-  TOOLBAR_CONTROL_GAP,
-  TOOLBAR_DISC_GLYPH_SIZES,
-  TOOLBAR_DISC_SIZE,
-  TOOLBAR_RINGS,
-  toolbarGlyphsFor,
-  toolbarGlyphTone,
-  type ToolbarGlyph,
-  toolbarSlot,
-} from "@/components/ui/control-geometry";
-import { usePanelStore, type MobilePanelView } from "@/stores/panel-store";
-import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
+import { usePanelStore } from "@/stores/panel-store";
+import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -66,11 +55,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
-import {
-  selectAgentSentMessages,
-  selectAgentTurnPresentation,
-  useSessionStore,
-} from "@/stores/session-store";
+import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
@@ -82,7 +67,7 @@ import {
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import type { DraftCommandTarget } from "@/agent-commands";
+import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
@@ -128,18 +113,13 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
-import { useIsInputLive } from "./input/use-input-live";
 import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
-import { ComposerRecall } from "@/composer/recall";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { usePaneHost } from "@/panels/pane-context";
-import { OverlayDismissalScope, useDismissOverlays } from "@/components/ui/overlay-dismissal";
-import type { PaneHost } from "@/panels/panel-manifest";
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
@@ -154,10 +134,6 @@ import type {
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
-import { ComposerInputProvider, type ComposerInput } from "@/composer/session";
-import type { ComposerFocusOptions } from "@/composer/model";
-import { useRetainedPanelActive } from "@/components/retained-panel";
-import { insertAtSelection } from "@/composer/insert-text";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
@@ -211,6 +187,10 @@ const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
 
 function noop() {}
 const noopCallback = () => {};
+
+function resolveComposerButtonIconSize(): number {
+  return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
+}
 
 function resolveIsComposerLocked(
   submitBehavior: "clear" | "preserve-and-lock",
@@ -273,22 +253,20 @@ function resolveCheckoutRemoteUrl(
   return checkoutStatus?.remoteUrl ?? null;
 }
 
-function buildCancelButtonStyle(
-  pressed: boolean,
-  isConnected: boolean,
-  isCancellingAgent: boolean,
-): object[] {
-  const pressedStyle = pressed ? styles.discPressed : undefined;
+function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean): object[] {
   const disabled = !isConnected || isCancellingAgent ? styles.buttonDisabled : undefined;
-  return [styles.cancelButton, pressedStyle, disabled].filter((value): value is object =>
-    Boolean(value),
-  );
+  return [styles.cancelButton, disabled].filter((value): value is object => Boolean(value));
 }
 
-function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: boolean): object[] {
-  const pressedStyle = pressed ? styles.discPressed : undefined;
+function buildRealtimeVoiceButtonStyle(
+  hovered: boolean | undefined,
+  voiceButtonDisabled: boolean,
+  reserveLeadingSpace: boolean,
+): object[] {
+  const hoveredStyle = hovered ? styles.iconButtonHovered : undefined;
   const disabledStyle = voiceButtonDisabled ? styles.buttonDisabled : undefined;
-  return [styles.realtimeVoiceButton, pressedStyle, disabledStyle].filter(
+  const reserveStyle = reserveLeadingSpace ? styles.realtimeVoiceButtonCompactReserve : undefined;
+  return [styles.realtimeVoiceButton, reserveStyle, hoveredStyle, disabledStyle].filter(
     (value): value is object => Boolean(value),
   );
 }
@@ -1017,24 +995,20 @@ interface ComposerAutocompleteHandle {
 function ComposerAutocompleteBinding({
   text,
   cursor,
-  recall,
   configuration,
   inputRef,
-  children,
-  anchorStyle,
+  anchorRef,
   show,
   ref,
 }: {
   text: ComposerTextSource;
   cursor: StoreApi<number>;
-  recall: ComposerRecall;
   configuration: Omit<
     Parameters<typeof useAgentAutocomplete>[0],
     "userInput" | "cursorIndex" | "onAutocompleteApplied"
   >;
   inputRef: React.RefObject<MessageInputRef | null>;
-  children: React.ReactNode;
-  anchorStyle: React.ComponentProps<typeof View>["style"];
+  anchorRef: React.RefObject<View | null>;
   show: boolean;
   ref: React.Ref<ComposerAutocompleteHandle>;
 }) {
@@ -1046,11 +1020,9 @@ function ComposerAutocompleteBinding({
     cursorIndex: Math.min(cursorIndex, userInput.length),
     onAutocompleteApplied: () => inputRef.current?.focus(),
   });
-  // A recalled message is sent as is; its leading `/command` must not open the picker.
-  const isShown = show && !recall.isShowing(userInput);
   const handleKeyPress = autocomplete.onKeyPress;
-  useImperativeHandle(ref, () => ({ onKeyPress: (event) => isShown && handleKeyPress(event) }), [
-    isShown,
+  useImperativeHandle(ref, () => ({ onKeyPress: (event) => show && handleKeyPress(event) }), [
+    show,
     handleKeyPress,
   ]);
   const selectOption = autocomplete.onSelectOption;
@@ -1060,15 +1032,16 @@ function ComposerAutocompleteBinding({
   );
   return (
     <ComposerAutocomplete
-      visible={autocomplete.isVisible && isShown}
-      anchorStyle={anchorStyle}
+      visible={autocomplete.isVisible && show}
+      anchorRef={anchorRef}
       options={autocomplete.options}
       selectedIndex={autocomplete.selectedIndex}
       onSelect={onSelect}
-      status={autocomplete.status}
-    >
-      {children}
-    </ComposerAutocomplete>
+      isLoading={autocomplete.isLoading}
+      errorMessage={autocomplete.errorMessage}
+      loadingText={autocomplete.loadingText}
+      emptyText={autocomplete.emptyText}
+    />
   );
 }
 
@@ -1094,8 +1067,8 @@ function ComposerForgeBinding({
 }
 
 interface ComposerCancelButtonProps {
-  discGlyphSize: number;
-  cancelButtonStyle: (state: PressableStateCallbackType) => object[];
+  buttonIconSize: number;
+  cancelButtonStyle: (object | undefined)[];
   handleCancelAgent: () => void;
   isConnected: boolean;
   isCancellingAgent: boolean;
@@ -1104,7 +1077,7 @@ interface ComposerCancelButtonProps {
 }
 
 function ComposerCancelButton({
-  discGlyphSize,
+  buttonIconSize,
   cancelButtonStyle,
   handleCancelAgent,
   isConnected,
@@ -1118,7 +1091,7 @@ function ComposerCancelButton({
   const icon = isCancellingAgent ? (
     <LoadingSpinner size="small" color="white" />
   ) : (
-    <Square size={discGlyphSize} color="white" fill="white" />
+    <Square size={buttonIconSize} color="white" fill="white" />
   );
   const shortcutNode = agentInterruptKeys ? <Shortcut chord={agentInterruptKeys} /> : null;
   return (
@@ -1130,7 +1103,7 @@ function ComposerCancelButton({
         accessibilityRole="button"
         style={cancelButtonStyle}
       >
-        <View style={styles.cancelButtonDisc}>{icon}</View>
+        {icon}
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipRow}>
@@ -1143,7 +1116,7 @@ function ComposerCancelButton({
 }
 
 interface ComposerVoiceModeButtonProps {
-  glyph: ToolbarGlyph;
+  buttonIconSize: number;
   handleToggleRealtimeVoice: () => void;
   isConnected: boolean;
   isVoiceSwitching: boolean;
@@ -1154,18 +1127,37 @@ interface ComposerVoiceModeButtonProps {
   t: TFunction;
 }
 
-/** Whether voice mode can take the trailing disc; MessageInput decides when it does. */
-function offersVoiceMode(input: {
+interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
   isVoiceModeForAgent: boolean;
   hasAgent: boolean;
   isAgentRunning: boolean;
+  hasSendableContent: boolean;
+  isCompact: boolean;
   showVoice: boolean;
-}): boolean {
-  return input.showVoice && !input.isVoiceModeForAgent && input.hasAgent && !input.isAgentRunning;
+}
+
+function ComposerRightControlsSlot({
+  isVoiceModeForAgent,
+  hasAgent,
+  isAgentRunning,
+  hasSendableContent,
+  isCompact,
+  showVoice,
+  ...voiceProps
+}: ComposerRightControlsSlotProps) {
+  const hideVoiceForCompactInput = isCompact && hasSendableContent;
+  const showVoiceModeButton =
+    showVoice && !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
+  if (!showVoiceModeButton) return null;
+  return (
+    <View style={styles.rightControls}>
+      <ComposerVoiceModeButton {...voiceProps} />
+    </View>
+  );
 }
 
 function ComposerVoiceModeButton({
-  glyph,
+  buttonIconSize,
   handleToggleRealtimeVoice,
   isConnected,
   isVoiceSwitching,
@@ -1176,25 +1168,13 @@ function ComposerVoiceModeButton({
   const shortcutNode = voiceToggleKeys ? <Shortcut chord={voiceToggleKeys} /> : null;
   const renderTriggerContent = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
-      const colorMapping =
-        toolbarGlyphTone(glyph, Boolean(hovered)) === "foreground"
-          ? iconForegroundMapping
-          : iconForegroundMutedMapping;
-      return (
-        <View style={styles.voiceModeDisc}>
-          {isVoiceSwitching ? (
-            <LoadingSpinner size="small" color="white" />
-          ) : (
-            <ThemedAudioLines
-              size={glyph.size}
-              strokeWidth={glyph.strokeWidth}
-              uniProps={colorMapping}
-            />
-          )}
-        </View>
-      );
+      if (isVoiceSwitching) {
+        return <LoadingSpinner size="small" color="white" />;
+      }
+      const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
+      return <ThemedAudioLines size={buttonIconSize} uniProps={colorMapping} />;
     },
-    [glyph, isVoiceSwitching],
+    [buttonIconSize, isVoiceSwitching],
   );
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -1217,24 +1197,6 @@ function ComposerVoiceModeButton({
   );
 }
 
-// A plugin modal can refuse to close; the request then tries the cursor anyway and settles.
-const OVERLAY_CLOSE_TIMEOUT_MS = 1_000;
-
-function closedWithin(closed: Promise<void>, timeoutMs: number): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<void>((resolve) => {
-    timeout = setTimeout(resolve, timeoutMs);
-  });
-  return Promise.race([closed, expired]).finally(() => clearTimeout(timeout));
-}
-
-/** Only the agent list can cover a screen outside a workspace: the Explorer lives in the workspace. */
-function isMobilePanelCoveringHost(target: MobilePanelView, host: PaneHost | null): boolean {
-  if (target === "agent-list") return true;
-  if (host === null) return false;
-  return target !== (host === "explorer" ? "file-explorer" : "agent");
-}
-
 export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   // A compact overlay panel (agent list, explorer) covers the pane without taking its
   // focus. The composer gives up input from the moment the user asks for the panel,
@@ -1242,21 +1204,16 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   // Pane focus stays put, so the keyboard the panel dismisses is a blur in the
   // user's own pane: closing the panel does not bring focus back.
   const isCompact = useIsCompactFormFactor();
-  const paneHost = usePaneHost();
-  const overlayPanelRequested = usePanelStore((state) =>
-    isMobilePanelCoveringHost(state.mobilePanel.target, paneHost),
-  );
+  const overlayPanelRequested = usePanelStore((state) => state.mobilePanel.target !== "agent");
   const coveredByOverlayPanel = isCompact && overlayPanelRequested;
   return (
     <ComposerKeyboardScopeProvider
       isPaneFocused={isPaneFocused}
       isActiveComposer={isPaneFocused && !coveredByOverlayPanel}
     >
-      <OverlayDismissalScope>
-        <RenderProfile id="ComposerContent">
-          <ComposerContent {...props} />
-        </RenderProfile>
-      </OverlayDismissalScope>
+      <RenderProfile id="ComposerContent">
+        <ComposerContent {...props} />
+      </RenderProfile>
     </ComposerKeyboardScopeProvider>
   );
 }
@@ -1311,6 +1268,7 @@ function ComposerContentImpl({
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
   const { t } = useTranslation();
+  const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
@@ -1339,13 +1297,15 @@ function ComposerContentImpl({
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
-  const controlSizing = controlSizingForLayout(isCompactFormFactor);
-  const toolbarGlyph = toolbarGlyphsFor(controlSizing).icon;
-  const discGlyphSize = TOOLBAR_DISC_GLYPH_SIZES[controlSizing];
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
-  const { finePointer: hasFinePointer } = usePointerCapabilities();
+  const hasFinePointer = useHasFinePointer();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
+  const hasText = useSyncExternalStore(
+    textSource.subscribe,
+    () => textSource.getSnapshot().trim().length > 0,
+    () => textSource.getSnapshot().trim().length > 0,
+  );
   const setUserInput = onChangeText;
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
@@ -1402,7 +1362,6 @@ function ComposerContentImpl({
   );
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
   const autocompleteRef = useRef<ComposerAutocompleteHandle>(null);
-  const recall = useMemo(() => new ComposerRecall(), []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([]);
   const nextPendingFileId = useRef(0);
@@ -1444,95 +1403,6 @@ function ComposerContentImpl({
       onChangeText(text);
     },
     [onChangeText],
-  );
-
-  const insertUserInput = useCallback(
-    (text: string) => {
-      const input = messageInputRef.current;
-      if (!input) {
-        onChangeText(textSource.getSnapshot() + text);
-        return;
-      }
-      const inserted = insertAtSelection(input.getInputSnapshot(), text);
-      input.replaceText(inserted.text, inserted.selection);
-    },
-    [onChangeText, textSource],
-  );
-  const isInputLive = useIsInputLive(messageInputRef);
-  const isPanelActive = useRetainedPanelActive();
-  const { isActiveComposer } = useComposerKeyboardScope();
-  const inputRevealed = isPanelActive && isActiveComposer;
-  const isActiveComposerRef = useRef(isActiveComposer);
-  isActiveComposerRef.current = isActiveComposer;
-  const isInputRevealed = useCallback(
-    () => isInputLive() && isActiveComposerRef.current,
-    [isInputLive],
-  );
-  const dismissOverlays = useDismissOverlays();
-  const latestFocusRef = useRef<Promise<void> | null>(null);
-  const takeInputFocus = useCallback(
-    (options?: ComposerFocusOptions) => {
-      const isFocused = () => messageInputRef.current?.isFocused() ?? false;
-      const place = () => {
-        messageInputRef.current?.focus();
-        if (options?.selection) messageInputRef.current?.setSelection(options.selection);
-      };
-      // The sheets, menus and modals this composer opened would otherwise cover the cursor, or take
-      // focus back as they close.
-      const request: Promise<void> = closedWithin(dismissOverlays(), OVERLAY_CLOSE_TIMEOUT_MS).then(
-        () => {
-          // A newer request decides where the cursor goes, and this one ends with it.
-          const latest = latestFocusRef.current;
-          if (latest && latest !== request) return latest;
-          if (isNative) {
-            place();
-            // A native input refuses focus without saying so, such as while dictation holds it.
-            if (!isFocused()) throw new Error("The composer input could not take focus.");
-            return;
-          }
-          return new Promise<void>((resolve, reject) => {
-            focusWithRetries({
-              focus: place,
-              isFocused,
-              onSuccess: resolve,
-              onTimeout: () => reject(new Error("The composer input could not take focus.")),
-            });
-          });
-        },
-      );
-      latestFocusRef.current = request;
-      return request;
-    },
-    [dismissOverlays],
-  );
-  const isComposerLockedRef = useRef(isComposerLocked);
-  isComposerLockedRef.current = isComposerLocked;
-  const composerInput = useMemo<ComposerInput>(
-    () => ({
-      locked: isComposerLocked,
-      isLocked: () => isComposerLockedRef.current,
-      isLive: isInputLive,
-      revealed: inputRevealed,
-      isRevealed: isInputRevealed,
-      focus: takeInputFocus,
-      textSource,
-      setText: replaceUserInput,
-      insertText: insertUserInput,
-      attachments,
-      changeAttachments: setSelectedAttachments,
-    }),
-    [
-      attachments,
-      inputRevealed,
-      insertUserInput,
-      isComposerLocked,
-      isInputLive,
-      isInputRevealed,
-      replaceUserInput,
-      setSelectedAttachments,
-      takeInputFocus,
-      textSource,
-    ],
   );
 
   const runClientSlashCommand = useCallback(
@@ -2109,24 +1979,16 @@ function ComposerContentImpl({
     ],
   );
 
-  // An open autocomplete owns the arrows; otherwise they may recall sent messages.
+  const hasSendableContent = hasText || selectedAttachments.length > 0;
+
+  // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
-    (event: ComposerKeyPressEvent) => {
-      if (autocompleteRef.current?.onKeyPress(event)) return true;
-      const recalledText = recall.handleKeyPress(event, () =>
-        selectAgentSentMessages(useSessionStore.getState().sessions[serverId], agentId),
-      );
-      if (recalledText === null) return false;
-      event.preventDefault();
-      replaceUserInput(recalledText);
-      return true;
-    },
-    [agentId, recall, replaceUserInput, serverId],
+    (event: ComposerKeyPressEvent) => autocompleteRef.current?.onKeyPress(event) ?? false,
+    [],
   );
 
-  const cancelButtonStyle = useCallback(
-    (state: PressableStateCallbackType) =>
-      buildCancelButtonStyle(state.pressed, isConnected, isCancellingAgent),
+  const cancelButtonStyle = useMemo(
+    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
     [isConnected, isCancellingAgent],
   );
 
@@ -2134,14 +1996,14 @@ function ComposerContentImpl({
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) =>
-      buildRealtimeVoiceButtonStyle(state.pressed, voiceButtonDisabled),
-    [voiceButtonDisabled],
+      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled, isCompactLayout),
+    [isCompactLayout, voiceButtonDisabled],
   );
 
   const activeActionContent = useMemo(
     () => (
       <ComposerCancelButton
-        discGlyphSize={discGlyphSize}
+        buttonIconSize={buttonIconSize}
         cancelButtonStyle={cancelButtonStyle}
         handleCancelAgent={handleCancelAgent}
         isConnected={isConnected}
@@ -2152,7 +2014,7 @@ function ComposerContentImpl({
     ),
     [
       agentInterruptKeys,
-      discGlyphSize,
+      buttonIconSize,
       cancelButtonStyle,
       handleCancelAgent,
       isCancellingAgent,
@@ -2161,32 +2023,32 @@ function ComposerContentImpl({
     ],
   );
 
-  const voiceModeContent = useMemo(
-    () =>
-      offersVoiceMode({
-        isVoiceModeForAgent,
-        hasAgent,
-        isAgentRunning,
-        showVoice: mode.showVoice,
-      }) ? (
-        <View style={styles.rightControls}>
-          <ComposerVoiceModeButton
-            glyph={toolbarGlyph}
-            handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-            isConnected={isConnected}
-            isVoiceSwitching={isVoiceSwitching}
-            realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-            voiceToggleKeys={voiceToggleKeys}
-            t={t}
-          />
-        </View>
-      ) : null,
+  const rightContent = useMemo(
+    () => (
+      <ComposerRightControlsSlot
+        isVoiceModeForAgent={isVoiceModeForAgent}
+        hasAgent={hasAgent}
+        isAgentRunning={isAgentRunning}
+        hasSendableContent={hasSendableContent}
+        isCompact={isCompactLayout}
+        showVoice={mode.showVoice}
+        buttonIconSize={buttonIconSize}
+        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+        isConnected={isConnected}
+        isVoiceSwitching={isVoiceSwitching}
+        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+        voiceToggleKeys={voiceToggleKeys}
+        t={t}
+      />
+    ),
     [
-      toolbarGlyph,
+      buttonIconSize,
       handleToggleRealtimeVoice,
       hasAgent,
+      hasSendableContent,
       isAgentRunning,
       isConnected,
+      isCompactLayout,
       isVoiceModeForAgent,
       isVoiceSwitching,
       mode.showVoice,
@@ -2196,6 +2058,7 @@ function ComposerContentImpl({
     ],
   );
 
+  const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
   const beforeVoiceContent = useMemo(
     () =>
       hasAgent ? (
@@ -2206,7 +2069,7 @@ function ComposerContentImpl({
             maxTokens={agentState.contextWindowMaxTokens}
             usedTokens={agentState.contextWindowUsedTokens}
             totalCostUsd={agentState.totalCostUsd}
-            toolbarRing={TOOLBAR_RINGS[controlSizing]}
+            glyphSize={contextWindowMeterGlyphSize}
           />
         </View>
       ) : null,
@@ -2217,7 +2080,7 @@ function ComposerContentImpl({
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
-      controlSizing,
+      contextWindowMeterGlyphSize,
     ],
   );
 
@@ -2337,27 +2200,18 @@ function ComposerContentImpl({
     [attachments, setSelectedAttachments, setGithubSearchQuery, setIsGithubPickerOpen],
   );
 
-  const leftContent = useMemo(() => {
-    const controls = renderLeftContent({
-      agentControls,
-      agentId,
-      serverId,
-      focusInput,
-      isCompactLayout,
-      showAgentControls: mode.showAgentControls,
-    });
-    return controls ? (
-      <ComposerInputProvider value={composerInput}>{controls}</ComposerInputProvider>
-    ) : null;
-  }, [
-    agentControls,
-    agentId,
-    composerInput,
-    focusInput,
-    isCompactLayout,
-    mode.showAgentControls,
-    serverId,
-  ]);
+  const leftContent = useMemo(
+    () =>
+      renderLeftContent({
+        agentControls,
+        agentId,
+        serverId,
+        focusInput,
+        isCompactLayout,
+        showAgentControls: mode.showAgentControls,
+      }),
+    [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
+  );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
     attachButtonRef.current = node;
@@ -2506,6 +2360,7 @@ function ComposerContentImpl({
       pluginClientSlashCommands,
     ],
   );
+  const messageInputContainerRef = useRef<View>(null);
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
@@ -2564,16 +2419,16 @@ function ComposerContentImpl({
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}
 
-            <ComposerAutocompleteBinding
-              text={textSource}
-              cursor={cursor}
-              recall={recall}
-              inputRef={messageInputRef}
-              anchorStyle={messageInputContainerStyle}
-              show={mode.showAutocomplete && !isFullscreen}
-              ref={autocompleteRef}
-              configuration={autocompleteConfiguration}
-            >
+            <View ref={messageInputContainerRef} style={messageInputContainerStyle}>
+              <ComposerAutocompleteBinding
+                text={textSource}
+                cursor={cursor}
+                inputRef={messageInputRef}
+                anchorRef={messageInputContainerRef}
+                show={mode.showAutocomplete && !isFullscreen}
+                ref={autocompleteRef}
+                configuration={autocompleteConfiguration}
+              />
               <ComposerForgeBinding
                 text={textSource}
                 configuration={forgeConfiguration}
@@ -2612,13 +2467,12 @@ function ComposerContentImpl({
                   disabled={isSubmitLoading}
                   leftContent={leftContent}
                   beforeVoiceContent={beforeVoiceContent}
-                  voiceModeContent={voiceModeContent}
+                  rightContent={rightContent}
                   activeActionContent={activeActionContent}
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
                   defaultSendBehavior={activeSendBehavior}
-                  sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
@@ -2654,7 +2508,7 @@ function ComposerContentImpl({
                 renderOption={renderGithubPickerOption}
               />
               {pluginAttachments.picker}
-            </ComposerAutocompleteBinding>
+            </View>
           </View>
         </View>
       </View>
@@ -2691,6 +2545,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: "100%",
     overflow: "visible",
     paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
   inputAreaLocked: {
     opacity: 0.6,
@@ -2700,6 +2555,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: 0,
     alignItems: "stretch",
     paddingHorizontal: 0,
+    paddingBottom: 0,
   },
   fullscreenFill: {
     flex: 1,
@@ -2719,49 +2575,42 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[3],
   },
   cancelButton: {
-    ...toolbarSlot(),
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cancelButtonDisc: {
-    width: TOOLBAR_DISC_SIZE,
-    height: TOOLBAR_DISC_SIZE,
+    width: 28,
+    height: 28,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
+    marginLeft: theme.spacing[1],
   },
   rightControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: TOOLBAR_CONTROL_GAP,
+    gap: theme.spacing[1],
   },
   contextWindowMeterSlot: {
-    ...toolbarSlot(),
+    width: 28,
+    height: 28,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
-  voiceModeDisc: {
-    width: TOOLBAR_DISC_SIZE,
-    height: TOOLBAR_DISC_SIZE,
+  realtimeVoiceButton: {
+    width: 28,
+    height: 28,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface3,
     alignItems: "center",
     justifyContent: "center",
   },
-  realtimeVoiceButton: {
-    ...toolbarSlot(),
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
+  realtimeVoiceButtonCompactReserve: {
+    marginLeft: theme.spacing[1],
   },
   realtimeVoiceButtonActive: {
     backgroundColor: theme.colors.palette.green[600],
     borderColor: theme.colors.palette.green[800],
   },
-  discPressed: {
-    opacity: 0.7,
+  iconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   attachmentTray: {
     flexDirection: "row",

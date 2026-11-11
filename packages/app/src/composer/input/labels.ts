@@ -1,6 +1,5 @@
 import type { TFunction } from "i18next";
 import type { SendBehavior } from "@/hooks/use-settings/storage";
-import type { AlternateSendAction } from "./state";
 
 export function resolveSubmitAccessibilityLabel(input: {
   submitButtonAccessibilityLabel: string | undefined;
@@ -21,19 +20,6 @@ export function resolveSubmitAccessibilityLabel(input: {
     );
   }
   return input.t("composer.input.sendMessage");
-}
-
-export function resolveSubmitAccessibilityHint(input: {
-  canPressLoadingButton: boolean;
-  alternateSendAction: AlternateSendAction | null;
-  t: TFunction;
-}): string | undefined {
-  if (input.canPressLoadingButton || !input.alternateSendAction) return undefined;
-  return input.t(
-    input.alternateSendAction === "queue"
-      ? "composer.input.longPressToQueue"
-      : "composer.input.longPressToSendNow",
-  );
 }
 
 export function resolveVoiceAccessibilityLabel(input: {

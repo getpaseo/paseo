@@ -343,8 +343,8 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     const repoRoot = createTempDir("paseo-branch-config-");
     const worktreeRoot = createTempDir("paseo-branch-worktree-");
     mkdirSync(path.join(worktreeRoot, ".git"));
-    await writePaseoWorktreeMetadata(worktreeRoot, { baseRefName: "main" });
-    await writePaseoWorktreeFirstAgentBranchAutoNameMetadata(worktreeRoot, {
+    writePaseoWorktreeMetadata(worktreeRoot, { baseRefName: "main" });
+    writePaseoWorktreeFirstAgentBranchAutoNameMetadata(worktreeRoot, {
       placeholderBranchName: "dazzling-yak",
     });
     writeConfig(repoRoot, {

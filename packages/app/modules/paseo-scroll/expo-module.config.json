@@ -1,1 +1,1 @@
-{ "platforms": ["android", "ios"], "android": { "modules": [] }, "ios": { "modules": [] } }
+{ "platforms": ["android"], "android": { "modules": [] } }

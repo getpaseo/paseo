@@ -1,5 +1,5 @@
-import type { PiTranscript } from "./transcript.js";
 import type {
+  PiAgentMessage,
   PiModel,
   PiPromptAck,
   PiRpcSlashCommand,
@@ -55,7 +55,7 @@ export interface PiRuntimeSession {
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<PiSessionState>;
-  getHistory(): Promise<PiTranscript>;
+  getMessages(): Promise<PiAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<PiModel[]>;
   setModel(provider: string, modelId: string): Promise<PiModel>;
   setThinkingLevel(level: string): Promise<void>;

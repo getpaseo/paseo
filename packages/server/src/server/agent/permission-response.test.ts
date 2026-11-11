@@ -32,15 +32,13 @@ class FakePermissionAgentManager {
     return this.permissionResult;
   }
 
-  async tryRunOutOfBand(): Promise<boolean> {
+  tryRunOutOfBand(): boolean {
     return this.outOfBandHandled;
   }
 
   getAgent() {
     return undefined;
   }
-
-  async reloadStalePluginSession(): Promise<void> {}
 
   hasInFlightRun(): boolean {
     return this.hasRunInFlight;

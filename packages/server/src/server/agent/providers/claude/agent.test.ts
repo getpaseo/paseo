@@ -18,9 +18,6 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
-import { AgentManager } from "../../agent-manager.js";
-import { ensureAgentLoaded } from "../../agent-loading.js";
-import { AgentStorage } from "../../agent-storage.js";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
@@ -33,11 +30,9 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { applyProviderOptionsPatch } from "../../option-controls.js";
-import { mergeProviderOptions } from "../../provider-options.js";
 
 interface TestClaudeSession {
-  translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
+  translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
   close(): Promise<void>;
 }
 
@@ -58,7 +53,7 @@ afterEach(() => {
 });
 
 describe("convertClaudeHistoryEntry", () => {
-  test("maps user tool results to timeline items", async () => {
+  test("maps user tool results to timeline items", () => {
     const toolUseId = "toolu_test";
     const entry = {
       type: "user",
@@ -84,14 +79,14 @@ describe("convertClaudeHistoryEntry", () => {
     ];
 
     const mapBlocks = vi.fn().mockReturnValue(stubTimeline);
-    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual(stubTimeline);
     expect(mapBlocks).toHaveBeenCalledTimes(1);
     expect(Array.isArray(mapBlocks.mock.calls[0][0])).toBe(true);
   });
 
-  test("replays persisted Claude tool results as completed tool calls", async () => {
+  test("replays persisted Claude tool results as completed tool calls", () => {
     const entry = {
       type: "user",
       message: {
@@ -129,12 +124,12 @@ describe("convertClaudeHistoryEntry", () => {
 
     const mapPersistedToolResultBlocks = (): AgentTimelineItem[] => completedToolCall;
 
-    expect(await convertClaudeHistoryEntry(entry, mapPersistedToolResultBlocks)).toEqual(
+    expect(convertClaudeHistoryEntry(entry, mapPersistedToolResultBlocks)).toEqual(
       completedToolCall,
     );
   });
 
-  test("returns user messages when no tool blocks exist", async () => {
+  test("returns user messages when no tool blocks exist", () => {
     const entry = {
       type: "user",
       message: {
@@ -143,7 +138,7 @@ describe("convertClaudeHistoryEntry", () => {
       },
     };
 
-    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "user_message",
         text: "Run npm test",
@@ -151,7 +146,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("converts compact boundary metadata variants", async () => {
+  test("converts compact boundary metadata variants", () => {
     const fixtures = [
       {
         entry: {
@@ -180,7 +175,7 @@ describe("convertClaudeHistoryEntry", () => {
     ] as const;
 
     for (const fixture of fixtures) {
-      expect(await convertClaudeHistoryEntry(fixture.entry, () => [])).toEqual([
+      expect(convertClaudeHistoryEntry(fixture.entry, () => [])).toEqual([
         {
           type: "compaction",
           status: "completed",
@@ -191,7 +186,7 @@ describe("convertClaudeHistoryEntry", () => {
     }
   });
 
-  test("skips synthetic user entries", async () => {
+  test("skips synthetic user entries", () => {
     const entry = {
       type: "user",
       isSynthetic: true,
@@ -202,13 +197,13 @@ describe("convertClaudeHistoryEntry", () => {
     };
 
     const mapBlocks = vi.fn().mockReturnValue([]);
-    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual([]);
     expect(mapBlocks).not.toHaveBeenCalled();
   });
 
-  test("skips meta user entries from Claude skill loading", async () => {
+  test("skips meta user entries from Claude skill loading", () => {
     const entry = {
       type: "user",
       isMeta: true,
@@ -224,13 +219,13 @@ describe("convertClaudeHistoryEntry", () => {
     };
 
     const mapBlocks = vi.fn().mockReturnValue([]);
-    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual([]);
     expect(mapBlocks).not.toHaveBeenCalled();
   });
 
-  test("skips interrupt placeholder transcript noise", async () => {
+  test("skips interrupt placeholder transcript noise", () => {
     const interruptEntry = {
       type: "user",
       message: {
@@ -251,11 +246,11 @@ describe("convertClaudeHistoryEntry", () => {
       .fn()
       .mockReturnValue([{ type: "assistant_message", text: "No response requested." }]);
 
-    expect(await convertClaudeHistoryEntry(interruptEntry, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(interruptEntry, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
   });
 
-  test("skips <local-command-stdout> messages (model switch, /context, etc.)", async () => {
+  test("skips <local-command-stdout> messages (model switch, /context, etc.)", () => {
     // Real entries from Claude Code JSONL history files
     const modelSwitch = {
       type: "user",
@@ -310,24 +305,24 @@ describe("convertClaudeHistoryEntry", () => {
 
     const mapBlocks = vi.fn().mockReturnValue([]);
 
-    expect(await convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
-    expect(await convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
 
     // Real user messages must NOT be filtered
     const realMessage = {
       type: "user",
       message: { role: "user", content: "fix the bug in auth.ts" },
     };
-    expect(await convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
+    expect(convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
       { type: "user_message", text: "fix the bug in auth.ts" },
     ]);
   });
 
-  test("maps task notifications to synthetic tool calls", async () => {
+  test("maps task notifications to synthetic tool calls", () => {
     const entry = {
       type: "system",
       subtype: "task_notification",
@@ -338,7 +333,7 @@ describe("convertClaudeHistoryEntry", () => {
       output_file: "/tmp/bg-fail-1.txt",
     };
 
-    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "tool_call",
         callId: "task_notification_task-note-system-1",
@@ -362,7 +357,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("maps queue-operation task notifications to synthetic tool calls", async () => {
+  test("maps queue-operation task notifications to synthetic tool calls", () => {
     const entry = {
       type: "queue-operation",
       operation: "enqueue",
@@ -377,7 +372,7 @@ describe("convertClaudeHistoryEntry", () => {
       ].join("\n"),
     };
 
-    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "tool_call",
         callId: "task_notification_task-note-queue-1",
@@ -401,7 +396,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("passes assistant content blocks through to the mapper", async () => {
+  test("passes assistant content blocks through to the mapper", () => {
     const entry = {
       type: "assistant",
       message: {
@@ -419,7 +414,7 @@ describe("convertClaudeHistoryEntry", () => {
     ];
     const mapBlocks = vi.fn().mockReturnValue(mappedTimeline);
 
-    expect(await convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
+    expect(convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
     expect(mapBlocks).toHaveBeenCalledWith(entry.message.content);
   });
 });
@@ -734,196 +729,6 @@ describe("ClaudeAgentSession features", () => {
     return { queryFactory, queryMock, launches };
   }
 
-  function createStreamingQueryMock() {
-    const mock = createQueryMock();
-    const messages: SDKMessage[] = [];
-    let pending: ((result: IteratorResult<SDKMessage, void>) => void) | null = null;
-    let ended = false;
-    const finish = () => {
-      ended = true;
-      pending?.({ done: true, value: undefined });
-      pending = null;
-    };
-    mock.queryMock.close.mockImplementation(finish);
-    mock.queryMock.return.mockImplementation(async () => finish());
-    mock.queryMock[Symbol.asyncIterator] = () => ({
-      next: async () => {
-        const message = messages.shift();
-        if (message) return { done: false, value: message };
-        if (ended) return { done: true, value: undefined };
-        return new Promise<IteratorResult<SDKMessage, void>>((resolve) => {
-          pending = resolve;
-        });
-      },
-    });
-    return {
-      ...mock,
-      push(message: SDKMessage) {
-        if (pending) {
-          pending({ done: false, value: message });
-          pending = null;
-        } else {
-          messages.push(message);
-        }
-      },
-    };
-  }
-
-  async function startToolForClosure() {
-    const mock = createStreamingQueryMock();
-    const session = await new ClaudeAgentClient({
-      logger,
-      queryFactory: mock.queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
-    const events: AgentStreamEvent[] = [];
-    let toolStarted!: () => void;
-    const running = new Promise<void>((resolve) => {
-      toolStarted = resolve;
-    });
-    const unsubscribe = session.subscribe((event) => {
-      events.push(event);
-      if (
-        event.type === "timeline" &&
-        event.item.type === "tool_call" &&
-        event.item.status === "running"
-      )
-        toolStarted();
-    });
-    await session.startTurn("run the tool");
-    mock.push({
-      type: "stream_event",
-      session_id: "closure-session",
-      uuid: "00000000-0000-4000-8000-000000000001",
-      parent_tool_use_id: null,
-      event: {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "tool_use", id: "closure-tool", name: "Bash", input: {} },
-      },
-    });
-    mock.push({
-      type: "stream_event",
-      session_id: "closure-session",
-      uuid: "00000000-0000-4000-8000-000000000002",
-      parent_tool_use_id: null,
-      event: { type: "content_block_stop", index: 0 },
-    });
-    await running;
-    return { ...mock, session, events, unsubscribe };
-  }
-
-  test("runtime close publishes tool cleanup without reporting a user turn cancellation", async () => {
-    const fixture = await startToolForClosure();
-    try {
-      await fixture.session.close();
-      expect(fixture.queryMock.close).toHaveBeenCalledTimes(1);
-      expect(
-        fixture.events.filter(
-          (event) =>
-            event.type === "timeline" &&
-            event.item.type === "tool_call" &&
-            event.item.status === "canceled",
-        ),
-      ).toHaveLength(1);
-      expect(
-        fixture.events.filter(
-          (event) =>
-            event.type === "turn_canceled" ||
-            event.type === "turn_completed" ||
-            event.type === "turn_failed",
-        ),
-      ).toEqual([]);
-    } finally {
-      fixture.unsubscribe();
-      await fixture.session.close();
-    }
-  });
-
-  test("explicit interruption still publishes tool cleanup and one turn cancellation", async () => {
-    const fixture = await startToolForClosure();
-    try {
-      await fixture.session.interrupt();
-      expect(
-        fixture.events.filter(
-          (event) =>
-            event.type === "timeline" &&
-            event.item.type === "tool_call" &&
-            event.item.status === "canceled",
-        ),
-      ).toHaveLength(1);
-      expect(fixture.events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
-    } finally {
-      fixture.unsubscribe();
-      await fixture.session.close();
-    }
-  });
-
-  test("runtime close resolves permissions once without reporting a user turn cancellation", async () => {
-    const { queryFactory } = createQueryMock();
-    const session = await new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
-    const events: AgentStreamEvent[] = [];
-    const unsubscribe = session.subscribe((event) => events.push(event));
-    const abort = new AbortController();
-    try {
-      await session.startTurn("run the tool");
-      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
-      if (!canUseTool) throw new Error("Expected canUseTool callback");
-      const permission = canUseTool(
-        "Bash",
-        { command: "printf test" },
-        { signal: abort.signal, toolUseID: "tool-closed" },
-      );
-      const rejected = expect(permission).rejects.toThrow("Claude session closed");
-      await session.close();
-      abort.abort();
-      await rejected;
-      expect(session.getPendingPermissions()).toEqual([]);
-      expect(events.filter(isPermissionResolvedEvent)).toHaveLength(1);
-      expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
-    } finally {
-      unsubscribe();
-      await session.close();
-    }
-  });
-
-  test("runtime close prevents a query from launching after pending options resolve", async () => {
-    const { queryFactory } = createQueryMock();
-    let optionsStarted!: () => void;
-    let allowOptions!: () => void;
-    const started = new Promise<void>((resolve) => {
-      optionsStarted = resolve;
-    });
-    const allowed = new Promise<void>((resolve) => {
-      allowOptions = resolve;
-    });
-    const session = await new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => {
-        optionsStarted();
-        await allowed;
-        return "/test/claude/bin";
-      },
-    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
-    const turn = session.startTurn("must not run after closure");
-    try {
-      await started;
-      await session.close();
-      allowOptions();
-      await turn;
-      expect(queryFactory).not.toHaveBeenCalled();
-    } finally {
-      allowOptions();
-      await turn;
-      await session.close();
-    }
-  });
-
   test("publishes a resolution when the SDK aborts a permission callback", async () => {
     const { queryFactory } = createQueryMock();
     const session = await new ClaudeAgentClient({
@@ -1082,157 +887,64 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("keeps an extraArgs settings file when Paseo sets Claude flag settings", async () => {
-    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-settings-"));
-    const settingsPath = path.join(settingsDir, "settings.json");
-    await fs.writeFile(
-      settingsPath,
-      JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "false" }, permissions: { deny: ["Monitor"] } }),
-    );
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-5-5",
-      providerOptions: {
-        extraArgs: { chrome: null, settings: settingsPath },
-      },
-    });
-
-    await session.startTurn("hello");
-
-    const options = queryFactory.mock.calls[0]?.[0].options;
-    expect(options?.extraArgs).toEqual({ chrome: null });
-    expect(options?.settings).toEqual({
-      env: { ENABLE_TOOL_SEARCH: "false" },
-      permissions: { deny: ["Monitor"] },
-      fastMode: false,
-    });
-    await session.close();
-    await fs.rm(settingsDir, { recursive: true, force: true });
-  });
-
-  test("keeps inline extraArgs settings JSON for internal agents", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      internal: true,
-      providerOptions: {
-        extraArgs: { settings: '{"env":{"ENABLE_TOOL_SEARCH":"false"}}' },
-      },
-    });
-
-    await session.startTurn("hello");
-
-    const options = queryFactory.mock.calls[0]?.[0].options;
-    expect(options?.extraArgs).toEqual({});
-    expect(options?.settings).toEqual({
-      env: { ENABLE_TOOL_SEARCH: "false" },
-      disableAllHooks: true,
-    });
-    await session.close();
-  });
-
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8",
       }),
-    ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
-      options: {},
-    });
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8[1m]",
       }),
-    ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
-      options: {},
-    });
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8-20260101",
       }),
-    ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
-      options: {},
-    });
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-5",
       }),
-    ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
-      options: {},
-    });
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
       }),
-    ).resolves.toEqual({ controls: [], options: {} });
+    ).resolves.toEqual([]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-5",
       }),
-    ).resolves.toEqual({ controls: [], options: {} });
+    ).resolves.toEqual([]);
 
     await expect(
-      client.listControls({
+      client.listFeatures({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-4-6",
       }),
-    ).resolves.toEqual({ controls: [], options: {} });
-  });
-
-  test("opens with Fast off on a model that has none, so unrelated options still apply", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-sonnet-5",
-      providerOptions: { fast_mode: true },
-    });
-
-    expect(session.openOptionsPatch).toEqual({ fast_mode: false });
-    await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
-    await session.close();
+    ).resolves.toEqual([]);
   });
 
   test("passes initial fast mode through Claude flag settings", async () => {
@@ -1246,7 +958,7 @@ describe("ClaudeAgentSession features", () => {
       provider: "claude",
       cwd: process.cwd(),
       model: "claude-opus-4-8",
-      providerOptions: { fast_mode: true },
+      featureValues: { fast_mode: true },
     });
 
     await expect(
@@ -1381,30 +1093,6 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("keeps turn identities distinct across resumed session objects", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const handle = {
-      provider: "claude" as const,
-      sessionId: "saved-session",
-      metadata: { cwd: process.cwd() },
-    };
-    const first = await client.resumeSession(handle);
-    const firstTurn = await first.startTurn("first");
-    await first.close();
-    const resumed = await client.resumeSession(handle);
-    try {
-      const nextTurn = await resumed.startTurn("second");
-      expect(nextTurn.turnId).not.toBe(firstTurn.turnId);
-    } finally {
-      await resumed.close();
-    }
-  });
-
   test("disables Claude hooks for internal agents only", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1474,17 +1162,16 @@ describe("ClaudeAgentSession features", () => {
       const iterator = input[Symbol.asyncIterator]();
       await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
 
-      const admission = await session.steerActiveTurn?.("same turn follow-up", {
-        expectedTurnId: turnId,
-        clientMessageId: "steer-client-id",
-      });
-      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
-      if (admission?.status !== "accepted") throw new Error("Expected steer admission");
+      await expect(
+        session.steerActiveTurn?.("same turn follow-up", {
+          expectedTurnId: turnId,
+          clientMessageId: "steer-client-id",
+        }),
+      ).resolves.toEqual({ status: "accepted" });
       await expect(iterator.next()).resolves.toMatchObject({
         value: {
           type: "user",
           priority: "next",
-          uuid: admission.providerMessageId,
           message: { content: [{ type: "text", text: "same turn follow-up" }] },
         },
       });
@@ -1521,7 +1208,7 @@ describe("ClaudeAgentSession features", () => {
         input: Record<string, unknown>,
         options: Record<string, unknown>,
       ): Promise<PermissionResult>;
-      translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
+      translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
     };
 
     try {
@@ -1542,7 +1229,7 @@ describe("ClaudeAgentSession features", () => {
           expectedTurnId: turnId,
           clearPendingPermissions: true,
         }),
-      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      ).resolves.toEqual({ status: "accepted" });
       await expect(firstPermission).resolves.toMatchObject({
         behavior: "deny",
         interrupt: undefined,
@@ -1561,7 +1248,7 @@ describe("ClaudeAgentSession features", () => {
         ),
       ).resolves.toMatchObject({ behavior: "deny", interrupt: undefined });
 
-      await internal.translateMessageToEvents({
+      internal.translateMessageToEvents({
         type: "command_lifecycle",
         command_uuid: steerUuid,
         state: "started",
@@ -1601,7 +1288,7 @@ describe("ClaudeAgentSession features", () => {
       const permission = internal.handlePermissionRequest("Write", {}, { toolUseID: "tool-1" });
       await expect(
         session.steerActiveTurn?.("system notification", { expectedTurnId: turnId }),
-      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      ).resolves.toEqual({ status: "accepted" });
       expect(session.getPendingPermissions()).toHaveLength(1);
       const requestId = session.getPendingPermissions()[0]!.id;
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
@@ -1614,8 +1301,6 @@ describe("ClaudeAgentSession features", () => {
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["Mythos 5.1", "claude-mythos-5-1", { type: "adaptive", display: "summarized" }, "high"],
-    ["Fable 5.2", "claude-fable-5-2", { type: "adaptive", display: "summarized" }, "medium"],
-    ["Mythos 5.2", "claude-mythos-5-2", { type: "adaptive", display: "summarized" }, "medium"],
     ["Haiku 5.5", "claude-haiku-5-5", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
@@ -1744,7 +1429,7 @@ describe("ClaudeAgentSession features", () => {
         ensureQuery(): Promise<unknown>;
       }
     ).ensureQuery();
-    await session.applyOptions?.({ fast_mode: true });
+    await session.setFeature?.("fast_mode", true);
 
     expect(queryFactory).toHaveBeenCalledTimes(1);
     expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
@@ -1752,242 +1437,6 @@ describe("ClaudeAgentSession features", () => {
     expect(queryMock.return).not.toHaveBeenCalled();
 
     await session.close();
-  });
-
-  test("rejects a change to a launch option while the first query is starting", async () => {
-    const { queryFactory } = createQueryMock();
-    let releaseBinary!: () => void;
-    const binaryLookup = new Promise<void>((resolve) => {
-      releaseBinary = resolve;
-    });
-    let lookupStarted!: () => void;
-    const lookupEntered = new Promise<void>((resolve) => {
-      lookupStarted = resolve;
-    });
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => {
-        lookupStarted();
-        await binaryLookup;
-        return "/test/claude/bin";
-      },
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-      providerOptions: { disallowedTools: ["Bash"] },
-    });
-
-    const turn = session.startTurn("hello");
-    await lookupEntered;
-    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
-      /disallowedTools.*cannot change on a running session/,
-    );
-    releaseBinary();
-    await turn;
-
-    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({ disallowedTools: ["Bash"] });
-    await session.close();
-  });
-
-  test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-      providerOptions: {
-        disallowedTools: ["Bash"],
-        sandbox: { enabled: true, failIfUnavailable: true },
-      },
-    });
-
-    await session.applyOptions?.({ fast_mode: true });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-
-    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
-      disallowedTools: ["Bash"],
-      sandbox: { enabled: true, failIfUnavailable: true },
-    });
-    await session.close();
-  });
-
-  test("an option Claude reads when it starts changes before the query exists and is rejected after", async () => {
-    const { queryFactory } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-      providerOptions: { disallowedTools: ["Bash"] },
-    });
-
-    await session.applyOptions?.({ disallowedTools: ["Bash", "Write"] });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
-      disallowedTools: ["Bash", "Write"],
-    });
-
-    // The query now runs with these; replacing it would end its background work.
-    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
-      /disallowedTools.*cannot change on a running session/,
-    );
-    // The same value is not a change, and Fast still applies.
-    await expect(
-      session.applyOptions?.({ disallowedTools: ["Bash", "Write"], fast_mode: true }),
-    ).resolves.toBeUndefined();
-    expect(queryFactory).toHaveBeenCalledTimes(1);
-    await session.close();
-  });
-
-  test("switching to a model without Fast turns it off, reports that, and later patches still apply", async () => {
-    const { queryFactory, queryMock } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-      providerOptions: { fast_mode: true },
-    });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    await session.setModel?.("claude-fable-5");
-
-    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
-    const reported = events.filter((event) => event.type === "options_changed");
-    expect(reported).toEqual([
-      { type: "options_changed", provider: "claude", patch: { fast_mode: false } },
-    ]);
-    // With a `config.json` default of `fast_mode: true`, the agent's effective options must
-    // still read Fast as off: a removed key would let the default fill `true` back in.
-    const stored = applyProviderOptionsPatch({
-      options: { fast_mode: true },
-      patch: reported[0].patch,
-    });
-    expect(mergeProviderOptions({ fast_mode: true }, stored)).toEqual({ fast_mode: false });
-    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toBeUndefined();
-    await session.close();
-  });
-
-  test("removing fast_mode turns Fast off", async () => {
-    const { queryFactory, queryMock } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-    });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    await session.applyOptions?.({ fast_mode: true });
-
-    await session.applyOptions?.({ fast_mode: null });
-
-    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
-    await session.close();
-  });
-
-  test("retries a fast mode change the runtime rejected", async () => {
-    const { queryFactory, queryMock } = createQueryMock();
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: "claude-opus-4-8",
-    });
-    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
-    queryMock.applyFlagSettings.mockClear();
-    queryMock.applyFlagSettings.mockRejectedValueOnce(new Error("runtime unavailable"));
-
-    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(
-      "runtime unavailable",
-    );
-    await session.applyOptions?.({ fast_mode: true });
-
-    expect(queryMock.applyFlagSettings).toHaveBeenCalledTimes(2);
-    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
-
-    await session.close();
-  });
-
-  test("fast mode survives a daemon restart through the stored providerOptions", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-fast-restart-"));
-    const storagePath = path.join(root, "agents");
-    const makeClient = () => {
-      const mock = createQueryMock();
-      const client = new ClaudeAgentClient({
-        logger,
-        queryFactory: mock.queryFactory,
-        resolveBinary: async () => "/test/claude/bin",
-      });
-      return { ...mock, client };
-    };
-    const agentId = "00000000-0000-4000-8000-0000000000f1";
-    const before = makeClient();
-    const storage = new AgentStorage(storagePath, logger);
-    const manager = new AgentManager({
-      clients: { claude: before.client },
-      registry: storage,
-      logger,
-    });
-    try {
-      await manager.createAgent(
-        { provider: "claude", cwd: root, model: "claude-opus-4-8" },
-        agentId,
-        { workspaceId: undefined },
-      );
-      await manager.setAgentOptions(agentId, { fast_mode: true });
-      await manager.closeAgent(agentId);
-      await manager.flush();
-      await storage.flush();
-
-      const after = makeClient();
-      const restartedStorage = new AgentStorage(storagePath, logger);
-      const restarted = new AgentManager({
-        clients: { claude: after.client },
-        registry: restartedStorage,
-        logger,
-      });
-      const agent = await ensureAgentLoaded(agentId, {
-        agentManager: restarted,
-        agentStorage: restartedStorage,
-        logger,
-      });
-      const session = (agent as unknown as { session: { ensureQuery(): Promise<unknown> } | null })
-        .session;
-      await session?.ensureQuery();
-
-      expect(restarted.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: true });
-      expect(after.queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
-        fastMode: true,
-      });
-      await restarted.closeAgent(agentId);
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
   });
 });
 
@@ -2946,7 +2395,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("emits canonical task snapshots from Claude TaskCreate results", async () => {
     const session = await createSessionForTest();
     try {
-      await session.translateMessageToEvents({
+      session.translateMessageToEvents({
         type: "assistant",
         message: {
           content: [
@@ -2960,7 +2409,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       } as unknown as SDKMessage);
 
-      const events = await session.translateMessageToEvents({
+      const events = session.translateMessageToEvents({
         type: "user",
         message: {
           content: [{ type: "tool_result", tool_use_id: "task-create-1", content: "created" }],
@@ -3206,13 +2655,8 @@ describe("ClaudeAgentSession context window usage", () => {
     await session.startTurn("turn", { clientMessageId: "client-message-1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const started = events.findIndex((event) => event.type === "turn_started");
-    const userMessage = events.findIndex(
-      (event) => event.type === "timeline" && event.item.type === "user_message",
-    );
-    expect(started).toBeGreaterThanOrEqual(0);
-    expect(userMessage).toBeGreaterThan(started);
-    expect(events[userMessage]).toMatchObject({
+    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
+    expect(events[1]).toMatchObject({
       type: "timeline",
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });
@@ -3283,7 +2727,7 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
-  test("classifies Claude root-only commands separately from inline skills and hides internal ones", async () => {
+  test("classifies Claude root-only commands separately from inline skills", async () => {
     const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       void prompt;
       return {
@@ -3314,11 +2758,6 @@ describe("ClaudeAgentSession context window usage", () => {
           {
             name: "clear",
             description: "Start a new session with empty context",
-            argumentHint: "",
-          },
-          {
-            name: "__remote-workflow",
-            description: "Run a remote workflow (server-launched sessions only)",
             argumentHint: "",
           },
         ],
@@ -4172,9 +3611,9 @@ describe("ClaudeAgentSession context window usage", () => {
     ]);
 
     try {
-      const compactEvents = await (
-        session as unknown as TestClaudeSession
-      ).translateMessageToEvents(createCompactBoundary());
+      const compactEvents = (session as unknown as TestClaudeSession).translateMessageToEvents(
+        createCompactBoundary(),
+      );
       expect(compactEvents).toContainEqual(
         expect.objectContaining({
           type: "usage_updated",
@@ -4360,7 +3799,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("result.result is surfaced as an assistant message when no model output was produced", async () => {
     const session = await createSessionForTest();
 
-    const events = await session.translateMessageToEvents({
+    const events = session.translateMessageToEvents({
       type: "result",
       subtype: "success",
       result: "Unknown command: /foo-doesnt-exist",
@@ -4395,7 +3834,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("result.result is not duplicated when the model produced output during the turn", async () => {
     const session = await createSessionForTest();
 
-    const events = await session.translateMessageToEvents({
+    const events = session.translateMessageToEvents({
       type: "result",
       subtype: "success",
       result: "Here is the answer.",

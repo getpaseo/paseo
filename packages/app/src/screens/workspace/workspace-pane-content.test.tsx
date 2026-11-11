@@ -11,7 +11,18 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { usePaneContext, usePaneFocus, type PaneContextValue } from "@/panels/pane-context";
-import { definePanel, registerPanel } from "@/panels/panel-registry";
+
+vi.mock("@/panels/register-panels", () => ({
+  ensurePanelsRegistered: vi.fn(),
+}));
+
+vi.mock("@/panels/panel-registry", () => ({
+  getPanelRegistration: () => ({
+    kind: "agent",
+    component: ProbePanel,
+    useDescriptor: vi.fn(),
+  }),
+}));
 
 interface ProbeSnapshot {
   paneContextValue: PaneContextValue;
@@ -35,18 +46,6 @@ function ProbePanel() {
   }, []);
 
   return null;
-}
-
-// The workspace screen registers the real panels; this probe stands in for each kind the tests open.
-for (const kind of ["agent", "draft"] as const) {
-  registerPanel(
-    definePanel(kind, {
-      component: ProbePanel,
-      useDescriptor: () => {
-        throw new Error("The probe panel has no descriptor");
-      },
-    }),
-  );
 }
 
 const agentTab: WorkspaceTabDescriptor = {

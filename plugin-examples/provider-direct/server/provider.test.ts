@@ -40,7 +40,7 @@ describe("direct provider example", () => {
     await connection.close();
   });
 
-  it("demonstrates option controls, commands, persistence, and provider-rendered timeline items", async () => {
+  it("demonstrates settings, commands, persistence, and provider-rendered timeline items", async () => {
     const connection = await createDirectExampleProvider().connect({
       versions: [1],
       capabilities: [
@@ -65,8 +65,8 @@ describe("direct provider example", () => {
         mcpServers: {},
         model: "example-1",
         mode: "build",
-        settings: {},
-        providerOptions: { concise: true, voice: "calm", privateValue: 1 },
+        settings: { concise: true, voice: "calm" },
+        providerOptions: { privateValue: 1 },
         persist: true,
       },
       history: "skip",
@@ -75,11 +75,10 @@ describe("direct provider example", () => {
       expect.objectContaining({
         type: "session.config",
         config: expect.objectContaining({
-          controls: [
-            expect.objectContaining({ key: "concise", icon: "Zap" }),
-            expect.objectContaining({ key: "voice", icon: "Mic", defaultValue: "calm" }),
-          ],
-          providerOptions: { concise: true, voice: "calm" },
+          settings: expect.arrayContaining([
+            expect.objectContaining({ id: "concise", value: true }),
+            expect.objectContaining({ id: "voice", value: "calm" }),
+          ]),
         }),
       }),
     );
@@ -89,29 +88,7 @@ describe("direct provider example", () => {
       type: "session.configure",
       requestId: "configure-complete",
       sessionId: "session-complete",
-      changes: { providerOptions: { voice: "direct", concise: null } },
-    });
-    expect(events.findLast((event) => event.type === "session.config")).toMatchObject({
-      config: { providerOptions: { voice: "direct" } },
-    });
-    await connection.send({
-      type: "session.configure",
-      requestId: "configure-refused",
-      sessionId: "session-complete",
-      changes: { model: "other-model", providerOptions: { voice: "loud" } },
-    });
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: "request.failed", requestId: "configure-refused" }),
-    );
-    // A refused request changes nothing, the model it named included.
-    await connection.send({
-      type: "session.configure",
-      requestId: "configure-after-refused",
-      sessionId: "session-complete",
-      changes: {},
-    });
-    expect(events.findLast((event) => event.type === "session.config")).not.toMatchObject({
-      config: { model: "other-model" },
+      changes: { settings: { voice: "direct" } },
     });
     await connection.send({
       type: "session.prompt",

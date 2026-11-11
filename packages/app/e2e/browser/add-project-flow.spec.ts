@@ -5,7 +5,6 @@ import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import {
   addProjectFlow,
-  chooseAddHostFromProjectFlow,
   addProjectFlowBack,
   addProjectFlowHost,
   addProjectFlowInput,
@@ -15,14 +14,11 @@ import {
   expectNewWorkspaceForAddedProject,
   expectAddProjectResultVisible,
   navigateAddProjectResults,
-  navigateAndDismissAddProject,
-  watchAddProjectRenderWarnings,
   openAddProjectFlow,
   openAddProjectHostSelection,
 } from "../support/helpers/add-project-flow";
 import { gotoAppShell } from "../support/helpers/app";
 import {
-  disconnectAllHostsAndReload,
   addConnectedHostAndReload,
   addConnectedHostsAndReload,
   addOfflineHostAndReload,
@@ -72,19 +68,6 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
 
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
-
-  test("Add host replaces the project dialog when no hosts are connected", async ({ page }) => {
-    await gotoAppShell(page);
-    await disconnectAllHostsAndReload(page);
-    await openAddProjectHostSelection(page);
-    const originalUrl = page.url();
-    await chooseAddHostFromProjectFlow(page);
-    await expect(addProjectFlow(page)).toBeHidden();
-    await expect(
-      page.getByRole("button", { name: "Direct connection", exact: true }),
-    ).toBeVisible();
-    await expect(page).toHaveURL(originalUrl);
-  });
 
   test("method selection shows the daemon's available project sources without search", async ({
     page,
@@ -148,7 +131,6 @@ test.describe("Add Project command-center flow", () => {
     test("Escape and Back restore searchable page input before closing at the root", async ({
       page,
     }) => {
-      const renderWarnings = watchAddProjectRenderWarnings(page);
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
         serverId: secondaryHost.serverId,
@@ -186,9 +168,8 @@ test.describe("Add Project command-center flow", () => {
 
       await page.keyboard.press("Escape");
       await expectAddProjectPage(page, "host");
-      await navigateAndDismissAddProject(page);
+      await page.keyboard.press("Escape");
       await expect(addProjectFlow(page)).not.toBeVisible();
-      expect(renderWarnings).toEqual([]);
     });
 
     test("New directory creates a Project on the selected remote host", async ({ page }) => {

@@ -2,8 +2,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
-import { SkeletonPulse, useSkeletonPulse } from "@/components/ui/skeleton";
-import { PrActivitySkeleton } from "./activity-skeleton";
+import { PrActivitySkeleton, SkeletonPulse, useSkeletonPulse } from "./activity-skeleton";
 
 const CHECK_ROW_KEYS = [0, 1, 2].map((i) => `pr-pane-skeleton-check-${i}`);
 

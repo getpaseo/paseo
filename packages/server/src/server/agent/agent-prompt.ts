@@ -15,7 +15,6 @@ export type AgentRunController = Pick<
   | "getAgent"
   | "tryRunOutOfBand"
   | "hasInFlightRun"
-  | "reloadStalePluginSession"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
@@ -111,12 +110,11 @@ export async function startAgentRun(
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
-  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
   try {
-    await agentManager.reloadStalePluginSession(agentId);
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
   } catch (error) {
     if (!isStaleProviderSessionError(error)) throw error;

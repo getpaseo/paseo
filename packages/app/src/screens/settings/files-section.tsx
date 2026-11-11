@@ -100,6 +100,7 @@ function FilePanelSettingsRowView({
         </DropdownMenu>
         <Button
           variant="outline"
+          size="sm"
           onPress={askAgain}
           disabled={associatedPanelId === null}
           accessibilityLabel={t("settings.files.askAgainFor", { label })}

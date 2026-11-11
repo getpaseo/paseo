@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { expectComposerModel } from "../support/helpers/agent-profiles";
 import {
   delayBrowserAgentCreatedStatus,
   openNewWorkspaceComposer,
@@ -70,8 +69,6 @@ test.describe("New workspace live pin", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, seeded);
-      // The composer appears before its provider catalog has hydrated.
-      await expectComposerModel(page, "Ten second stream");
       await submitNewWorkspacePrompt(page, "Pin me while I start");
 
       await creation.waitForCreateRequest();

@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
@@ -60,14 +59,6 @@ async function openCompactActionsMenu(page: Page, workspaceId: string) {
   return menu;
 }
 
-async function expectActionsInOrder(menu: Locator, labels: readonly string[]) {
-  const items = menu.getByRole("menuitem");
-  await expect(items).toHaveCount(labels.length);
-  for (const [index, label] of labels.entries()) {
-    await expect(items.nth(index).getByText(label, { exact: true })).toBeVisible();
-  }
-}
-
 test("compact git actions menu lists a promoted Pull once", async ({ page }) => {
   const repoPath = await createRemoteRepo("compact-menu-pull-");
   cleanupTasks.push(async () => {
@@ -92,7 +83,12 @@ test("compact git actions menu lists a promoted Pull once", async ({ page }) => 
   const menu = await openCompactActionsMenu(page, workspaceId);
 
   await expect(menu.getByTestId("changes-menu-pull")).toHaveCount(1);
-  await expectActionsInOrder(menu, ["Pull", "Push", "Pull and push", "Archive workspace"]);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Pull",
+    "Push",
+    "Pull and push",
+    "Archive workspace",
+  ]);
 });
 
 test("compact git actions menu lists a promoted Push once", async ({ page }) => {
@@ -110,5 +106,10 @@ test("compact git actions menu lists a promoted Push once", async ({ page }) => 
   const menu = await openCompactActionsMenu(page, workspaceId);
 
   await expect(menu.getByTestId("changes-menu-push")).toHaveCount(1);
-  await expectActionsInOrder(menu, ["Push", "Pull", "Pull and push", "Archive workspace"]);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Push",
+    "Pull",
+    "Pull and push",
+    "Archive workspace",
+  ]);
 });

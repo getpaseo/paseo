@@ -63,8 +63,6 @@ export function setupAutoArchiveOnMerge(
       let freshSnapshot: WorkspaceGitRuntimeSnapshot | null;
       try {
         freshSnapshot = await options.workspaceGitService.getSnapshot(snapshot.cwd, {
-          force: true,
-          afterInFlight: true,
           reason: "auto-archive-on-merge",
         });
       } catch (error) {

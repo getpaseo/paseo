@@ -1,5 +1,4 @@
 import type { StreamItem } from "@/types/stream";
-import { continuesTurn } from "./turn-membership";
 
 export const DEFAULT_MOUNTED_RECENT_STREAM_ITEMS = 20;
 
@@ -33,7 +32,7 @@ export function findMountedWindowStart(input: {
   }
 
   let startIndex = Math.max(items.length - minMountedCount, 0);
-  while (startIndex > 0 && continuesTurn(items[startIndex - 1], items[startIndex])) {
+  while (startIndex > 0 && items[startIndex]?.kind !== "user_message") {
     startIndex -= 1;
   }
   return startIndex;

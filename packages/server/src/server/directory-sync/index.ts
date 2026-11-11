@@ -6,7 +6,6 @@ import type {
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import type { BackgroundVisibility } from "../agent/directory.js";
 import { type CollectionRead, VersionedCollection } from "./internal/versioned-collection.js";
 
 interface AgentDirectoryEntry {
@@ -70,7 +69,7 @@ export class DirectorySyncService {
   synchronizeWorkspaces(
     snapshot: Iterable<WorkspaceDescriptorPayload>,
     cursor: DirectorySyncCursor,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): Pick<FetchWorkspacesResponse, "entries" | "emptyProjects" | "pageInfo" | "sync"> {
     this.workspaces.replaceAll(snapshot);
     const read = this.read(this.workspaces, cursor, includeBackground);
@@ -85,7 +84,7 @@ export class DirectorySyncService {
   synchronizeAgents(
     snapshot: Iterable<AgentDirectoryEntry>,
     cursor: DirectorySyncCursor,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): Pick<FetchAgentsResponse, "entries" | "pageInfo" | "sync"> {
     this.agents.replaceAll(snapshot);
     const read = this.read(this.agents, cursor, includeBackground);
@@ -114,7 +113,7 @@ export class DirectorySyncService {
     value: WorkspaceDescriptorPayload | null,
     id: string,
     includeSequence: boolean,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
     if (value) {
       this.workspaces.replace(value);
@@ -134,7 +133,7 @@ export class DirectorySyncService {
     value: AgentDirectoryEntry | null,
     id: string,
     includeSequence: boolean,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
     if (value) {
       this.agents.replace(value);
@@ -149,7 +148,7 @@ export class DirectorySyncService {
     );
   }
 
-  private metadata(read: CollectionRead<unknown>, includeBackground: BackgroundVisibility = false) {
+  private metadata(read: CollectionRead<unknown>, includeBackground = false) {
     return {
       generation: this.generationFor(includeBackground),
       headSeq: read.headSeq,
@@ -163,7 +162,7 @@ export class DirectorySyncService {
     payload: T,
     includeSequence: boolean,
     version: DirectoryVersion | null,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): T & Partial<DirectoryVersion> {
     return version && includeSequence
       ? { ...payload, ...version, generation: this.generationFor(includeBackground) }
@@ -173,7 +172,7 @@ export class DirectorySyncService {
   private read<T>(
     collection: VersionedCollection<T>,
     cursor: DirectorySyncCursor,
-    includeBackground: BackgroundVisibility = false,
+    includeBackground = false,
   ): CollectionRead<T> {
     if (cursor.generation !== this.generationFor(includeBackground)) {
       return collection.readSnapshot(
@@ -186,9 +185,7 @@ export class DirectorySyncService {
     return collection.readAfter(cursor.afterSeq);
   }
 
-  // Each visibility scope admits a different subset, so cursors never cross scopes.
-  private generationFor(includeBackground: BackgroundVisibility): string {
-    if (includeBackground === "workspaces") return `${this.generation}:background-workspaces`;
+  private generationFor(includeBackground: boolean): string {
     return includeBackground ? `${this.generation}:background` : this.generation;
   }
 

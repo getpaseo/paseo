@@ -21,6 +21,10 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     gap: theme.spacing[1],
   },
+  sectionHeaderLinkText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
   card: {
     backgroundColor: theme.colors.surface1,
     borderRadius: theme.borderRadius.lg,

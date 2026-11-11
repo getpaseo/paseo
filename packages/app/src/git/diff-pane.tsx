@@ -1,4 +1,3 @@
-import type { DiffFileHeader } from "@/git/diff-snapshot";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { floatingActionsClearance } from "@/components/ui/floating-action-button";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
@@ -20,7 +19,6 @@ import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
-  ArrowRight,
   ChevronDown,
   Columns2,
   ExternalLink,
@@ -63,7 +61,6 @@ import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
-import { WorkspaceBaseBranchPicker } from "@/git/workspace-base-branch-picker";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -204,7 +201,6 @@ const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
-const ThemedArrowRight = withUnistyles(ArrowRight);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
@@ -474,8 +470,6 @@ interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | 
 }
 
 interface ChangesRepositoryToolbarModel {
-  baseRef: string | null;
-  isWorktree: boolean;
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
@@ -502,8 +496,6 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
-  baseRef: string | null;
-  isWorktree: boolean;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
@@ -527,8 +519,6 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 } {
   return {
     repository: {
-      baseRef: input.baseRef,
-      isWorktree: input.isWorktree,
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
@@ -639,10 +629,6 @@ function ChangesToolbarTrailing({ children }: { children: ReactNode }) {
   return <ToolbarControls style={styles.changesToolbarControls}>{children}</ToolbarControls>;
 }
 
-function isManagedWorktree(status: { isPaseoOwnedWorktree?: boolean } | null | undefined): boolean {
-  return status?.isPaseoOwnedWorktree === true;
-}
-
 function ChangesRepositoryToolbar({
   compact,
   model,
@@ -668,17 +654,6 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
-        {model.baseRef && model.isWorktree ? (
-          <>
-            <ThemedArrowRight size={14} uniProps={extraMutedIconColorMapping} />
-            <WorkspaceBaseBranchPicker
-              serverId={model.serverId}
-              workspaceId={model.workspaceId}
-              cwd={model.cwd}
-              baseRef={model.baseRef}
-            />
-          </>
-        ) : null}
       </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         {model.pullRequest ? (
@@ -1095,7 +1070,6 @@ interface DiffBodyContentProps {
   emptyMessage: string;
   emptyAction: ChangesEmptyAction | null;
   children: ReactElement;
-  loadingLabel: string;
   checkingRepositoryLabel: string;
   notRepositoryLabel: string;
 }
@@ -1112,16 +1086,11 @@ function DiffBodyContent({
   emptyAction,
   children,
   checkingRepositoryLabel,
-  loadingLabel,
   notRepositoryLabel,
 }: DiffBodyContentProps) {
   if (isStatusLoading) {
     return (
-      <View
-        style={styles.loadingContainer}
-        accessibilityRole="progressbar"
-        accessibilityLabel={loadingLabel}
-      >
+      <View style={styles.loadingContainer}>
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
         <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
@@ -1143,16 +1112,12 @@ function DiffBodyContent({
   }
   if (isDiffLoading) {
     return (
-      <View
-        style={styles.loadingContainer}
-        accessibilityRole="progressbar"
-        accessibilityLabel={loadingLabel}
-      >
+      <View style={styles.loadingContainer}>
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
   }
-  if (diffTooLarge && !hasChanges) {
+  if (diffTooLarge) {
     return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
@@ -1169,7 +1134,7 @@ function DiffBodyContent({
         {emptyAction ? (
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             testID="changes-empty-switch-mode"
             onPress={emptyAction.onPress}
           >
@@ -1331,7 +1296,7 @@ function ChangesTreeRail({
 }: {
   shown: boolean;
   children: ReactElement;
-  files: DiffFileHeader[];
+  files: ParsedDiffFile[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1371,7 +1336,7 @@ function ChangesBody({
   children: ReactElement;
   desktopTreeVisible: boolean;
   isMobile: boolean;
-  files: DiffFileHeader[];
+  files: ParsedDiffFile[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1596,7 +1561,6 @@ export function ChangesSurface({
     selectBase: handleSelectBase,
     selectAll: handleSelectAll,
     files,
-    treeFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,
@@ -1846,7 +1810,6 @@ export function ChangesSurface({
         hasChanges={hasChanges}
         emptyMessage={emptyMessage}
         emptyAction={emptyAction}
-        loadingLabel={t("common.loading")}
         checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
         notRepositoryLabel={t("workspace.git.diff.notRepository")}
       >
@@ -1877,7 +1840,7 @@ export function ChangesSurface({
       presentation={presentation}
       desktopTreeVisible={desktopTreeVisible}
       isMobile={isMobile}
-      files={treeFiles}
+      files={files}
       mode={workingMode}
       onSelectFile={handleSelectTreeFile}
       treeWidth={instanceState.treeWidth}
@@ -1941,8 +1904,6 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
-        baseRef: baseRef ?? null,
-        isWorktree: isManagedWorktree(status),
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -1960,8 +1921,6 @@ export function ChangesSurface({
         workspaceId,
       }),
     [
-      baseRef,
-      status,
       committedDiffDescription,
       currentBranchName,
       cwd,

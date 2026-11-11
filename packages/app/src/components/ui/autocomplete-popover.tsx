@@ -5,18 +5,14 @@ import {
   useRef,
   useState,
   type ReactElement,
-  type ReactNode,
+  type RefObject,
 } from "react";
-import { View, useWindowDimensions, type StyleProp, type ViewStyle } from "react-native";
+import { View, useWindowDimensions } from "react-native";
 import { Portal } from "@gorhom/portal";
 import Animated, { useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Autocomplete,
-  type AutocompleteOption,
-  type AutocompleteStatus,
-} from "@/components/ui/autocomplete";
+import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
@@ -36,26 +32,29 @@ interface RelativeAnchorRect {
 
 interface AutocompletePopoverProps {
   visible: boolean;
-  children: ReactNode;
-  anchorStyle?: StyleProp<ViewStyle>;
+  anchorRef: RefObject<View | null>;
   options: readonly AutocompleteOption[];
   selectedIndex: number;
   onSelect: (option: AutocompleteOption) => void;
-  status?: AutocompleteStatus | null;
+  isLoading?: boolean;
+  errorMessage?: string;
+  loadingText?: string;
+  emptyText?: string;
 }
 
 export function AutocompletePopover({
   visible,
-  children,
-  anchorStyle,
+  anchorRef,
   options,
   selectedIndex,
   onSelect,
-  status,
+  isLoading,
+  errorMessage,
+  loadingText,
+  emptyText,
 }: AutocompletePopoverProps): ReactElement | null {
   "use no memo";
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
-  const anchorRef = useRef<View>(null);
   const [relativeAnchorRect, setRelativeAnchorRect] = useState<RelativeAnchorRect | null>(null);
   const windowDimensions = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
@@ -138,26 +137,25 @@ export function AutocompletePopover({
     [anchorY, reservedLift, safeAreaInsets.top],
   );
 
-  const showPopover = canMeasure && relativeAnchorRect && baseStyle;
+  if (!visible || !relativeAnchorRect || !baseStyle) return null;
+  if (options.length > 0 && selectedIndex < 0) return null;
 
   // The translate view is the popover's own frame, so it lifts only the popover.
   return (
-    <View ref={anchorRef} onLayout={remeasure} style={anchorStyle} collapsable={false}>
-      {children}
-      {showPopover ? (
-        <Portal hostName={portalHostName}>
-          <KeyboardTranslateView {...anchor.translation} style={baseStyle}>
-            <Animated.View testID="composer-autocomplete-popover" style={heightStyle}>
-              <Autocomplete
-                options={options}
-                selectedIndex={selectedIndex}
-                onSelect={onSelect}
-                status={status}
-              />
-            </Animated.View>
-          </KeyboardTranslateView>
-        </Portal>
-      ) : null}
-    </View>
+    <Portal hostName={portalHostName}>
+      <KeyboardTranslateView {...anchor.translation} style={baseStyle}>
+        <Animated.View testID="composer-autocomplete-popover" style={heightStyle}>
+          <Autocomplete
+            options={options}
+            selectedIndex={selectedIndex}
+            onSelect={onSelect}
+            isLoading={isLoading}
+            errorMessage={errorMessage}
+            loadingText={loadingText}
+            emptyText={emptyText}
+          />
+        </Animated.View>
+      </KeyboardTranslateView>
+    </Portal>
   );
 }

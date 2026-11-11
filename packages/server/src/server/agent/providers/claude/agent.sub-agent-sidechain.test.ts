@@ -273,7 +273,7 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     queryFactory.mockReset();
   });
 
-  test("labels the Task card from its input and preserves callId lifecycle collapse", async () => {
+  test("accumulates lightweight sub_agent detail and preserves callId lifecycle collapse", async () => {
     const session = await new ClaudeAgentClient({
       logger,
       queryFactory,
@@ -307,7 +307,9 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
 
     expect(latest.detail.subAgentType).toBe("Explore");
     expect(latest.detail.description).toBe("Inspect repository structure");
-    expect(latest.detail.log).toBe("");
+    expect(latest.detail.log).toContain("[Read] README.md");
+    expect(latest.detail.log).toContain("[Edit] src/index.ts");
+    expect(latest.detail.log).not.toContain("VERY_LARGE_OLD_STRING");
 
     const rows: AgentTimelineRow[] = timelineToolCalls.map((item, index) => ({
       seq: index + 1,
@@ -394,7 +396,10 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
       .map((event) => event.item)
       .at(-1);
 
-    expect(latestSubAgentUpdate?.detail).toMatchObject({ type: "sub_agent", log: "" });
+    expect(latestSubAgentUpdate?.detail).toMatchObject({
+      type: "sub_agent",
+      log: expect.stringContaining("[Read] README.md"),
+    });
   });
 
   test("routes a resumed SendMessage sidechain to the original child without a second Task card", async () => {
@@ -548,7 +553,7 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     ).toMatchObject({ type: "upsert", id: "task-tail-1", status: "failed" });
   });
 
-  test("keeps the Task card the same size while the child runs", async () => {
+  test("tails sub-agent actions instead of dropping latest entries at cap", async () => {
     queryFactory.mockImplementation(() => buildQueryMock(buildTailScenarioEvents(205)));
 
     const session = await new ClaudeAgentClient({
@@ -563,27 +568,24 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     const events = await collectUntilTerminal(streamSession(session, "delegate work"));
     await session.close();
 
-    const runningCards = events
-      .flatMap((event) =>
-        event.type === "timeline" &&
-        event.item.type === "tool_call" &&
-        event.item.callId === "task-tail-1" &&
-        event.item.status === "running" &&
-        event.item.detail.type === "sub_agent"
-          ? [event.item]
-          : [],
+    const timelineToolCalls = events
+      .filter(
+        (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+          event.type === "timeline" && event.item.type === "tool_call",
       )
-      .map((item) => JSON.stringify(item));
-    expect(runningCards).toHaveLength(1);
+      .map((event) => event.item)
+      .filter((item) => item.callId === "task-tail-1");
+    const subAgentUpdates = timelineToolCalls.filter((item) => item.detail.type === "sub_agent");
+    const latest = subAgentUpdates[subAgentUpdates.length - 1];
+    expect(latest).toBeDefined();
+    if (!latest || latest.detail.type !== "sub_agent") {
+      throw new Error("expected sub_agent detail");
+    }
 
-    const childToolCalls = events.filter(
-      (event) =>
-        event.type === "provider_subagent" &&
-        event.event.type === "timeline" &&
-        event.event.id === "task-tail-1" &&
-        event.event.item.type === "tool_call",
-    );
-    expect(childToolCalls).toHaveLength(205);
+    expect(latest.detail.log).not.toContain("[Read] file-1.md");
+    expect(latest.detail.log).not.toContain("[Read] file-5.md");
+    expect(latest.detail.log).toContain("[Read] file-6.md");
+    expect(latest.detail.log).toContain("[Read] file-205.md");
   });
 
   test("keeps a long main-thread tool call out of the subagents track", async () => {

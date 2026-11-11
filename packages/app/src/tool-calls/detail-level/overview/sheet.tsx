@@ -4,12 +4,8 @@ import { BottomSheetScrollView, type BottomSheetScrollViewMethods } from "@gorho
 import { Wrench, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import {
-  type ContextBridge,
-  useIsolatedBottomSheetVisibility,
-} from "@/components/ui/isolated-bottom-sheet-modal";
+import { useIsolatedBottomSheetVisibility } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ToolCallSheetModal, useToolCallSheetContextBridge } from "@/components/tool-call-sheet";
-import { useToolCallExpansionContextBridge } from "@/tool-calls/expansion-context";
 import type { Theme } from "@/styles/theme";
 
 interface OverviewToolCallGroupSheetProps {
@@ -33,12 +29,7 @@ export function OverviewToolCallGroupSheet({
 }: OverviewToolCallGroupSheetProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<BottomSheetScrollViewMethods>(null);
-  const sheetContextBridge = useToolCallSheetContextBridge();
-  const expansionContextBridge = useToolCallExpansionContextBridge();
-  const contextBridge = useCallback<ContextBridge>(
-    (content) => sheetContextBridge(expansionContextBridge(content)),
-    [expansionContextBridge, sheetContextBridge],
-  );
+  const contextBridge = useToolCallSheetContextBridge();
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
     onClose,

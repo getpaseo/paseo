@@ -8,7 +8,7 @@ import {
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { resetDraftAgentCommandsForCheckout } from "@/agent-commands/cache";
+import { resetDraftAgentCommandsForCheckout } from "@/hooks/agent-commands-query";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
@@ -25,7 +25,7 @@ export async function fetchCheckoutStatus({
   serverId: string;
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
-  const payload = normalizeCheckoutBaseRef(await client.getCheckoutStatus(cwd));
+  const payload = await client.getCheckoutStatus(cwd);
   return payload;
 }
 
@@ -56,7 +56,7 @@ export function applyCheckoutStatusUpdateFromEvent({
   serverId: string;
   message: CheckoutStatusUpdate;
 }): void {
-  const payload = normalizeCheckoutBaseRef(message.payload);
+  const { payload } = message;
   const prStatus = payload.prStatus
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
@@ -86,13 +86,6 @@ export function applyCheckoutStatusUpdateFromEvent({
   if (hasPrStatusChanged(previous, prStatus)) {
     void invalidatePrPaneTimelineForCheckout(queryClient, { serverId, cwd: prStatus.cwd });
   }
-}
-
-function normalizeCheckoutBaseRef<T extends CheckoutStatusPayload>(payload: T): T {
-  // COMPAT(workspaceBaseBranch): hosts <= v0.11.2 only send the display ref; remove after 2027-10-14.
-  return !payload.isGit || payload.baseRefExact === undefined
-    ? payload
-    : { ...payload, baseRef: payload.baseRefExact };
 }
 
 // requestId changes on every emission and carries no PR state.

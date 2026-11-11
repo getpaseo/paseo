@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { realpath, access, readdir } from "node:fs/promises";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -35,21 +35,21 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
 // one `cwd` encodes to when the project moved, the daemon migrated, or Claude Code sees the
 // cwd under another name (a Windows binary under WSL). Returns the expected path when no
 // transcript exists anywhere.
-export async function claudeTranscriptPath(input: {
+export function claudeTranscriptPathSync(input: {
   cwd: string;
   sessionId: string;
   configDir?: string;
-}): Promise<string> {
+}): string {
   const options = { configDir: input.configDir };
   const fileName = `${input.sessionId}.jsonl`;
-  const expected = join(await claudeProjectDir(input.cwd, options), fileName);
-  if (await exists(expected)) {
+  const expected = join(claudeProjectDirSync(input.cwd, options), fileName);
+  if (existsSync(expected)) {
     return expected;
   }
   const projectsRoot = join(resolveConfigDir(options), "projects");
   let projectDirs: string[];
   try {
-    projectDirs = await readdir(projectsRoot);
+    projectDirs = readdirSync(projectsRoot);
   } catch (error) {
     if (isMissingDirectoryError(error)) {
       return expected;
@@ -58,21 +58,11 @@ export async function claudeTranscriptPath(input: {
   }
   for (const projectDir of projectDirs) {
     const candidate = join(projectsRoot, projectDir, fileName);
-    if (await exists(candidate)) {
+    if (existsSync(candidate)) {
       return candidate;
     }
   }
   return expected;
-}
-
-async function exists(file: string): Promise<boolean> {
-  try {
-    await access(file);
-    return true;
-  } catch (error) {
-    if (isMissingDirectoryError(error)) return false;
-    throw error;
-  }
 }
 
 function isMissingDirectoryError(error: unknown): boolean {

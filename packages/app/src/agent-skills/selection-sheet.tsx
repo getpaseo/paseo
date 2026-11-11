@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Check } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { SettingsCard, SettingsRow, SettingsSection } from "@/components/settings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type {
   AgentSkillSelection as SkillSelection,
   AgentSkillsSaveResult as SkillsSaveResult,
 } from "@getpaseo/protocol/messages";
+
+const ThemedCheck = withUnistyles(Check);
+const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
 
 interface SkillSelectionSheetProps {
   visible: boolean;
@@ -152,11 +157,12 @@ export function SkillSelectionSheet({
       footer={footer}
       testID="skill-selection-sheet"
     >
-      <SettingsCard testID="skill-selection-all-card">
-        <SettingsRow
-          label={t("settings.host.skills.chooseAll")}
-          hint={t("settings.host.skills.chooseAllHint")}
-        >
+      <View style={settingsStyles.card} testID="skill-selection-all-card">
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("settings.host.skills.chooseAll")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.host.skills.chooseAllHint")}</Text>
+          </View>
           <Switch
             value={allSkills}
             onValueChange={handleToggleAll}
@@ -164,29 +170,30 @@ export function SkillSelectionSheet({
             accessibilityLabel={t("settings.host.skills.chooseAll")}
             testID="skill-selection-all"
           />
-        </SettingsRow>
-      </SettingsCard>
+        </View>
+      </View>
 
       {/* The sheet body already spaces its blocks apart, so the section owns
           only the gap between its label and the list the label names. */}
       <SettingsSection title={t("settings.host.skills.chooseList")} flush>
-        <SettingsCard testID="skill-selection-list-card">
+        <View style={settingsStyles.card} testID="skill-selection-list-card">
           {available.length === 0 ? (
             <View style={settingsStyles.row}>
               <Text style={settingsStyles.rowHint}>{t("settings.host.skills.chooseEmpty")}</Text>
             </View>
           ) : (
-            available.map((name) => (
-              <SkillRow
+            available.map((name, index) => (
+              <SkillCheckboxRow
                 key={name}
                 name={name}
                 checked={isSkillSelected(draft, name)}
                 disabled={allSkills || isSaving}
+                withBorder={index > 0}
                 onToggle={handleToggleSkill}
               />
             ))
           )}
-        </SettingsCard>
+        </View>
       </SettingsSection>
 
       {saveError ? <Text style={settingsStyles.rowError}>{saveError}</Text> : null}
@@ -194,27 +201,52 @@ export function SkillSelectionSheet({
   );
 }
 
-function SkillRow({
-  name,
-  checked,
-  disabled,
-  onToggle,
-}: {
+interface SkillCheckboxRowProps {
   name: string;
   checked: boolean;
   disabled: boolean;
+  withBorder: boolean;
   onToggle: (name: string) => void;
-}) {
-  const handleValueChange = useCallback(() => onToggle(name), [name, onToggle]);
+}
+
+function SkillCheckboxRow({
+  name,
+  checked,
+  disabled,
+  withBorder,
+  onToggle,
+}: SkillCheckboxRowProps) {
+  const handlePress = useCallback(() => onToggle(name), [name, onToggle]);
+  const accessibilityState = useMemo(() => ({ checked, disabled }), [checked, disabled]);
+  const rowStyle = useMemo(
+    () => [
+      settingsStyles.row,
+      withBorder ? settingsStyles.rowBorder : null,
+      styles.checkboxRow,
+      disabled ? styles.disabledRow : null,
+    ],
+    [disabled, withBorder],
+  );
+  const boxStyle = useMemo(
+    () => [styles.checkbox, checked ? styles.checkboxChecked : null],
+    [checked],
+  );
+
   return (
-    <SettingsRow label={name}>
-      <Switch
-        value={checked}
-        onValueChange={handleValueChange}
-        disabled={disabled}
-        accessibilityLabel={name}
-      />
-    </SettingsRow>
+    <Pressable
+      style={rowStyle}
+      onPress={handlePress}
+      disabled={disabled}
+      accessibilityRole="checkbox"
+      accessibilityLabel={name}
+      accessibilityState={accessibilityState}
+      aria-checked={checked}
+    >
+      <View style={boxStyle}>
+        {checked ? <ThemedCheck size={14} uniProps={checkedIconMapping} /> : null}
+      </View>
+      <Text style={settingsStyles.rowTitle}>{name}</Text>
+    </Pressable>
   );
 }
 
@@ -226,5 +258,25 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerButton: {
     flex: 1,
+  },
+  checkboxRow: {
+    justifyContent: "flex-start",
+    gap: theme.spacing[3],
+  },
+  disabledRow: {
+    opacity: theme.opacity[50],
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
   },
 }));

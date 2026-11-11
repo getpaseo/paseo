@@ -1,4 +1,4 @@
-import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -35,6 +35,16 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
   return normalized;
 }
 
+export function getFeatureTooltip(feature: Pick<AgentFeature, "label" | "tooltip">): string {
+  return feature.tooltip ?? feature.label;
+}
+
+export function isFeatureActive(feature: AgentFeature): boolean {
+  if (feature.type === "toggle") return feature.value;
+  const selectedOption = feature.options.find((option) => option.id === feature.value);
+  return selectedOption !== undefined && !selectedOption.isDefault;
+}
+
 export function getFeatureHighlightColor(featureId: string): FeatureHighlightColor {
   switch (featureId) {
     case FAST_MODE_FEATURE_ID:
@@ -47,14 +57,6 @@ export function getFeatureHighlightColor(featureId: string): FeatureHighlightCol
     default:
       return "default";
   }
-}
-
-export function resolveProviderSnapshotEntry(
-  entries: readonly ProviderSnapshotEntry[] | null | undefined,
-  provider: string | null | undefined,
-): ProviderSnapshotEntry | null {
-  if (!entries || !provider) return null;
-  return entries.find((entry) => entry.provider === provider) ?? null;
 }
 
 function findModelById(

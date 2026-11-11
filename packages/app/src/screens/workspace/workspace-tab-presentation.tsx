@@ -6,6 +6,7 @@ import { Check } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
+import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration, type PanelIconProps } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -42,6 +43,7 @@ export function WorkspaceTabPresentationResolver({
   workspaceId,
   children,
 }: WorkspaceTabPresentationResolverProps): ReactElement {
+  ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.kind);
   invariant(registration, `No panel registration for kind: ${tab.kind}`);
 

@@ -29,27 +29,26 @@ export function MobilePanelOverlay({
   dockVisible = false,
   frameStyle,
 }: MobilePanelOverlayProps) {
-  const { leftPanelWidth, position, windowWidth } = useMobilePanelsRuntime();
+  const { position, windowWidth } = useMobilePanelsRuntime();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const overlayOpen = useIsMobilePanelActive(panel);
   const docked = presentation === "dock";
   const isOpen = docked ? dockVisible : overlayOpen;
   const hostId = useId();
   const isLeft = panel === "agent-list";
-  const width = isLeft ? leftPanelWidth : windowWidth;
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => {
     if (docked) return { transform: [{ translateX: 0 }] };
-    const frame = getMobilePanelFrame(position.value, width);
+    const frame = getMobilePanelFrame(position.value, windowWidth);
     return {
       transform: [{ translateX: isLeft ? frame.leftTranslateX : frame.rightTranslateX }],
     };
-  }, [docked, isLeft, width]);
+  }, [docked, isLeft, windowWidth]);
 
   const backdropAnimatedStyle = useAnimatedStyle(() => {
-    const frame = getMobilePanelFrame(position.value, width);
+    const frame = getMobilePanelFrame(position.value, windowWidth);
     return { opacity: isLeft ? frame.leftBackdropOpacity : frame.rightBackdropOpacity };
-  }, [isLeft, width]);
+  }, [isLeft, windowWidth]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     if (docked) return { opacity: 1, display: "flex" as const, pointerEvents: "box-none" as const };
@@ -74,11 +73,11 @@ export function MobilePanelOverlay({
     () => [
       docked ? styles.dockedPanel : styles.panel,
       !docked && positionedPanelStyle,
-      !docked && { width },
+      !docked && { width: windowWidth },
       panelStyle,
       sidebarAnimatedStyle,
     ],
-    [docked, panelStyle, positionedPanelStyle, sidebarAnimatedStyle, width],
+    [docked, panelStyle, positionedPanelStyle, sidebarAnimatedStyle, windowWidth],
   );
   let overlayPointerEvents: "auto" | "box-none" | "none";
   if (!isWeb) {

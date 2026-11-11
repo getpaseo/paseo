@@ -10,6 +10,26 @@ export function reserveKeyboardLayoutShift(input: {
   return input.phase === "start" ? Math.max(input.current, input.target) : input.target;
 }
 
+export function resolveStreamKeyboardInset(input: {
+  platform: "android" | "ios";
+  settledShift: number;
+}): {
+  contentContainerPaddingBottom: number;
+  contentInset: { bottom: number } | undefined;
+} {
+  const settledShift = Math.max(0, input.settledShift);
+  if (input.platform === "ios") {
+    return {
+      contentContainerPaddingBottom: 0,
+      contentInset: { bottom: settledShift },
+    };
+  }
+  return {
+    contentContainerPaddingBottom: settledShift,
+    contentInset: undefined,
+  };
+}
+
 export function resolveKeyboardShift(input: {
   rawKeyboardHeight: number;
   keyboardProgress: number;
@@ -37,14 +57,9 @@ export function resolveKeyboardLift(input: {
   shift: number;
   enabled: boolean;
   bottomClearance: number;
-  keyboardGap: number;
 }): number {
   "worklet";
-  if (!input.enabled) return 0;
-  // The gap opens over the shift's first points, so the view never rises at rest.
-  return (
-    Math.max(0, input.shift - input.bottomClearance) + Math.min(input.keyboardGap, input.shift)
-  );
+  return input.enabled ? Math.max(0, input.shift - input.bottomClearance) : 0;
 }
 
 export function shouldReconcileHiddenKeyboardEnd(input: {

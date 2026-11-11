@@ -8,7 +8,7 @@ user-invocable: true
 
 Two agents from contrasting profiles, fresh context, planning a solution in parallel.
 
-Use the user's request and current conversation as input, including any arguments supplied with the skill invocation.
+**User's additional context:** $ARGUMENTS
 
 ## Prerequisites
 

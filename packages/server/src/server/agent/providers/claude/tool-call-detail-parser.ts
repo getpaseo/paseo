@@ -23,7 +23,6 @@ import {
   toShellToolDetail,
   toWriteToolDetail,
   toolDetailBranchByName,
-  parseKnownToolDetail,
 } from "../tool-call-detail-primitives.js";
 
 const ClaudeGrepOutputSchema = z
@@ -233,9 +232,9 @@ export function deriveClaudeToolDetail(
     };
   }
 
-  const detail = parseKnownToolDetail(ClaudeToolDetailPass2Schema, pass1.data);
-  if (detail) {
-    return detail;
+  const pass2 = ClaudeToolDetailPass2Schema.safeParse(pass1.data);
+  if (pass2.success && pass2.data) {
+    return pass2.data;
   }
 
   return {

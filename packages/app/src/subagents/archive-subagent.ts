@@ -4,7 +4,6 @@ import type { ConfirmDialogInput } from "@/utils/confirm-dialog";
 export interface ResolveArchiveSubagentDialogInput {
   title: Agent["title"] | null | undefined;
   status: Agent["status"] | null | undefined;
-  backgroundWork?: Agent["backgroundWork"];
 }
 
 function resolveSubagentLabel(title: Agent["title"] | null | undefined): string | null {
@@ -25,7 +24,7 @@ export function resolveArchiveSubagentDialog(
   input: ResolveArchiveSubagentDialogInput,
 ): ConfirmDialogInput {
   const subagentLabel = resolveSubagentLabel(input.title) ?? "this subagent";
-  const isRunning = input.status === "running" || (input.backgroundWork?.count ?? 0) > 0;
+  const isRunning = input.status === "running";
 
   return {
     title: isRunning ? "Archive running subagent?" : "Archive subagent?",
@@ -59,7 +58,6 @@ export async function requestArchiveSubagent(
     resolveArchiveSubagentDialog({
       title: subagent?.title,
       status: subagent?.status,
-      backgroundWork: subagent?.backgroundWork,
     }),
   );
   if (!confirmed) {

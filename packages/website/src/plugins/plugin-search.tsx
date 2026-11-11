@@ -68,16 +68,12 @@ export function PluginSearch({
     input.current?.focus();
   }, [edit]);
   const handleSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    (event: FormEvent) => {
       event.preventDefault();
       // Live results already show the term.
-      if (!live) {
-        // Hydration can attach this handler before state adopts text already in the input.
-        const submittedTerm = String(new FormData(event.currentTarget).get("q") ?? "");
-        show(submittedTerm, { replace: false });
-      }
+      if (!live) show(term, { replace: false });
     },
-    [live, show],
+    [live, show, term],
   );
   return (
     <form

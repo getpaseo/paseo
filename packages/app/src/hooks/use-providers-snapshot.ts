@@ -10,7 +10,6 @@ import { useReplicaQuery } from "@/data/query";
 import { queryClient as singletonQueryClient } from "@/data/query-client";
 import {
   normalizeProvidersSnapshotCwd,
-  providersSnapshotQuery,
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
   fetchProvidersSnapshot,
@@ -79,16 +78,17 @@ export function useProvidersSnapshot(
   const queryKey = useMemo(() => providersSnapshotQueryKey(serverId, cwd), [cwd, serverId]);
 
   const snapshotQuery = useReplicaQuery({
-    ...providersSnapshotQuery({
-      serverId: serverId ?? "",
-      cwd,
-      client: () => {
-        if (!client || !serverId) throw new Error(t("workspace.terminal.hostDisconnected"));
-        return client;
-      },
-      queryClient,
-    }),
+    queryKey,
+    // The content-hash cache already owns catalog and model identity.
+    structuralSharing: false,
     enabled: Boolean(enabled && supportsSnapshot && serverId && client && isConnected),
+    pushEvent: "providers_snapshot_update",
+    queryFn: async ({ signal }) => {
+      if (!client || !serverId) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      return fetchProvidersSnapshot({ client, serverId, cwd, queryClient, signal });
+    },
   });
 
   const refreshMutation = useMutation({

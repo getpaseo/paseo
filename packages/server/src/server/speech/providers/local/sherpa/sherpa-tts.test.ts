@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { engineFiles, getLocalTtsEngine, type LocalTtsModelId } from "./model-catalog.js";
 import { SherpaOnnxTTS } from "./sherpa-tts.js";
 
 const directories: string[] = [];
@@ -12,28 +11,17 @@ afterEach(() => {
     rmSync(directory, { recursive: true, force: true });
 });
 
-function createTts(
-  numThreads?: number,
-  beforeGenerate?: () => Promise<void>,
-  modelId: LocalTtsModelId = "kokoro-en-v0_19",
-) {
+function createTts(numThreads?: number, beforeGenerate?: () => Promise<void>) {
   const modelDir = mkdtempSync(join(tmpdir(), "paseo-tts-"));
   directories.push(modelDir);
-  // Data directories have no extension; everything else is a model file.
-  for (const name of engineFiles(getLocalTtsEngine(modelId))) {
-    if (name.includes(".")) writeFileSync(join(modelDir, name), "");
-    else mkdirSync(join(modelDir, name));
-  }
+  for (const name of ["model.onnx", "voices.bin", "tokens.txt"])
+    writeFileSync(join(modelDir, name), "");
+  mkdirSync(join(modelDir, "espeak-ng-data"));
   let nativeConfig: unknown;
   const requests: unknown[] = [];
   const released: boolean[] = [];
   const tts = new SherpaOnnxTTS(
-    {
-      modelId,
-      modelDir,
-      engine: getLocalTtsEngine(modelId),
-      numThreads,
-    },
+    { preset: "kokoro-en-v0_19", modelDir, numThreads },
     pino({ level: "silent" }),
     () => ({
       OfflineTts: class {
@@ -150,31 +138,4 @@ describe("SherpaOnnxTTS", () => {
       expect(nativeConfig).not.toHaveProperty("provider");
     },
   );
-
-  it("loads Piper voices through the vits engine", () => {
-    const { nativeConfig } = createTts(undefined, undefined, "piper-de-thorsten");
-    expect(nativeConfig).toMatchObject({
-      model: {
-        vits: {
-          model: expect.stringMatching(/de_DE-thorsten-medium\.onnx$/),
-          tokens: expect.stringMatching(/tokens\.txt$/),
-          dataDir: expect.stringMatching(/espeak-ng-data$/),
-        },
-      },
-    });
-    expect(nativeConfig).not.toHaveProperty("model.kokoro");
-  });
-
-  it("gives multi-language Kokoro its lexicons, dictionary and number rules", () => {
-    const { nativeConfig } = createTts(undefined, undefined, "kokoro-int8-multi-lang-v1_1");
-    expect(nativeConfig).toMatchObject({
-      model: {
-        kokoro: {
-          lexicon: expect.stringMatching(/lexicon-us-en\.txt,.*lexicon-zh\.txt$/),
-          dictDir: expect.stringMatching(/dict$/),
-        },
-      },
-      ruleFsts: expect.stringMatching(/date-zh\.fst,.*phone-zh\.fst,.*number-zh\.fst$/),
-    });
-  });
 });

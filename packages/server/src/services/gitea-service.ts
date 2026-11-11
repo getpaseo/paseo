@@ -162,7 +162,6 @@ const GiteaPrListItemSchema = z
     updated: z.string().optional(),
     labels: z.string().optional(),
     ci: z.string().optional(),
-    headSha: z.string().optional(),
   })
   .passthrough();
 
@@ -1011,7 +1010,6 @@ function currentPullRequestApiToListItem(item: GiteaCurrentPullRequestApi): Gite
     ...(item.mergeable != null ? { mergeable: String(item.mergeable) } : {}),
     base: item.base.ref,
     head,
-    headSha: item.head.sha,
     updated: item.updated_at,
     labels: item.labels.map((label) => label.name).join(","),
   };
@@ -1084,7 +1082,6 @@ function toCurrentPullRequestStatus(item: GiteaPrListItem): CurrentPullRequestSt
     state,
     baseRefName: item.base ?? "",
     headRefName: stripHeadOwner(item.head),
-    ...(item.headSha ? { headSha: item.headSha } : {}),
     isMerged: state === "merged",
     mergeable: mapGiteaMergeable(item),
     checks: [],
@@ -1656,7 +1653,6 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
           input.headSha !== undefined &&
           item.head.sha === input.headSha,
       ) ??
-      candidates[0] ??
       null;
     return match ? currentPullRequestApiToListItem(match) : null;
   }
@@ -1722,12 +1718,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         combined,
         actionTasks,
       );
-      return applyGiteaChecks(
-        { ...status, headSha: pr.headSha },
-        combined,
-        actionTasks,
-        actionRequiredRunIds,
-      );
+      return applyGiteaChecks(status, combined, actionTasks, actionRequiredRunIds);
     } catch {
       return status;
     }

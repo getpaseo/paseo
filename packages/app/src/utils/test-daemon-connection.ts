@@ -6,8 +6,6 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import type { HostConnection } from "@/types/host-connection";
-import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
-import { createHostLogger } from "@/runtime/host-logger";
 import { getOrCreateClientId } from "./client-id";
 import { resolveAppVersion } from "./app-version";
 import {
@@ -30,7 +28,6 @@ export interface DaemonProbeClient {
 }
 
 export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient> {
-  createLogger: typeof createHostLogger;
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
@@ -39,7 +36,6 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
 }
 
 const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonClient> = {
-  createLogger: createHostLogger,
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createDesktopTransportFactory: createDesktopDaemonTransportFactory,
@@ -136,13 +132,12 @@ function resolveConnectionCredentials(
 export async function buildClientConfig(
   connection: HostConnection,
   serverId?: string,
-  options: {
+  options?: {
     capabilities?: DaemonClientConfig["capabilities"];
     trace?: DaemonClientConfig["trace"];
-    createPluginClientBundleStore?: DaemonClientConfig["createPluginClientBundleStore"];
     password?: string;
     localCredential?: DaemonClientConfig["localCredential"];
-  } = {},
+  },
   deps: Pick<
     DaemonConnectionDependencies<DaemonProbeClient>,
     | "getClientId"
@@ -160,12 +155,10 @@ export async function buildClientConfig(
     clientType: "mobile" as const,
     appVersion: deps.resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
-    webSocketFactory: createAppWebSocketFactory(),
     reconnect: { enabled: false },
     ...resolveConnectionCredentials(connection, options),
-    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-    ...(options.trace ? { trace: options.trace } : {}),
-    createPluginClientBundleStore: options.createPluginClientBundleStore,
+    ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
+    ...(options?.trace ? { trace: options.trace } : {}),
     ...((connection.type === "directSocket" || connection.type === "directPipe") &&
     desktopTransportFactory
       ? { transportFactory: desktopTransportFactory }
@@ -295,7 +288,6 @@ interface ProbeOptions {
   localCredential?: DaemonClientConfig["localCredential"];
   capabilities?: DaemonClientConfig["capabilities"];
   trace?: DaemonClientConfig["trace"];
-  createPluginClientBundleStore?: DaemonClientConfig["createPluginClientBundleStore"];
 }
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
@@ -320,9 +312,5 @@ export async function connectToDaemon(
   deps: DaemonConnectionDependencies<DaemonProbeClient> = defaultDaemonConnectionDependencies,
 ): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
   const config = await buildClientConfig(connection, options?.serverId, options, deps);
-  let serverId = options?.serverId;
-  config.logger = deps.createLogger(() => serverId);
-  const result = await connectAndProbe(config, resolveTimeout(connection, options), deps);
-  serverId = result.serverId;
-  return result;
+  return connectAndProbe(config, resolveTimeout(connection, options), deps);
 }

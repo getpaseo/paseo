@@ -110,7 +110,7 @@ function runTicks(input: { tail: StreamItem[]; historyStart: number; heads: Stre
       isTurnActive: true,
       history: model.history,
       liveHead: model.segments.liveHead,
-      timingByItemId: model.turnTiming.byItemId,
+      timingByAssistantId: model.turnTiming.byAssistantId,
     });
   }
 }

@@ -7,6 +7,7 @@ import { Terminal as HeadlessTerminal, type IBufferCell, type IBufferLine } from
 import { expect, test } from "vitest";
 
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 import type { TerminalStreamEvent } from "@getpaseo/client/internal/daemon-client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -45,7 +46,7 @@ test("byte-stream headless terminal matches daemon state after high-output attac
       terminalId: terminal.id,
       headless: liveHeadless,
     });
-    const initialSnapshot = waitForReplayEnd(client, terminal.id);
+    const initialSnapshot = waitForTerminalStreamEvent(client, terminal.id, "snapshot");
 
     const liveSubscription = await subscribeTerminal(client, terminal.id);
     await initialSnapshot;
@@ -59,13 +60,13 @@ test("byte-stream headless terminal matches daemon state after high-output attac
       text: BYTE_DONE_MARKER,
       rows: BYTE_TEST_SIZE.rows,
     });
-    const daemonSnapshot = await readReplayViewport({
+    const daemonSnapshot = await readTerminalSnapshot({
       port: daemon.port,
       terminalId: terminal.id,
     });
     await liveHeadless.flush();
 
-    expect(liveHeadless.visibleLines()).toEqual(daemonSnapshot.lines);
+    expect(liveHeadless.visibleLines()).toEqual(visibleTerminalLines(daemonSnapshot));
     expect(liveHeadless.cursor()).toEqual(daemonSnapshot.cursor);
     expect(liveHeadless.visibleLines()).toEqual(capturedViewport.lines);
 
@@ -78,7 +79,7 @@ test("byte-stream headless terminal matches daemon state after high-output attac
       terminalId: terminal.id,
       headless: restoreHeadless,
     });
-    const restoreFrame = waitForReplayEnd(client, terminal.id);
+    const restoreFrame = waitForTerminalStreamEvent(client, terminal.id, "restore");
 
     await subscribeTerminal(client, terminal.id, {
       restore: { mode: "visible-snapshot", scrollbackLines: 200, size: BYTE_TEST_SIZE },
@@ -115,10 +116,12 @@ class ClientHeadlessTerminal {
   }
 
   applyEvent(event: TerminalStreamEvent): void {
-    if (event.type === "replay") {
-      if (event.replay.type === "begin") this.enqueueText("\x1bc", { resetDecoder: true });
-      if (event.replay.type === "data")
-        this.enqueueText(this.decoder.decode(event.replay.data, { stream: true }));
+    if (event.type === "snapshot") {
+      this.enqueueText(renderTerminalSnapshotToAnsi(event.state), { resetDecoder: true });
+      return;
+    }
+    if (event.type === "restore") {
+      this.enqueueText(this.decoder.decode(event.data, { stream: false }), { resetDecoder: true });
       return;
     }
     this.enqueueText(this.decoder.decode(event.data, { stream: true }));
@@ -184,32 +187,35 @@ async function subscribeTerminal(
   return response.subscription;
 }
 
-async function readReplayViewport(input: { port: number; terminalId: string }): Promise<{
-  lines: string[];
-  cursor: TerminalState["cursor"];
-}> {
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${input.port}/ws`, clientType: "mobile" });
-  const headless = new ClientHeadlessTerminal(BYTE_TEST_SIZE);
-  const stop = pipeTerminalStreamToHeadless({ client, terminalId: input.terminalId, headless });
+async function readTerminalSnapshot(input: {
+  port: number;
+  terminalId: string;
+}): Promise<TerminalState> {
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${input.port}/ws`,
+    appVersion: "0.1.96",
+    clientType: "mobile",
+  });
   try {
     await client.connect();
-    const completed = waitForReplayEnd(client, input.terminalId);
+    const snapshot = waitForTerminalStreamEvent(client, input.terminalId, "snapshot");
     await subscribeTerminal(client, input.terminalId);
-    await completed;
-    await headless.flush();
-    return { lines: headless.visibleLines(), cursor: headless.cursor() };
+    const event = await snapshot;
+    return event.state;
   } finally {
-    stop();
     await client.close();
   }
 }
 
-async function waitForReplayEnd(client: DaemonClient, terminalId: string): Promise<void> {
-  await client.waitForTerminalStreamEvent(
-    (event) =>
-      event.terminalId === terminalId && event.type === "replay" && event.replay.type === "end",
-    10000,
-  );
+function waitForTerminalStreamEvent<TType extends TerminalStreamEvent["type"]>(
+  client: DaemonClient,
+  terminalId: string,
+  type: TType,
+): Promise<Extract<TerminalStreamEvent, { type: TType }>> {
+  return client.waitForTerminalStreamEvent(
+    (event) => event.terminalId === terminalId && event.type === type,
+    10_000,
+  ) as Promise<Extract<TerminalStreamEvent, { type: TType }>>;
 }
 
 async function createPackageLockTerminalCwd(): Promise<PackageLockTerminalCwd> {
@@ -281,16 +287,24 @@ async function waitForCondition<T>(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for terminal byte parity`);
 }
 
+function visibleTerminalLines(state: TerminalState): string[] {
+  return state.grid.map(terminalRowText);
+}
+
+function terminalRowText(row: TerminalState["grid"][number]): string {
+  return row
+    .map((cell) => cell.char)
+    .join("")
+    .trimEnd();
+}
+
 function bufferLineText(line: IBufferLine | undefined, reusableCell: IBufferCell): string {
   const cells: TerminalCell[] = [];
   for (let col = 0; col < BYTE_TEST_SIZE.cols; col += 1) {
     const cell = line?.getCell(col, reusableCell);
     cells.push({ char: cell?.getChars() || " " });
   }
-  return cells
-    .map((cell) => cell.char)
-    .join("")
-    .trimEnd();
+  return terminalRowText(cells);
 }
 
 function packageLockStreamScript(): string {

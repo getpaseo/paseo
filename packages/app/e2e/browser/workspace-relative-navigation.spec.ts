@@ -70,31 +70,25 @@ test("previous and next traverse every visible workspace while digit shortcuts s
         workspaceId: order[8],
       });
     });
-    await test.step("collapsed groups keep shortcut targets selected without expanding", async () => {
-      await expectCollapsedWorkspaceShortcuts(page, order);
+    await test.step("hidden Done rows remain shortcut targets without expanding the project", async () => {
+      await expectHiddenWorkspaceShortcuts(page, order);
     });
   } finally {
     await project.cleanup();
   }
 });
 
-async function expectCollapsedWorkspaceShortcuts(page: Page, order: string[]) {
+async function expectHiddenWorkspaceShortcuts(page: Page, order: string[]) {
   await page.getByLabel("Show less", { exact: true }).click();
   const rows = page.getByRole("button", { name: /^Workspace \d{2}$/ });
-  await expect(rows).toHaveCount(8);
-  await expectSidebarWorkspaceSelected({ page, serverId: getServerId(), workspaceId: order[8] });
-  await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId: order[0] });
   await expect(rows).toHaveCount(7);
+  await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId: order[0] });
   await page.keyboard.press("Alt+9");
   await expect(page).toHaveURL(new RegExp(`/workspace/${order[8]}$`));
-  await expectSidebarWorkspaceSelected({ page, serverId: getServerId(), workspaceId: order[8] });
-  await expect(rows).toHaveCount(8);
-  await page.keyboard.press("Alt+]");
-  await expect(page).toHaveURL(new RegExp(`/workspace/${order[9]}$`));
-  await expectSidebarWorkspaceSelected({ page, serverId: getServerId(), workspaceId: order[9] });
-  await expect(rows).toHaveCount(8);
   await expect(page.getByTestId(`sidebar-workspace-row-${getServerId()}:${order[8]}`)).toHaveCount(
     0,
   );
-  await expect(page.getByLabel("Show more", { exact: true })).toBeVisible();
+  await page.keyboard.press("Alt+]");
+  await expect(page).toHaveURL(new RegExp(`/workspace/${order[9]}$`));
+  await expect(rows).toHaveCount(7);
 }

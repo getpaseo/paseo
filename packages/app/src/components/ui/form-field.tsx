@@ -21,15 +21,8 @@ import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import {
   createControlGeometry,
   resolveControlInteractionStyles,
-  type ControlSize,
+  type FieldControlSize,
 } from "@/components/ui/control-geometry";
-import { useContainedControlSize } from "@/components/ui/control-size";
-
-const FIELD_CHROME = { sm: "chromeSm", md: "chromeMd" } as const satisfies Record<
-  ControlSize,
-  string
->;
-const FIELD_TEXT = { sm: "inputSm", md: "inputMd" } as const satisfies Record<ControlSize, string>;
 
 interface FieldProps {
   label: string;
@@ -74,7 +67,7 @@ export function Field({ label, children, trailing, hint, error, testID }: FieldP
 }
 
 type FormTextInputProps = AdaptiveTextInputProps & {
-  size?: ControlSize;
+  size?: FieldControlSize;
 };
 
 type FlatFormTextInputStyle = ViewStyle & TextStyle;
@@ -166,13 +159,11 @@ function assignTextInputRef(
 }
 
 export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputProps>(
-  function FormTextInput({ size: sizeProp, style, onFocus, onBlur, editable, ...props }, ref) {
+  function FormTextInput({ size = "md", style, onFocus, onBlur, editable, ...props }, ref) {
     const [focused, setFocused] = useState(false);
-    const containedSize = useContainedControlSize();
-    const size = sizeProp ?? containedSize ?? "md";
     const isDisabled = editable === false;
-    const chromeSizeStyle = formInputStyles[FIELD_CHROME[size]];
-    const inputSizeStyle = formInputStyles[FIELD_TEXT[size]];
+    const chromeSizeStyle = size === "sm" ? formInputStyles.chromeSm : formInputStyles.chromeMd;
+    const inputSizeStyle = size === "sm" ? formInputStyles.inputSm : formInputStyles.inputMd;
     const splitStyle = useMemo(() => splitFormTextInputStyle(style), [style]);
     const setInputRef = useCallback(
       (node: EditingTextInputHandle | null) => {

@@ -45,17 +45,14 @@ export function parseClaudeWorkflowRun(contents: string): ClaudeWorkflowRun | nu
  * provider runtime was recreated, so replay terminalizes it as failed instead of resurrecting a
  * row that can never receive another update.
  */
-export async function observeReplayWorkflows(input: {
+export function observeReplayWorkflows(input: {
   workflows: readonly ClaudeWorkflowRun[];
-  parentEntries: Iterable<ClaudeWorkflowParentEntry> | AsyncIterable<ClaudeWorkflowParentEntry>;
+  parentEntries: Iterable<ClaudeWorkflowParentEntry>;
   /** Repeatable entries in chronological order, supplied by the transcript reader. */
-  entriesByRunId?: ReadonlyMap<
-    string,
-    Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>
-  >;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
-}): Promise<SubagentObservation[]> {
-  const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries);
+  entriesByRunId?: ReadonlyMap<string, Iterable<ClaudeReplayEntry>>;
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+}): SubagentObservation[] {
+  const toolCallIdByRunId = readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
 
   for (const workflow of input.workflows) {
@@ -82,7 +79,7 @@ export async function observeReplayWorkflows(input: {
       });
     }
 
-    for (const observation of await observeWorkflowTimeline({
+    for (const observation of observeWorkflowTimeline({
       id,
       result: workflow.result,
       entries: input.entriesByRunId?.get(workflow.runId) ?? [],
@@ -118,19 +115,19 @@ export async function observeReplayWorkflows(input: {
   return observations;
 }
 
-async function observeWorkflowTimeline(input: {
+function observeWorkflowTimeline(input: {
   id: string;
   result: unknown;
-  entries: Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
+  entries: Iterable<ClaudeReplayEntry>;
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
   finishedAt?: string;
-}): Promise<SubagentObservation[]> {
+}): SubagentObservation[] {
   const observations: SubagentObservation[] = [];
   const replayedAssistantText = new Set<string>();
 
-  for await (const entry of input.entries) {
+  for (const entry of input.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const items = (await input.convertEntry?.(entry)) ?? [];
+    const items = input.convertEntry?.(entry) ?? [];
     for (const item of items) {
       if (item.type === "assistant_message") replayedAssistantText.add(item.text.trim());
       observations.push({
@@ -153,13 +150,11 @@ async function observeWorkflowTimeline(input: {
   return observations;
 }
 
-async function readWorkflowLinks(
-  entries: Iterable<ClaudeWorkflowParentEntry> | AsyncIterable<ClaudeWorkflowParentEntry>,
-): Promise<Map<string, string>> {
+function readWorkflowLinks(entries: Iterable<ClaudeWorkflowParentEntry>): Map<string, string> {
   const workflowToolCallIds = new Set<string>();
   const toolCallIdByRunId = new Map<string, string>();
 
-  for await (const entry of entries) {
+  for (const entry of entries) {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -170,7 +165,7 @@ async function readWorkflowLinks(
     }
   }
 
-  for await (const entry of entries) {
+  for (const entry of entries) {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {

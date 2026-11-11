@@ -89,7 +89,7 @@ function CatalogTile({ entry, width, installing, onInstall }: CatalogTileProps) 
         </View>
       </View>
       <Button
-        size="sm"
+        size="xs"
         variant="outline"
         disabled={installing}
         loading={installing}

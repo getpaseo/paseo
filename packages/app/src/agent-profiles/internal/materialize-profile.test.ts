@@ -23,7 +23,7 @@ describe("materializeAgentProfile", () => {
           model: "claude-opus-5",
           modeId: "plan",
           thinkingOptionId: "think-hard",
-          options: { web_search: true },
+          featureValues: { web_search: true },
         }),
       ),
     ).toEqual({
@@ -31,7 +31,7 @@ describe("materializeAgentProfile", () => {
       modelId: "claude-opus-5",
       modeId: "plan",
       thinkingOptionId: "think-hard",
-      options: { web_search: true },
+      featureValues: { web_search: true },
     });
   });
 
@@ -41,7 +41,7 @@ describe("materializeAgentProfile", () => {
       modelId: "",
       modeId: "",
       thinkingOptionId: "",
-      options: {},
+      featureValues: {},
     });
   });
 
@@ -61,7 +61,7 @@ describe("toAgentConfigApply", () => {
             model: "claude-opus-5",
             modeId: "plan",
             thinkingOptionId: "think-hard",
-            options: { web_search: true },
+            featureValues: { web_search: true },
           }),
         ),
       ),
@@ -69,7 +69,7 @@ describe("toAgentConfigApply", () => {
       modelId: "claude-opus-5",
       modeId: "plan",
       thinkingOptionId: "think-hard",
-      options: { web_search: true },
+      featureValues: { web_search: true },
     });
   });
 
@@ -81,8 +81,8 @@ describe("toAgentConfigApply", () => {
 
   it("omits an empty feature map so the agent keeps its own feature values", () => {
     expect(
-      toAgentConfigApply(materializeAgentProfile(profile({ options: {} }))),
-    ).not.toHaveProperty("options");
+      toAgentConfigApply(materializeAgentProfile(profile({ featureValues: {} }))),
+    ).not.toHaveProperty("featureValues");
   });
 
   it("never carries a provider, which a running agent cannot change", () => {

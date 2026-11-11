@@ -43,7 +43,7 @@ export interface WorkspaceScriptsService {
   buildSnapshot(
     workspace: PersistedWorkspaceRecord,
     project?: PersistedProjectRecord | null,
-  ): Promise<WorkspaceScriptsPayload>;
+  ): WorkspaceScriptsPayload;
   emitStatusUpdate(workspaceId: string, workspaceDirectory: string): Promise<void>;
   list(workspaceId: string): Promise<WorkspaceScriptPayload[]>;
   launch(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
@@ -62,7 +62,7 @@ export function createWorkspaceScriptsService(deps: {
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl: string | null;
   resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
-  getGlobalServicePorts: () => Promise<PaseoServicePortAllocation | undefined>;
+  globalServicePorts?: PaseoServicePortAllocation;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
   // Script status is daemon state, so it reaches every client, not only the requester.
@@ -81,7 +81,7 @@ export function createWorkspaceScriptsService(deps: {
     getDaemonTcpHost,
     serviceProxyPublicBaseUrl,
     resolveScriptHealth,
-    getGlobalServicePorts,
+    globalServicePorts,
     logger,
     emit,
     publishStatusUpdate,
@@ -110,17 +110,17 @@ export function createWorkspaceScriptsService(deps: {
     };
   }
 
-  async function buildSnapshot(
+  function buildSnapshot(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord | null = null,
-  ): Promise<WorkspaceScriptsPayload> {
+  ): WorkspaceScriptsPayload {
     if (!serviceProxy || !scriptRuntimeStore) {
       return [];
     }
     return buildWorkspaceScriptPayloads({
       workspaceId: workspace.workspaceId,
       workspaceDirectory: workspace.cwd,
-      paseoConfig: await readPaseoConfigForProjection(workspace.cwd, logger),
+      paseoConfig: readPaseoConfigForProjection(workspace.cwd, logger),
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
@@ -137,7 +137,7 @@ export function createWorkspaceScriptsService(deps: {
       const project = await projectRegistry.get(workspace.projectId);
       publishStatusUpdate({
         type: "script_status_update",
-        payload: { workspaceId, scripts: await buildSnapshot(workspace, project) },
+        payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
       });
     } catch (error) {
       logger.warn({ err: error, workspaceId }, "Failed to project workspace script status");
@@ -172,7 +172,6 @@ export function createWorkspaceScriptsService(deps: {
 
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {
     const available = requireAvailable();
-    const globalServicePorts = await getGlobalServicePorts();
     const workspace = await getWorkspace(input.workspaceId);
     await assertAutomationAllowed(workspace.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
@@ -203,7 +202,7 @@ export function createWorkspaceScriptsService(deps: {
     scriptName: string;
   }): Promise<WorkspaceScriptPayload> {
     const { workspace, project } = await launchProcess(input);
-    const script = (await buildSnapshot(workspace, project)).find(
+    const script = buildSnapshot(workspace, project).find(
       (entry) => entry.scriptName === input.scriptName,
     );
     if (!script) {
@@ -231,7 +230,7 @@ export function createWorkspaceScriptsService(deps: {
     // The launcher's terminal exit listener owns route removal and runtime state updates.
     await available.terminalManager.killTerminalAndWait(runtime.terminalId);
 
-    const script = (await buildSnapshot(workspace, project)).find(
+    const script = buildSnapshot(workspace, project).find(
       (entry) => entry.scriptName === input.scriptName,
     );
     if (!script) {

@@ -9,5 +9,4 @@ export {
   type ArchiveFinishedStatus,
   type UseArchiveFinishedSubagentsInput,
 } from "./use-archive-finished";
-export { useSubagentSheetTab } from "./sheet-tab";
-export { deriveSubagentStatusBucket } from "./track-presentation";
+export { useSubagentOpensInSheet } from "./opens-in-sheet";

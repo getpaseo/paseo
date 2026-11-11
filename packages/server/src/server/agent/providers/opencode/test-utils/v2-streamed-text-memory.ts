@@ -1,4 +1,3 @@
-import { collectTimelineSnapshot } from "./v2-timeline.js";
 import { TimelineProjection } from "../../../timeline-projection.js";
 import { V2Timeline } from "../v2/timeline.js";
 
@@ -22,18 +21,16 @@ for (let index = 0; index < chunks; index++) {
   const event =
     mode === "delta"
       ? timeline.delta({ ...part, delta })
-      : (
-          await collectTimelineSnapshot(timeline, [
-            {
-              id: "answer",
-              type: "assistant",
-              agent: "build",
-              model: { providerID: "test", id: "model" },
-              time: { created: 2 },
-              content: [{ type: "reasoning", text }],
-            },
-          ])
-        )[0];
+      : timeline.messages([
+          {
+            id: "answer",
+            type: "assistant",
+            agent: "build",
+            model: { providerID: "test", id: "model" },
+            time: { created: 2 },
+            content: [{ type: "reasoning", text }],
+          },
+        ])[0];
   if (event?.type !== "timeline") throw new Error("Expected a timeline event");
   projection.append({
     seq: index + 1,

@@ -1,100 +1,36 @@
-import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import {
-  createLifecycleRegistration,
-  pluginHookRegistry,
-} from "@getpaseo/plugin/internal/lifecycle";
-import { isDeepStrictEqual } from "node:util";
-import {
-  serializeAgentTool,
-  agentToolMetadataSchema,
-  type SessionOpenWireRequest,
-  type PluginAgentTools,
-} from "../agent-tools.js";
-import type { AgentToolDefinition } from "@getpaseo/plugin/server";
 import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
-import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
   PluginHookAgent,
-  PluginHookPayload,
   PluginHookContext,
   PluginLifecycleRegistration,
 } from "@getpaseo/plugin/server";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type {
-  PluginHookRequests,
+  PluginBeforeRequests,
   PluginHookWorkspace,
-  PluginHookEvents,
+  PluginLifecycleEvents,
 } from "@getpaseo/plugin/server";
 import { WorkspaceCreateRequestSchema } from "@getpaseo/protocol/messages";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
-export type PluginWireBeforeRequests = Omit<PluginHookRequests, "agent.open.before"> & {
-  "agent.open.before": SessionOpenWireRequest;
-};
-
-/** Daemon-only results; ownership never crosses the plugin process boundary. */
-export type PluginBeforeResults = PluginWireBeforeRequests & {
-  "agent.open.before": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
-};
-
-const worktreeRequestFields = {
-  repoRoot: z.string(),
-  sourceCheckout: z.string(),
-  branch: z.string().min(1),
-  slug: z.string().refine((value) => validateBranchSlug(value).valid, "Invalid worktree slug"),
-  path: z.string().min(1),
-};
-const changeRequestFields = {
-  headRef: z.string().min(1),
-  headRepositoryOwner: z.string().optional(),
-  checkoutRefs: z
-    .array(z.object({ remoteName: z.string().optional(), remoteRef: z.string() }))
-    .optional(),
-  pushRemoteUrl: z.string().optional(),
-  trackOriginHead: z.boolean().optional(),
-};
-const worktreeRequestSchema = z.discriminatedUnion("kind", [
-  z
-    .object({ ...worktreeRequestFields, kind: z.literal("branch-off"), baseRef: z.string().min(1) })
-    .strict(),
-  z
-    .object({
-      ...worktreeRequestFields,
-      kind: z.literal("checkout-branch"),
-    })
-    .strict(),
-  z
-    .object({
-      ...worktreeRequestFields,
-      ...changeRequestFields,
-      kind: z.literal("checkout-change-request"),
-      baseRef: z.string().min(1),
-      forge: z.string(),
-      changeRequestNumber: z.number().int().positive(),
-      headRepository: z.string().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      ...worktreeRequestFields,
-      ...changeRequestFields,
-      kind: z.literal("checkout-github-pr"),
-      baseRef: z.string().min(1),
-      githubPrNumber: z.number().int().positive(),
-    })
-    .strict(),
-]);
+export const lifecycleEventNames = [
+  "agent.created",
+  "agent.closed",
+  "agent.turn_started",
+  "agent.turn_ended",
+  "agent.permission_requested",
+  "agent.permission_resolved",
+  "agent.archived",
+  "workspace.created",
+  "workspace.archived",
+] as const;
+export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
 
 const beforeSchemas = {
-  "worktree.create.before": worktreeRequestSchema,
-  "agent.create.before": CreateAgentRequestMessageSchema.pick({
-    config: true,
-    env: true,
-    metadata: true,
-  }).strict(),
-  "agent.open.before": z
+  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
+  "agent.session_open": z
     .object({
       agentId: z.string(),
       workspaceId: z.string().nullable(),
@@ -102,53 +38,28 @@ const beforeSchemas = {
       cwd: z.string(),
       reason: z.enum(["create", "resume", "refresh", "import"]),
       purpose: z.enum(["interactive", "history"]),
-      title: z.string().nullable(),
-      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
-      background: z.boolean().optional(),
-      labels: z.record(z.string(), z.string()),
-      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
-      metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
-      tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
-      mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
     })
     .strict(),
-  "workspace.create.before": WorkspaceCreateRequestSchema.omit({
-    type: true,
-    requestId: true,
-  }).strict(),
+  "workspace.create": WorkspaceCreateRequestSchema.omit({ type: true, requestId: true }).strict(),
 };
 
-const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
-  tools: z.array(
-    z.custom<AgentToolDefinition>(
-      (tool) =>
-        typeof tool === "object" &&
-        tool !== null &&
-        "input" in tool &&
-        "execute" in tool &&
-        typeof tool.execute === "function",
-    ),
-  ),
-});
-
 export interface PluginLifecycle {
-  wait(
-    name: "worktree.create.after",
-    payload: PluginHookPayload<"worktree.create.after">,
-  ): Promise<void>;
-  emit<Name extends keyof PluginHookEvents>(name: Name, event: PluginHookEvents[Name]): void;
-  before<Name extends keyof PluginWireBeforeRequests>(
+  emit<Name extends keyof PluginLifecycleEvents>(
     name: Name,
-    request: PluginWireBeforeRequests[Name],
-  ): Promise<PluginBeforeResults[Name]>;
+    event: PluginLifecycleEvents[Name],
+  ): void;
+  before<Name extends keyof PluginBeforeRequests>(
+    name: Name,
+    request: PluginBeforeRequests[Name],
+  ): Promise<PluginBeforeRequests[Name]>;
 }
 
-export function validateBeforeRequest<Name extends keyof PluginWireBeforeRequests>(
+export function validateBeforeRequest<Name extends keyof PluginBeforeRequests>(
   name: Name,
   value: unknown,
-): PluginWireBeforeRequests[Name] {
-  return beforeSchemas[name].parse(value) as PluginWireBeforeRequests[Name];
+): PluginBeforeRequests[Name] {
+  return beforeSchemas[name].parse(value) as PluginBeforeRequests[Name];
 }
 
 export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): PluginHookWorkspace {
@@ -158,7 +69,6 @@ export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): Plug
     cwd: workspace.cwd,
     name: workspace.title,
     archivedAt: workspace.archivedAt,
-    metadata: workspace.metadata,
   };
 }
 
@@ -168,9 +78,7 @@ export function describeHookAgent(agent: {
   provider: string;
   cwd: string;
   title?: string | null;
-  background?: boolean;
   labels: Record<string, string>;
-  metadata: Record<string, JsonValue>;
 }): PluginHookAgent {
   return {
     id: agent.id,
@@ -179,8 +87,6 @@ export function describeHookAgent(agent: {
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
-    background: agent.background === true,
-    metadata: agent.metadata,
   };
 }
 
@@ -190,32 +96,32 @@ export function publishAgentStream(
   event: AgentStreamEvent,
 ): void {
   if (event.type === "turn_started") {
-    lifecycle.emit("agent.turn.before", { agent, turnId: event.turnId ?? null });
+    lifecycle.emit("agent.turn_started", { agent, turnId: event.turnId ?? null });
   } else if (event.type === "turn_completed") {
-    lifecycle.emit("agent.turn.after", {
+    lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
       timeline: [],
       outcome: { kind: "completed" },
     });
   } else if (event.type === "turn_failed") {
-    lifecycle.emit("agent.turn.after", {
+    lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
       timeline: [],
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
     });
   } else if (event.type === "turn_canceled") {
-    lifecycle.emit("agent.turn.after", {
+    lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
       timeline: [],
       outcome: { kind: "canceled", reason: event.reason },
     });
   } else if (event.type === "permission_requested") {
-    lifecycle.emit("agent.permission.before", { agent, request: event.request });
+    lifecycle.emit("agent.permission_requested", { agent, request: event.request });
   } else if (event.type === "permission_resolved") {
-    lifecycle.emit("agent.permission.after", {
+    lifecycle.emit("agent.permission_resolved", {
       agent,
       requestId: event.requestId,
       resolution: event.resolution,
@@ -223,58 +129,31 @@ export function publishAgentStream(
   }
 }
 
-type SessionOpenRequest = z.infer<(typeof beforeSchemas)["agent.open.before"]>;
-
-// Omitted `background` and `metadata` mean unchanged, so a hook returning its own object keeps working.
-function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpenRequest): boolean {
-  return (
-    previous.agentId !== next.agentId ||
-    previous.workspaceId !== next.workspaceId ||
-    previous.provider !== next.provider ||
-    previous.cwd !== next.cwd ||
-    previous.reason !== next.reason ||
-    previous.purpose !== next.purpose ||
-    previous.title !== next.title ||
-    (next.background !== undefined && previous.background !== next.background) ||
-    !isDeepStrictEqual(previous.labels, next.labels) ||
-    (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
-  );
-}
-
-export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
+export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   name: Name,
-  input: PluginWireBeforeRequests[Name],
+  input: PluginBeforeRequests[Name],
   output: unknown,
-): Promise<PluginWireBeforeRequests[Name]> {
+): PluginBeforeRequests[Name] {
   const result = validateBeforeRequest(name, output);
-  if (name === "agent.open.before") {
-    const previous = beforeSchemas["agent.open.before"].parse(input);
-    const next = beforeSchemas["agent.open.before"].parse(result);
-    if (changesSessionOpenTarget(previous, next)) {
-      throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
+  if (name === "agent.session_open") {
+    const previous = beforeSchemas["agent.session_open"].parse(input);
+    const next = beforeSchemas["agent.session_open"].parse(result);
+    if (
+      previous.agentId !== next.agentId ||
+      previous.workspaceId !== next.workspaceId ||
+      previous.provider !== next.provider ||
+      previous.cwd !== next.cwd ||
+      previous.reason !== next.reason ||
+      previous.purpose !== next.purpose
+    ) {
+      throw new Error("agent.session_open hooks can only change env");
     }
-    return { ...result, background: previous.background, metadata: previous.metadata };
   }
-  if (name === "agent.create.before") {
-    const previous = beforeSchemas["agent.create.before"].parse(input);
-    const next = beforeSchemas["agent.create.before"].parse(result);
+  if (name === "agent.create") {
+    const previous = beforeSchemas["agent.create"].parse(input);
+    const next = beforeSchemas["agent.create"].parse(result);
     if (previous.config.cwd !== next.config.cwd) {
-      throw new Error("agent.create.before hooks cannot change the workspace directory");
-    }
-    // Omitted means unchanged: the next hook sees what this one was handed.
-    return { ...result, metadata: next.metadata ?? previous.metadata };
-  }
-  if (name === "workspace.create.before") {
-    const previous = beforeSchemas["workspace.create.before"].parse(input);
-    const next = beforeSchemas["workspace.create.before"].parse(result);
-    // Omitted means unchanged; an explicit {} still replaces.
-    return { ...result, metadata: next.metadata ?? previous.metadata };
-  }
-  if (name === "worktree.create.before") {
-    const previous = beforeSchemas["worktree.create.before"].parse(input);
-    const next = beforeSchemas["worktree.create.before"].parse(result);
-    if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
-      throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+      throw new Error("agent.create hooks cannot change the workspace directory");
     }
   }
   return result;
@@ -283,34 +162,37 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
 type Handler = (input: unknown, context: PluginHookContext) => unknown;
 
 export class PluginHookHandlers implements PluginLifecycleRegistration {
-  private readonly handlers = new Map<string, Set<Handler>>();
+  private readonly events = new Map<string, Set<Handler>>();
+  private readonly transforms = new Map<string, Set<Handler>>();
   private readonly active = new Map<string, AbortController>();
 
   private readonly changed: () => void;
 
-  private readonly agentTools: PluginAgentTools | undefined;
-
-  constructor(changed: () => void, agentTools?: PluginAgentTools) {
-    this.agentTools = agentTools;
+  constructor(changed: () => void) {
     this.changed = changed;
-    const registration = createLifecycleRegistration((name, handler) =>
-      this.register(name, handler as Handler),
-    );
-    this.addHook = registration.addHook;
-    this.on = registration.on;
-    this.before = registration.before;
   }
 
-  readonly addHook: PluginLifecycleRegistration["addHook"];
-  readonly on: PluginLifecycleRegistration["on"];
-  readonly before: PluginLifecycleRegistration["before"];
+  readonly on: PluginLifecycleRegistration["on"] = (name, handler) => {
+    if (!lifecycleEventNames.includes(name)) {
+      throw new Error(`Unknown lifecycle event: ${name}`);
+    }
+    return this.register(this.events, name, handler as Handler);
+  };
 
-  catalog(): string[] {
-    return [...this.handlers.keys()];
+  readonly before: PluginLifecycleRegistration["before"] = (name, handler) => {
+    if (!beforeHookNames.includes(name)) {
+      throw new Error(`Unknown before hook: ${name}`);
+    }
+    return this.register(this.transforms, name, handler as Handler);
+  };
+
+  catalog(): { events: string[]; before: string[] } {
+    return { events: [...this.events.keys()], before: [...this.transforms.keys()] };
   }
 
   async invoke(
     id: string,
+    kind: "event" | "before",
     name: string,
     input: unknown,
     paseo: PluginHookContext["paseo"],
@@ -318,32 +200,33 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     const controller = new AbortController();
     this.active.set(id, controller);
     try {
-      if (Object.hasOwn(beforeSchemas, name)) {
-        const hookName = name as keyof PluginHookRequests;
-        if (hookName === "agent.open.before") {
-          return await this.openSession(input, { paseo, signal: controller.signal });
+      if (kind === "before") {
+        if (
+          !beforeHookNames.includes(
+            name as keyof import("@getpaseo/plugin/server").PluginBeforeRequests,
+          )
+        ) {
+          throw new Error(`Unknown before hook: ${name}`);
         }
+        const hookName = name as keyof import("@getpaseo/plugin/server").PluginBeforeRequests;
         let request = validateBeforeRequest(hookName, input);
-        for (const handler of this.handlers.get(name) ?? []) {
+        for (const handler of this.transforms.get(name) ?? []) {
           controller.signal.throwIfAborted();
           const result = await handler(
             { request: structuredClone(request) },
             { paseo, signal: controller.signal },
           );
-          if (result !== undefined) request = await validateBeforeResult(hookName, request, result);
+          if (result !== undefined) {
+            request = validateBeforeResult(hookName, request, result);
+          }
         }
         return request;
       }
-      for (const handler of this.handlers.get(name) ?? []) {
+      for (const handler of this.events.get(name) ?? []) {
         controller.signal.throwIfAborted();
         try {
           await handler(structuredClone(input), { paseo, signal: controller.signal });
         } catch (error) {
-          if (
-            Object.hasOwn(pluginHookRegistry, name) &&
-            pluginHookRegistry[name as keyof typeof pluginHookRegistry].waits
-          )
-            throw error;
           console.error(`Lifecycle hook ${name} failed`, error);
         }
       }
@@ -351,36 +234,6 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     } finally {
       this.active.delete(id);
     }
-  }
-
-  private async openSession(
-    input: unknown,
-    context: PluginHookContext,
-  ): Promise<SessionOpenWireRequest> {
-    let request = validateBeforeRequest("agent.open.before", input);
-    this.agentTools?.detach(request.agentId);
-    let tools: AgentToolDefinition[] = [];
-    for (const handler of this.handlers.get("agent.open.before") ?? []) {
-      context.signal.throwIfAborted();
-      const result = await handler(
-        { request: { ...structuredClone(request), tools: [...tools] } },
-        context,
-      );
-      if (result === undefined) continue;
-      const local = sessionOpenLocalResultSchema.parse(result);
-      const metadata = local.tools.map(serializeAgentTool);
-      request = await validateBeforeResult("agent.open.before", request, {
-        ...local,
-        tools: metadata,
-      });
-      tools = local.tools;
-    }
-    context.signal.throwIfAborted();
-    if (request.purpose === "history") {
-      request.tools = [];
-      request.mcpServers = {};
-    } else this.agentTools?.attach(request.agentId, tools);
-    return request;
   }
 
   cancel(id: string): void {
@@ -391,14 +244,19 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     for (const controller of this.active.values()) {
       controller.abort();
     }
-    this.handlers.clear();
+    this.events.clear();
+    this.transforms.clear();
   }
 
-  private register(name: string, handler: Handler): () => void {
-    let handlers = this.handlers.get(name);
+  private register(
+    registry: Map<string, Set<Handler>>,
+    name: string,
+    handler: Handler,
+  ): () => void {
+    let handlers = registry.get(name);
     if (!handlers) {
       handlers = new Set();
-      this.handlers.set(name, handlers);
+      registry.set(name, handlers);
     }
     handlers.add(handler);
     this.changed();
@@ -407,7 +265,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
         return;
       }
       if (handlers.size === 0) {
-        this.handlers.delete(name);
+        registry.delete(name);
       }
       this.changed();
     };

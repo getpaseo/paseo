@@ -1,4 +1,4 @@
-import { useHydrated, useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion, type Transition } from "framer-motion";
 import { Check, ChevronDown, Languages } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
@@ -33,7 +33,6 @@ type OpenFocus = "current" | "first" | "last";
  * the menu button pattern: arrows move between languages, Escape and outside presses close it.
  */
 export function LanguageSelector() {
-  const hydrated = useHydrated();
   const { t } = useTranslation();
   const locale = useLocale();
   const location = useLocation();
@@ -126,7 +125,6 @@ export function LanguageSelector() {
       <button
         ref={triggerRef}
         type="button"
-        disabled={!hydrated}
         aria-label={t("languageSelector.current", { language: LANGUAGE_NAMES[locale] })}
         aria-haspopup="menu"
         aria-expanded={open}

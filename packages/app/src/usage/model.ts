@@ -106,7 +106,6 @@ export interface UsageQueryState {
 
 export function resolveUsageView(
   input: {
-    enabled?: boolean;
     hostLabel: string;
     isConnected: boolean;
     supportsUsage: boolean;
@@ -126,8 +125,6 @@ export function resolveUsageView(
       message: t("providerUsage.hostUpgradeRequired", { host: hostLabel }),
     };
   }
-  if (input.enabled === false)
-    return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
   if (query?.data) {
     return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
   }

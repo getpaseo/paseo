@@ -43,7 +43,7 @@ export function createSkillSelectionStore(
     },
     async set(selection) {
       const parsed = coerceSkillSelection(selection);
-      await configStore.setAgentSkillSelection(parsed);
+      configStore.setAgentSkillSelection(parsed);
       return parsed;
     },
     async isSet() {

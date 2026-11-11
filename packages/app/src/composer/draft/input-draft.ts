@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { TextReplacement } from "@/composer/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
-import type { DraftCommandTarget } from "@/agent-commands";
+import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import {
   useAgentFormState,
   type CreateAgentInitialValues,
   type UseAgentFormStateResult,
 } from "@/hooks/use-agent-form-state";
-import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
+import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import {
   buildDraftAgentControls,
+  hasDraftContent,
   resolveDraftKey,
   type DraftKeyInput,
 } from "@/composer/draft/input-draft-core";
@@ -22,13 +22,11 @@ import {
   resolveEffectiveComposerThinkingOptionId,
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
-import { useDraftStore, type DraftInput } from "@/stores/draft-store";
+import { useDraftStore } from "@/stores/draft-store";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { isWeb } from "@/constants/platform";
-
-const NO_METADATA: Record<string, JsonValue> = {};
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -37,9 +35,7 @@ type AttachmentUpdater =
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
-  initialProviderOptions?: Record<string, unknown>;
-  /** Which composer a plugin's `useComposer()` reports. */
-  context?: "draft" | "new-workspace";
+  initialFeatureValues?: Record<string, unknown>;
   isVisible?: boolean;
   lockedWorkingDir?: string;
 }
@@ -54,9 +50,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModeId: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
-  providerOptions: Record<string, unknown> | undefined;
-  /** What plugins set on the agent this draft creates. */
-  metadata: Record<string, JsonValue>;
+  featureValues: Record<string, unknown> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -141,8 +135,21 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
 
   const saveDraft = useCallback(
-    (update: (draft: DraftInput) => DraftInput) =>
-      useDraftStore.getState().updateDraftInput({ draftKey, update }),
+    (
+      update: (draft: { text: string; attachments: UserComposerAttachment[] }) => {
+        text: string;
+        attachments: UserComposerAttachment[];
+      },
+    ) => {
+      const store = useDraftStore.getState();
+      const current = store.getDraftInput(draftKey) ?? { text: "", attachments: [] };
+      const next = update(current);
+      if (!hasDraftContent(next)) {
+        store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
+        return;
+      }
+      store.saveDraftInput({ draftKey, draft: next });
+    },
     [draftKey],
   );
 
@@ -153,20 +160,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       }),
     [draftKey],
   );
-
-  // Text another module put in the draft (a plugin writing to a composer that is not on screen)
-  // reaches the input the way a rewind restore does.
-  const replacementRequest = useDraftStore(
-    (state) => state.textReplacementRequestByDraftKey[draftKey] ?? 0,
-  );
-  const shownReplacementRequestRef = useRef({ draftKey, request: replacementRequest });
-  useEffect(() => {
-    const shown = shownReplacementRequestRef.current;
-    if (shown.draftKey === draftKey && shown.request === replacementRequest) return;
-    shownReplacementRequestRef.current = { draftKey, request: replacementRequest };
-    textPublication.cancel();
-    publishTextReplacement("replace", textSource.getSnapshot());
-  }, [draftKey, publishTextReplacement, replacementRequest, textPublication, textSource]);
 
   const editText = useCallback(
     (nextText: string) => {
@@ -198,18 +191,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [saveDraft],
   );
 
-  const metadata = useDraftStore((state) => state.metadataByDraftKey[draftKey] ?? NO_METADATA);
-  const setMetadata = useCallback(
-    (patch: Record<string, JsonValue>) =>
-      useDraftStore.getState().patchDraftMetadata({ draftKey, patch }),
-    [draftKey],
-  );
-
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
       textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
-      if (lifecycle === "sent") useDraftStore.getState().clearDraftMetadata({ draftKey });
     },
     [draftKey, textPublication],
   );
@@ -289,28 +274,26 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
 
   const {
-    optionControls: draftOptionControls,
-    options: draftOptions,
-    shownOptions: draftShownOptions,
-    setOption: setDraftOption,
-    applyProfile: applyProfileOptions,
-  } = useDraftProviderOptions({
+    features: draftFeatures,
+    featureValues: draftFeatureValues,
+    setFeatureValue: setDraftFeatureValue,
+    applyProfileFeatureValues,
+  } = useDraftAgentFeatures({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
-    getProvider: formState.getSelectedProvider,
     cwd: workingDir,
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
-    initialOptions: composerOptions?.initialProviderOptions,
+    initialFeatureValues: composerOptions?.initialFeatureValues,
   });
 
   const applyDraftAgentProfile = useCallback(
     (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
       formState.applyProfileFromUser(profile);
-      applyProfileOptions({ provider: profile.provider, options: profile.options });
+      applyProfileFeatureValues(profile.featureValues);
     },
-    [applyProfileOptions, formState],
+    [applyProfileFeatureValues, formState],
   );
 
   const commandDraft = useMemo(
@@ -320,9 +303,15 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         cwd: workingDir,
         effectiveModelId,
         effectiveThinkingOptionId,
-        providerOptions: draftOptions,
+        featureValues: draftFeatureValues,
       }),
-    [effectiveModelId, effectiveThinkingOptionId, draftOptions, providerSelection, workingDir],
+    [
+      effectiveModelId,
+      effectiveThinkingOptionId,
+      draftFeatureValues,
+      providerSelection,
+      workingDir,
+    ],
   );
 
   const composerState = useMemo<DraftComposerState | null>(() => {
@@ -336,17 +325,12 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModeId,
       effectiveModelId,
       effectiveThinkingOptionId,
-      providerOptions: draftOptions,
-      metadata,
+      featureValues: draftFeatureValues,
       agentControls: buildDraftAgentControls({
         formState,
-        optionControls: draftOptionControls,
-        options: draftShownOptions,
-        onSetOption: setDraftOption,
+        features: draftFeatures,
+        onSetFeature: setDraftFeatureValue,
         onApplyAgentProfile: applyDraftAgentProfile,
-        context: composerOptions.context ?? "draft",
-        metadata,
-        onSetMetadata: setMetadata,
       }),
       commandDraft,
     };
@@ -356,14 +340,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveModeId,
     effectiveModelId,
     effectiveThinkingOptionId,
-    draftOptionControls,
-    draftOptions,
-    draftShownOptions,
-    setDraftOption,
+    draftFeatures,
+    draftFeatureValues,
     applyDraftAgentProfile,
     formState,
-    metadata,
-    setMetadata,
+    setDraftFeatureValue,
     workingDir,
   ]);
 
