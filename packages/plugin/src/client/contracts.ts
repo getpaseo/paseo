@@ -1,8 +1,23 @@
+import type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js";
+import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
-import type { PaseoApi } from "@getpaseo/client";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { PluginPaseoApi } from "./reference-api.js";
+import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-import type { PluginRpcContract } from "../rpc.js";
+import type { PluginFile } from "./file.js";
+import type {
+  PluginComposer,
+  PluginComposerItemContribution,
+  PluginComposerSelector,
+} from "./composer.js";
+import type { PluginNewWorkspaceItemContribution } from "./new-workspace.js";
+import type {
+  PluginRpcContract,
+  PluginSubscribeOptions,
+  PluginSubscriptionContract,
+  PluginSubscriptionHandle,
+  PluginWireInput,
+} from "../rpc.js";
 import type {
   PluginButtonRegistration,
   PluginHeaderButtonContribution,
@@ -17,6 +32,7 @@ import type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "../contracts.js";
+import type { PluginIconProps, PluginSerializableIcon } from "../icons.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -80,18 +96,38 @@ export interface PluginSidebarItemProps extends PluginHostProps {
   openPopover(Content: ComponentType<PluginPopoverProps>): void;
 }
 
-export interface PluginSidebarItemContribution {
+export interface PluginSidebarItemContribution<Text extends PluginText = string> {
   id: string;
   /** Settings row label, accessibility label, and default label for SidebarRow. */
-  title: string;
+  title: Text;
   Component: ComponentType<PluginSidebarItemProps>;
 }
 
-export interface PluginIconProps {
-  name: string;
-  size?: number;
-  color?: string;
+export interface PluginSidebarViewProps extends Pick<PluginHostProps, "theme" | "layout"> {
+  active: { workspace: WorkspaceRef | null; agent: AgentRef | null };
+  navigation: {
+    openWorkspace(ref: WorkspaceRef): void;
+    openAgent(ref: AgentRef): void;
+    openTerminal(ref: TerminalRef): void;
+    openProject(ref: ProjectRef): void;
+  };
+  dismiss(): void;
 }
+
+export interface PluginSidebarViewContribution<Text extends PluginText = string> {
+  id: string;
+  title: Text;
+  description?: Text;
+  Component: ComponentType<PluginSidebarViewProps>;
+}
+
+/**
+ * A Lucide icon name, inline SVG markup, or a component. Components receive the surface's size
+ * and color; buttons widen the props with their host and target context.
+ */
+export type PluginIcon<Props extends PluginIconProps = PluginIconProps> =
+  | PluginSerializableIcon
+  | ComponentType<Props>;
 
 export type PluginPanelLocation = "workspace" | "explorer";
 
@@ -99,22 +135,60 @@ export interface PluginOpenPanelOptions {
   location?: PluginPanelLocation;
 }
 
-interface PluginWorkspacePanelBase {
+interface PluginWorkspacePanelBase<Text extends PluginText = string> {
   id: string;
-  title: string;
-  icon: string;
+  title: Text;
+  icon: PluginIcon;
   locations?: readonly PluginPanelLocation[];
 }
 
-export interface PluginWorkspacePanelProps extends PluginNavigableHostProps {
-  context: "workspace";
-  workspaceId: string;
+export interface PluginTab {
+  /** Shows the tab's unsaved dot and asks before closing. */
+  setModified(modified: boolean): void;
+  /** Opaque persisted JSON. Undefined until written; the panel validates it. */
+  readonly state: unknown;
+  setState(state: JsonValue): void;
 }
 
-export interface PluginAgentPanelProps extends PluginNavigableHostProps {
-  context: "agent";
+export interface PluginPanelProps<Params> extends PluginNavigableHostProps {
   workspaceId: string;
+  readonly params: Readonly<Params>;
+  revision: number;
+  tab: PluginTab;
+}
+export interface PluginWorkspacePanelParams {}
+export interface PluginAgentPanelParams {
+  readonly agentId: string;
+}
+export interface PluginFilePanelParams {
+  readonly path: string;
+  readonly lineStart?: number;
+  readonly lineEnd?: number;
+}
+export interface PluginWorkspacePanelProps extends PluginPanelProps<PluginWorkspacePanelParams> {
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Use the panel registration to select the context. */
+  context: "workspace";
+}
+export interface PluginAgentPanelProps extends PluginPanelProps<PluginAgentPanelParams> {
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Use the panel registration to select the context. */
+  context: "agent";
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Read `params.agentId`. */
   agentId: string;
+}
+export interface PluginFilePanelProps extends PluginPanelProps<PluginFilePanelParams> {
+  file: PluginFile;
+}
+
+export interface PluginFilePanelContribution<Text extends PluginText = string> {
+  id: string;
+  title: Text;
+  icon: PluginIcon;
+  /** Extensions without the dot, case-insensitive, and exact filenames. */
+  files: { extensions: readonly string[]; filenames?: readonly string[] };
+  Component: ComponentType<PluginFilePanelProps>;
 }
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
@@ -127,21 +201,35 @@ interface PluginClientContextAliases {
   /** @deprecated Use `addScreen`. */
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   /** @deprecated Use `addSidebarHeaderItem`. */
-  addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
+  addSidebarItem(contribution: PluginSidebarContribution<PluginText>): PluginCleanup;
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities, PluginClientContextAliases {
-  addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
-  addScreen(contribution: PluginScreenContribution): PluginCleanup;
-  addSidebarHeaderItem(contribution: PluginSidebarItemContribution): PluginCleanup;
-  addSidebarFooterItem(contribution: PluginSidebarItemContribution): PluginCleanup;
-  addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
-  addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
-  addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
-  addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
-  addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
-  addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
-  addTheme(contribution: PluginThemeContribution): PluginCleanup;
+  readonly i18n: import("./translations.js").PluginI18n;
+  /** Play a base64-encoded audio file on this client; resolves when playback ends. */
+  playAudio(source: { base64: string; mimeType: string }): Promise<void>;
+  addSettingsScreen(contribution: PluginSettingsScreenContribution<PluginText>): PluginCleanup;
+  addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
+  addSidebarView(contribution: PluginSidebarViewContribution<PluginText>): PluginCleanup;
+  addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
+  addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
+  addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
+  addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
+  addCommandCenterItem(
+    contribution: PluginCommandCenterItemContribution<PluginText>,
+  ): PluginCleanup;
+  addSlashCommand(contribution: PluginClientSlashCommandContribution<PluginText>): PluginCleanup;
+  addHeaderButton(
+    contribution: PluginHeaderButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addComposerPill(
+    contribution: PluginComposerPillContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
+  addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
+  addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
+  addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
+  addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;
@@ -149,33 +237,55 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
+  /**
+   * Subscribes to a plugin subscription on this client's host. Paseo re-subscribes after a
+   * reconnect and releases what is left when the plugin stops.
+   */
+  subscribe<InputSchema extends ZodType, EventSchema extends ZodType>(
+    contract: PluginSubscriptionContract<InputSchema, EventSchema>,
+    input: PluginWireInput<ZodInput<InputSchema>>,
+    onEvent: (event: ZodOutput<EventSchema>) => void,
+    options?: PluginSubscribeOptions,
+  ): PluginSubscriptionHandle;
 }
 
 export type PluginClientContribution = (client: PluginClientContext) => PluginCleanup;
 
-export type PluginWorkspacePanelContribution =
-  | (PluginWorkspacePanelBase & {
-      context: "workspace";
+export type PluginWorkspacePanelContribution<Text extends PluginText = string> =
+  | (PluginWorkspacePanelBase<Text> & {
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+      /** @deprecated Omit context. */
+      context?: "workspace";
       Component: ComponentType<PluginWorkspacePanelProps>;
     })
-  | (PluginWorkspacePanelBase & {
+  | (PluginWorkspacePanelBase<Text> & {
+      // COMPAT(pluginAgentPanelAlias): added in v0.13.0, remove after 2027-04-23
+      /** @deprecated Register with `addAgentPanel`. */
       context: "agent";
       Component: ComponentType<PluginAgentPanelProps>;
     });
 
-export interface PluginSettingsScreenContribution {
+export interface PluginAgentPanelContribution<
+  Text extends PluginText = string,
+> extends PluginWorkspacePanelBase<Text> {
+  Component: ComponentType<PluginAgentPanelProps>;
+}
+
+export interface PluginSettingsScreenContribution<Text extends PluginText = string> {
   id: string;
-  title: string;
-  icon: string;
+  title: Text;
+  icon: PluginIcon;
   Component: ComponentType<PluginSurfaceProps>;
 }
 
 /** The screen header's title: fixed, or derived from the params the screen was opened with. */
-export type PluginScreenTitle = string | ((params: PluginScreenParams) => string);
+export type PluginScreenTitle<Text extends PluginText = string> =
+  | Text
+  | ((params: PluginScreenParams) => Text);
 
-export interface PluginScreenContribution {
+export interface PluginScreenContribution<Text extends PluginText = string> {
   id: string;
-  title: PluginScreenTitle;
+  title: PluginScreenTitle<Text>;
   Component: ComponentType<PluginScreenProps>;
 }
 
@@ -185,10 +295,10 @@ export interface PluginSurfaceContribution {
 }
 
 /** @deprecated Use `PluginSidebarItemContribution` with `addSidebarHeaderItem`. */
-export interface PluginSidebarContribution {
+export interface PluginSidebarContribution<Text extends PluginText = string> {
   id: string;
-  title: string;
-  icon: string;
+  title: Text;
+  icon: PluginIcon;
   surface: string;
 }
 
@@ -226,12 +336,14 @@ export interface PluginTimelineRendererContribution<Schema extends ZodType = Zod
 }
 
 export interface PluginCommandCapabilities {
-  paseo: PaseoApi;
+  paseo: PluginPaseoApi;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
-    input: ZodInput<InputSchema>,
+    input: PluginWireInput<ZodInput<InputSchema>>,
   ): Promise<ZodOutput<OutputSchema>>;
   openScreen(input: PluginOpenScreenInput): void;
+  /** The composers `selector` names, whether or not their tabs are open; see `useComposers`. */
+  composers(selector: PluginComposerSelector): readonly PluginComposer[];
   /** @deprecated Use `openScreen`. */
   openSurface(id: string): void;
   openSettings(id: string): void;
@@ -254,39 +366,39 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 
-interface PluginCommandCenterItemBase {
+interface PluginCommandCenterItemBase<Text extends PluginText = string> {
   id: string;
-  title: string;
-  icon: string;
+  title: Text;
+  icon: PluginIcon;
   keywords?: readonly string[];
 }
 
-export type PluginCommandCenterItemContribution =
-  | (PluginCommandCenterItemBase & {
+export type PluginCommandCenterItemContribution<Text extends PluginText = string> =
+  | (PluginCommandCenterItemBase<Text> & {
       context: "global";
       onSelect(context: PluginGlobalCommandContext): void | Promise<void>;
     })
-  | (PluginCommandCenterItemBase & {
+  | (PluginCommandCenterItemBase<Text> & {
       context: "workspace";
       onSelect(context: PluginWorkspaceCommandContext): void | Promise<void>;
     })
-  | (PluginCommandCenterItemBase & {
+  | (PluginCommandCenterItemBase<Text> & {
       context: "agent";
       onSelect(context: PluginAgentCommandContext): void | Promise<void>;
     });
 
-interface PluginClientSlashCommandBase {
+interface PluginClientSlashCommandBase<Text extends PluginText = string> {
   name: string;
-  description: string;
-  argumentHint: string;
+  description: Text;
+  argumentHint: Text;
 }
 
-export type PluginClientSlashCommandContribution =
-  | (PluginClientSlashCommandBase & {
+export type PluginClientSlashCommandContribution<Text extends PluginText = string> =
+  | (PluginClientSlashCommandBase<Text> & {
       context: "workspace";
       onSubmit(context: PluginWorkspaceCommandContext & { args: string }): void | Promise<void>;
     })
-  | (PluginClientSlashCommandBase & {
+  | (PluginClientSlashCommandBase<Text> & {
       context: "agent";
       onSubmit(context: PluginAgentCommandContext & { args: string }): void | Promise<void>;
     });

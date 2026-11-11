@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import MarkdownIt from "markdown-it";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   classifyForResolution,
   fetchDaemonResolution,
   getAssistantFileLinkToken,
+  resolveMissingNestedRelativeFile,
   UnresolvedFileLinkError,
   type AssistantFileLinkContext,
   type DirectorySuggestionEntry,
@@ -13,6 +18,126 @@ import {
 const CONTEXT: AssistantFileLinkContext = {
   workspaceRoot: "/Users/test/project",
 };
+
+it.each([
+  ["guide/details.md", "/repo/docs/guide/details.md"],
+  ["../README.md", "/repo/README.md"],
+  ["guide/details%20page.md", "/repo/docs/guide/details page.md"],
+])("resolves authored href %s from its document directory", (href, expected) => {
+  expect(
+    classifyForResolution({ href }, { workspaceRoot: "/repo", relativePathBase: "/repo/docs" }),
+  ).toMatchObject({ kind: "resolved", value: { kind: "file", target: { path: expected } } });
+});
+
+it.each([
+  ["C:/repo/docs", "../README.md", "C:/repo/README.md"],
+  ["C:/repo/docs", "../../", "C:/"],
+  ["~/.paseo/docs", "../guide.md", "~/.paseo/guide.md"],
+  ["/repo/docs", "/other/file.md", "/other/file.md"],
+  ["/repo/docs", "file:///other/file.md", "/other/file.md"],
+  ["/repo/docs", "guide/details.md#L3", "/repo/docs/guide/details.md"],
+])(
+  "resolves %s with href %s without changing absolute destinations",
+  (relativePathBase, href, expected) => {
+    expect(
+      classifyForResolution({ href }, { workspaceRoot: "/repo", relativePathBase }),
+    ).toMatchObject({
+      kind: "resolved",
+      value: { kind: "file", target: { path: expected } },
+    });
+  },
+);
+
+it("keeps inferred paths and chat links rooted at the workspace", () => {
+  const context = { workspaceRoot: "/repo", relativePathBase: "/repo/docs" };
+  expect(classifyForResolution({ href: "src/file.ts", markup: "linkify" }, context)).toMatchObject({
+    value: { kind: "file", target: { path: "/repo/src/file.ts" } },
+  });
+  expect(
+    classifyForResolution({ href: "guide/details.md" }, { workspaceRoot: "/repo" }),
+  ).toMatchObject({
+    value: { kind: "file", target: { path: "/repo/guide/details.md" } },
+  });
+  expect(classifyForResolution({ href: "https://example.com/docs" }, context)).toMatchObject({
+    value: { kind: "external", url: "https://example.com/docs" },
+  });
+});
+
+it.each(["docs/guides", "docs/guides/", "docs/%E6%8C%87%E5%8D%97"])(
+  "resolves an explicit extensionless folder href: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: { path: `${CONTEXT.workspaceRoot}/${decodeURIComponent(href).replace(/\/$/, "")}` },
+      },
+    });
+  },
+);
+
+it.each(["docs/guides", "origin/main"])("leaves extensionless inline code alone: %s", (text) => {
+  expect(classifyForResolution({ href: text, text, sourceType: "inline-code" }, CONTEXT)).toEqual({
+    kind: "resolved",
+    value: { kind: "ignored" },
+  });
+});
+
+it.each([{ markup: "linkify" }, { sourceInfo: "auto" }])(
+  "keeps auto-recognized extensionless text ignored: %j",
+  (origin) => {
+    expect(
+      classifyForResolution({ href: "docs/guides", text: "docs/guides", ...origin }, CONTEXT),
+    ).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each(["docs/guides?view=all"])(
+  "does not turn URL-like hrefs into workspace paths: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each([
+  ".dev/tablet-review/tablet-agent-draft.png",
+  "images/capture.jpg",
+  "downloads/archive.custom",
+  "assets/LICENSE",
+  "example.com/guides",
+  "capture.png",
+  "missing.png",
+])("opens explicit file link %s without filename guessing", (href) => {
+  expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+    kind: "resolved",
+    value: { kind: "file", target: { path: `${CONTEXT.workspaceRoot}/${href}` } },
+  });
+});
+
+it("opens the existing non-ASCII file named by a rendered markdown link", async () => {
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "assistant-file-link-"));
+  try {
+    await mkdir(path.join(workspaceRoot, "docs/reports"), { recursive: true });
+    await writeFile(path.join(workspaceRoot, "docs/reports/开户赠金.md"), "report content");
+    const tokens = new MarkdownIt().parseInline("[报告](docs/reports/开户赠金.md)", {});
+    const href = tokens[0].children?.find((token) => token.type === "link_open")?.attrGet("href");
+    expect(href).toBe("docs/reports/%E5%BC%80%E6%88%B7%E8%B5%A0%E9%87%91.md");
+    const resolution = classifyForResolution({ href: href! }, { workspaceRoot });
+    expect(resolution.kind).toBe("resolved");
+    if (resolution.kind !== "resolved" || resolution.value.kind !== "file") {
+      throw new Error("Expected a directly resolved file link");
+    }
+    expect(await readFile(resolution.value.target.path, "utf8")).toBe("report content");
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
 
 function resolvedSuggestions(
   entries: DirectorySuggestionResult["entries"],
@@ -52,6 +177,27 @@ const unavailableSuggestions: GetDirectorySuggestions = async () => {
 };
 
 describe("classifyForResolution", () => {
+  it.each([
+    ["C:/repo/my%20file.md", undefined],
+    ["C:\\repo\\my%20file.md", undefined],
+    ["C:/repo/my%20file.md:12", 12],
+    ["C:\\repo\\my%20file.md:12", 12],
+  ])("keeps the literal filename in Windows inline code %s", (href, lineStart) => {
+    for (const text of [href, undefined]) {
+      const result = classifyForResolution(
+        { href, text, sourceType: "inline-code" },
+        { workspaceRoot: "C:/repo" },
+      );
+      expect(result).toMatchObject({
+        kind: "resolved",
+        value: { kind: "file", target: { path: "C:/repo/my%20file.md", lineStart } },
+      });
+    }
+    expect(classifyForResolution({ href }, { workspaceRoot: "C:/repo" })).toMatchObject({
+      kind: "resolved",
+      value: { kind: "file", target: { path: "C:/repo/my file.md", lineStart } },
+    });
+  });
   it("returns the directFile target synchronously", () => {
     const result = classifyForResolution({ href: "src/components/message.tsx#L33" }, CONTEXT);
 
@@ -165,6 +311,46 @@ describe("classifyForResolution", () => {
 
     expect(result).toEqual({ kind: "resolved", value: { kind: "ignored" } });
   });
+
+  it("decodes percent-encoded markdown hrefs", () => {
+    const result = classifyForResolution({ href: "docs/my%20file.md" }, CONTEXT);
+
+    expect(result).toEqual({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: {
+          raw: "docs/my%20file.md",
+          path: "/Users/test/project/docs/my file.md",
+          lineStart: undefined,
+          lineEnd: undefined,
+        },
+      },
+    });
+  });
+
+  it("keeps literal percent signs in inline-code paths", () => {
+    const result = classifyForResolution(
+      {
+        href: "docs/my%20file.md",
+        text: "docs/my%20file.md",
+        sourceType: "inline-code",
+      },
+      CONTEXT,
+    );
+
+    expect(result).toEqual({
+      kind: "needsLookup",
+      ambiguousQuery: "docs/my%20file.md",
+      token: "docs/my%20file.md",
+      target: {
+        raw: "docs/my%20file.md",
+        path: "/Users/test/project/docs/my%20file.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
+  });
 });
 
 describe("fetchDaemonResolution", () => {
@@ -236,6 +422,174 @@ describe("fetchDaemonResolution", () => {
         getDirectorySuggestions: unavailableSuggestions,
       }),
     ).rejects.toEqual(new UnresolvedFileLinkError("dumm.md"));
+  });
+});
+
+describe("resolveMissingNestedRelativeFile", () => {
+  const target = {
+    raw: "schema/x.md:12-14",
+    path: "/Users/test/project/schema/x.md",
+    lineStart: 12,
+    lineEnd: 14,
+  };
+
+  it("opens a nested-repo suffix when the workspace-root path is missing", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+
+    const result = await resolveMissingNestedRelativeFile({
+      target,
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches).toEqual([
+      {
+        query: "schema/x.md",
+        cwd: "/Users/test/project",
+        matchMode: "suffix",
+        limit: 1,
+      },
+    ]);
+    expect(result).toEqual({
+      ...target,
+      path: "/Users/test/project/repo-a/schema/x.md",
+    });
+  });
+
+  it("keeps the exact workspace path when suggestions return that relative path", async () => {
+    const { getDirectorySuggestions } = suggestionsFromMap({
+      "schema/x.md": [{ path: "schema/x.md", kind: "file" }],
+    });
+
+    const result = await resolveMissingNestedRelativeFile({
+      target,
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(result).toEqual(target);
+  });
+
+  it("keeps the original target when suggestions are empty", async () => {
+    const { getDirectorySuggestions } = suggestionsFromMap({});
+
+    await expect(
+      resolveMissingNestedRelativeFile({
+        target,
+        workspaceRoot: "/Users/test/project",
+        getDirectorySuggestions,
+      }),
+    ).resolves.toEqual(target);
+  });
+
+  it("keeps the original target when the daemon throws", async () => {
+    await expect(
+      resolveMissingNestedRelativeFile({
+        target,
+        workspaceRoot: "/Users/test/project",
+        getDirectorySuggestions: unavailableSuggestions,
+      }),
+    ).resolves.toEqual(target);
+  });
+
+  it.each([
+    ["a bare filename", { ...target, path: "/Users/test/project/file.ts" }],
+    ["a path outside the workspace", { ...target, path: "/tmp/schema/x.md" }],
+    ["a home-relative path", { ...target, path: "~/schema/x.md" }],
+  ])("does not search %s", async (_label, candidate) => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+
+    const result = await resolveMissingNestedRelativeFile({
+      target: candidate,
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches).toEqual([]);
+    expect(result).toEqual(candidate);
+  });
+
+  it("does not search when the workspace root is blank", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({});
+
+    const result = await resolveMissingNestedRelativeFile({
+      target,
+      workspaceRoot: "   ",
+      getDirectorySuggestions,
+    });
+
+    expect(searches).toEqual([]);
+    expect(result).toEqual(target);
+  });
+
+  it.each([
+    ["/Users/test/project/schema/x.md", "/Users/test/project"],
+    ["file:///Users/test/project/schema/x.md", "/Users/test/project"],
+    ["C:/repo/schema/x.md", "C:/repo"],
+    ["\\\\server\\share\\schema\\x.md", "//server/share"],
+  ])("keeps absolute destination %s", async (raw, workspaceRoot) => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+    const absoluteTarget = { raw, path: `${workspaceRoot}/schema/x.md` };
+    await expect(
+      resolveMissingNestedRelativeFile({
+        target: absoluteTarget,
+        workspaceRoot,
+        getDirectorySuggestions,
+      }),
+    ).resolves.toEqual(absoluteTarget);
+    expect(searches).toEqual([]);
+  });
+
+  it.each(["docs/guides", "./docs/guides", "docs/guides/"])(
+    "keeps folder href %s direct",
+    async (raw) => {
+      const { getDirectorySuggestions, searches } = suggestionsFromMap({
+        "docs/guides": [{ path: "repo-a/docs/guides", kind: "file" }],
+      });
+      const folderTarget = { raw, path: "/Users/test/project/docs/guides" };
+      await expect(
+        resolveMissingNestedRelativeFile({
+          target: folderTarget,
+          workspaceRoot: "/Users/test/project",
+          getDirectorySuggestions,
+        }),
+      ).resolves.toEqual(folderTarget);
+      expect(searches).toEqual([]);
+    },
+  );
+
+  it("normalizes a Windows workspace root before the suffix lookup", async () => {
+    const windowsTarget = {
+      raw: "schema/x.md",
+      path: "C:\\repo\\schema\\x.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    };
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+
+    const result = await resolveMissingNestedRelativeFile({
+      target: windowsTarget,
+      workspaceRoot: "C:\\repo\\",
+      getDirectorySuggestions,
+    });
+
+    expect(searches).toEqual([
+      {
+        query: "schema/x.md",
+        cwd: "C:\\repo\\",
+        matchMode: "suffix",
+        limit: 1,
+      },
+    ]);
+    expect(result.path).toBe("C:/repo/repo-a/schema/x.md");
   });
 });
 

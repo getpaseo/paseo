@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildVisibleComboboxOptions } from "@/components/ui/combobox-options";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import {
   type BranchPickerDetail,
@@ -7,6 +8,7 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemToCheckoutRequest,
+  startsNewBranch,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -338,5 +340,67 @@ describe("defaultBasePickerItem", () => {
 
   it("has no default for detached HEAD", () => {
     expect(defaultBasePickerItem({ currentBranch: null })).toBeNull();
+  });
+});
+
+describe("starting-ref search", () => {
+  it.each(["gitlab", "github"] as const)(
+    "keeps a %s change request returned for a body-only match",
+    (forge) => {
+      const item: ForgeSearchItem = {
+        ...prItem,
+        forge,
+        number: 3896,
+        title: "fix(config): send environment credentials only to trusted hosts",
+        body: "This mirrors the fix shipped for CVE-2024-53858.",
+        headRefName: "8545-duo-test",
+      };
+      const { options } = buildPickerOptionData({
+        branchDetails: [],
+        prItems: [item],
+        baseItem: null,
+      });
+      const visible = buildVisibleComboboxOptions({
+        options,
+        searchQuery: "2024",
+        searchable: true,
+        allowCustomValue: false,
+        customValuePrefix: "Use",
+      });
+      expect(visible.map((option) => option.label)).toEqual([
+        `${forge === "gitlab" ? "!" : "#"}3896 fix(config): send environment credentials only to trusted hosts`,
+      ]);
+      const selected = buildPickerOptionData({
+        branchDetails: [],
+        prItems: [],
+        baseItem: { kind: "github-pr", item },
+      });
+      expect(
+        buildVisibleComboboxOptions({
+          options: selected.options,
+          searchQuery: "2024",
+          searchable: true,
+          allowCustomValue: false,
+          customValuePrefix: "Use",
+        }),
+      ).toEqual(visible);
+    },
+  );
+});
+
+describe("startsNewBranch", () => {
+  it("is true for a branch-off and for no request, which is the default base on a detached HEAD", () => {
+    expect(startsNewBranch(undefined)).toBe(true);
+    expect(startsNewBranch({ action: "branch-off", refName: "main" })).toBe(true);
+  });
+
+  it("is false for a checkout of a branch or a change request", () => {
+    expect(startsNewBranch({ action: "checkout", refName: "feature" })).toBe(false);
+    expect(
+      startsNewBranch({
+        checkoutSource: { kind: "change_request", forge: "github", number: 7 },
+      }),
+    ).toBe(false);
+    expect(startsNewBranch({ githubPrNumber: 7 })).toBe(false);
   });
 });

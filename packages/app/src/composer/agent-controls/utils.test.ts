@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   getFeatureHighlightColor,
-  getFeatureTooltip,
   getAgentControlHintKey,
   normalizeModelId,
   resolveAgentModelSelection,
@@ -16,25 +15,9 @@ describe("getAgentControlHintKey", () => {
 });
 
 describe("feature metadata helpers", () => {
-  it("prefers explicit feature tooltip copy", () => {
-    expect(
-      getFeatureTooltip({
-        label: "Plan",
-        tooltip: "Toggle plan mode",
-      }),
-    ).toBe("Toggle plan mode");
-  });
-
-  it("falls back to the feature label when no tooltip is provided", () => {
-    expect(
-      getFeatureTooltip({
-        label: "Custom",
-      }),
-    ).toBe("Custom");
-  });
-
   it("maps feature highlight colors by feature id", () => {
     expect(getFeatureHighlightColor("fast_mode")).toBe("yellow");
+    expect(getFeatureHighlightColor("service_tier")).toBe("yellow");
     expect(getFeatureHighlightColor("plan_mode")).toBe("blue");
     expect(getFeatureHighlightColor("other")).toBe("default");
   });

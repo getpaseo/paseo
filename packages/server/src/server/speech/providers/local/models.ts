@@ -2,6 +2,7 @@ import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./sherpa/model-do
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
+  LocalSpeechModelIdSchema,
   LocalSttModelIdSchema,
   LocalTtsModelIdSchema,
   listSherpaOnnxModels,
@@ -13,6 +14,7 @@ import {
 export {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
+  LocalSpeechModelIdSchema,
   LocalSttModelIdSchema,
   LocalTtsModelIdSchema,
   type LocalSpeechModelId,

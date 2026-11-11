@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { open, readFile, stat, unlink, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { ensurePrivateDirectory } from "./private-files.js";
@@ -15,6 +16,7 @@ export const pidLockInfoSchema = z.object({
   serverId: z.string().nullable().optional(),
   desktopManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
+  bootId: z.string().optional(),
 });
 
 export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
@@ -28,13 +30,16 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err;
 }
 
+// The field is assigned explicitly rather than declared as a constructor parameter property:
+// the terminal worker loads this module under --experimental-strip-types, which cannot emit
+// the assignment a parameter property implies.
 export class PidLockError extends Error {
-  constructor(
-    message: string,
-    public readonly existingLock?: PidLockInfo,
-  ) {
+  readonly existingLock?: PidLockInfo;
+
+  constructor(message: string, existingLock?: PidLockInfo) {
     super(message);
     this.name = "PidLockError";
+    this.existingLock = existingLock;
   }
 }
 
@@ -62,16 +67,45 @@ function precedesThisBoot(startedAt: string): boolean {
   return stamped < Date.now() - uptime() * 1000 - BOOT_INSTANT_TOLERANCE_MS;
 }
 
+let cachedBootId: string | null | undefined;
+
+// Linux names each boot. The wall-clock boot instant is not enough there: a VM paused while
+// its host sleeps keeps its uptime, so after it resumes the instant lands after locks its
+// running supervisor wrote.
+export function currentBootId(): string | null {
+  if (cachedBootId === undefined) {
+    try {
+      cachedBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf-8").trim() || null;
+    } catch {
+      cachedBootId = null;
+    }
+  }
+  return cachedBootId;
+}
+
+/**
+ * Whether a record stamped with `startedAt` (and, on Linux, `bootId`) was written during the
+ * current boot. Daemon locks and terminal worker records share this rule.
+ */
+export function writtenDuringThisBoot(stamp: {
+  startedAt: string;
+  bootId?: string | null;
+}): boolean {
+  const thisBoot = currentBootId();
+  if (stamp.bootId && thisBoot) return stamp.bootId === thisBoot;
+  return !precedesThisBoot(stamp.startedAt);
+}
+
 /**
  * Whether the process that wrote this lock is still running.
  *
  * A PID alone does not identify the supervisor: the operating system hands the number to
  * something else once the supervisor is gone, and a reboot reassigns it freely. A process
- * cannot predate the boot it runs under, so a lock stamped before this boot is abandoned
+ * cannot predate the boot it runs under, so a lock written during another boot is abandoned
  * however alive its PID looks.
  */
 export function isPidLockOwnerRunning(lock: PidLockInfo): boolean {
-  if (precedesThisBoot(lock.startedAt)) return false;
+  if (!writtenDuringThisBoot(lock)) return false;
   return isPidRunning(lock.pid);
 }
 
@@ -214,6 +248,7 @@ export async function acquirePidLock(
   }
 
   // Create new lock with exclusive flag
+  const bootId = currentBootId();
   const lockInfo: PidLockInfo = {
     pid: lockOwnerPid,
     startedAt: new Date().toISOString(),
@@ -221,6 +256,7 @@ export async function acquirePidLock(
     uid: process.getuid?.() ?? 0,
     listen,
     heartbeat: true,
+    ...(bootId ? { bootId } : {}),
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
   };
 

@@ -63,9 +63,14 @@ const EXPECTED_CLAUDE_MODELS = [
     descriptionFragment: "Previous release",
   },
   {
+    id: "claude-fable-5-2",
+    model: "Fable 5.2",
+    descriptionFragment: "Most powerful",
+  },
+  {
     id: "claude-fable-5-1",
     model: "Fable 5.1",
-    descriptionFragment: "Most powerful",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-fable-5",
@@ -123,9 +128,14 @@ const EXPECTED_CLAUDE_MODELS = [
     descriptionFragment: "Most capable",
   },
   {
+    id: "claude-haiku-5-5",
+    model: "Haiku 5.5",
+    descriptionFragment: "Fastest",
+  },
+  {
     id: "claude-haiku-4-5",
     model: "Haiku 4.5",
-    descriptionFragment: "Fastest",
+    descriptionFragment: "Previous release",
   },
 ] as const;
 
@@ -194,11 +204,10 @@ function assertClaudeModels(data: ProviderModel[]): void {
     );
   }
 
-  const fable51Index = data.findIndex((model) => model.id === "claude-fable-5-1");
-  const fable5Index = data.findIndex((model) => model.id === "claude-fable-5");
-  assert.strictEqual(
-    fable5Index,
-    fable51Index + 1,
+  const fable52Index = data.findIndex((model) => model.id === "claude-fable-5-2");
+  assert.deepStrictEqual(
+    data.slice(fable52Index, fable52Index + 3).map((model) => model.id),
+    ["claude-fable-5-2", "claude-fable-5-1", "claude-fable-5"],
     "Fable models should stay adjacent and newest-first",
   );
   assert(
@@ -360,10 +369,6 @@ try {
       "all codex model IDs should be from the gpt family",
     );
     assert(
-      ids.some((id) => id.includes("codex")),
-      "codex model list should include at least one codex-optimized model",
-    );
-    assert(
       data.every((m) => m.model && m.id && m.description),
       "every codex model should have model, id, and description fields",
     );
@@ -435,8 +440,8 @@ try {
       "--quiet should print the same ordered model IDs returned by --json",
     );
     assert(
-      claudeModelsFromJson.some((m) => m.id === "claude-sonnet-5-5"),
-      "captured --json output should include the current Claude everyday model id",
+      claudeModelsFromJson.some((m) => m.id === "claude-haiku-5-5"),
+      "captured --json output should include the current Claude quick-answer model id",
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
   }

@@ -1,3 +1,4 @@
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
@@ -50,13 +51,22 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     serverId,
     clientBundle: serverId,
     lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     queryClient: new QueryClient(),
     paseo: {} as InstalledPlugin["paseo"],
     invoke: async () => undefined,
+    subscribe: () => {
+      throw new Error("Subscriptions are not used here");
+    },
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

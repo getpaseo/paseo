@@ -1,10 +1,3 @@
-import {
-  buildExplorerCheckoutKey,
-  isExplorerTab,
-  resolveExplorerTabForCheckout,
-  type ExplorerTab,
-} from "../explorer-tab-memory";
-import { type ExplorerCheckoutContext } from "../explorer-checkout-context";
 import { z } from "zod";
 
 export type MobilePanelView = "agent" | "agent-list" | "file-explorer";
@@ -33,11 +26,17 @@ export interface PanelLayoutInput {
   isCompact: boolean;
 }
 
+/** How app chrome presents the left sidebar: over the workspace, beside it, or not at all. */
+export type LeftSidebarPresentation = "overlay" | "dock" | "hidden";
+
+/** The panels app chrome presents, which decide the mobile panel targets that can stay selected. */
+export interface PanelLayout extends PanelLayoutInput {
+  leftSidebar: LeftSidebarPresentation;
+}
+
 export interface PanelCoreState {
   mobilePanel: MobilePanelSelection;
   desktop: DesktopSidebarState;
-  explorerTab: ExplorerTab;
-  explorerTabByCheckout: Record<string, ExplorerTab>;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -77,43 +76,33 @@ export function setMobilePanelTarget(
   return { target, revision: selection.revision + 1 };
 }
 
-function resolveExplorerTabFromCheckout(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): ExplorerTab {
-  return resolveExplorerTabForCheckout({
-    serverId: checkout.serverId,
-    cwd: checkout.cwd,
-    isGit: checkout.isGit,
-    explorerTabByCheckout: state.explorerTabByCheckout,
-  });
-}
-
-export interface OpenFileExplorerPatch {
-  mobilePanel: MobilePanelSelection;
-  explorerTab: ExplorerTab;
-}
-
-export function buildOpenFileExplorerPatch(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): OpenFileExplorerPatch {
+/**
+ * Only an overlay sidebar shows the `agent-list` target. A docked or hidden sidebar drops it, so
+ * a stale target cannot resurface the overlay on the next collapse. Always invalidate in-flight
+ * gestures, even when an opening swipe has not committed `agent-list` yet.
+ */
+export function dropOverlayAgentList(selection: MobilePanelSelection): MobilePanelSelection {
   return {
-    mobilePanel: setMobilePanelTarget(state.mobilePanel, "file-explorer"),
-    explorerTab: resolveExplorerTabFromCheckout(state, checkout),
+    target: selection.target === "agent-list" ? "agent" : selection.target,
+    revision: selection.revision + 1,
   };
 }
 
-export type ToggleFileExplorerPatch = OpenFileExplorerPatch | { mobilePanel: MobilePanelSelection };
-
-export function buildToggleFileExplorerPatch(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): ToggleFileExplorerPatch {
-  if (!selectIsCompactFileExplorerOpen(state)) {
-    return buildOpenFileExplorerPatch(state, checkout);
+/**
+ * Keeps only the targets the layout presents. The `file-explorer` target exists on compact layouts
+ * only; a wide layout docks the Explorer instead, and a stale target there would block the
+ * navigation swipe, which begins only from `agent`.
+ */
+export function reconcileMobilePanel(
+  selection: MobilePanelSelection,
+  layout: PanelLayout,
+): MobilePanelSelection {
+  const sidebarReconciled =
+    layout.leftSidebar === "overlay" ? selection : dropOverlayAgentList(selection);
+  if (!layout.isCompact && sidebarReconciled.target === "file-explorer") {
+    return setMobilePanelTarget(sidebarReconciled, "agent");
   }
-  return { mobilePanel: setMobilePanelTarget(state.mobilePanel, "agent") };
+  return sidebarReconciled;
 }
 
 const ExplorerTabSchema = z.enum(["changes", "files", "pr"]);
@@ -156,26 +145,6 @@ export const PanelPersistedStateSchema = z.strictObject({
 
 type MigratablePanelState = z.infer<typeof PanelPersistedStateSchema>;
 
-function migratePanelExplorerTabByCheckout(state: MigratablePanelState, version: number): void {
-  if (
-    version < 4 ||
-    typeof state.explorerTabByCheckout !== "object" ||
-    !state.explorerTabByCheckout
-  ) {
-    state.explorerTabByCheckout = {};
-    return;
-  }
-  const entries = Object.entries(state.explorerTabByCheckout);
-  const next: Record<string, ExplorerTab> = {};
-  for (const [key, value] of entries) {
-    if (!isExplorerTab(value)) {
-      continue;
-    }
-    next[key] = value;
-  }
-  state.explorerTabByCheckout = next;
-}
-
 function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   const desktop = state.desktop;
   if (!desktop) {
@@ -216,10 +185,8 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
   if (state.desktop) {
     delete state.desktop.fileExplorerOpen;
   }
-  if (!isExplorerTab(state.explorerTab)) {
-    state.explorerTab = "changes";
-  }
-  migratePanelExplorerTabByCheckout(state, version);
+  delete state.explorerTab;
+  delete state.explorerTabByCheckout;
   if (version < 8) {
     migratePanelDesktopFocusMode(state);
   }
@@ -263,6 +230,3 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
 
   return state;
 }
-
-export { buildExplorerCheckoutKey, resolveExplorerTabForCheckout };
-export type { ExplorerTab, ExplorerCheckoutContext };

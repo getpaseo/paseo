@@ -84,6 +84,23 @@ describe("daemon web UI bootstrap", () => {
     }
   });
 
+  test("returns 404 for missing metadata while serving web UI deep links", async () => {
+    const distDir = await createWebUiDist();
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: true,
+      webUi: { enabled: true, distDir },
+    });
+    const origin = `http://127.0.0.1:${daemonHandle.port}`;
+    const metadata = await fetch(`${origin}/.well-known/oauth-protected-resource/mcp/agents`);
+    expect(metadata.status).toBe(404);
+    expect(metadata.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(await metadata.json()).toEqual({ error: "Not found" });
+
+    const deepLink = await fetch(`${origin}/h/example/agent/123`);
+    expect(deepLink.status).toBe(200);
+    expect(await deepLink.text()).toContain("<body>app</body>");
+  });
+
   test("advertises ComputerName as the hostname over HTTP and WebSocket", async () => {
     daemonHandle = await createTestPaseoDaemon({ mcpEnabled: false });
     const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
@@ -132,6 +149,44 @@ describe("daemon web UI bootstrap", () => {
       useTls: true,
       label: expectedHostName,
     });
+  });
+
+  test("spells out the scheme default port when the Host header omits it", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    // A browser reaching a proxy that terminates TLS on 443 sends a Host header
+    // with no port at all. The app rejects a portless `listen`, so the daemon
+    // has to supply the default itself.
+    const httpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "paseo.example.test", "x-forwarded-proto": "https" },
+      }),
+    );
+    const httpHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "paseo.example.test" },
+      }),
+    );
+    const ipv6Hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "[::1]", "x-forwarded-proto": "https" },
+      }),
+    );
+
+    expect(httpsHint.listen).toBe("paseo.example.test:443");
+    expect(httpHint.listen).toBe("paseo.example.test:80");
+    expect(ipv6Hint.listen).toBe("[::1]:443");
   });
 
   test("ignores forwarded HTTPS when proxy trust is disabled", async () => {

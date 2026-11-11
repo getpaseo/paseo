@@ -1,21 +1,20 @@
+import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import { Keyboard, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { ComposerDock } from "@/composer/dock";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
-import { FileDropZone } from "@/components/file-drop/file-drop-zone";
+import { type ComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
-import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
-import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -24,13 +23,13 @@ import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
-import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
+  resolveDraftWorkingDirectory,
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
-import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import { DRAFT_CAPABILITIES } from "@/composer/draft/timeline";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
@@ -40,7 +39,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import {
   buildWorkspaceTabPersistenceKey,
@@ -49,22 +48,12 @@ import {
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 
-const EMPTY_PENDING_PERMISSIONS = new Map();
-const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
-  supportsStreaming: true,
-  supportsSessionPersistence: false,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-};
-
 interface AutoSubmitConfig {
   provider: string;
   modeId: string | null;
   model: string | null;
   thinkingOptionId: string | null;
-  featureValues: Record<string, unknown>;
+  providerOptions: Record<string, unknown>;
 }
 
 function resolveAutoSubmitConfig(
@@ -73,7 +62,7 @@ function resolveAutoSubmitConfig(
     modeId?: string | null;
     model?: string | null;
     thinkingOptionId?: string | null;
-    featureValues?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
   } | null,
 ): AutoSubmitConfig | null {
   if (!pending) return null;
@@ -82,50 +71,34 @@ function resolveAutoSubmitConfig(
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
-    featureValues: pending.featureValues ?? {},
+    providerOptions: pending.providerOptions ?? {},
   };
-}
-
-// Reconcile the form's selected mode against the currently discovered modes.
-// The mode picker displays modeOptions[0] when the stored mode isn't in the
-// list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
-// no longer defines), so the submitted mode must match that display — otherwise
-// we'd send a stale mode the provider rejects while the UI showed a valid one.
-function reconcileSelectedMode(modeOptionIds: readonly string[], selectedMode: string): string {
-  if (modeOptionIds.length === 0) {
-    return "";
-  }
-  return modeOptionIds.includes(selectedMode) ? selectedMode : (modeOptionIds[0] ?? "");
 }
 
 function resolveDraftModeIdOverride(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionIds: readonly string[];
-  selectedMode: string;
+  effectiveModeId: string;
 }): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
+  const { autoSubmitConfig, effectiveModeId } = input;
   if (autoSubmitConfig?.modeId) {
     return { modeId: autoSubmitConfig.modeId };
   }
-  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
-  if (reconciled !== "") {
-    return { modeId: reconciled };
+  if (effectiveModeId !== "") {
+    return { modeId: effectiveModeId };
   }
   return {};
 }
 
 function resolveDraftModeId(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionIds: readonly string[];
-  selectedMode: string;
+  effectiveModeId: string;
 }): string | null {
-  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
+  const { autoSubmitConfig, effectiveModeId } = input;
   if (autoSubmitConfig?.modeId !== undefined) {
     return autoSubmitConfig.modeId;
   }
-  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
-  if (reconciled !== "") {
-    return reconciled;
+  if (effectiveModeId !== "") {
+    return effectiveModeId;
   }
   return null;
 }
@@ -143,11 +116,11 @@ async function submitDraftCreateRequest(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
-    selectedMode: string;
-    modeOptions: readonly { id: string }[];
+    effectiveModeId: string;
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
-    featureValues: Record<string, unknown> | undefined;
+    providerOptions: Record<string, unknown> | undefined;
+    metadata: Record<string, JsonValue>;
   };
   hostDisconnectedMessage: string;
   selectModelMessage: string;
@@ -177,8 +150,7 @@ async function submitDraftCreateRequest(input: {
   }
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
-    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
-    selectedMode: composerState.selectedMode,
+    effectiveModeId: composerState.effectiveModeId,
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
@@ -187,7 +159,7 @@ async function submitDraftCreateRequest(input: {
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
-    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    providerOptions: autoSubmitConfig?.providerOptions ?? composerState.providerOptions,
   });
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
@@ -198,6 +170,7 @@ async function submitDraftCreateRequest(input: {
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
+    ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
@@ -219,10 +192,9 @@ function buildDraftAgentSnapshot(input: {
   composerState: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
-    modeOptions: readonly { id: string }[];
-    selectedMode: string;
+    effectiveModeId: string;
     selectedProvider: string | null;
-    agentControls: { features?: Agent["features"] };
+    agentControls: { optionControls?: ComposerOptionControls };
   };
   selectModelMessage: string;
 }): Agent {
@@ -234,8 +206,7 @@ function buildDraftAgentSnapshot(input: {
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
     autoSubmitConfig,
-    modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
-    selectedMode: composerState.selectedMode,
+    effectiveModeId: composerState.effectiveModeId,
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {
@@ -260,7 +231,8 @@ function buildDraftAgentSnapshot(input: {
     title: "Agent",
     cwd: workspaceDirectory,
     model,
-    features: composerState.agentControls.features,
+    options: composerState.agentControls.optionControls?.options,
+    controls: composerState.agentControls.optionControls?.controls,
     thinkingOptionId,
     parentAgentId: null,
     labels: {},
@@ -279,25 +251,15 @@ function buildDraftInitialValues(input: {
   };
 }
 
-function resolveDraftWorkingDirectory(input: {
-  workspaceDirectory: string | null;
-  initialSetup: WorkspaceDraftTabSetup | null;
-}): string | null {
-  if (input.initialSetup) {
-    return input.initialSetup.cwd;
-  }
-  return input.workspaceDirectory;
-}
-
-interface WorkspaceDraftAgentTabProps {
+interface WorkspaceDraftComposerProps {
   serverId: string;
   workspaceId: string;
   tabId: string;
   draftId: string;
   initialSetup?: WorkspaceDraftTabSetup;
   isPaneFocused: boolean;
+  editingSession: ComposerEditingSession;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
-  onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
   onOpenImportSheet?: () => void;
 }
 
@@ -311,19 +273,24 @@ function resolveImportPillPress(
   return onOpenImportSheet ?? null;
 }
 
-export function WorkspaceDraftAgentTab({
+/**
+ * Creates the agent from the draft's first prompt. The conversation panel shows that prompt in
+ * the timeline from the create-flow store while the agent is created.
+ */
+export function WorkspaceDraftComposer({
   serverId,
   workspaceId,
   tabId,
   draftId,
   initialSetup = undefined,
   isPaneFocused,
+  editingSession,
   onCreated,
-  onOpenWorkspaceFile,
   onOpenImportSheet,
-}: WorkspaceDraftAgentTabProps) {
+}: WorkspaceDraftComposerProps) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     id: w.id,
@@ -351,7 +318,7 @@ export function WorkspaceDraftAgentTab({
     composer: {
       initialServerId: serverId,
       initialValues: draftInitialValues,
-      initialFeatureValues: draftSetup?.featureValues,
+      initialProviderOptions: draftSetup?.providerOptions,
       isVisible: true,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
     },
@@ -369,8 +336,7 @@ export function WorkspaceDraftAgentTab({
   const draftModeOptions = composerState.modeOptions;
   const draftSelectedMode = composerState.selectedMode;
   const draftSetMode = composerState.setModeFromUser;
-  const draftFeatures = composerState.agentControls.features;
-  const draftOnSetFeature = composerState.agentControls.onSetFeature;
+  const draftOptionControls = composerState.agentControls.optionControls;
 
   const clearDraftInput = draftInput.clear;
   const replaceDraftText = draftInput.replaceText;
@@ -405,8 +371,9 @@ export function WorkspaceDraftAgentTab({
   }, [pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
   const isCompactFormFactor = useIsCompactFormFactor();
+  const isComposerFullscreen = useComposerFullscreen(editingSession);
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
-    COMPACT_FORM_FACTOR_WIDTH,
+    COMPACT_CONTENT_WIDTH,
     { initialIsBelow: isCompactFormFactor },
   );
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
@@ -431,89 +398,77 @@ export function WorkspaceDraftAgentTab({
       openWorkspaceChanges({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? "" }),
-        checkout: { serverId, cwd: composerState.workingDir, isGit: true },
         preferences: openInSidePane,
       });
     },
-    [composerState.workingDir, isCompactFormFactor, openInSidePane, serverId, workspaceId],
+    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
-  const {
-    formErrorMessage,
-    isSubmitting,
-    submittedStreamItems,
-    pendingMessageSubmissions,
-    draftAgent,
-    handleCreateFromInput,
-    continueCreateFromAttempt,
-  } = useDraftAgentCreateFlow<Agent, AgentSnapshotPayload>({
-    draftId,
-    getPendingServerId: () => serverId,
-    initialAttempt: initialCreateAttempt,
-    allowEmptyText: allowsEmptyAutoSubmit,
-    validateBeforeSubmit: ({ text, attachments }) => {
-      const allowsEmptyDraftText = shouldAllowEmptyDraftText({
-        allowsEmptyAutoSubmit,
-        attachments,
-      });
-      return validateDraftSubmission({
-        text,
-        allowsEmptyAutoSubmit: allowsEmptyDraftText,
-        composerState,
-        autoSubmitConfig,
-        workspaceDirectory: draftWorkingDirectory,
-        hasClient: Boolean(client),
-      });
-    },
-    onBeforeSubmit: async () => {
-      await composerState.persistFormPreferences();
-      if (isWeb) {
-        (document.activeElement as HTMLElement | null)?.blur?.();
-      }
-      Keyboard.dismiss();
-    },
-    buildDraftAgent: (attempt) =>
-      buildDraftAgentSnapshot({
-        attempt,
-        serverId,
-        tabId,
-        workspaceDirectory: draftWorkingDirectory,
-        autoSubmitConfig,
-        composerState,
-        selectModelMessage: t("workspaceSetup.errors.selectModel"),
-      }),
-    createRequest: async ({ attempt, text, images, attachments, cwd }) => {
-      if (pendingAutoSubmit?.agentCreation) {
-        const result = await pendingAutoSubmit.agentCreation.result;
-        return { agentId: result.id, result };
-      }
-      return submitDraftCreateRequest({
-        draftId,
-        attempt,
-        text,
-        images,
-        attachments,
-        cwd,
-        client,
-        workspaceDirectory: draftWorkingDirectory,
-        workspaceId: workspaceFields?.id ?? null,
-        autoSubmitConfig,
-        composerState,
-        hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
-        selectModelMessage: t("workspaceSetup.errors.selectModel"),
-      });
-    },
-    onCreateSuccess: ({ result }) => {
-      clearDraftInput("sent");
-      clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
-      useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
-      onCreated(result);
-    },
-  });
-  const turnPresentation = useMemo(
-    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
-    [pendingMessageSubmissions],
-  );
+  const { formErrorMessage, isSubmitting, handleCreateFromInput, continueCreateFromAttempt } =
+    useDraftAgentCreateFlow<Agent, AgentSnapshotPayload>({
+      draftId,
+      getPendingServerId: () => serverId,
+      initialAttempt: initialCreateAttempt,
+      allowEmptyText: allowsEmptyAutoSubmit,
+      validateBeforeSubmit: ({ text, attachments }) => {
+        const allowsEmptyDraftText = shouldAllowEmptyDraftText({
+          allowsEmptyAutoSubmit,
+          attachments,
+        });
+        return validateDraftSubmission({
+          text,
+          allowsEmptyAutoSubmit: allowsEmptyDraftText,
+          composerState,
+          autoSubmitConfig,
+          workspaceDirectory: draftWorkingDirectory,
+          isConnected,
+        });
+      },
+      onBeforeSubmit: async () => {
+        await composerState.persistFormPreferences();
+        if (isWeb) {
+          (document.activeElement as HTMLElement | null)?.blur?.();
+        }
+        Keyboard.dismiss();
+      },
+      buildDraftAgent: (attempt) =>
+        buildDraftAgentSnapshot({
+          attempt,
+          serverId,
+          tabId,
+          workspaceDirectory: draftWorkingDirectory,
+          autoSubmitConfig,
+          composerState,
+          selectModelMessage: t("workspaceSetup.errors.selectModel"),
+        }),
+      createRequest: async ({ attempt, text, images, attachments, cwd }) => {
+        if (pendingAutoSubmit?.agentCreation) {
+          const result = await pendingAutoSubmit.agentCreation.result;
+          return { agentId: result.id, result };
+        }
+        return submitDraftCreateRequest({
+          draftId,
+          attempt,
+          text,
+          images,
+          attachments,
+          cwd,
+          client,
+          workspaceDirectory: draftWorkingDirectory,
+          workspaceId: workspaceFields?.id ?? null,
+          autoSubmitConfig,
+          composerState,
+          hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
+          selectModelMessage: t("workspaceSetup.errors.selectModel"),
+        });
+      },
+      onCreateSuccess: ({ result }) => {
+        clearDraftInput("sent");
+        clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
+        useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
+        onCreated(result);
+      },
+    });
   useAgentControlCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
@@ -526,7 +481,9 @@ export function WorkspaceDraftAgentTab({
         providers: composerState.modelSelectorProviders,
         selectedProvider: draftProvider,
         selectedModelId: composerState.effectiveModelId,
-        select: composerState.setProviderAndModelFromUser,
+        select: (provider, modelId) => {
+          composerState.setProviderAndModelFromUser(provider, modelId);
+        },
       },
       thinking: {
         options: draftThinkingOptions,
@@ -538,10 +495,7 @@ export function WorkspaceDraftAgentTab({
         selectedId: draftSelectedMode,
         select: draftSetMode,
       },
-      features: {
-        list: draftFeatures,
-        set: draftOnSetFeature,
-      },
+      optionControls: draftOptionControls ?? null,
     },
   });
   const isReadyForPendingAutoSubmit = Boolean(
@@ -617,74 +571,48 @@ export function WorkspaceDraftAgentTab({
     }),
     [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
-  const dockContent = (
-    <View style={styles.contentContainer}>
-      {isSubmitting && draftAgent ? (
-        <View style={styles.streamContainer}>
-          <AgentStreamView
-            agentId={tabId}
-            serverId={serverId}
-            context={draftAgent}
-            streamItems={submittedStreamItems}
-            pendingMessageSubmissions={pendingMessageSubmissions}
-            turnPresentation={turnPresentation}
-            pendingPermissions={EMPTY_PENDING_PERMISSIONS}
-            onOpenWorkspaceFile={onOpenWorkspaceFile}
-          />
-        </View>
-      ) : (
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
-          <View style={styles.configSection}>
-            {formErrorMessage ? (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{formErrorMessage}</Text>
-              </View>
-            ) : null}
-          </View>
-        </ScrollView>
-      )}
-    </View>
-  );
-
   return (
-    <FileDropZone style={styles.container}>
-      <ComposerDock>
-        {dockContent}
-        <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
-          {importPillPress ? (
-            <View style={styles.importPillRow}>
-              <View style={styles.importPillContent}>
-                <ComposerImportPill onPress={importPillPress} />
-              </View>
-            </View>
-          ) : null}
-          <Composer
-            agentId={tabId}
-            serverId={serverId}
-            workspaceId={workspaceId}
-            isPaneFocused={isPaneFocused}
-            onSubmitMessage={handleCreateFromInput}
-            isSubmitLoading={isSubmitting}
-            blurOnSubmit={true}
-            textSource={draftInput.textSource}
-            onChangeText={draftInput.editText}
-            textReplacement={draftInput.textReplacement}
-            attachments={draftInput.attachments}
-            attachmentScopeKeys={attachmentScopeKeys}
-            onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
-            onChangeAttachments={draftInput.setAttachments}
-            cwd={composerState.workingDir}
-            clearDraft={draftInput.clear}
-            autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
-            autoFocusKey={String(draftInput.attachmentFocusRequestId)}
-            onFocusInput={handleFocusInputCallback}
-            commandDraft={composerState.commandDraft}
-            agentControls={composerAgentControls}
-            isCompactLayout={isCompactComposerLayout}
-          />
+    <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
+      {formErrorMessage ? (
+        <View style={styles.formErrorRow}>
+          <View style={styles.formError}>
+            <Text style={styles.errorText}>{formErrorMessage}</Text>
+          </View>
         </View>
-      </ComposerDock>
-    </FileDropZone>
+      ) : null}
+      {importPillPress && !isComposerFullscreen ? (
+        <View style={styles.importPillRow}>
+          <View style={styles.importPillContent}>
+            <ComposerImportPill onPress={importPillPress} />
+          </View>
+        </View>
+      ) : null}
+      <Composer
+        agentId={tabId}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        isPaneFocused={isPaneFocused}
+        onSubmitMessage={handleCreateFromInput}
+        isSubmitLoading={isSubmitting}
+        blurOnSubmit={true}
+        textSource={draftInput.textSource}
+        onChangeText={draftInput.editText}
+        textReplacement={draftInput.textReplacement}
+        attachments={draftInput.attachments}
+        attachmentScopeKeys={attachmentScopeKeys}
+        onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
+        onChangeAttachments={draftInput.setAttachments}
+        cwd={composerState.workingDir}
+        clearDraft={draftInput.clear}
+        editingSession={editingSession}
+        autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+        autoFocusKey={String(draftInput.attachmentFocusRequestId)}
+        onFocusInput={handleFocusInputCallback}
+        commandDraft={composerState.commandDraft}
+        agentControls={composerAgentControls}
+        isCompactLayout={isCompactComposerLayout}
+      />
+    </View>
   );
 }
 
@@ -692,31 +620,16 @@ const animatedStaticStyles = RNStyleSheet.create({
   inputAreaWrapper: {
     width: "100%",
     flexShrink: 1,
+    // Content-sized inline; fills the dock's fullscreen slot.
+    flexGrow: 1,
   },
 });
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
-    flex: 1,
+  formErrorRow: {
     width: "100%",
-    backgroundColor: theme.colors.surface0,
-  },
-  contentContainer: {
-    flex: 1,
-  },
-  streamContainer: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  configScrollContent: {
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[6],
-  },
-  configSection: {
-    gap: theme.spacing[3],
+    alignItems: "center",
   },
   importPillRow: {
     width: "100%",
@@ -736,8 +649,10 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: theme.contentMaxWidth,
     flexDirection: "row",
   },
-  errorContainer: {
-    marginTop: theme.spacing[2],
+  formError: {
+    width: "100%",
+    maxWidth: theme.contentMaxWidth,
+    marginBottom: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.md,

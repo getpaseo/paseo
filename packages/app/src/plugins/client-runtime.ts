@@ -1,6 +1,7 @@
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { createPluginHosts } from "./hosts";
+import { createPlayAudio, type AudioEngine } from "@/audio";
+import { getPluginClientApi } from "./client-state/api";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
+import { subscribePluginRpc } from "@getpaseo/plugin/client/host";
 import {
   createPluginAgentActionContext,
   createPluginCapabilities,
@@ -12,7 +13,10 @@ import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
 import type { InstalledPlugin } from "./types";
 
-export function createPluginClientRuntime(installation: InstalledPlugin): PluginClientRuntime {
+export function createPluginClientRuntime(
+  installation: InstalledPlugin,
+  audio: Pick<AudioEngine, "play">,
+): PluginClientRuntime {
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(
     installation,
@@ -20,7 +24,9 @@ export function createPluginClientRuntime(installation: InstalledPlugin): Plugin
   );
   return {
     ...capabilities,
-    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
+    i18n: installation.i18n,
+    playAudio: createPlayAudio(audio, installation.lifetime.signal),
+    hosts: getPluginClientApi(installation).hosts,
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },
@@ -30,6 +36,8 @@ export function createPluginClientRuntime(installation: InstalledPlugin): Plugin
     openPanel(panelId, options) {
       openClientPanel({ installation, state, panelId, options });
     },
+    subscribe: (contract, input, onEvent, options) =>
+      subscribePluginRpc(contract, installation.subscribe, input, onEvent, options),
   };
 }
 

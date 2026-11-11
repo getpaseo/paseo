@@ -42,12 +42,17 @@ export function parseRelayConnectionUri(input: string): ParsedRelayConnectionUri
   }
   const endpoint = normalizeHostPort(url.host);
   const password = url.searchParams.get("password") || undefined;
+  const security = url.searchParams.get("security");
+  if (security !== null && security !== "protected") {
+    throw new Error("Relay connection URI has an unsupported security mode");
+  }
   return {
     offer: {
       v: 2,
       serverId,
       daemonPublicKeyB64: key,
       relay: { endpoint, useTls: url.searchParams.get("ssl") === "true" },
+      ...(security === "protected" ? { minimumSecurityMode: "protected" as const } : {}),
     },
     ...(password ? { password } : {}),
   };
@@ -59,6 +64,9 @@ export function serializeRelayConnectionUri(parts: ParsedRelayConnectionUri): st
   );
   url.searchParams.set("key", parts.offer.daemonPublicKeyB64);
   if (parts.offer.relay.useTls) url.searchParams.set("ssl", "true");
+  if (parts.offer.minimumSecurityMode) {
+    url.searchParams.set("security", parts.offer.minimumSecurityMode);
+  }
   if (parts.password) url.searchParams.set("password", parts.password);
   return url.toString();
 }

@@ -132,7 +132,7 @@ export interface BaseRefCheckoutStatus {
 
 // Display only. The exact ref is what every request carries; this is just how a ref reads in
 // a row label, so "refs/remotes/origin/other-name" shows as "other-name".
-function branchNameFromRef(refName: string): string {
+export function branchNameFromRef(refName: string): string {
   if (refName.startsWith("refs/heads/")) return refName.slice("refs/heads/".length);
   if (refName.startsWith(REMOTE_TRACKING_PREFIX)) {
     const remainder = refName.slice(REMOTE_TRACKING_PREFIX.length);
@@ -210,6 +210,17 @@ export function pickerItemToCheckoutRequest(
   }
 }
 
+/**
+ * Whether creating a worktree from this request cuts a new branch, which is what the daemon does
+ * for anything but a checkout. No request at all (a detached HEAD gives the screen no default
+ * base) cuts one from the repository's default branch.
+ */
+export function startsNewBranch(request: PickerCheckoutRequest | undefined): boolean {
+  if (!request) return true;
+  if (request.action === "checkout") return false;
+  return !request.checkoutSource && request.githubPrNumber === undefined;
+}
+
 export function prPickerOptionId(number: number): string {
   return `${PR_OPTION_PREFIX}${number}`;
 }
@@ -264,7 +275,10 @@ export function buildPickerOptionData(input: {
     itemById.set(id, { kind: "github-pr", item: pr });
     const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
     const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
-    timedOptions.push({ option: { id, label: formatPrLabel(pr) }, timestamp });
+    timedOptions.push({
+      option: { id, label: formatPrLabel(pr), searchText: pr.body ?? undefined },
+      timestamp,
+    });
   }
 
   const baseItem = input.baseItem;
@@ -279,7 +293,13 @@ export function buildPickerOptionData(input: {
     const labeledItem = disambiguate(baseItem, timedOptions);
     itemById.set(selectedOptionId, labeledItem);
     timedOptions.push({
-      option: { id: selectedOptionId, label: pickerItemLabel(labeledItem) },
+      option: {
+        id: selectedOptionId,
+        label: pickerItemLabel(labeledItem),
+        ...(labeledItem.kind === "github-pr"
+          ? { searchText: labeledItem.item.body ?? undefined }
+          : {}),
+      },
       // The base sorts first: it is what a workspace is created from unless you pick something.
       timestamp: Number.POSITIVE_INFINITY,
     });

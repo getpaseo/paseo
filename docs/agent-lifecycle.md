@@ -12,6 +12,27 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Daemon restart recovery
+
+Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
+Host settings → Agents to resume interrupted agents after graceful shutdown or a crash. The daemon
+reopens the saved provider conversation and settings, then sends `Resume working.`. Customize
+the prompt with `agents.resumePrompt` or the same settings page.
+Disabling recovery consumes pending intent; enabling it later does not revive old work.
+
+Only agents recorded as running qualify. Idle and initializing agents stay inactive. Archived
+agents or workspaces, private helpers and Hub-owned executions retain their own lifecycle.
+Explicit creation environment overrides are saved with the agent and reapplied when reopening.
+
+Startup chooses candidates before anything else reads or repairs persisted running state, then
+opens connections and resumes every candidate in the background. A provider that is slow to reopen
+holds back only its own agent; a failed reopen is logged. Graceful shutdown records intent before
+closing runtimes.
+
+This is best-effort continuation. A crash between saving intent and dispatching a prompt can lose
+or repeat a continuation. Provider resume owns conversation restoration; there is no recovery retry
+loop or exactly-once turn guarantee.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -25,8 +46,54 @@ Reload releases the old runtime before resuming its durable session: an idle pro
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
 replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
 
-Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
-action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
+Idle resumable runtimes are collected after one hour without activity, checked once a minute.
+Collection releases the process and preserves the agent record, conversation, relationships, and
+provider session. The next prompt resumes that session. Set `agents.idleRuntimeCleanup: false` in
+host config to disable automatic collection. The host setting applies immediately; config-file edits
+apply on reload. Disabling invalidates pending safety checks and close admission. A close already
+started finishes. Re-enabling keeps the existing idle timestamps.
+
+Foreground runs, permissions and responses, queued deliveries, lifecycle operations, and working
+managed or native descendants prevent collection. Outstanding local or remote finish subscriptions
+also protect their caller, including registration, recovery and notification dispatch acknowledgment.
+An idle managed child can still own background work.
+
+The daemon baseline always applies. An optional provider `canStopRuntime()` adds a veto: false,
+errors and timeouts retain ownership, while true cannot override daemon blockers. Without a provider
+check, the baseline decides collection after the same one-hour idle period. Once protected work
+finishes, a fresh idle hour starts. There is no deadline that overrides a veto.
+
+The `idle-runtime-cleanup/` module owns the clocks, eligibility policy and sweep lifetime.
+AgentManager supplies captured runtime capabilities and owns atomic revalidation and shutdown.
+Finish subscriptions expose caller protection through their public capability; the collector never
+reads their watches or durable records.
+
+The collector rechecks daemon state after asynchronous probes and event draining, in the existing
+close/load lifecycle lane. A prompt admitted before closure prevents collection. A prompt arriving
+after closure starts waits for release and resumes the saved session.
+
+Provider checks follow the signals their runtimes expose:
+
+- Claude uses its process-local background roster and pending completion notifications. A fresh
+  process starts empty. CLI 2.1.292 or newer is known to support the roster; older binaries must
+  demonstrate support by emitting one. Unknown versions stay resident until then.
+- Codex queries background terminals for loaded threads, including native children, and protects
+  pending provider requests. App servers without the terminal-list RPC stay resident.
+- OpenCode checks active executions and descendants. V1 checks PTYs; v2 also checks shell and
+  inbox inventories. The shared server remains leased while a session vetoes collection.
+- Pi checks streaming, compaction, pending replies, and adapter-owned operations. Known native
+  subagent signals also protect their parent through the daemon's subagent store.
+- OMP additionally requires `get_state.isSettled: true` and `hasPendingAsyncWork: false`.
+  These protect jobs with unsuppressed completion delivery, pending deliveries, queued result
+  injection, and admitted or scheduled continuations that can re-wake the session. Older OMP
+  runtimes without either field stay resident. These signals are not an inventory of arbitrary
+  processes.
+- ACP checks adapter-owned foreground turns, permissions, buffered user messages, and running
+  ACP terminals, including quiet terminals. Exited or failed-to-spawn terminal records do not
+  prevent collection. This does not inspect processes launched internally by the provider.
+
+These checks do not discover arbitrary detached processes or work hidden by third-party
+extensions. A provider plugin adds its own veto through the [runtime safety contract](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
 
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
@@ -69,11 +136,49 @@ the marker. Closing a tab sets that client's label to `false`. Any `true` client
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
 
-Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
+Agent-scoped workspace creation records the caller's workspace as `parentWorkspaceId`.
+This is informational ancestry for future workspace grouping. It does not change placement,
+visibility, status, or archive behavior. Archiving a parent workspace preserves its children's
+records and parentage. Unscoped creation and existing workspaces have no parent; ancestry is
+never inferred from directories, projects, or Git branches.
+
+Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation reuses that workspace unless a new workspace is explicitly requested.
+
+Setup belongs to the workspace, including combined workspace-plus-agent creation and the supported agent `worktree` request. Run setup through the workspace workflow before launching configured terminals or scripts. Setup output is read in the Setup panel from per-command snapshots; never produce setup chat timeline rows or concatenate command logs. Legacy agent `git`/`worktreeName` inputs and hidden MCP worktree placement are rejected with workspace-creation guidance. Existing wire schemas retain an empty combined-log string for parsing compatibility.
 
 Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the parent and open-tab lifecycle labels: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 
-`notifyOnFinish` defaults to `true` for agent-scoped creation and background prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
+`notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
+
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
+
+The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
+crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
+acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
+admission within their original timeout and cancellation scope.
+
+Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
+persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
+`$PASEO_HOME/finish-subscriptions.json`. Registration must commit before creation or queued-prompt
+acknowledgment promises a notification. A pending replacement retains its predecessor until dispatch
+accepts; rejected dispatch removes only the candidate. Recovery coalesces registrations for the same
+caller, child, and host into one watch.
+
+Bootstrap restores these watches after repairing stale running records to `closed` and before opening
+ingress. Reading a closed child's result does not load its provider. A finish notification reports that
+the child's run has settled; the parent decides whether its task is complete. A child chosen for restart
+recovery is observed only after its resume was sent, so the parent never hears that it was closed
+in between. Archived or deleted parents suppress delivery;
+parent-owned creation watches also stop
+reporting after detachment.
+
+Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure
+retries the captured notification; it does not change the child's reported outcome. Remote host loss
+follows the [connected-host observation policy](connected-hosts.md#delegating-agents). Shutdown stops observation before flushing message delivery, retaining
+outstanding intent. A crash after successful dispatch but before removal commits can repeat the
+notification. Clean shutdown can also flush an already queued callback while retaining its intent,
+so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
+
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
@@ -83,6 +188,51 @@ A watched child that closes before its finish event also notifies the caller so 
 Some providers can create their own child sessions inside one provider runtime. OMP's task tool reports these with `child_session` events; `AgentManager` imports the live provider handle, stamps `paseo.parent-agent-id`, and surfaces the result as a normal subagent in the parent's subagents track.
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
+
+## Background visibility
+
+An agent is effectively background when it or its workspace is background:
+`agent.background || workspace.background`. Background controls discovery only. Background agents
+and the agents in background workspaces are ordinary durable agents: provider history, plugin
+hooks, parentage, finish notifications to a caller, archive, and restart recovery keep their
+normal behavior. Both flags are fixed at creation.
+
+- **Agent.** `create_agent_request.background` marks the agent. Use it for helpers the user does
+  not watch, such as a plugin's classifier in the user's open workspace. A background agent never
+  raises attention, adds nothing to its workspace's status bucket or Last prompt time, and stays
+  out of tabs, the parent's subagent track and agent lists in the app. A tab opened by id still
+  works.
+- **Workspace.** `workspace.background` hides the workspace from the sidebar unless **Show
+  background** is on.
+- **Inheritance.** When `background` is omitted, an agent created by a caller agent takes the
+  caller's own `background`. A new workspace takes the caller's effective background. A request
+  that creates its workspace applies `background` to both the agent and the workspace. Explicit
+  true or false always wins.
+
+`AgentDirectory` (`packages/server/src/server/agent/directory.ts`) owns visibility for lists.
+Default workspace and agent lists, including History requests, exclude background work;
+`includeBackground` includes it. Exact-ID operations bypass discovery filtering. The app
+replicates inclusively and filters at each surface.
+
+Sources without the `background_agents` hello capability get workspace-only visibility on
+inclusive reads and subscriptions: agents in background workspaces, but no agent-level background
+agents. Older apps replicate inclusively and auto-open a tab for every root agent, so a classifier
+run would otherwise open a tab each turn. That visibility has its own directory sync generation.
+
+Sequenced directories keep complete canonical collections. A filtered read must never replace
+those collections with its subset. Inclusive and default observations have distinct cursor
+scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
+Clients gate background workspaces and inclusive discovery on `features.backgroundWorkspaces`.
+They gate a background agent placed in an existing workspace or under a caller on
+`features.backgroundAgents`.
+
+### Private daemon helpers
+
+Branch-name and commit-message generators still use private disposable internal runtimes.
+`AgentManager` does not persist them or their provider sessions, excludes them from public
+discovery and plugin hooks, and drops their timelines on archive. An archived helper retains
+its exact-ID result briefly to cover completion before a waiter attaches. This internal
+lifecycle is separate from public workspace visibility and is not a public creation option.
 
 ## Archive
 
@@ -107,12 +257,36 @@ Workspace archive is a separate lifecycle. Archiving or removing a worktree can 
 agent record without setting the agent's `archivedAt`, while its `workspaceId` still points at the
 archived workspace. History navigation must not infer workspace lifecycle from `agent.archivedAt`
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
-only the route's explicit Unarchive or Restore action changes the archived workspace.
+the route exposes explicit Unarchive and Restore actions.
+
+Workspace archive is undoable from the archived toast, or with Cmd/Ctrl+Z, while the toast is up.
+The daemon runs one archive lane per workspace, shared by every connection
+(`packages/server/src/server/workspace-archive-operations.ts`):
+
+| A request arrives while  | Result                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| an archive runs: archive | joins the running archive                                 |
+| an archive runs: undo    | aborts the archive, waits for it to settle, then restores |
+| an undo runs: archive    | waits for the undo, then archives                         |
+| an undo runs: undo       | joins the running undo                                    |
+
+A request takes its place in the lane before its first `await`. Arrival order decides, so an undo
+sent right behind its archive still cancels it.
+
+An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
+the agents that archive itself archived. Deleting the worktree directory is the point of no
+return: an undo after it recreates the worktree through workspace recovery. The client shows or
+hides the row by the latest local intent, so a late remove or upsert from a superseded request
+does not flip it back. Tabs and layout are purged only once the undo window closes with the
+archive committed.
 
 History navigation opens the selected agent without changing either archive state. Workspace
-**Restore** recovers only the workspace; the selected archived agent stays open with its callout.
-The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
-history hydration. Other archived agents stay archived.
+**Unarchive**, **Restore**, Undo, and reopening the directory recover the agents closed by that
+workspace archive, including
+after a daemon restart or after the toast expires. Agents archived individually beforehand stay
+archived. A failed worktree recreation leaves the workspace and its agents archived for retry.
+Each recovered agent runs the provider's native unarchive hook before interactive resume and
+history hydration.
 
 Opening an agent is a navigation choice, independent of whether its details are cached. The
 layout retains that choice across reload while the panel fetches the agent from the daemon.
@@ -125,11 +299,12 @@ lifecycle queue. Resume chooses its history or interactive purpose from the dura
 entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
 close retains the runtime for cleanup and blocks replacement through that close operation.
 
-Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
-purpose initializes a temporary app-server, reads the persisted thread and child histories, and
-releases the process before returning. It never loads, resumes, or unarchives a native thread,
-including legacy records whose native archive failed. The retained history session contains only
-the read results. Interactive resume remains responsible for repairing a provider session archived
+Authoritative timeline catch-up can use a runtime-only `history` resume purpose. The retained
+history session contains only the read results and must release its provider process once replay
+finishes. Codex reads the persisted thread and child histories on a temporary app-server and never
+loads, resumes, or unarchives a native thread, including legacy records whose native archive failed.
+ACP providers spawn the CLI, replay the session through `session/load`, and terminate the process
+before returning. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.
 
 Provider session connection owns every process it spawns until the session is registered with
@@ -160,16 +335,26 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
-A finished workspace can be marked unread after it has been reviewed. The daemon restores
-`finished` attention on its newest eligible workspace-root agent without sending a new completion
-notification. Opening the workspace clears that attention through the normal focus flow.
+A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
+attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
+`error` and `finished` otherwise, without sending a new notification. Opening a workspace restores
+its selected tab; attention on another agent remains unread until that agent is focused or the
+workspace is explicitly marked read.
 
-Attention is set by the agent finishing or failing and cleared by the client's
-`workspace.clear_attention`, which fires when the user reads the chat. Loading an agent's runtime is
+Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
+interaction with its chat, including repeat clicks in an already focused pane. A completion
+arriving while focused stays unread until the next interaction; leaving does not acknowledge it. Loading an agent's runtime is
 neither, so resuming carries the stored attention and the stored last-activity time through
 untouched. Forging either makes a background resume look like the user read a workspace and like the
 agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted
 `updatedAt` is what workspace `statusEnteredAt` is re-derived from on the next daemon start.
+
+The `failed` bucket follows unread `error` attention, not lifecycle status. An agent stays `error`
+until its next turn starts, so reading the chat dismisses the red dot the same way it dismisses the
+green one. For the same reason every new failure raises `error` attention, including a failed reload
+that leaves the lifecycle at `error`, and replaces unread `finished` attention; otherwise the failed
+agent would show the green dot or none. Subagents track marks are the exception: they follow the
+child's lifecycle, because the track is where a failed child stays visible.
 
 ## The subagents track
 
@@ -185,7 +370,7 @@ parentAgentId === thisAgent.id  AND  !archivedAt
 
 - **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track. A descriptor's optional `parentSubagentId` identifies its direct provider-subagent parent; an absent value identifies a direct child of the managed agent.
 
-Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
+Clicking either kind opens a workspace tab. On compact layouts it opens in a [sheet](explorer-sidebar.md#sheets) instead, replacing the subagents list in place (Back returns to the list); the sheet hides the composer and shows the agent's model and thinking as one line in its place (`PaneSubtitle`, the row provider subagents already use), and a Paseo subagent's sheet offers **Open as tab** (the full-screen glyph in the header) to get the composer back. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Every subagent pane links back to its parent (`packages/app/src/subagents/parent/`): a pill above the composer when there is one, a parent box in the composer's place when there is not. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
@@ -197,10 +382,11 @@ Claude Code announces subagent lifecycle on the SDK stream (`task_started` / `ta
 
 - **Not every announced task belongs in the track.** Task subagents announce as `local_agent` and workflows as `local_workflow`; a backgrounded shell announces as `local_bash` with the same `tool_use_id` shape, and ambient housekeeping sets `skip_transcript`. The Claude provider normalizes a workflow to a generic provider-subagent descriptor titled `Workflow`, using Claude's summary as its description and timeline opener. Shared storage, protocol, and UI do not distinguish it from another provider subagent.
 - **A task that was never declared gets no descriptor, by any route.** Filtered tasks still emit `task_notification`s carrying a `tool_use_id`, and still emit frames carrying `parent_tool_use_id`. Attributing either produces a descriptor with no identity and a defaulted `running` status — a nameless row that never finishes. Status, presentation updates, and sidechain frames all route through the declaration table.
-- **Task ids are session-scoped, not turn-scoped.** Cancelling a turn must not clear the routing table: a backgrounded child settles after the interrupt and needs its descriptor to still exist. Cancellation instead terminalizes the declared children that were running in the foreground, and a later `task_notification` is free to correct that guess. Backgrounded children are identified by `task_updated.patch.is_backgrounded`.
+- **Task ids are session-scoped, not turn-scoped.** Cancelling a turn must not clear the routing table: a backgrounded child settles after the interrupt and needs its descriptor to still exist. Cancellation instead terminalizes the declared children that were running in the foreground, and a later `task_notification` is free to correct that guess. Backgrounded children are identified by `is_backgrounded` on `task_started` (set at spawn; a resumed subagent is always background) or, when moved there later, on `task_updated.patch`.
 - **A resumed task can be announced again with a new `tool_use_id`.** The first Task tool id remains the canonical descriptor and later ids are routing aliases for the same session-scoped task. The resumed prompt is added to that child timeline.
 - **Effort is only reachable through hooks.** It appears nowhere on the message stream at any depth, and the level Paseo requests is not necessarily the level that runs — a model that does not support it is silently downgraded. A hook firing inside a subagent reports the active post-downgrade level next to its `agent_id`, which is the same id `task_started` calls `task_id`.
 - **Backgrounded subagents emit no frames carrying `parent_tool_use_id` at all.** Everything keyed off that field sees nothing for one; they are visible only because the task protocol announces them.
+- **Only `system/init` and `result` bracket a main-session turn.** Background subagents emit neither on the main stream, while their task frames, their own background jobs' `task_notification`, and `rate_limit_event` arrive with no `parent_tool_use_id`, the same shape as main-session work. `session_state_changed` stays `running` for as long as any background subagent lives (Claude Code 2.1.280), so it cannot open a turn; its `idle` can close one.
 - **Nested ownership comes from the launching sidechain, not `spawn_depth` alone.** A sidechain's Agent or Bash tool call records the direct owner of that `tool_use_id`; the following `task_started` inherits it. This routes a grandchild descriptor and child-owned background notifications without relying on labels or flattening them into the managed parent.
 - **On replay, `<session>/subagents/` holds every descendant beside the root.** Resolve the tree one proven generation at a time: the root transcript admits direct children, then each admitted sidechain transcript admits its children by `toolUseId`. `spawnDepth` orders candidates but does not establish ownership. Unresolved sidecars remain excluded as ambient or unrelated work.
 - **Replay `totalTokens` is a context-size reading, not cumulative spend.** Claude Code finalizes a subagent by summing the _last_ assistant message's usage block and shipping that as `usage.total_tokens`. Summing per-entry usage instead multiplies the cached prefix by the turn count and reports a number several times larger than the live path.

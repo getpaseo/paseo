@@ -86,7 +86,7 @@ Configure via `daemon.hostnames` in `config.json`:
 
 By default, anyone who can reach the daemon's listening address can connect. On localhost this is fine, only local processes have access. But if you bind to a network interface (e.g. your LAN IP or `0.0.0.0`), or if you don't fully trust your local network, you can require a password.
 
-When a password is configured, all HTTP requests must include an `Authorization: Bearer <password>` header and all WebSocket connections must authenticate via subprotocol. Unauthenticated requests receive a `401 Unauthorized` response. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
+When a password is configured, all HTTP requests must include an `Authorization: Bearer <password>` header, and every WebSocket client, including relay clients, must send the password when it connects. Relay clients send it inside the end-to-end encrypted channel, so the relay never sees it. Unauthenticated HTTP requests receive a `401 Unauthorized` response. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
 
 If you enable the [bundled web UI](/docs/web-ui), its static files are also served without the password so the login screen can render. This is by design, the API and WebSocket still require authentication before any agent data is returned or any command runs. Set a password before binding the daemon to a network so the data behind the page stays protected.
 
@@ -121,6 +121,14 @@ The image runs the daemon and launched agents as the non-root `paseo` user, but 
 
 See [Docker](/docs/docker) for Compose and reverse proxy examples.
 
+## Linux desktop sandbox
+
+Paseo checks Chromium sandbox availability each time the desktop app launches on Linux. It keeps sandboxing enabled when user namespaces work or an installed sandbox helper is usable. The `.deb` and `.rpm` installers configure that helper.
+
+AppImage and extracted tar archives launch with Chromium's sandbox disabled when neither is available. Use the `.deb` or `.rpm` package if you require Chromium process isolation. Passing `--no-sandbox` explicitly disables it.
+
+Open **Settings → Diagnostics → App Diagnostics** to check the sandbox state and reason. The [desktop log](/docs/troubleshooting#reading-the-logs) records the same decision.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode, Muse Code) but does not manage their authentication. Each agent provider handles its own credentials:
@@ -144,7 +152,7 @@ Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; clear
 ## Recommendations
 
 - **Use the relay** for mobile access, it's the simplest option and all traffic is end-to-end encrypted
-- **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon
+- **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon unless you also set a password
 - **Set a password** if you bind to a network address, it prevents unauthorized clients from controlling your agents
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
 - **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials

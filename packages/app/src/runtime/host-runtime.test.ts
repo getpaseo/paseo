@@ -11,6 +11,7 @@ import type {
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
+import type { HostDirectory } from "@getpaseo/protocol/hosts";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
@@ -52,6 +53,10 @@ it("requests the managed connection credential through desktop main without a we
 });
 
 class FakeDaemonClient {
+  supportsBackgroundWorkspaces(): boolean {
+    return false;
+  }
+  relaySecurityFloor: "legacy" | "protected" | undefined = undefined;
   private state: ConnectionState = { status: "idle" };
   private listeners = new Set<(status: ConnectionState) => void>();
   private error: string | null = null;
@@ -132,6 +137,7 @@ class FakeDaemonClient {
     if (response) await response;
     const failure = this.sendAgentMessageFailures.shift();
     if (failure) throw failure;
+    return {};
   }
 
   async waitForSentMessages(count: number): Promise<void> {
@@ -154,8 +160,22 @@ class FakeDaemonClient {
     }
   }
 
+  get isConnected(): boolean {
+    return this.state.status === "connected";
+  }
+
   getConnectionState(): ConnectionState {
     return this.state;
+  }
+
+  public connectedHosts = false;
+  public hostDirectory: Promise<HostDirectory> = Promise.resolve({
+    self: { serverId: "srv_test", label: "test" },
+    hosts: [],
+  });
+
+  observeHosts() {
+    return subscriptionFixture(this.hostDirectory, () => () => {});
   }
 
   public ownedSubscriptions = true;
@@ -168,7 +188,10 @@ class FakeDaemonClient {
       serverId: "srv_test",
       hostname: "test",
       version: this.daemonVersion,
-      features: { ownedSubscriptions: this.ownedSubscriptions },
+      features: {
+        ownedSubscriptions: this.ownedSubscriptions,
+        connectedHosts: this.connectedHosts,
+      },
     };
   }
 
@@ -323,6 +346,11 @@ class Deferred<T> {
   }
 }
 
+function relayPinOf(host: HostProfile | undefined): "protected" | undefined {
+  const connection = host?.connections[0];
+  return connection?.type === "relay" ? connection.minimumSecurityMode : undefined;
+}
+
 async function waitForHostOnline(store: HostRuntimeStore, serverId: string): Promise<void> {
   if (store.getSnapshot(serverId)?.connectionStatus === "online") return;
   await new Promise<void>((resolve) => {
@@ -401,6 +429,20 @@ function replicaAgent(snapshot: FetchAgentsEntry["agent"], serverId: string): Ag
 function agentPermission(id: string): AgentPermissionRequest {
   return { id, provider: "codex", name: id, kind: "tool", title: id };
 }
+
+const relayPrimary: HostConnection = {
+  id: "relay:relay.paseo.sh:443",
+  type: "relay",
+  relayEndpoint: "relay.paseo.sh:443",
+  daemonPublicKeyB64: "pk_test",
+};
+
+const relayAlternate: HostConnection = {
+  id: "relay:relay-next.paseo.sh:443",
+  type: "relay",
+  relayEndpoint: "relay-next.paseo.sh:443",
+  daemonPublicKeyB64: "pk_test",
+};
 
 function makeHost(input?: Partial<HostProfile>): HostProfile {
   const direct: HostConnection = {
@@ -542,6 +584,7 @@ function createPairingStore(
     connectAttempts?: string[];
     serverIdForHost?: (host: HostProfile) => string;
     storage?: HostRuntimeStorage;
+    probeSecurityFloor?: "legacy" | "protected";
   } = {},
 ): HostRuntimeStore {
   return new HostRuntimeStore({
@@ -553,8 +596,10 @@ function createPairingStore(
         if (input.password && host.password !== input.password) {
           throw new DaemonAuthenticationError("password_required");
         }
+        const client = makeConnectedProbeClient(5);
+        client.relaySecurityFloor = input.probeSecurityFloor;
         return {
-          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          client: client as unknown as DaemonClient,
           serverId: input.serverIdForHost?.(host) ?? host.serverId,
           hostname: input.hostname ?? "paired",
         };
@@ -761,6 +806,85 @@ describe("HostRuntimeController", () => {
     );
 
     expect(createdClients.map((entry) => entry.connection)).toEqual([oldRelay, newRelay]);
+    expect(createdClients[0]?.client.isDisposed()).toBe(true);
+    expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
+  });
+
+  it("keeps the active relay client when its security pin is learned", async () => {
+    const relay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+    };
+    const createdClients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({ connections: [relay], preferredConnectionId: relay.id }),
+      deps: {
+        createClient: () => {
+          const client = new FakeDaemonClient();
+          createdClients.push(client);
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.activateConnection({ connectionId: relay.id });
+    // The client negotiated protected itself; the pin it reported is already enforced.
+    createdClients[0]!.relaySecurityFloor = "protected";
+    await controller.updateHost(
+      makeHost({
+        connections: [{ ...relay, minimumSecurityMode: "protected" }],
+        preferredConnectionId: relay.id,
+      }),
+    );
+
+    expect(createdClients).toHaveLength(1);
+    expect(createdClients[0]?.isDisposed()).toBe(false);
+    expect(controller.getSnapshot().client).toBe(createdClients[0]);
+  });
+
+  it("replaces the active legacy relay client when a strict offer pins its connection", async () => {
+    const relay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+    };
+    const createdClients: Array<{ client: FakeDaemonClient; connection: HostConnection }> = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({ connections: [relay], preferredConnectionId: relay.id }),
+      deps: {
+        createClient: ({ connection }) => {
+          const client = new FakeDaemonClient();
+          createdClients.push({ client, connection });
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.activateConnection({ connectionId: relay.id });
+    expect(createdClients[0]?.client.relaySecurityFloor).toBeUndefined();
+    const pinned: HostConnection = { ...relay, minimumSecurityMode: "protected" };
+    await controller.updateHost(
+      makeHost({ connections: [pinned], preferredConnectionId: relay.id }),
+    );
+
+    expect(createdClients.map((entry) => entry.connection)).toEqual([relay, pinned]);
     expect(createdClients[0]?.client.isDisposed()).toBe(true);
     expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
   });
@@ -989,6 +1113,50 @@ describe("HostRuntimeController", () => {
     expect(activeClient.latencyMeasurements()).toEqual([]);
   });
 
+  it.each([12, null])(
+    "falls back to relay when the direct client disconnects with heartbeat RTT %s",
+    async (heartbeatRtt) => {
+      useHostRuntimeClock();
+      const clients: FakeDaemonClient[] = [];
+      const latencies: Record<string, number | Error> = {
+        "direct:lan:6767": 12,
+        "relay:relay.paseo.sh:443": 65,
+      };
+      const controller = new HostRuntimeController({
+        host: makeHost(),
+        deps: makeDeps(latencies, clients),
+      });
+
+      await controller.start({ autoProbe: false });
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+      const directClient = clients[0];
+      directClient.heartbeatReportsRtt(heartbeatRtt);
+      directClient.clearLatencyMeasurements();
+      latencies["direct:lan:6767"] = new Error("LAN unreachable");
+      directClient.setConnectionState({ status: "disconnected", reason: "network changed" });
+      expect(controller.getSnapshot().connectionStatus).toBe("error");
+      expect(directClient.getLastLivenessRttMs()).toBe(heartbeatRtt);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await controller.runProbeCycleNow();
+
+      const snapshot = controller.getSnapshot();
+      expect(snapshot.activeConnectionId).toBe("relay:relay.paseo.sh:443");
+      expect(snapshot.connectionStatus).toBe("online");
+      expect(snapshot.probeByConnectionId).toEqual(
+        new Map([
+          ["direct:lan:6767", { status: "unavailable", latencyMs: null }],
+          ["relay:relay.paseo.sh:443", { status: "available", latencyMs: 65 }],
+        ]),
+      );
+      expect(directClient.isDisposed()).toBe(true);
+      expect(directClient.latencyMeasurements()).toEqual([]);
+      await controller.stop();
+    },
+  );
+
   it("does not create a probe client for the selected connection while it reconnects", async () => {
     useHostRuntimeClock();
     const relay: HostConnection = {
@@ -1033,6 +1201,151 @@ describe("HostRuntimeController", () => {
 
     expect(probeAttempts).toEqual([]);
     expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
+  });
+
+  it.each([40, null])(
+    "keeps the selected connection when it reconnects before an alternative probe resolves with heartbeat RTT %s",
+    async (reconnectedRtt) => {
+      useHostRuntimeClock();
+      const primary: HostConnection = {
+        id: "relay:relay.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay.paseo.sh:443",
+        daemonPublicKeyB64: "pk_test",
+      };
+      const alternative: HostConnection = {
+        id: "relay:relay-next.paseo.sh:443",
+        type: "relay",
+        relayEndpoint: "relay-next.paseo.sh:443",
+        daemonPublicKeyB64: "pk_test",
+      };
+      const host = makeHost({
+        connections: [primary, alternative],
+        preferredConnectionId: primary.id,
+      });
+      const activeClient = new FakeDaemonClient();
+      activeClient.setConnectionState({ status: "connected" });
+      activeClient.heartbeatReportsRtt(40);
+      // The first alternative probe (startup) answers immediately; the one that
+      // runs after the foreground is slow, like a relay handshake on mobile.
+      const slowAlternativeProbe = createDeferred<void>();
+      let alternativeProbes = 0;
+      const createdClients: FakeDaemonClient[] = [];
+      const controller = new HostRuntimeController({
+        host,
+        deps: {
+          createClient: () => {
+            const client = new FakeDaemonClient();
+            createdClients.push(client);
+            return client as unknown as DaemonClient;
+          },
+          connectToDaemon: async ({ connection }) => {
+            if (connection.id !== alternative.id) {
+              throw new Error(`unexpected probe for ${connection.id}`);
+            }
+            alternativeProbes += 1;
+            if (alternativeProbes > 1) await slowAlternativeProbe.promise;
+            return {
+              client: makeConnectedProbeClient(60) as unknown as DaemonClient,
+              serverId: host.serverId,
+              hostname: host.label ?? null,
+            };
+          },
+          getClientId: async () => "cid_test_runtime",
+        },
+      });
+      await controller.start({
+        autoProbe: false,
+        initialConnection: {
+          connectionId: primary.id,
+          existingClient: activeClient as unknown as DaemonClient,
+        },
+      });
+      expect(controller.getSnapshot().activeConnectionId).toBe(primary.id);
+
+      // The relay closed the socket while the app was in the background.
+      activeClient.setConnectionState({ status: "disconnected", reason: "1012" });
+      await vi.advanceTimersByTimeAsync(130_000);
+
+      // Foreground: the probe cycle starts while the selected client is still down ...
+      const cycle = controller.runProbeCycleNow();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(alternativeProbes).toBe(2);
+      // ... the selected client reconnects ...
+      activeClient.heartbeatReportsRtt(reconnectedRtt);
+      activeClient.setConnectionState({ status: "connected" });
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+      const statuses: string[] = [];
+      controller.subscribe(() => statuses.push(controller.getSnapshot().connectionStatus));
+      // ... and only then does the alternative probe come back.
+      slowAlternativeProbe.resolve();
+      await cycle;
+
+      // Once the selected connection is back online, nothing should take it down again.
+      expect(statuses.filter((status) => status !== "online")).toEqual([]);
+      expect(controller.getSnapshot().activeConnectionId).toBe(primary.id);
+      expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
+      expect(activeClient.isDisposed()).toBe(false);
+      expect(createdClients).toEqual([]);
+    },
+  );
+
+  it("fails over when the selected connection stays down until an alternative probe resolves", async () => {
+    useHostRuntimeClock();
+    const primary: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const alternative: HostConnection = {
+      id: "relay:relay-next.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay-next.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({
+      connections: [primary, alternative],
+      preferredConnectionId: primary.id,
+    });
+    const activeClient = new FakeDaemonClient();
+    activeClient.setConnectionState({ status: "connected" });
+    const slowAlternativeProbe = createDeferred<void>();
+    let alternativeProbes = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          alternativeProbes += 1;
+          if (alternativeProbes > 1) await slowAlternativeProbe.promise;
+          return {
+            client: makeConnectedProbeClient(60) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: primary.id,
+        existingClient: activeClient as unknown as DaemonClient,
+      },
+    });
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "1012" });
+    await vi.advanceTimersByTimeAsync(130_000);
+    const cycle = controller.runProbeCycleNow();
+    await vi.advanceTimersByTimeAsync(1_000);
+    slowAlternativeProbe.resolve();
+    await cycle;
+
+    expect(controller.getSnapshot().activeConnectionId).toBe(alternative.id);
+    expect(activeClient.isDisposed()).toBe(true);
+    await controller.stop();
   });
 
   it("rejects probes that resolve to a different server id", async () => {
@@ -1265,6 +1578,233 @@ describe("HostRuntimeController", () => {
       switched = controller.getSnapshot().activeConnectionId === "relay:relay.paseo.sh:443";
     }
     expect(switched).toBe(true);
+  });
+
+  it("keeps the live connection while one alternate sample is re-read at active ticks", async () => {
+    // Replays the recorded Android sequence: both relays probed at startup, the alternate
+    // measured once, then only the active connection is re-read every ten seconds.
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 1053,
+      [relayAlternate.id]: 251,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start();
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    const clientsAfterStart = clients.length;
+
+    await vi.advanceTimersByTimeAsync(10_500);
+    activeClient.heartbeatReportsRtt(376);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(clients.length).toBe(clientsAfterStart);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().client).toBe(activeClient);
+    expect(activeClient.isDisposed()).toBe(false);
+    await controller.stop();
+  });
+
+  it("does not hold the previous socket's RTT against a reconnected active connection", async () => {
+    // Replays the recorded foreground recovery: the active client reconnects on its own while an
+    // alternate probe is in flight. The recovered socket has no heartbeat RTT yet.
+    useHostRuntimeClock();
+    const host = makeHost({
+      connections: [relayPrimary, relayAlternate],
+      preferredConnectionId: relayPrimary.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [relayPrimary.id]: 300,
+      [relayAlternate.id]: 392,
+    };
+    let connectGate: Promise<void> | null = null;
+    const baseDeps = makeDeps(latencies, clients);
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        ...baseDeps,
+        connectToDaemon: async (input) => {
+          if (connectGate) await connectGate;
+          return baseDeps.connectToDaemon(input);
+        },
+      },
+    });
+
+    await controller.start();
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(403);
+    await vi.advanceTimersByTimeAsync(150_500);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "liveness_timeout" });
+    activeClient.setConnectionState({ status: "connecting", attempt: 2 });
+    activeClient.heartbeatReportsRtt(null);
+    latencies[relayAlternate.id] = 280;
+    const alternateConnect = createDeferred<void>();
+    connectGate = alternateConnect.promise;
+    await vi.advanceTimersByTimeAsync(2_800);
+    activeClient.setConnectionState({ status: "connected" });
+    await vi.advanceTimersByTimeAsync(500);
+    alternateConnect.resolve();
+    connectGate = null;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(controller.getSnapshot().probeByConnectionId.get(relayAlternate.id)).toEqual({
+      status: "available",
+      latencyMs: 280,
+    });
+    const clientsAfterProbe = clients.length;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(clients.length).toBe(clientsAfterProbe);
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayPrimary.id);
+    expect(controller.getSnapshot().client).toBe(activeClient);
+    expect(activeClient.isDisposed()).toBe(false);
+    await controller.stop();
+  });
+
+  it("starts the switch streak over when the active socket reconnects", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 15,
+      "relay:relay.paseo.sh:443": 60,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    activeClient.heartbeatReportsRtt(95);
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    }
+
+    activeClient.setConnectionState({ status: "disconnected", reason: "network changed" });
+    activeClient.setConnectionState({ status: "connected" });
+    activeClient.heartbeatReportsRtt(95);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe("relay:relay.paseo.sh:443");
+    await controller.stop();
+  });
+
+  it("ends the switch streak when a fresh probe of the alternate fails", async () => {
+    useHostRuntimeClock();
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      "direct:lan:6767": 15,
+      "relay:relay.paseo.sh:443": 60,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(95);
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+    }
+
+    latencies["relay:relay.paseo.sh:443"] = new Error("relay unreachable");
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().probeByConnectionId.get("relay:relay.paseo.sh:443")).toEqual({
+      status: "unavailable",
+      latencyMs: null,
+    });
+
+    latencies["relay:relay.paseo.sh:443"] = 30;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe("relay:relay.paseo.sh:443");
+    await controller.stop();
+  });
+
+  it("restarts the streak when a different candidate becomes the fastest fresh sample", async () => {
+    useHostRuntimeClock();
+    const direct: HostConnection = {
+      id: "direct:lan:6767",
+      type: "directTcp",
+      endpoint: "lan:6767",
+    };
+    const host = makeHost({
+      connections: [direct, relayPrimary, relayAlternate],
+      preferredConnectionId: direct.id,
+    });
+    const clients: FakeDaemonClient[] = [];
+    const latencies: Record<string, number | Error> = {
+      [direct.id]: 15,
+      [relayPrimary.id]: 60,
+      [relayAlternate.id]: 70,
+    };
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(latencies, clients),
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+    const activeClient = controller.getSnapshot().client as unknown as FakeDaemonClient;
+    activeClient.heartbeatReportsRtt(95);
+
+    latencies[relayPrimary.id] = 30;
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+      expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+    }
+
+    latencies[relayAlternate.id] = 20;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+    expect(controller.getSnapshot().activeConnectionId).toBe(direct.id);
+
+    for (let index = 0; index < 2; index += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      await controller.runProbeCycleNow();
+    }
+    expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+    await controller.stop();
   });
 
   it("exposes one snapshot with active connection and status from same source", async () => {
@@ -1655,6 +2195,103 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it.each([false, true])(
+    "keeps B and C distinct with routed and direct candidates (B direct first: %s)",
+    async (directFirst) => {
+      const directory = new Deferred<HostDirectory>();
+      const origin = new FakeDaemonClient();
+      origin.setConnectionState({ status: "connected" });
+      origin.connectedHosts = true;
+      origin.hostDirectory = directory.promise;
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage(),
+        deps: {
+          createClient: ({ host }) =>
+            (host.serverId === "srv_a"
+              ? origin
+              : new FakeDaemonClient()) as unknown as DaemonClient,
+          connectToDaemon: async ({ host }) => ({
+            client: (host.serverId === "srv_a"
+              ? origin
+              : makeConnectedProbeClient(5)) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          }),
+          getClientId: async () => "cid_fleet_candidates",
+        },
+      });
+      const addDirectB = () =>
+        store.upsertDirectConnection({
+          serverId: "srv_b",
+          endpoint: "b:6767",
+          label: "My B",
+        });
+      try {
+        if (directFirst) await addDirectB();
+        await store.upsertDirectConnection({
+          serverId: "srv_c",
+          endpoint: "c:6767",
+          label: "My C",
+        });
+        await store.upsertDirectConnection({ serverId: "srv_a", endpoint: "a:6767" });
+        await waitForHostOnline(store, "srv_a");
+        directory.resolve({
+          self: { serverId: "srv_a", label: "A" },
+          hosts: ["b", "c"].map((target) => ({
+            registrationId: `reg_${target}`,
+            serverId: `srv_${target}`,
+            label: `Fleet ${target.toUpperCase()}`,
+            source: { id: "user", key: target },
+            metadata: {},
+            enabled: true,
+            status: "online" as const,
+            targetDescription: `${target}:6767`,
+            lastOnlineAt: null,
+            nextRetryAt: null,
+            error: null,
+          })),
+        });
+        await vi.waitFor(() =>
+          expect(store.getHosts()).toContainEqual(
+            expect.objectContaining({
+              serverId: "srv_b",
+              connections: expect.arrayContaining([
+                { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+              ]),
+            }),
+          ),
+        );
+        await waitForHostOnline(store, "srv_b");
+        if (!directFirst) await addDirectB();
+        const targets = store.getHosts().filter((host) => host.serverId === "srv_b");
+        expect(targets).toHaveLength(1);
+        expect(targets[0]?.connections).toEqual(
+          expect.arrayContaining([
+            { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+            { id: "direct:b:6767", type: "directTcp", endpoint: "b:6767", useTls: false },
+          ]),
+        );
+        expect(targets[0]?.connections).toHaveLength(2);
+        expect(targets[0]?.label).toBe(directFirst ? "My B" : "Fleet B");
+        expect(store.getSnapshot("srv_b")?.connectionStatus).toBe("online");
+        expect(store.getHosts()).toHaveLength(3);
+        const targetC = store.getHosts().find((host) => host.serverId === "srv_c");
+        expect(targetC).toMatchObject({
+          serverId: "srv_c",
+          label: "My C",
+          connections: [
+            { id: "direct:c:6767", type: "directTcp", endpoint: "c:6767", useTls: false },
+            { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+          ],
+        });
+        await waitForHostOnline(store, "srv_c");
+        expect(store.getSnapshot("srv_c")?.connectionStatus).toBe("online");
+      } finally {
+        store.syncHosts([]);
+      }
+    },
+  );
+
   it.each(["active", "inactive", "background"] as const)(
     "keeps reconnect enabled through inactive/background and resumes immediately (mounted %s)",
     async (currentState) => {
@@ -3047,6 +3684,34 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("drains a queued message as a steer so a turn the agent just started is not interrupted", async () => {
+    const host = makeHost({ serverId: "srv_steer_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_steer_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "queued", text: "next task", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForSentMessages(1);
+
+    expect(fakeClient.sentAgentMessages[0]?.[2]?.activeTurnBehavior).toBe("steer");
+    sessionStore.clearSession(host.serverId);
+  });
+
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
@@ -3666,6 +4331,96 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("keeps a strict offer's security pin through both pairing paths and a reload", async () => {
+    const storage = createMemoryHostRuntimeStorage();
+    const store = createPairingStore({ storage });
+    answerHostConfirmations(store, true);
+    const strictOffer = (serverId: string): ConnectionOffer => ({
+      ...makeOffer({ serverId, daemonPublicKeyB64: `pk_${serverId}` }),
+      minimumSecurityMode: "protected",
+    });
+
+    await store.importConnectionLink(encodeOfferUrl(strictOffer("srv_import")), "openProject");
+    await store.beginLinkPairing().submit(encodeOfferUrl(strictOffer("srv_pair")));
+
+    const pinOf = (hosts: HostProfile[], serverId: string) =>
+      relayPinOf(hosts.find((host) => host.serverId === serverId));
+    expect(pinOf(store.getHosts(), "srv_import")).toBe("protected");
+    expect(pinOf(store.getHosts(), "srv_pair")).toBe("protected");
+
+    await waitForHostOnline(store, "srv_pair");
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(pinOf(persisted, "srv_import")).toBe("protected");
+    expect(pinOf(persisted, "srv_pair")).toBe("protected");
+    store.syncHosts([]);
+
+    const reloaded = createPairingStore({ storage });
+    const registryLoaded = onceHostListMatches(reloaded, () => reloaded.isHostRegistryLoaded());
+    reloaded.boot();
+    await registryLoaded;
+    expect(pinOf(reloaded.getHosts(), "srv_import")).toBe("protected");
+    expect(pinOf(reloaded.getHosts(), "srv_pair")).toBe("protected");
+
+    reloaded.syncHosts([]);
+  });
+
+  it("learns the security pin from an adopted probe client and keeps it across a reload", async () => {
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_saved",
+    };
+    const host = makeHost({
+      serverId: "srv_saved",
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    });
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([host]),
+      "@paseo:e2e": "1",
+    });
+    const store = createPairingStore({ storage, probeSecurityFloor: "protected" });
+
+    store.boot();
+    await waitForHostOnline(store, "srv_saved");
+    const pinned = onceHostListMatches(
+      store,
+      () => relayPinOf(store.getHosts()[0]) === "protected",
+    );
+    await pinned;
+
+    const activeClient = store.getSnapshot("srv_saved")?.client as unknown as FakeDaemonClient;
+    expect(activeClient.relaySecurityFloor).toBe("protected");
+    expect(activeClient.isDisposed()).toBe(false);
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0]?.connections[0]?.minimumSecurityMode).toBe("protected");
+    store.syncHosts([]);
+
+    const reloaded = createPairingStore({ storage, probeSecurityFloor: "legacy" });
+    const registryLoaded = onceHostListMatches(reloaded, () => reloaded.isHostRegistryLoaded());
+    reloaded.boot();
+    await registryLoaded;
+    expect(relayPinOf(reloaded.getHosts()[0])).toBe("protected");
+
+    reloaded.syncHosts([]);
+  });
+
+  it("learns the security pin for a host paired from an old offer once it goes online", async () => {
+    const storage = createMemoryHostRuntimeStorage();
+    const store = createPairingStore({ storage, probeSecurityFloor: "protected" });
+    answerHostConfirmations(store, true);
+
+    await store.beginLinkPairing().submit(encodeOfferUrl(makeOffer()));
+    await waitForHostOnline(store, "srv_offer");
+    await onceHostListMatches(store, () => relayPinOf(store.getHosts()[0]) === "protected");
+
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0]?.connections[0]?.minimumSecurityMode).toBe("protected");
+
+    store.syncHosts([]);
+  });
+
   it("probes a pairing link immediately and saves only after admission", async () => {
     const store = createPairingStore({ password: "correct-password" });
     answerHostConfirmations(store, true);
@@ -3916,6 +4671,53 @@ describe("HostRuntimeStore", () => {
       "srv_localhost:6767",
       "srv_10.0.0.5:6767",
     ]);
+    store.syncHosts([]);
+  });
+
+  it("authenticates Remote SSH probes with the entered daemon password and stores it verbatim", async () => {
+    const store = createPairingStore({
+      password: " s3cret ",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    await store.probeAndUpsertRemoteSshConnection({
+      host: "deploy@example.com",
+      password: " s3cret ",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_ssh");
+    expect(host?.password).toBe(" s3cret ");
+    expect(host?.connections[0]).toMatchObject({
+      type: "remoteSsh",
+      host: "deploy@example.com",
+    });
+
+    // The fix promises the saved password is sent on every connection: a later
+    // cycle must authenticate from the stored profile alone.
+    await store.runProbeCycleNow("srv_ssh");
+    await waitForHostOnline(store, "srv_ssh");
+    store.syncHosts([]);
+  });
+
+  it("rejects Remote SSH probes without the daemon password, the way the daemon does", async () => {
+    const store = createPairingStore({
+      password: "s3cret",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    const failure = await store
+      .probeAndUpsertRemoteSshConnection({ host: "deploy@example.com" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(DaemonAuthenticationError);
+    expect((failure as DaemonAuthenticationError).reason).toBe("password_required");
+    expect(store.getHosts().find((entry) => entry.serverId === "srv_ssh")).toBeUndefined();
     store.syncHosts([]);
   });
 

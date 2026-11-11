@@ -147,7 +147,7 @@ function getPreviewFrameStyle(position: SplitDropZonePosition) {
 
 const styles = StyleSheet.create((theme) => ({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 40,
   },
   previewOverlay: {

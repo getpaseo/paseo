@@ -6,8 +6,6 @@ import {
   type Ref,
 } from "react";
 import {
-  Platform,
-  StatusBar,
   View,
   type GestureResponderEvent,
   type PressableProps,
@@ -133,10 +131,9 @@ export function ContextMenuTrigger({
       const point = coerceEventPoint(event);
       if (!point) return;
 
-      const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
       ctx.setAnchorRect({
         x: point.pageX,
-        y: point.pageY + statusBarHeight,
+        y: point.pageY,
         width: 0,
         height: 0,
       });
@@ -168,7 +165,9 @@ export function ContextMenuTrigger({
 
   const handleContextMenu = useCallback(
     (event: unknown) => {
-      if (isNative) return;
+      // A trigger with no menu of its own leaves the browser's menu alone, e.g. copy and paste
+      // in a field rendered inside it.
+      if (isNative || !shouldEnableOnThisPlatform) return;
       if (typeof event === "object" && event !== null) {
         const preventDefault = Reflect.get(event, "preventDefault");
         const stopPropagation = Reflect.get(event, "stopPropagation");
@@ -178,7 +177,7 @@ export function ContextMenuTrigger({
       onContextMenu?.(event);
       openAtEvent(event);
     },
-    [onContextMenu, openAtEvent],
+    [onContextMenu, openAtEvent, shouldEnableOnThisPlatform],
   );
 
   const resolveDynamicStyle = useCallback(
