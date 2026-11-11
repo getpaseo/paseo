@@ -23,6 +23,22 @@ function readSessionMessage(message: WebSocketMessage): SessionMessage | null {
   }
 }
 
+/** Drops one real fork RPC while preserving the browser's remaining daemon traffic. */
+export async function dropNextForkRequest(page: Page): Promise<() => number> {
+  let dropped = 0;
+  await page.routeWebSocket(new RegExp(`:${getE2EDaemonPort()}\\b`), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((payload) => {
+      if (dropped === 0 && readSessionMessage(payload)?.type === "agent.fork_context.request") {
+        dropped += 1;
+        return;
+      }
+      server.send(payload);
+    });
+  });
+  return () => dropped;
+}
+
 export function observeForkAttachment(page: Page): {
   waitForText: () => Promise<string>;
 } {
