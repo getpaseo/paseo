@@ -1,0 +1,7 @@
+Fixed
+- Fixed repeated Android animation exceptions for views that have already unmounted
+- Fixed the Android animation run loop continuing while the app is in the background
+- Fixed finished Android chat messages being remeasured during streaming updates
+- Fixed bottom sheets retaining window-size listeners after closing
+
+Full notes: https://paseo.sh/changelog

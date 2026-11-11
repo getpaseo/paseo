@@ -1,4 +1,5 @@
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
+import type { HostFeatureName } from "@/runtime/host-features";
 
 export interface AcpProviderCatalogEntry {
   id: string;
@@ -8,7 +9,7 @@ export interface AcpProviderCatalogEntry {
   iconSvg: string | null;
   installLink: string;
   command: readonly [string, ...string[]];
-  bundledProvider?: boolean;
+  bundledProvider?: { readonly hostFeature: HostFeatureName };
   env?: Readonly<Record<string, string>>;
   params?: Readonly<Record<string, unknown>>;
 }
@@ -180,6 +181,16 @@ const CATALOG_DATA = [
     command: ["uvx", "--from", "fast-agent-acp==0.10.47", "fast-agent-acp", "-x"],
   },
   {
+    id: "fx",
+    bundledProvider: { hostFeature: "fxProvider" },
+    title: "fx",
+    description: "Vercel Labs' tiny, open, native coding agent",
+    version: "manual",
+    iconId: "fx",
+    installLink: "https://fx.sh/docs/getting-started/installation",
+    command: ["fx", "acp"],
+  },
+  {
     id: "gemini",
     title: "Gemini CLI",
     description: "Google's official CLI for Gemini",
@@ -241,7 +252,7 @@ const CATALOG_DATA = [
   },
   {
     id: "hoplite",
-    bundledProvider: true,
+    bundledProvider: { hostFeature: "hopliteProvider" },
     title: "Hoplite",
     description: "Cloud coding agent through the local hoplite acp bridge",
     version: "manual",
@@ -292,7 +303,10 @@ const CATALOG_DATA = [
     version: "0.6.13",
     iconId: "minimax-code",
     installLink: "https://agent.minimax.io",
-    command: ["npx", "-y", "@minimax-ai/code@0.6.13", "acp"],
+    // `-p <pkg>` names the package and `mcode` names its binary. Without the
+    // explicit binary, npx resolves the executable from the unscoped package
+    // name (`code`), which this package does not publish.
+    command: ["npx", "-y", "-p", "@minimax-ai/code@0.6.13", "mcode", "acp"],
   },
   {
     id: "minion-code",

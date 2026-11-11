@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { realpathSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -379,4 +381,22 @@ export function observeSetupPanelTraffic(page: Page) {
 
 export function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
   return detail.commands.map((command) => command.log).join("\n");
+}
+
+/** Hold this isolated daemon's terminal worker so script exit cannot race a layout change. */
+export async function pauseWorkspaceTerminalWorker(terminalId: string): Promise<() => void> {
+  const home = process.env.E2E_PASEO_HOME;
+  if (!home) throw new Error("Missing isolated E2E home");
+  const directory = path.join(home, "terminal-worker");
+  for (const name of await readdir(directory)) {
+    if (!name.endsWith(".json")) continue;
+    const record = JSON.parse(await readFile(path.join(directory, name), "utf8")) as {
+      pid: number;
+      terminals: Array<{ id: string }>;
+    };
+    if (!record.terminals.some((terminal) => terminal.id === terminalId)) continue;
+    process.kill(record.pid, "SIGSTOP");
+    return () => process.kill(record.pid, "SIGCONT");
+  }
+  throw new Error(`No isolated terminal worker owns ${terminalId}`);
 }

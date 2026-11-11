@@ -1,4 +1,4 @@
-import { normalizeAgentModelCatalog } from "@getpaseo/protocol/agent-types";
+import { normalizeAgentModelCatalog, type ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -160,14 +160,14 @@ export interface ResolveProviderCreateConfigOptions {
   cwd?: string | null;
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: ManagedAgent | null;
   unattended: boolean;
 }
 
 export interface ResolvedProviderCreateConfig {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 interface ResolveDefaultModelOptions {
@@ -563,7 +563,7 @@ export class ProviderSnapshotManager {
     return definition.resolveCreateConfig({
       provider: input.provider,
       requestedMode: input.requestedMode,
-      featureValues: input.featureValues,
+      providerOptions: input.providerOptions,
       parent,
       unattended: input.unattended || parent?.isUnattended === true,
       availableModes: entry.modes ?? [],
@@ -744,8 +744,13 @@ export class ProviderSnapshotManager {
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({
         modeId: parent.currentModeId,
-        config: parent.config,
-        features: parent.features,
+        // Provider defaults from `config.json` apply to the parent too, so classify on the
+        // effective options while the stored overrides stay as they are.
+        config: {
+          ...parent.config,
+          providerOptions: parent.effectiveOptions ?? parent.config.providerOptions,
+        },
+        controls: parent.controls,
         availableModes: parent.availableModes ?? definition.modes ?? [],
       }),
     };

@@ -5,7 +5,7 @@ export function sheet(page: Page, label: string): Locator {
   return page.getByRole("dialog", { name: label });
 }
 
-/** A sheet tab's header, which carries its title, Close, and the Open as tab glyph. */
+/** A sheet tab's header, which carries its title, Back, Close, and the Open as tab glyph. */
 export function sheetHeader(page: Page, label: string): Locator {
   return page.getByTestId("sheet-tab-header").filter({ hasText: label });
 }
@@ -48,6 +48,12 @@ export async function closeSheet(page: Page, label: string): Promise<void> {
   await expect(sheet(page, label)).toHaveCount(0);
 }
 
+/** Steps a sheet opened from a list back to that list, in the same sheet. */
+export async function backToList(page: Page, label: string): Promise<void> {
+  await sheetHeader(page, label).getByRole("button", { name: "Back" }).click();
+  await expect(sheet(page, label)).toHaveCount(0);
+}
+
 export async function openSheetAsTab(page: Page, label: string): Promise<void> {
   await sheetHeader(page, label).getByRole("button", { name: "Open as tab" }).click();
   await expect(sheet(page, label)).toHaveCount(0);
@@ -76,6 +82,15 @@ export async function selectTabFromSwitcher(page: Page, label: string): Promise<
   await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 }
 
+/** Each open sheet renders its own backdrop, so counting them counts the sheets. */
+export async function expectOneSheetOpen(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
+}
+
+export async function expectNoSheetOpen(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+}
+
 /** Taps the top sheet's backdrop; each stacked sheet renders its own, top last. */
 export async function tapSheetBackdrop(page: Page): Promise<void> {
   await page
@@ -96,4 +111,16 @@ export async function expectDeclinedDiscardPrompt(
   });
   await close();
   expect(await prompt).toContain("discard the draft");
+}
+
+/** A seeded prompt the mock agent echoes, so the chat shows `target` as a tappable file link. */
+export function promptMentioning(target: string): string {
+  return [
+    "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
+    "Return JSON only with fields 'title' and 'branch'.",
+    "",
+    "<user-prompt>",
+    `Open \`${target}\` now`,
+    "</user-prompt>",
+  ].join("\n");
 }

@@ -375,19 +375,18 @@
       "otherHostComment": "# 指定另一台主机"
     },
     "plugins": {
-      "title": "用插件扩展",
-      "description": "添加新的面板和功能，在桌面端、网页端和移动端都能使用",
-      "lead": "插件",
+      "title": "让 Paseo 修改 Paseo",
+      "description": "Paseo 里的 Agent 可以修改整个界面，无需重启，在移动端也一样。",
+      "request": "在侧边栏加一个面板，列出等待我审查的 PR。",
+      "plan": "我会把它做成本地插件并安装。",
+      "done": "审查队列已出现在你的侧边栏。",
+      "panelTitle": "审查队列",
+      "libraryTitle": "400 多个社区插件",
+      "libraryDescription": "开发者用的是和你的 Agent 相同的插件 API",
       "browse": "浏览插件",
       "docs": "插件文档",
       "license": "Paseo 采用 Apache 2.0 许可证。",
-      "fork": "Fork 仓库",
-      "uiTitle": "界面",
-      "uiDescription": "页面、工作区面板、侧边栏项目、斜杠命令和主题",
-      "lifecycleTitle": "Agent 生命周期",
-      "lifecycleDescription": "修改配置和 MCP 服务器、响应权限请求、发送后续消息",
-      "providersTitle": "Provider",
-      "providersDescription": "把编程 Agent 添加为 Provider，用法与内置 Provider 相同"
+      "fork": "Fork 仓库"
     },
     "philosophy": {
       "title": "理念",
@@ -447,10 +446,10 @@
     },
     "mockup": {
       "alt": "Paseo 桌面应用，并排打开了编程 Agent、一段对话和一份代码 diff",
-      "build": "构建",
-      "review": "审查",
-      "ship": "发布",
-      "extend": "扩展",
+      "build": "并行 Agent",
+      "review": "代码审查",
+      "ship": "Pull Request",
+      "extend": "插件",
       "app": {
         "newWorkspace": "新建工作区",
         "history": "历史",
@@ -652,6 +651,8 @@
     "metaDescription": "每个 Paseo 版本发布的产品更新、问题修复和改进。了解新的 Agent Provider、移动端功能和 daemon 变化。",
     "title": "更新日志",
     "linkTo": "链接到 Paseo {{version}}",
+    "showAllChanges": "显示全部变更",
+    "hideAllChanges": "收起全部变更",
     "untranslatedRelease": "此版本的发布说明尚未翻译，因此以英文显示。"
   },
   "blog": {
