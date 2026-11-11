@@ -218,7 +218,7 @@ export function mountNetworkTunnelProvider(input: {
     }
     disposers.push(unlisten);
     const requestedRevision = revision;
-    const state = await getBrowserRoutingState(input.serverId, desktop);
+    const state = await getBrowserRoutingState({ serverId: input.serverId, desktop });
     if (disposed || requestedRevision !== revision) return;
     enabled = state;
     reconcile();

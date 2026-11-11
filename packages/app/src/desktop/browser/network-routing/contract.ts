@@ -35,20 +35,32 @@ export function requireIpcSuccess<T extends { ok: true }>(
   if (!result.ok) throw new RoutingIpcError(result.error.code, result.error.message);
   return result;
 }
-export async function getBrowserRoutingState(
-  serverId: string,
+export interface BrowserRoutingStateRequest {
+  serverId: string;
+  desktop?: RoutingDesktop;
+}
+
+export async function getBrowserRoutingState({
+  serverId,
   desktop = routingDesktop,
-): Promise<boolean> {
+}: BrowserRoutingStateRequest): Promise<boolean> {
   const result = z
     .union([z.object({ ok: z.literal(true), enabled: z.boolean() }), ipcFailureSchema])
     .parse(await desktop.invoke("browser_routing_get_state", { serverId }));
   return requireIpcSuccess(result).enabled;
 }
-export async function resolveBrowserPartition(
-  serverId: string,
-  sharedPartition: string,
+export interface BrowserPartitionRequest {
+  serverId: string;
+  /** Returned when routing is off for this host. */
+  sharedPartition: string;
+  desktop?: RoutingDesktop;
+}
+
+export async function resolveBrowserPartition({
+  serverId,
+  sharedPartition,
   desktop = routingDesktop,
-): Promise<string> {
+}: BrowserPartitionRequest): Promise<string> {
   const result = z
     .union([
       z.object({

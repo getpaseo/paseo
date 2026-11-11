@@ -344,28 +344,46 @@ describe("host routing contract", () => {
       ok: false,
       error: { code: "routing_disabled", message: "disabled" },
     });
-    expect(await resolveBrowserPartition(serverId, "persist:paseo-browser", h.desktop)).toBe(
-      "persist:paseo-browser",
-    );
+    expect(
+      await resolveBrowserPartition({
+        serverId,
+        sharedPartition: "persist:paseo-browser",
+        desktop: h.desktop,
+      }),
+    ).toBe("persist:paseo-browser");
     h.invoke.mockResolvedValue({ ok: true, partition: "persist:paseo-browser-via-abc" });
-    expect(await resolveBrowserPartition(serverId, "persist:paseo-browser", h.desktop)).toBe(
-      "persist:paseo-browser-via-abc",
-    );
+    expect(
+      await resolveBrowserPartition({
+        serverId,
+        sharedPartition: "persist:paseo-browser",
+        desktop: h.desktop,
+      }),
+    ).toBe("persist:paseo-browser-via-abc");
     h.invoke.mockResolvedValue({ ok: false, error: { code: "not_ready", message: "Preparing" } });
     await expect(
-      resolveBrowserPartition(serverId, "persist:paseo-browser", h.desktop),
+      resolveBrowserPartition({
+        serverId,
+        sharedPartition: "persist:paseo-browser",
+        desktop: h.desktop,
+      }),
     ).rejects.toMatchObject({ code: "not_ready" });
     h.invoke.mockRejectedValue(new Error("IPC disconnected"));
     await expect(
-      resolveBrowserPartition(serverId, "persist:paseo-browser", h.desktop),
+      resolveBrowserPartition({
+        serverId,
+        sharedPartition: "persist:paseo-browser",
+        desktop: h.desktop,
+      }),
     ).rejects.toThrow("IPC disconnected");
   });
   it("reads the actual setting and rejects unavailable IPC", async () => {
     const h = harness();
     h.invoke.mockResolvedValue({ ok: true, enabled: true });
-    expect(await getBrowserRoutingState(serverId, h.desktop)).toBe(true);
+    expect(await getBrowserRoutingState({ serverId, desktop: h.desktop })).toBe(true);
     h.invoke.mockResolvedValue({ ok: false, error: { code: "not_ready", message: "Unavailable" } });
-    await expect(getBrowserRoutingState(serverId, h.desktop)).rejects.toThrow("Unavailable");
+    await expect(getBrowserRoutingState({ serverId, desktop: h.desktop })).rejects.toThrow(
+      "Unavailable",
+    );
   });
   it.each([
     [false, false, true, false, true],

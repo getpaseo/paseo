@@ -1000,11 +1000,11 @@ export function BrowserPane({
         });
         return;
       }
-      const needsAttachment = recordBrowserNavigationRequest(
-        browserIdRef.current,
-        normalizedUrl,
-        webview,
-      );
+      const needsAttachment = recordBrowserNavigationRequest({
+        browserId: browserIdRef.current,
+        url: normalizedUrl,
+        paneWebview: webview,
+      });
       if (needsAttachment || !webview || !webview.isConnected) {
         setWebviewRevision((revision) => revision + 1);
         return;

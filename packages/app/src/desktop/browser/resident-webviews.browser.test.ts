@@ -529,7 +529,7 @@ describe("host browser partitions", () => {
     });
     Object.assign(first!, { getURL: () => "http://intranet/current" });
     partition = "persist:paseo-browser-via-remote";
-    const changing = recreateHostBrowserWebviews("remote", true);
+    const changing = recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     expect(first?.isConnected).toBe(false);
     await changing;
     const next = getResidentBrowserWebview("switch-host");
@@ -537,10 +537,10 @@ describe("host browser partitions", () => {
     expect(next?.getAttribute("partition")).toBe(partition);
     expect((next as HTMLElement & { src: string }).src).toBe("http://intranet/current");
     expect(getResidentBrowserWebview("other-host")).toBe(other);
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     expect(getResidentBrowserWebview("switch-host")).toBe(next);
     partition = "persist:paseo-browser";
-    await recreateHostBrowserWebviews("remote", false);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: false });
     expect(next?.isConnected).toBe(false);
     expect(getResidentBrowserWebview("switch-host")?.getAttribute("partition")).toBe(partition);
   });
@@ -563,7 +563,7 @@ describe("host browser partitions", () => {
       first.dispatchEvent(navigation);
 
       partition = enabled ? "persist:paseo-browser-via-remote" : "persist:paseo-browser";
-      await recreateHostBrowserWebviews("remote", enabled);
+      await recreateHostBrowserWebviews({ serverId: "remote", enabled });
 
       const replacement = getResidentBrowserWebview(input.browserId)!;
       expect(first.isConnected).toBe(false);
@@ -586,7 +586,7 @@ describe("host browser partitions", () => {
     const first = (await ensureResidentBrowserWebview({ ...input, url: currentUrl }))!;
     Object.assign(first, { getURL: () => currentUrl });
     partition = "persist:paseo-browser-via-remote";
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     const replacement = getResidentBrowserWebview(input.browserId)!;
 
     expect(await ensureResidentBrowserWebview({ ...input, url: requestedUrl })).toBe(replacement);
@@ -612,7 +612,7 @@ describe("host browser partitions", () => {
       first.dispatchEvent(event);
     }
     partition = "persist:paseo-browser-via-remote";
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     expect(
       (getResidentBrowserWebview("redirecting-navigation") as HTMLElement & { src: string }).src,
     ).toBe("https://example.test/redirected");
@@ -638,7 +638,7 @@ describe("host browser partitions", () => {
         first.dispatchEvent(navigation);
       }
       partition = "persist:paseo-browser-via-remote";
-      await recreateHostBrowserWebviews("remote", true);
+      await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
       const replacement = getResidentBrowserWebview(input.browserId)!;
       const restoredUrl = loading ? loadingUrl : currentUrl;
       expect((replacement as HTMLElement & { src: string }).src).toBe(restoredUrl);
@@ -664,12 +664,12 @@ describe("host browser partitions", () => {
       finishEnable = resolve;
     });
     resolvePartition = () => enablingPartition;
-    const enabling = recreateHostBrowserWebviews("remote", true);
+    const enabling = recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     const reattaching = ensureResidentBrowserWebview(input);
     expect(first.isConnected).toBe(false);
 
     resolvePartition = () => Promise.resolve("persist:paseo-browser");
-    await recreateHostBrowserWebviews("remote", false);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: false });
     const replacement = getResidentBrowserWebview(input.browserId)!;
     finishEnable("persist:paseo-browser-via-remote");
     await enabling;
@@ -701,10 +701,14 @@ describe("host browser partitions", () => {
         ready = resolve;
       });
       resolvePartition = () => preparingPartition;
-      const changing = recreateHostBrowserWebviews("remote", enabled);
+      const changing = recreateHostBrowserWebviews({ serverId: "remote", enabled });
       expect(first.isConnected).toBe(false);
 
-      recordBrowserNavigationRequest(input.browserId, input.url, first);
+      recordBrowserNavigationRequest({
+        browserId: input.browserId,
+        url: input.url,
+        paneWebview: first,
+      });
       const attaching = ensureResidentBrowserWebview(input);
       const partition = enabled ? "persist:paseo-browser-via-remote" : "persist:paseo-browser";
       ready(partition);
@@ -729,12 +733,16 @@ describe("host browser partitions", () => {
     const first = (await ensureResidentBrowserWebview(input))!;
     Object.assign(first, { getURL: () => currentUrl });
     partition = "persist:paseo-browser-via-remote";
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     const replacement = getResidentBrowserWebview(input.browserId)!;
     replacement.setAttribute("src", currentUrl);
     expect(first.isConnected).toBe(false);
 
-    const needsAttachment = recordBrowserNavigationRequest(input.browserId, input.url, first);
+    const needsAttachment = recordBrowserNavigationRequest({
+      browserId: input.browserId,
+      url: input.url,
+      paneWebview: first,
+    });
 
     expect(replacement.getAttribute("src")).toBe(input.url);
     expect(needsAttachment).toBe(true);
@@ -780,7 +788,7 @@ describe("host browser partitions", () => {
       first.dispatchEvent(new Event(completionEvent));
       Object.assign(first, { getURL: () => "https://example.test/committed#section" });
       partition = "persist:paseo-browser-via-remote";
-      await recreateHostBrowserWebviews("remote", true);
+      await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
       expect(
         (getResidentBrowserWebview(input.browserId) as HTMLElement & { src: string }).src,
       ).toBe("https://example.test/committed#section");
@@ -838,7 +846,7 @@ describe("host browser partitions", () => {
     }))!;
     Object.assign(previous, { getWebContentsId: () => 1 });
     partition = "persist:paseo-browser-via-remote";
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     const next = getResidentBrowserWebview("late-attach")!;
     expect(next).not.toBe(previous);
     const uncaught = recordUncaughtErrors();
@@ -1029,7 +1037,7 @@ it("recreates a resident tab from the desktop routing event and restores its URL
       url: "http://intranet",
       profileHost: {
         ...profileHost,
-        resolvePartition: (serverId, shared) => resolveBrowserPartition(serverId, shared, desktop),
+        resolvePartition: (request) => resolveBrowserPartition({ ...request, desktop }),
       },
       routingEvents: desktop,
     });
@@ -1073,7 +1081,9 @@ it.each([new Error("unexpected guest URL failure"), "unexpected guest failure"])
           throw failure;
         },
       });
-      await expect(recreateHostBrowserWebviews("remote", true)).rejects.toBe(failure);
+      await expect(recreateHostBrowserWebviews({ serverId: "remote", enabled: true })).rejects.toBe(
+        failure,
+      );
       expect(webview?.isConnected).toBe(true);
     } finally {
       clearResidentBrowserWebviewsForTests();
@@ -1100,7 +1110,7 @@ it("preserves src when getURL reports Electron's known not-attached error", asyn
       },
     });
     partition = "persist:paseo-browser-via-remote";
-    await recreateHostBrowserWebviews("remote", true);
+    await recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     expect((getResidentBrowserWebview("url-pending") as HTMLElement & { src: string }).src).toBe(
       "https://example.test/current",
     );
@@ -1125,7 +1135,7 @@ it("cannot reattach the previous profile while the replacement is preparing", as
     partition = new Promise((resolve) => {
       ready = resolve;
     });
-    const changing = recreateHostBrowserWebviews("remote", true);
+    const changing = recreateHostBrowserWebviews({ serverId: "remote", enabled: true });
     // A retained pane can receive ResizeObserver or cleanup callbacks during preparation.
     releaseResidentBrowserWebview(input.browserId, initial);
     presentBrowserWebview(input.browserId, initial, document.body, document.body, {

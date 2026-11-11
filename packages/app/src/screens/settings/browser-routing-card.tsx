@@ -98,7 +98,7 @@ export function BrowserRoutingSetting({
     dataShape: "value",
     staleTimeMs: 0,
     queryKey,
-    queryFn: () => getBrowserRoutingState(serverId, desktop),
+    queryFn: () => getBrowserRoutingState({ serverId, desktop }),
     retry: false,
   });
   const mutation = useMutation({

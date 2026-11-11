@@ -6,6 +6,7 @@ import {
   providerReadySchema,
   routingChangedSchema,
   routingDesktop,
+  type BrowserPartitionRequest,
   type RoutingDesktop,
 } from "./network-routing/contract";
 import {
@@ -46,7 +47,7 @@ interface BrowserWebviewIdentity {
 
 export interface BrowserWebviewProfileHost {
   profilePartition: string;
-  resolvePartition?: (serverId: string, sharedPartition: string) => Promise<string>;
+  resolvePartition?: (request: BrowserPartitionRequest) => Promise<string>;
   registerAttachedBrowser(input: DesktopAttachedBrowserRegistration): Promise<void>;
 }
 
@@ -440,12 +441,19 @@ export function subscribeBrowserWebviewReplacement(
 function notifyReplacement(browserId: string) {
   for (const listener of replacementListeners.get(browserId) ?? []) listener();
 }
-function configureBrowserWebview(
-  webview: HTMLElement,
-  input: PrepareBrowserInput,
-  browser: BrowserWebviewProfileHost,
-  partition: string,
-): void {
+interface BrowserWebviewSetup {
+  webview: HTMLElement;
+  input: PrepareBrowserInput;
+  browser: BrowserWebviewProfileHost;
+  partition: string;
+}
+
+function configureBrowserWebview({
+  webview,
+  input,
+  browser,
+  partition,
+}: BrowserWebviewSetup): void {
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
   webview.setAttribute("partition", partition);
   webview.setAttribute("allowpopups", "true");
@@ -477,11 +485,17 @@ function configureBrowserWebview(
   observeHostNetworkFailures(webview, input.serverId);
 }
 /** Returns whether the pane must acquire its current guest before using guest APIs. */
-export function recordBrowserNavigationRequest(
-  browserId: string,
-  url: string,
-  paneWebview: HTMLElement | null,
-): boolean {
+export interface BrowserNavigationRequest {
+  browserId: string;
+  url: string;
+  paneWebview: HTMLElement | null;
+}
+
+export function recordBrowserNavigationRequest({
+  browserId,
+  url,
+  paneWebview,
+}: BrowserNavigationRequest): boolean {
   const id = trimNonEmpty(browserId);
   if (!id) return true;
   const pending = pendingWebviews.get(id);
@@ -536,10 +550,10 @@ async function createResidentBrowserWebview(
   const browser = getBrowserBridge(input.profileHost);
   const previousInput = residentInputs.get(browserId);
   residentInputs.set(browserId, input);
-  const partition = await (browser.resolvePartition ?? resolveBrowserPartition)(
-    input.serverId,
-    browser.profilePartition,
-  );
+  const partition = await (browser.resolvePartition ?? resolveBrowserPartition)({
+    serverId: input.serverId,
+    sharedPartition: browser.profilePartition,
+  });
   // Closing a tab or changing routing while preparation was pending cancels that attach.
   if (residentInputs.get(browserId) !== input) return null;
   const requestedUrl = latestUrl();
@@ -566,7 +580,7 @@ async function createResidentBrowserWebview(
     residentWebviewsByBrowserId.delete(browserId);
   }
   const webview = ownerDocument.createElement("webview") as BrowserWebviewElement;
-  configureBrowserWebview(webview, { ...input, initialUrl: url }, browser, partition);
+  configureBrowserWebview({ webview, input: { ...input, initialUrl: url }, browser, partition });
   releaseResidentBrowserWebview(browserId, webview);
   if (existing) notifyReplacement(browserId);
   return webview;
@@ -584,10 +598,15 @@ function readWebviewUrl(webview: HTMLElement, fallback: string): string {
   }
 }
 
-export async function recreateHostBrowserWebviews(
-  serverId: string,
-  enabled: boolean,
-): Promise<void> {
+export interface HostRoutingChange {
+  serverId: string;
+  enabled: boolean;
+}
+
+export async function recreateHostBrowserWebviews({
+  serverId,
+  enabled,
+}: HostRoutingChange): Promise<void> {
   const replacements: Promise<unknown>[] = [];
   for (const [browserId, input] of residentInputs) {
     if (input.serverId !== serverId) continue;
@@ -622,8 +641,8 @@ function ensureBrowserRoutingListener(
       // A routing change or a provider handoff: no window is known to be serving yet.
       const remote = remoteProviders.get(event.serverId);
       if (remote) remote.ready = false;
-      void recreateHostBrowserWebviews(event.serverId, event.enabled).catch((error) =>
-        console.error("[browser-routing] webview preparation failed", error),
+      void recreateHostBrowserWebviews({ serverId: event.serverId, enabled: event.enabled }).catch(
+        (error) => console.error("[browser-routing] webview preparation failed", error),
       );
     }),
     desktop.listen("browser_routing_provider_ready", (raw) => {
@@ -761,7 +780,7 @@ function observeHostNetworkFailures(webview: HTMLElement, serverId: string): voi
       )
         return;
       navigation.failed = true;
-      retryFailedHostNavigation(webview, serverId, navigation);
+      retryFailedHostNavigation({ webview, serverId, navigation });
     },
     { signal },
   );
@@ -770,16 +789,18 @@ function observeHostNetworkFailures(webview: HTMLElement, serverId: string): voi
     (event) => {
       const details = event as Event & { httpResponseCode?: number };
       navigation.failed = details.httpResponseCode === 503;
-      if (navigation.failed) retryFailedHostNavigation(webview, serverId, navigation);
+      if (navigation.failed) retryFailedHostNavigation({ webview, serverId, navigation });
     },
     { signal },
   );
 }
-function retryFailedHostNavigation(
-  webview: HTMLElement,
-  serverId: string,
-  navigation: FailedHostNavigation,
-): void {
+interface HostNavigationRetry {
+  webview: HTMLElement;
+  serverId: string;
+  navigation: FailedHostNavigation;
+}
+
+function retryFailedHostNavigation({ webview, serverId, navigation }: HostNavigationRetry): void {
   const host = useNetworkRoutingStatus.getState().hosts[serverId];
   const remote = remoteProviders.get(serverId);
   const routed = webview.getAttribute("partition")?.startsWith(ROUTED_BROWSER_PARTITION_PREFIX);
@@ -810,6 +831,6 @@ export function reloadFailedHostBrowserWebviews(serverId: string): void {
     const webview = getResidentBrowserWebview(browserId);
     if (!webview) continue;
     const navigation = failedHostNavigations.get(webview);
-    if (navigation) retryFailedHostNavigation(webview, serverId, navigation);
+    if (navigation) retryFailedHostNavigation({ webview, serverId, navigation });
   }
 }
