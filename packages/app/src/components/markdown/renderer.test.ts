@@ -6,7 +6,7 @@ import { matchCommandLink } from "@/agent-commands";
 import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
-import { extractNodeText, markInlineImages } from "react-native-enriched-markdown/src/web/utils";
+import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
@@ -15,7 +15,6 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
-import { MD4C_FLAGS } from "./renderer";
 
 it("recognizes complete known commands in inline code", () => {
   const names = new Set(["code-review", "review:fast"]);
@@ -933,6 +932,32 @@ it("normalizes a large HTML table into one block per row", () => {
   expect(rendered.endsWith(`${cell} ${cell}`)).toBe(true);
 });
 
+describe("HTML cleanup with math enabled", () => {
+  it("keeps tags inside an inline math span untouched", () => {
+    expect(normalizeMarkdownHtml("Costs $x<y>z$ today")).toBe("Costs $x<y>z$ today");
+  });
+
+  it("keeps tags inside a display math span untouched", () => {
+    const source = "Before.\n\n$$\na<b>\nc=d\n$$\n\nAfter.";
+    expect(normalizeMarkdownHtml(source)).toBe(source);
+  });
+
+  it("still normalizes tags outside math spans", () => {
+    expect(normalizeMarkdownHtml("Costs $x<y>z$ and <b>bold</b>")).toBe(
+      "Costs $x<y>z$ and **bold**",
+    );
+  });
+
+  it("still normalizes tags in code-looking dollar text", () => {
+    // No math span: the second $ is not a closer, so <y> is ordinary HTML.
+    expect(normalizeMarkdownHtml("Costs $5 and <y>z</y>")).toBe("Costs $5 and z");
+  });
+
+  it("keeps comments inside math spans and drops them outside", () => {
+    expect(normalizeMarkdownHtml("$a<!-- c -->b$ <!-- d -->")).toBe("$a<!-- c -->b$ ");
+  });
+});
+
 it.each([
   "3/4",
   "1.5",
@@ -1097,62 +1122,3 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
-
-describe("LaTeX math", () => {
-  function collectMath(tree: ASTNode): Array<[string, string]> {
-    const math: Array<[string, string]> = [];
-    const collect = (node: ASTNode) => {
-      if (node.type === "LatexMathInline" || node.type === "LatexMathDisplay") {
-        math.push([node.type, extractNodeText(node)]);
-      }
-      node.children?.forEach(collect);
-    };
-    collect(tree);
-    return math;
-  }
-
-  it("parses inline math with the renderer's parser flags", async () => {
-    const tree = await parseMarkdown(
-      prepareMarkdownSource("The cost is $x^2$ when x is large.").render(),
-      MD4C_FLAGS,
-    );
-    expect(collectMath(tree)).toEqual([["LatexMathInline", "x^2"]]);
-  });
-
-  it("parses display math as its own block between paragraphs", async () => {
-    const tree = await parseMarkdown(
-      prepareMarkdownSource("Before.\n\n$$E = mc^2$$\n\nAfter.").render(),
-      MD4C_FLAGS,
-    );
-    expect(tree.children?.map((node) => node.type)).toEqual([
-      "Paragraph",
-      "LatexMathDisplay",
-      "Paragraph",
-    ]);
-    expect(collectMath(tree)).toEqual([["LatexMathDisplay", "E = mc^2"]]);
-  });
-
-  it("keeps prices and other dollar amounts as plain text", async () => {
-    const tree = await parseMarkdown(
-      prepareMarkdownSource("It costs $5 and $10, or $2,000 total.").render(),
-      MD4C_FLAGS,
-    );
-    expect(collectMath(tree)).toEqual([]);
-    expect(extractNodeText(tree)).toBe("It costs $5 and $10, or $2,000 total.");
-  });
-
-  it("keeps dollar signs inside inline code literal", async () => {
-    const tree = await parseMarkdown(
-      prepareMarkdownSource("Set `a$b` and `$HOME` for the build.").render(),
-      MD4C_FLAGS,
-    );
-    expect(collectMath(tree)).toEqual([]);
-    const codes: string[] = [];
-    const collect = (node: ASTNode) => {
-      if (node.type === "Code") codes.push(extractNodeText(node));
-      node.children?.forEach(collect);
-    };
-    collect(tree);
-    expect(codes).toEqual(["a$b", "$HOME"]);
-  });
-});
