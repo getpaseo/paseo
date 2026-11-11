@@ -108,7 +108,7 @@ export async function withTimelineFooterPlugin(
   });
   const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "footer-plugin" });
   const previous = await client.getDaemonConfig();
-  let installed = false;
+  let installAttempted = false;
   let failed = false;
   try {
     await agent.client.waitForFinish(agent.agentId, 30_000);
@@ -119,8 +119,8 @@ export async function withTimelineFooterPlugin(
     await writeFile(path.join(directory, "index.client.tsx"), clientSource);
     await writeFile(path.join(directory, "index.server.ts"), serverSource);
     await client.patchDaemonConfig({ pluginsEnabled: true });
+    installAttempted = true;
     await client.installDirectoryPlugin(directory);
-    installed = true;
     await client.invokePluginRpc(FOOTER_PLUGIN_ID, "seed", { agentId: agent.agentId });
     await openAgentRoute(page, agent);
     await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
@@ -132,7 +132,10 @@ export async function withTimelineFooterPlugin(
     // Every step runs, and a cleanup failure never hides the test's own error.
     await runEachCleanup([
       async () => {
-        if (installed) await client.removePlugin(FOOTER_PLUGIN_ID);
+        // A failed install can still leave the plugin configured.
+        if (!installAttempted) return;
+        const configured = (await client.listPlugins()).some(({ id }) => id === FOOTER_PLUGIN_ID);
+        if (configured) await client.removePlugin(FOOTER_PLUGIN_ID);
       },
       () => client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false }),
       () => client.close(),
