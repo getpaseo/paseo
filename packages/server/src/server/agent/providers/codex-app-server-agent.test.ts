@@ -6373,6 +6373,39 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("fails queued reconnect notices before reporting process disconnection", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+    try {
+      for (const attempt of ["1/2", "2/2"]) {
+        appServer.reportsTurnError({
+          threadId: "thread-1",
+          turnId: "codex-turn-1",
+          message: `Reconnecting... ${attempt}`,
+          willRetry: true,
+        });
+      }
+      // Exit before the session's ordered notification queue has drained.
+      appServer.disconnect();
+      await terminalEvent;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "running: Reconnecting... 2/2",
+        "failed: Reconnecting... 2/2",
+        "turn_failed",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      expect(new Set(events.map((event) => event.turnId)).size).toBe(1);
+      expect(events[0]?.turnId).toBeTruthy();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("cancels the reconnect row before closing its session", async () => {
     const { appServer, session, events } = await startStatusNoticeTurnTest();
     try {

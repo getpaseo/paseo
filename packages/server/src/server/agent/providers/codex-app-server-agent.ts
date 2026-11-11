@@ -3779,6 +3779,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async connect(): Promise<void> {
+    // A replacement process must not inherit the previous process's queued events.
+    if (this.connectionState === "disconnected") await this.pendingNotifications;
     if (this.closed) {
       throw this.createClosedError();
     }
@@ -3826,7 +3828,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.client = client;
     client.setUnexpectedTerminationHandler((error) => {
-      this.handleUnexpectedTermination(error);
+      this.pendingNotifications = this.queueUnexpectedTermination(error);
     });
     client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
@@ -3900,6 +3902,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       sessionId: this.currentThreadId ?? undefined,
       turnId: this.activeForegroundTurnId ?? undefined,
     };
+  }
+
+  private async queueUnexpectedTermination(error: Error): Promise<void> {
+    this.connectionState = "disconnected";
+    this.background.stop();
+    // Finish notifications already received from this process before ending
+    // their turn, so queued retry notices cannot reopen a failed retry row.
+    await this.pendingNotifications;
+    if (!this.closed) this.handleUnexpectedTermination(error);
   }
 
   private handleUnexpectedTermination(error: Error): void {
