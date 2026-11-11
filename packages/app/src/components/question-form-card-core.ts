@@ -1,4 +1,7 @@
+import type { QuestionAnswers } from "@getpaseo/protocol/question-answers";
+
 export interface QuestionOption {
+  id?: string;
   label: string;
   description?: string;
   preview?: string;
@@ -45,6 +48,7 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       const o = opt as Record<string, unknown>;
       if (typeof o.label !== "string") return null;
       options.push({
+        ...(typeof o.id === "string" ? { id: o.id } : {}),
         label: o.label,
         description: typeof o.description === "string" ? o.description : undefined,
         preview: readOptionalString(o, "preview"),
@@ -133,6 +137,41 @@ export function buildQuestionFormAnswers(
     }
   }
   return answers;
+}
+
+export interface QuestionFormAnswerInputOptions {
+  input: Record<string, unknown> | undefined;
+  questions: QuestionFormQuestion[];
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+}
+
+export function buildQuestionFormAnswerInput({
+  input,
+  questions,
+  selections,
+  otherTexts,
+}: QuestionFormAnswerInputOptions): Record<string, unknown> {
+  if (input?.answerFormat !== "structured") {
+    return { ...input, answers: buildQuestionFormAnswers(questions, selections, otherTexts) };
+  }
+
+  const questionAnswers: QuestionAnswers = {};
+  for (const [index, question] of questions.entries()) {
+    const otherText = questionShowsTextInput(question) ? otherTexts[index]?.trim() : undefined;
+    const replacesSelection = !question.multiSelect && Boolean(otherText);
+    const selected = replacesSelection ? [] : Array.from(selections[index] ?? []);
+    const selectedOptionIds = selected.map((optionIndex) => {
+      const id = question.options[optionIndex].id;
+      if (!id) throw new Error("Structured question options require IDs");
+      return id;
+    });
+    questionAnswers[question.header] = {
+      selectedOptionIds,
+      ...(otherText ? { otherText } : {}),
+    };
+  }
+  return { ...input, questionAnswers };
 }
 
 export function shouldSubmitEmptyOnDismiss(questions: QuestionFormQuestion[]): boolean {
