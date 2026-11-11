@@ -15,6 +15,25 @@ function presentationStatus(row: SubagentRow) {
   return providerSubagentLifecycleStatus(row.status);
 }
 
+/** Keep the children counted as working visible before the selectors' chronological history. */
+export function sortSubagentRows(rows: readonly SubagentRow[]): SubagentRow[] {
+  return [...rows].sort((left, right) => {
+    const leftRunning = isWorkingRow(left);
+    const rightRunning = isWorkingRow(right);
+    return Number(rightRunning) - Number(leftRunning);
+  });
+}
+
+// The sort has to agree with the pill's count, which includes a child's background work.
+function isWorkingRow(row: SubagentRow): boolean {
+  return (
+    deriveSubagentStatusBucket(
+      presentationStatus(row),
+      row.kind === "paseo" ? row.backgroundWork : undefined,
+    ) === "running"
+  );
+}
+
 /**
  * A child's mark reports what it is doing, not whether anyone read it: the track is where a
  * failed child stays visible after the parent's own attention is cleared.
