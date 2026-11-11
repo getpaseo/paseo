@@ -29,6 +29,7 @@ import { estimateStreamItemHeight } from "./web-virtualization";
 import { createReadingAnchor } from "./reading-anchor";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { useRevisedHistoryRows } from "./history-row-revision";
+import { useChatCopyOnSelect } from "./chat-copy-on-select.web";
 import { createStreamStrategy } from "./strategy";
 import {
   isHistoryStartLoadingOperation,
@@ -314,6 +315,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     olderHistoryProgressKey,
     scrollEnabled,
     contentMaxWidth,
+    copyOnSelect = false,
     isMobileBreakpoint,
   } = props;
   const historyVirtualized = useRevisedHistoryRows(
@@ -338,6 +340,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const handleContentRef = useCallback((node: HTMLElement | null) => {
     contentRef.current = node;
   }, []);
+  useChatCopyOnSelect(scrollContainerRef, copyOnSelect);
   const [followOutput, setFollowOutputr] = useState(true);
   const followOutputRef = useRef(followOutput);
   const setFollowOutput = (value: boolean) => {

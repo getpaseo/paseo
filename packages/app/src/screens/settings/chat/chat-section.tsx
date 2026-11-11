@@ -37,6 +37,10 @@ export function ChatSection() {
     (chatOutlineEnabled: boolean) => void updateSettings({ chatOutlineEnabled }),
     [updateSettings],
   );
+  const changeChatCopyOnSelect = useCallback(
+    (chatCopyOnSelect: boolean) => void updateSettings({ chatCopyOnSelect }),
+    [updateSettings],
+  );
 
   return (
     <View>
@@ -61,6 +65,15 @@ export function ChatSection() {
               hint={t("settings.appearance.chatOutline.description")}
               value={settings.chatOutlineEnabled}
               onValueChange={changeChatOutline}
+            />
+          )}
+          {/* Native chat text copies through the system selection menu instead. */}
+          {isNative ? null : (
+            <SettingsSwitch
+              label={t("settings.general.chatCopyOnSelect.label")}
+              hint={t("settings.general.chatCopyOnSelect.description")}
+              value={settings.chatCopyOnSelect}
+              onValueChange={changeChatCopyOnSelect}
             />
           )}
         </SettingsCard>
