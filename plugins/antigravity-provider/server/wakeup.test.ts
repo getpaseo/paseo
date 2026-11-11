@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,7 @@ async function setupHarness(env: Record<string, string> = {}) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "agy-wakeup-test-"));
   temporary.push(cwd);
   const dataDir = path.join(cwd, "agy-data");
+  const logFile = path.join(cwd, "agy-log.ndjson");
   await mkdir(dataDir, { recursive: true });
   const usage = new Usage();
   const provider = createAntigravityProvider(usage);
@@ -41,6 +42,7 @@ async function setupHarness(env: Record<string, string> = {}) {
     args: [fakeAgy],
     env: {
       ANTIGRAVITY_EXECUTABLE_DATA_DIR: dataDir,
+      AGY_TEST_LOG: logFile,
       ...env,
     },
   };
@@ -157,6 +159,19 @@ async function setupHarness(env: Record<string, string> = {}) {
     return opened.persistence;
   }
 
+  async function records(): Promise<Array<Record<string, unknown>>> {
+    try {
+      const content = await readFile(logFile, "utf8");
+      return content
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  }
+
   return {
     connection,
     usage,
@@ -169,6 +184,7 @@ async function setupHarness(env: Record<string, string> = {}) {
     prompt,
     canStopRuntime,
     rootPersistence,
+    records,
   };
 }
 
@@ -489,5 +505,117 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     expect(c1ReplayIdx).toBeGreaterThan(rootOpenIdx);
     expect(c2ReplayIdx).toBeGreaterThan(c1ReplayIdx);
     expect(rootReadyIdx).toBeGreaterThan(c2ReplayIdx);
+  });
+
+  it("executes shell tools inside post-turn autonomous wakeups in full-access mode (--dangerously-skip-permissions) and syncs accept-edits via session/set_mode", async () => {
+    const h = await setupHarness();
+    await h.open(undefined, "s", "default");
+
+    const initialLaunches = (await h.records()).filter(
+      (r) => Array.isArray(r.args) && r.args.includes("acp"),
+    );
+    expect(initialLaunches).toHaveLength(1);
+    expect(initialLaunches[0]!.args).not.toContain("--dangerously-skip-permissions");
+
+    // Switching default -> accept-edits calls session/set_mode without respawning
+    await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-accept-edits",
+      sessionId: "s",
+      changes: { mode: "accept-edits" },
+    });
+    const afterAcceptEdits = await h.records();
+    expect(
+      afterAcceptEdits.some(
+        (r) =>
+          typeof r.rpc === "object" &&
+          r.rpc !== null &&
+          (r.rpc as { method?: string }).method === "session/set_mode" &&
+          (r.rpc as { params?: { modeId?: string } }).params?.modeId === "accept-edits",
+      ),
+    ).toBe(true);
+    expect(
+      afterAcceptEdits.filter((r) => Array.isArray(r.args) && r.args.includes("acp")),
+    ).toHaveLength(1);
+
+    // Switching to full-access recycles driver with --dangerously-skip-permissions so post-turn shell tools succeed
+    await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-full-access",
+      sessionId: "s",
+      changes: { mode: "full-access" },
+    });
+
+    await h.prompt("BG_WAKEUP_SHELL_TOOL");
+    expect(await h.canStopRuntime()).toBe(false);
+
+    await h.wait(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50",
+    );
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-1" &&
+        e.state === "completed",
+    );
+
+    const shellCompleted = h.events.find(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "tool_call" &&
+        e.item.id === "wakeup-shell-1" &&
+        e.item.status === "completed",
+    );
+    expect(shellCompleted).toBeDefined();
+    expect(await h.canStopRuntime()).toBe(true);
+
+    const allLaunches = (await h.records()).filter(
+      (r) => Array.isArray(r.args) && r.args.includes("acp"),
+    );
+    expect(allLaunches).toHaveLength(2);
+    expect(allLaunches[1]!.args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("aborts stalled post-turn unpromptable tools in default mode via session/cancel and settles cleanly instead of hanging", async () => {
+    const h = await setupHarness({ AGY_AUTONOMOUS_TOOL_STALL_TIMEOUT_MS: "180" });
+    await h.open(undefined, "s", "default");
+
+    await h.prompt("BG_WAKEUP_SHELL_TOOL");
+    expect(await h.canStopRuntime()).toBe(false);
+
+    const failedTool = await h.wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "tool_call" &&
+        e.item.id === "wakeup-shell-1" &&
+        e.item.status === "failed",
+    );
+    expect(JSON.stringify(failedTool)).toContain("Full access");
+
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-1" &&
+        e.state === "completed",
+    );
+    expect(await h.canStopRuntime()).toBe(true);
+
+    const logs = await h.records();
+    expect(
+      logs.some(
+        (r) =>
+          typeof r.rpc === "object" &&
+          r.rpc !== null &&
+          (r.rpc as { method?: string }).method === "session/cancel",
+      ),
+    ).toBe(true);
   });
 });

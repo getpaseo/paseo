@@ -68,6 +68,7 @@ const INTERRUPT_GRACE_MS = 350;
 const ROOT_TRANSCRIPT_POLL_MS = 180;
 const AUTONOMOUS_ACP_SETTLE_MS = 320;
 const AUTONOMOUS_TRANSCRIPT_SETTLE_MS = 120;
+const AUTONOMOUS_TOOL_STALL_TIMEOUT_MS = 15_000;
 const AUTONOMOUS_PLANNER_TIMEOUT_MS = 90_000;
 
 interface ActiveTurn {
@@ -83,6 +84,7 @@ interface AutonomousTurn {
   awaitingPlannerResponse: boolean;
   pendingTranscriptTools: AcpToolCallPayload[];
   settleTimer: NodeJS.Timeout | null;
+  toolStallTimer: NodeJS.Timeout | null;
   plannerTimeoutTimer: NodeJS.Timeout | null;
 }
 
@@ -115,6 +117,7 @@ export class Session {
   private readonly subagents: SubagentManager;
   private readonly dataDir: string;
   private readonly locatorId: string;
+  private readonly autonomousToolStallTimeoutMs: number;
 
   private driver: DriverProcess | null = null;
   private rootTranscriptReader: JsonlTranscriptReader | null = null;
@@ -161,6 +164,11 @@ export class Session {
       options.catalog(),
     );
     const mergedEnv = { ...options.launch.env, ...options.config.env };
+    const customStallMs = Number(mergedEnv.AGY_AUTONOMOUS_TOOL_STALL_TIMEOUT_MS);
+    this.autonomousToolStallTimeoutMs =
+      Number.isFinite(customStallMs) && customStallMs > 0
+        ? customStallMs
+        : AUTONOMOUS_TOOL_STALL_TIMEOUT_MS;
     if (options.usage) {
       const remembered = options.usage.rememberLaunch(options.launch, options.config.env);
       this.dataDir = remembered.dataDir;
@@ -248,8 +256,23 @@ export class Session {
       this.options.catalog(),
     );
     if (changes.mode !== undefined && changes.mode !== null) {
+      const previousMode = this.mode;
       this.mode = changes.mode as AntigravityModeId;
       this.autoApproveEligiblePendingPermissions();
+      if (this.driver?.isAlive) {
+        if (this.driver.skipPermissions !== (this.mode === "full-access")) {
+          if (this.canStopRuntime()) {
+            await this.retireDriver();
+          }
+        } else if (
+          previousMode !== this.mode &&
+          this.conversationId &&
+          !this.turn &&
+          !this.autonomousTurn
+        ) {
+          await this.syncNativeAcpMode(this.driver);
+        }
+      }
     }
     if (changes.model !== undefined) {
       await this.applyModelChange(changes.model);
@@ -382,6 +405,7 @@ export class Session {
     });
 
     if (this.autonomousTurn) {
+      this.syncAutonomousToolStallGuard(this.autonomousTurn);
       this.scheduleAutonomousSettleCheck();
     }
   }
@@ -559,6 +583,14 @@ export class Session {
   }
 
   private async ensureDriver(): Promise<DriverProcess> {
+    if (
+      this.driver?.isAlive &&
+      this.driver.skipPermissions !== (this.mode === "full-access") &&
+      this.canStopRuntime()
+    ) {
+      await this.retireDriver();
+    }
+
     if (this.driver?.isAlive) {
       await this.syncDirtyModel(this.driver);
       return this.driver;
@@ -589,6 +621,7 @@ export class Session {
         launch,
         cwd: this.options.config.cwd,
         additionalDirectories: this.files.directoryPath ? [this.files.directoryPath] : [],
+        skipPermissions: this.mode === "full-access",
       },
       {
         onNotification: (method, params) => this.handleNotification(driver, method, params),
@@ -648,6 +681,16 @@ export class Session {
     }
 
     const reportedModel = sessionResult.models?.currentModelId ?? null;
+    await this.reconcileInitialModel(driver, reportedModel);
+    if (this.mode === "accept-edits") {
+      await this.syncNativeAcpMode(driver);
+    }
+  }
+
+  private async reconcileInitialModel(
+    driver: DriverProcess,
+    reportedModel: string | null,
+  ): Promise<void> {
     if (!this.defaultModel) {
       this.defaultModel =
         (this.options.config.model ? null : reportedModel) ??
@@ -666,6 +709,20 @@ export class Session {
       this.model = reportedModel;
     }
     this.modelDirty = false;
+  }
+
+  private async syncNativeAcpMode(driver: DriverProcess): Promise<void> {
+    if (!this.conversationId || driver.skipPermissions) return;
+    const nativeMode = this.mode === "accept-edits" ? "accept-edits" : "default";
+    try {
+      await driver.requestInit(
+        "session/set_mode",
+        { sessionId: this.conversationId, modeId: nativeMode },
+        acpSessionResultSchema,
+      );
+    } catch {
+      // Older agy builds may not implement session/set_mode; client-side permission rules remain active.
+    }
   }
 
   private async openOrLoadAcpSession(driver: DriverProcess) {
@@ -956,6 +1013,7 @@ export class Session {
       }
       this.inspectToolSideEffects(payload);
     });
+    this.syncAutonomousToolStallGuard(auto);
   }
 
   private failAutonomousPlannerStep(auto: AutonomousTurn, step: TranscriptStep): void {
@@ -993,6 +1051,7 @@ export class Session {
       });
     }
     this.inspectToolSideEffects(updatedPayload);
+    this.syncAutonomousToolStallGuard(auto);
     this.scheduleAutonomousSettleCheck();
   }
 
@@ -1034,6 +1093,7 @@ export class Session {
       awaitingPlannerResponse: false,
       pendingTranscriptTools: [],
       settleTimer: null,
+      toolStallTimer: null,
       plannerTimeoutTimer: null,
     };
     this.autonomousTurn = auto;
@@ -1046,10 +1106,69 @@ export class Session {
     return auto;
   }
 
+  private syncAutonomousToolStallGuard(auto: AutonomousTurn): void {
+    const shouldArm =
+      this.autonomousTurn === auto &&
+      !this.driver?.skipPermissions &&
+      !auto.receivedAcpUpdates &&
+      auto.pendingTranscriptTools.length > 0 &&
+      this.pendingPermissions.size === 0;
+    if (!shouldArm) {
+      this.clearAutonomousToolStallTimeout(auto);
+      return;
+    }
+    this.clearAutonomousToolStallTimeout(auto);
+    auto.toolStallTimer = setTimeout(() => {
+      if (this.autonomousTurn !== auto || this.closed) return;
+      if (auto.pendingTranscriptTools.length === 0 || this.pendingPermissions.size > 0) return;
+      this.abortStalledAutonomousTools(
+        auto,
+        "Background wakeup cannot prompt for interactive tool approval after a turn has ended. Switch session mode to Full access for unattended background tool execution.",
+      );
+    }, this.autonomousToolStallTimeoutMs);
+    auto.toolStallTimer.unref?.();
+  }
+
+  private clearAutonomousToolStallTimeout(auto: AutonomousTurn): void {
+    if (auto.toolStallTimer) {
+      clearTimeout(auto.toolStallTimer);
+      auto.toolStallTimer = null;
+    }
+  }
+
+  private abortStalledAutonomousTools(auto: AutonomousTurn, reason: string): void {
+    if (this.conversationId) {
+      this.driver?.notify("session/cancel", { sessionId: this.conversationId });
+    }
+    for (const pending of auto.pendingTranscriptTools.splice(0)) {
+      const failedPayload: AcpToolCallPayload = {
+        ...pending,
+        status: "failed",
+        rawOutput: { error: reason },
+      };
+      if (!auto.receivedAcpUpdates) {
+        this.options.emit({
+          type: "timeline.item",
+          sessionId: this.id,
+          item: mapAcpToolCall(failedPayload),
+        });
+      }
+    }
+    auto.awaitingPlannerResponse = false;
+    this.settleAutonomousTurn("completed");
+  }
+
   private armAutonomousPlannerTimeout(auto: AutonomousTurn): void {
     this.clearAutonomousPlannerTimeout(auto);
     auto.plannerTimeoutTimer = setTimeout(() => {
-      if (this.autonomousTurn !== auto) return;
+      if (this.autonomousTurn !== auto || this.closed) return;
+      if (auto.pendingTranscriptTools.length > 0 && this.pendingPermissions.size === 0) {
+        this.abortStalledAutonomousTools(
+          auto,
+          "Autonomous wakeup tool execution timed out before returning a result.",
+        );
+        return;
+      }
       auto.awaitingPlannerResponse = false;
       this.scheduleAutonomousSettleCheck(50);
     }, AUTONOMOUS_PLANNER_TIMEOUT_MS);
@@ -1068,6 +1187,7 @@ export class Session {
       clearTimeout(auto.settleTimer);
       auto.settleTimer = null;
     }
+    this.clearAutonomousToolStallTimeout(auto);
     this.clearAutonomousPlannerTimeout(auto);
   }
 
@@ -1170,6 +1290,7 @@ export class Session {
       if (isPostTurnLive) {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        this.clearAutonomousToolStallTimeout(auto);
         this.scheduleAutonomousSettleCheck();
       }
       this.emitUsageUpdate(update);
@@ -1184,6 +1305,7 @@ export class Session {
       if (isPostTurnLive && update.sessionUpdate !== "user_message_chunk") {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        this.clearAutonomousToolStallTimeout(auto);
         this.scheduleAutonomousSettleCheck();
       }
       this.applyChunkUpdate(update);
@@ -1194,6 +1316,7 @@ export class Session {
       if (isPostTurnLive) {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        this.clearAutonomousToolStallTimeout(auto);
         this.scheduleAutonomousSettleCheck();
       }
       this.chunkIds.clear();
@@ -1359,6 +1482,9 @@ export class Session {
       detail,
       options: request.options,
     });
+    if (this.autonomousTurn) {
+      this.syncAutonomousToolStallGuard(this.autonomousTurn);
+    }
 
     this.options.emit({
       type: "session.permission",
@@ -1398,6 +1524,9 @@ export class Session {
       kind: "question",
       questions,
     });
+    if (this.autonomousTurn) {
+      this.syncAutonomousToolStallGuard(this.autonomousTurn);
+    }
 
     this.options.emit({
       type: "session.permission",
@@ -1470,6 +1599,7 @@ export class Session {
       });
     }
     if (this.autonomousTurn) {
+      this.syncAutonomousToolStallGuard(this.autonomousTurn);
       this.scheduleAutonomousSettleCheck();
     }
   }

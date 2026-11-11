@@ -227,6 +227,7 @@ const PROMPT_ROUTES = [
   ["ASK_QUESTION", (id) => handleAskQuestionPrompt(id)],
   ["PROMPT_CACHED_USAGE", (id) => handlePromptCachedUsage(id)],
   ["BG_RUN_COMMAND_WAKEUP", (id) => handleBgRunCommandWakeup(id)],
+  ["BG_WAKEUP_SHELL_TOOL", (id) => handleBgWakeupShellTool(id)],
   ["BG_SCHEDULE_ONESHOT_WAKEUP", (id) => handleBgScheduleOneshotWakeup(id)],
   ["BG_SCHEDULE_DAEMON_WAKEUP", (id) => handleBgScheduleDaemonWakeup(id)],
   ["KILL_DAEMON_SCHEDULE", (id) => handleKillDaemonSchedule(id)],
@@ -581,6 +582,64 @@ function handleBgRunCommandWakeup(id) {
       output_tokens: 80,
     });
   }, 180);
+}
+
+function handleBgWakeupShellTool(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nBG_WAKEUP_SHELL_TOOL\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "sched-shell-1",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 180, Prompt: "Run date in wakeup" },
+    rawOutput: { output: "Scheduled 180s timer" },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T17:01:50Z sender=scheduler priority=HIGH content=Run date in wakeup\n</SYSTEM_MESSAGE>",
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: "Timer fired; checking wall-clock time.",
+      tool_calls: [
+        {
+          id: "wakeup-shell-1",
+          name: "run_command",
+          args: {
+            CommandLine: JSON.stringify("date '+%Y-%m-%d %H:%M:%S'"),
+            WaitMsBeforeAsync: "5000",
+          },
+        },
+      ],
+    });
+    // Real agy closes its ACP conversation stream goroutine when session/prompt exits:
+    // without --dangerously-skip-permissions, run_command stalls in WAITING_FOR_USER.
+    if (!args.includes("--dangerously-skip-permissions")) {
+      return;
+    }
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "GENERIC",
+      status: "DONE",
+      content: "Command exited with code 0.\n\nCommand output:\n2026-11-11 17:01:50\n",
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      content: "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50",
+    });
+  }, 160);
 }
 
 function handleBgScheduleOneshotWakeup(id) {
@@ -1132,6 +1191,11 @@ lines.on("line", async (line) => {
         currentModelId: currentModel,
       },
     });
+    return;
+  }
+
+  if (method === "session/set_mode") {
+    respond(id, {});
     return;
   }
 

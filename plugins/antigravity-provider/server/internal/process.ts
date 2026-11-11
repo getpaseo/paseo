@@ -26,6 +26,7 @@ export interface DriverProcessHandlers {
 }
 
 export class DriverProcess {
+  readonly skipPermissions: boolean;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly exitedPromise: Promise<void>;
   private readonly pending = new Map<string | number, PendingRpc>();
@@ -39,10 +40,19 @@ export class DriverProcess {
       launch: ProviderLaunch;
       cwd: string;
       additionalDirectories?: readonly string[];
+      skipPermissions?: boolean;
     },
     private readonly handlers: DriverProcessHandlers,
   ) {
-    const args = [...options.launch.args, "acp", "--stdio", "--add-dir", options.cwd];
+    this.skipPermissions = Boolean(options.skipPermissions);
+    const args = [
+      ...options.launch.args,
+      "acp",
+      "--stdio",
+      ...(this.skipPermissions ? ["--dangerously-skip-permissions"] : []),
+      "--add-dir",
+      options.cwd,
+    ];
     for (const directory of options.additionalDirectories ?? []) {
       if (directory !== options.cwd) args.push("--add-dir", directory);
     }
