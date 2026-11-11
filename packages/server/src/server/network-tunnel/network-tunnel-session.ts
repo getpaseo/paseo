@@ -32,6 +32,35 @@ import {
 type TunnelOpenRequest = Extract<SessionInboundMessage, { type: "network.tunnel.open.request" }>;
 type TunnelCloseRequest = Extract<SessionInboundMessage, { type: "network.tunnel.close.request" }>;
 type CloseReason = (typeof TunnelCloseReason)[keyof typeof TunnelCloseReason];
+type TunnelFrameOf<Opcode> = Extract<TunnelFrame, { opcode: Opcode }>;
+
+interface Deadline {
+  deadline: number;
+  signal: AbortSignal;
+}
+
+interface TunnelLookupRequest extends Deadline {
+  lookup: TunnelLookup;
+  hostname: string;
+}
+
+interface OpenFailure {
+  requestId: string;
+  code: NetworkTunnelRpcError["code"];
+  message: string;
+}
+
+interface StreamClose {
+  subscription: TunnelSubscription;
+  streamId: string;
+  reason: CloseReason;
+}
+
+interface StreamViolation {
+  subscription: TunnelSubscription;
+  streamId: string;
+  detail: string;
+}
 
 export const NETWORK_TUNNEL_FAMILY = "network.tunnel";
 /** Each subscription may hold maxStreams × 2 windows of buffers; cap how many one session can open. */
@@ -181,12 +210,12 @@ function acquireLookupSlot(deadline: number, signal: AbortSignal): Promise<() =>
   });
 }
 
-async function lookupWithDeadline(
-  lookup: TunnelLookup,
-  hostname: string,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<ResolvedTunnelAddress[]> {
+async function lookupWithDeadline({
+  lookup,
+  hostname,
+  deadline,
+  signal,
+}: TunnelLookupRequest): Promise<ResolvedTunnelAddress[]> {
   const release = await acquireLookupSlot(deadline, signal);
   // Only the actual resolver completion releases the worker slot. Expiration or
   // cancellation of the stream stops waiting but cannot cancel system DNS work.
@@ -201,7 +230,7 @@ async function lookupWithDeadline(
       release();
     }
   })();
-  return withDeadline(pending, deadline, signal);
+  return withDeadline(pending, { deadline, signal });
 }
 
 /**
@@ -252,20 +281,28 @@ export class NetworkTunnelSession {
   handleOpenRequest(request: TunnelOpenRequest): void {
     const { requestId } = request;
     if (!this.host.allowsNetworkProxy()) {
-      this.failOpen(requestId, "permission_denied", "Session lacks the network.proxy permission");
+      this.failOpen({
+        requestId,
+        code: "permission_denied",
+        message: "Session lacks the network.proxy permission",
+      });
       return;
     }
     const source = this.host.currentSource();
     if (!source || !this.host.isModernSource(source) || !this.host.supportsTunnel(source)) {
-      this.failOpen(
+      this.failOpen({
         requestId,
-        "unsupported_capability",
-        "Network tunnels require the owned_subscriptions and network_tunnel capabilities",
-      );
+        code: "unsupported_capability",
+        message: "Network tunnels require the owned_subscriptions and network_tunnel capabilities",
+      });
       return;
     }
     if (this.subscriptions.size >= this.maxSubscriptions) {
-      this.failOpen(requestId, "resource_limit", "Too many network tunnels for this session");
+      this.failOpen({
+        requestId,
+        code: "resource_limit",
+        message: "Too many network tunnels for this session",
+      });
       return;
     }
     const limits = agreeOnLimits(this.limits, request.limits);
@@ -317,19 +354,23 @@ export class NetworkTunnelSession {
     }
     switch (frame.opcode) {
       case TunnelOpcode.Open:
-        this.openStream(subscription, frame.streamId, frame.target);
+        this.openStream(subscription, frame);
         return;
       case TunnelOpcode.Data:
-        await this.receiveData(subscription, frame.streamId, frame.payload);
+        await this.receiveData(subscription, frame);
         return;
       case TunnelOpcode.WindowUpdate:
-        await this.receiveCredit(subscription, frame.streamId, frame.credit);
+        await this.receiveCredit(subscription, frame);
         return;
       case TunnelOpcode.Close:
-        this.receiveClose(subscription, frame.streamId, frame.reason);
+        this.receiveClose(subscription, frame);
         return;
       case TunnelOpcode.Connected:
-        await this.violate(subscription, frame.streamId, "client sent Connected");
+        await this.violate({
+          subscription,
+          streamId: frame.streamId,
+          detail: "client sent Connected",
+        });
         return;
     }
   }
@@ -351,7 +392,7 @@ export class NetworkTunnelSession {
     return this.releaseAll();
   }
 
-  private failOpen(requestId: string, code: NetworkTunnelRpcError["code"], message: string): void {
+  private failOpen({ requestId, code, message }: OpenFailure): void {
     this.host.emit({
       type: "network.tunnel.open.response",
       payload: { requestId, ok: false, error: { code, message } },
@@ -382,14 +423,17 @@ export class NetworkTunnelSession {
     });
   }
 
-  private openStream(subscription: TunnelSubscription, streamId: string, target: TunnelTarget) {
+  private openStream(
+    subscription: TunnelSubscription,
+    { streamId, target }: TunnelFrameOf<typeof TunnelOpcode.Open>,
+  ) {
     if (subscription.streams.has(streamId)) {
-      void this.violate(subscription, streamId, "duplicate stream open");
+      void this.violate({ subscription, streamId, detail: "duplicate stream open" });
       return;
     }
     // Sockets still draining a graceful close hold daemon resources too.
     if (subscription.streams.size + subscription.closing.size >= subscription.limits.maxStreams) {
-      this.sendClose(subscription, streamId, TunnelCloseReason.StreamLimit);
+      this.sendClose({ subscription, streamId, reason: TunnelCloseReason.StreamLimit });
       return;
     }
     const stream: TunnelStream = {
@@ -420,12 +464,12 @@ export class NetworkTunnelSession {
         described.kind === "literal"
           ? [described.address]
           : (loopbackForLocalhostName(described.hostname) ??
-            (await lookupWithDeadline(
-              this.lookup,
-              described.hostname,
+            (await lookupWithDeadline({
+              lookup: this.lookup,
+              hostname: described.hostname,
               deadline,
-              stream.cancel.signal,
-            )));
+              signal: stream.cancel.signal,
+            })));
       const approved = approveAddresses(candidates);
       if (stream.state !== "connecting") return;
       const socket = await dialAny({
@@ -529,20 +573,19 @@ export class NetworkTunnelSession {
 
   private async receiveData(
     subscription: TunnelSubscription,
-    streamId: string,
-    payload: Uint8Array,
+    { streamId, payload }: TunnelFrameOf<typeof TunnelOpcode.Data>,
   ): Promise<void> {
     const stream = subscription.streams.get(streamId);
     if (!stream) return;
     if (stream.state !== "connected" || !stream.socket) {
-      await this.violate(subscription, streamId, "Data before Connected");
+      await this.violate({ subscription, streamId, detail: "Data before Connected" });
       return;
     }
     if (
       payload.length > subscription.limits.maxDataBytes ||
       payload.length > stream.inboundCredit
     ) {
-      await this.violate(subscription, streamId, "Data exceeds credit");
+      await this.violate({ subscription, streamId, detail: "Data exceeds credit" });
       return;
     }
     stream.inboundCredit -= payload.length;
@@ -574,25 +617,31 @@ export class NetworkTunnelSession {
 
   private async receiveCredit(
     subscription: TunnelSubscription,
-    streamId: string,
-    credit: number,
+    { streamId, credit }: TunnelFrameOf<typeof TunnelOpcode.WindowUpdate>,
   ): Promise<void> {
     const stream = subscription.streams.get(streamId);
     if (!stream) return;
     if (stream.state !== "connected") {
-      await this.violate(subscription, streamId, "WindowUpdate before Connected");
+      await this.violate({ subscription, streamId, detail: "WindowUpdate before Connected" });
       return;
     }
     const inFlight = subscription.limits.initialWindowBytes - stream.outboundCredit;
     if (credit > inFlight) {
-      await this.violate(subscription, streamId, "WindowUpdate exceeds delivered bytes");
+      await this.violate({
+        subscription,
+        streamId,
+        detail: "WindowUpdate exceeds delivered bytes",
+      });
       return;
     }
     stream.outboundCredit += credit;
     this.flushOutbound(stream);
   }
 
-  private receiveClose(subscription: TunnelSubscription, streamId: string, reason: CloseReason) {
+  private receiveClose(
+    subscription: TunnelSubscription,
+    { streamId, reason }: TunnelFrameOf<typeof TunnelOpcode.Close>,
+  ) {
     const stream = subscription.streams.get(streamId);
     if (!stream) return;
     const socket = stream.socket;
@@ -618,16 +667,12 @@ export class NetworkTunnelSession {
     this.teardownStream(stream);
   }
 
-  private async violate(
-    subscription: TunnelSubscription,
-    streamId: string,
-    detail: string,
-  ): Promise<void> {
+  private async violate({ subscription, streamId, detail }: StreamViolation): Promise<void> {
     this.logger.warn(
       { subscriptionId: subscription.owner.id, streamId, detail },
       "Tunnel protocol violation; releasing subscription",
     );
-    this.sendClose(subscription, streamId, TunnelCloseReason.ProtocolError);
+    this.sendClose({ subscription, streamId, reason: TunnelCloseReason.ProtocolError });
     this.announceClosed(subscription, "protocol_error");
     await subscription.owner.release();
   }
@@ -637,7 +682,7 @@ export class NetworkTunnelSession {
     if (stream.state === "closed") return;
     const { subscription } = stream;
     this.teardownStream(stream);
-    this.sendClose(subscription, stream.id, reason);
+    this.sendClose({ subscription, streamId: stream.id, reason });
   }
 
   private teardownStream(stream: TunnelStream): void {
@@ -651,7 +696,7 @@ export class NetworkTunnelSession {
     if (socket) destroySocket(socket);
   }
 
-  private sendClose(subscription: TunnelSubscription, streamId: string, reason: CloseReason) {
+  private sendClose({ subscription, streamId, reason }: StreamClose) {
     this.send(subscription, {
       opcode: TunnelOpcode.Close,
       subscriptionId: subscription.owner.id,
@@ -680,11 +725,7 @@ function destroySocket(socket: net.Socket): void {
   socket.destroy();
 }
 
-async function withDeadline<T>(
-  promise: Promise<T>,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<T> {
+async function withDeadline<T>(promise: Promise<T>, { deadline, signal }: Deadline): Promise<T> {
   if (signal.aborted) {
     // Observe the resolver even when cancellation won before the guard was installed.
     void promise.catch(() => {});

@@ -561,6 +561,11 @@ function requireWebSocketServices(params: {
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
+interface ServerInfoTarget {
+  session: Session;
+  ws?: WebSocketLike;
+}
+
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
@@ -2013,10 +2018,7 @@ export class VoiceAssistantWebSocketServer {
     connection.session.setHostSource(sourceId);
   }
 
-  private buildServerInfoStatusPayload(
-    session: Session,
-    ws?: WebSocketLike,
-  ): ServerInfoStatusPayload {
+  private buildServerInfoStatusPayload({ session, ws }: ServerInfoTarget): ServerInfoStatusPayload {
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
@@ -2239,7 +2241,7 @@ export class VoiceAssistantWebSocketServer {
       type: "session",
       message: {
         type: "status",
-        payload: this.buildServerInfoStatusPayload(session, ws),
+        payload: this.buildServerInfoStatusPayload({ session, ws }),
       },
     };
   }
@@ -2264,7 +2266,7 @@ export class VoiceAssistantWebSocketServer {
         continue;
       connection.session.publish({
         type: "status",
-        payload: this.buildServerInfoStatusPayload(connection.session),
+        payload: this.buildServerInfoStatusPayload({ session: connection.session }),
       });
     }
   }

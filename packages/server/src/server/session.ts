@@ -727,6 +727,12 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+/** A message on its way to one client; without a source, the session's own permissions apply. */
+interface ClientMessageProjection {
+  message: SessionOutboundMessage;
+  source?: object;
+}
+
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
@@ -755,7 +761,7 @@ export class Session {
         return this.onBinaryMessageToSource(source, frame);
       } else this.emitBinary(frame);
     },
-    (source, message) => this.projectMessageForClient(message, source),
+    (source, message) => this.projectMessageForClient({ message, source }),
     (request, message) =>
       this.sessionLogger.warn(
         {
@@ -9263,7 +9269,7 @@ export class Session {
           !this.delivery.isModern(source) &&
           this.wantsEvent(event, source)
         )
-          this.onMessageToSource(source, this.projectMessageForClient(message, source));
+          this.onMessageToSource(source, this.projectMessageForClient({ message, source }));
       }
     } else if (delivered.size === 0 && this.wantsEvent(event)) this.onMessage(message);
     return true;
@@ -9293,11 +9299,11 @@ export class Session {
     if (msg.type === "workspace_setup_status_response") {
       if (this.clientSources.size > 0 && this.onMessageToSource) {
         for (const [source] of this.clientSources) {
-          this.onMessageToSource(source, this.projectMessageForClient(msg, source));
+          this.onMessageToSource(source, this.projectMessageForClient({ message: msg, source }));
         }
         return;
       }
-      msg = this.projectMessageForClient(msg);
+      msg = this.projectMessageForClient({ message: msg });
     }
     this.onMessage(msg);
   }
@@ -9317,10 +9323,10 @@ export class Session {
       : this.supports(CLIENT_CAPS.networkTunnel);
   }
 
-  private projectMessageForClient(
-    message: SessionOutboundMessage,
-    source?: object,
-  ): SessionOutboundMessage {
+  private projectMessageForClient({
+    message,
+    source,
+  }: ClientMessageProjection): SessionOutboundMessage {
     // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
     if (message.type === "status" && message.payload.status === "server_info") {
       return {
