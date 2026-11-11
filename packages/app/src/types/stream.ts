@@ -833,6 +833,8 @@ export interface PluginTimelineStreamItem {
    * duration, and stats.
    */
   source?: StreamItem;
+  /** Completed assistant identity retained by host projection, never plugin-authored data. */
+  sourceAssistant?: Pick<AssistantMessageItem, "messageId">;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
