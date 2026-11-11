@@ -85,6 +85,11 @@ Escape interrupts an agent only in the message input or an unclaimed surface.
 A focused terminal excludes that binding. The source leaves terminal Escape alone;
 terminal Escape/Ctrl forwarding is a separate feature.
 
+Terminal arrows never pass through the shortcut pipeline. The Android hardware
+module claims them while the terminal's hidden input (`nativeID`) owns the focus.
+`TextInput.onKeyPress` only sees IME keys, and an arrow that falls through moves
+the hidden caret and desyncs the next text change, so the pipeline cannot own them.
+
 ## Keys shared with text editing
 
 A binding on a key the platform already uses for editing, such as Cmd/Ctrl+Z for
