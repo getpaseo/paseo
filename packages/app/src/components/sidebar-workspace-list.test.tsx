@@ -3,7 +3,14 @@
  */
 import { act, renderHook } from "@testing-library/react";
 import { createWorkspaceVisibilityPolicy } from "@/components/sidebar/sidebar-group-visibility";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  useLimitedSidebarGroup,
+  useSidebarSectionGroup,
+} from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  SidebarWorkspaceSectionRows,
+  type SidebarWorkspaceSectionRowInput,
+} from "@/components/sidebar/sidebar-workspace-section-rows";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +38,7 @@ vi.mock("expo-router", () => ({
 import {
   createSidebarWorkspaceEntry,
   type SidebarProjectEntry,
+  type SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
 import {
@@ -648,5 +656,137 @@ describe("sidebar group visibility", () => {
     expect(result.current.visibleItems).toEqual(items);
     act(() => result.current.toggleExpanded());
     expect(result.current.visibleItems).toHaveLength(20);
+  });
+});
+
+function sectionPlacement(index: number): SidebarWorkspacePlacement {
+  return {
+    workspaceKey: `${SERVER_ID}:section-${index}`,
+    serverId: SERVER_ID,
+    workspaceId: `section-${index}`,
+    projectViewKey: "project-a",
+    projectName: "Project A",
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: `Row ${index}`,
+  };
+}
+
+const sectionRowsKeyExtractor = (item: SidebarWorkspacePlacement) => item.workspaceKey;
+
+const renderSectionRow = (
+  item: SidebarWorkspacePlacement,
+  input?: SidebarWorkspaceSectionRowInput,
+) => (
+  <div
+    key={item.workspaceKey}
+    data-workspace={item.workspaceId}
+    data-draggable={input?.drag ? "yes" : "no"}
+  />
+);
+
+const ignoreSectionReorder = () => {};
+
+function sectionRowsElement(input: {
+  leadingItem: SidebarWorkspacePlacement | null;
+  items: SidebarWorkspacePlacement[];
+  manualSort: boolean;
+}): ReactElement {
+  return (
+    <SidebarWorkspaceSectionRows
+      testID="section-rows"
+      leadingItem={input.leadingItem}
+      items={input.items}
+      manualSort={input.manualSort}
+      keyExtractor={sectionRowsKeyExtractor}
+      renderRow={renderSectionRow}
+      onReorder={ignoreSectionReorder}
+      extraData=""
+      useNestable={false}
+    />
+  );
+}
+
+describe("workspace section rows", () => {
+  function renderRows(element: ReactElement): { container: HTMLElement; root: Root } {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(element);
+    });
+    return { container, root };
+  }
+
+  function renderedWorkspaceIds(container: HTMLElement): string[] {
+    return [...container.querySelectorAll("[data-workspace]")].map(
+      (element) => element.getAttribute("data-workspace") ?? "",
+    );
+  }
+
+  const visible = Array.from({ length: 7 }, (_, index) => sectionPlacement(index + 1));
+  const hiddenOpenWorkspace = sectionPlacement(8);
+
+  it("renders the open workspace above the list when the limit hides it", () => {
+    for (const manualSort of [true, false]) {
+      const { container, root } = renderRows(
+        sectionRowsElement({ leadingItem: hiddenOpenWorkspace, items: visible, manualSort }),
+      );
+      expect(renderedWorkspaceIds(container)).toEqual([
+        "section-8",
+        ...visible.map((item) => item.workspaceId),
+      ]);
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("hands rows to the drag list only on manual sort", () => {
+    for (const manualSort of [true, false]) {
+      const { container, root } = renderRows(
+        sectionRowsElement({ leadingItem: null, items: visible, manualSort }),
+      );
+      const dragState = [...container.querySelectorAll("[data-workspace]")].map((element) =>
+        element.getAttribute("data-draggable"),
+      );
+      expect(dragState).toEqual(visible.map(() => (manualSort ? "yes" : "no")));
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+});
+
+describe("sidebar section group", () => {
+  function placement(index: number): SidebarWorkspacePlacement {
+    return {
+      workspaceKey: `${SERVER_ID}:gate-${index}`,
+      serverId: SERVER_ID,
+      workspaceId: `gate-${index}`,
+      projectViewKey: "project-a",
+      projectName: "Project A",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: `Row ${index}`,
+    };
+  }
+
+  const items = Array.from({ length: 9 }, (_, index) => placement(index + 1));
+  const selection = { serverId: SERVER_ID, workspaceId: "gate-9" };
+  const policy = createWorkspaceVisibilityPolicy<SidebarWorkspacePlacement>(new Map());
+
+  it("pulls the open workspace above the limit only while the route can select a row", () => {
+    const enabled = renderHook(() =>
+      useSidebarSectionGroup({ items, selection, selectionEnabled: true, policy }),
+    );
+    expect(enabled.result.current.leadingItem).toBe(items[8]);
+    expect(enabled.result.current.visibleItems).toEqual(items.slice(0, 7));
+    expect(enabled.result.current.canToggle).toBe(true);
+
+    const disabled = renderHook(() =>
+      useSidebarSectionGroup({ items, selection, selectionEnabled: false, policy }),
+    );
+    expect(disabled.result.current.leadingItem).toBeNull();
+    expect(disabled.result.current.visibleItems).toEqual(items.slice(0, 7));
+    expect(disabled.result.current.canToggle).toBe(true);
   });
 });
