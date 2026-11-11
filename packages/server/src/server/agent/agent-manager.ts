@@ -355,6 +355,22 @@ type InitialConfigChangeResult =
   | { status: "applied"; initialization: AgentConfigInitialization }
   | { status: "partial"; error: unknown };
 
+interface InitialPersistenceInput {
+  session: AgentSession;
+  original: AgentPersistenceHandle;
+  initialization: InitialConfigChangeResult | undefined;
+}
+
+function persistenceAfterInitialConfig({
+  session,
+  original,
+  initialization,
+}: InitialPersistenceInput): AgentPersistenceHandle {
+  if (!initialization) return original;
+  // Configuration can rotate the resume token before registration installs event listeners.
+  return session.describePersistence() ?? original;
+}
+
 function completeInitialConfigChange({
   result,
   onConfigApplied,
@@ -1810,7 +1826,7 @@ export class AgentManager {
         : {}),
       workspaceId,
       launchEnv,
-      persistence: handle,
+      persistence: persistenceAfterInitialConfig({ session, original: handle, initialization }),
       restoring: true,
       runtimeInfo: purpose === "history" ? record?.runtimeInfo : undefined,
     });
