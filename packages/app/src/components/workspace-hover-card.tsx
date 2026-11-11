@@ -65,7 +65,7 @@ export function WorkspaceHoverCard({
 
   return (
     <HoverCard disabled={isDragging || disabled}>
-      <HoverCardTrigger>{children}</HoverCardTrigger>
+      <HoverCardTrigger ignoreTouch>{children}</HoverCardTrigger>
       <HoverCardContent
         placement="right"
         role="menu"
