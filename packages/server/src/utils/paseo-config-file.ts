@@ -112,7 +112,13 @@ interface Snapshot {
   fingerprint: string;
   edit: ReadPaseoConfigForEditResult;
   runtime: ReadPaseoConfigResult;
+  checkedAt: number;
 }
+
+// How long a listing may show a config before re-checking it. Daemon edits drop the snapshot at once.
+const SNAPSHOT_REVALIDATE_MS = 2_000;
+// Above the roots a busy daemon lists: a listing that visits more roots than this evicts the next one it needs.
+const MAX_SNAPSHOTS = 1_024;
 
 /** Owns config admission, snapshots and daemon read/modify/write ordering for every consumer. */
 class ProjectConfigOwner {
@@ -162,11 +168,13 @@ class ProjectConfigOwner {
     }
   }
 
-  private remember(root: string, snapshot: Snapshot): Snapshot {
+  private remember(root: string, checked: Omit<Snapshot, "checkedAt">): Snapshot {
+    const snapshot = { ...checked, checkedAt: Date.now() };
     this.snapshots.delete(root);
     this.snapshots.set(root, snapshot);
     // Worktrees come and go; retain only a bounded set of reusable snapshots.
-    if (this.snapshots.size > 256) this.snapshots.delete(this.snapshots.keys().next().value!);
+    if (this.snapshots.size > MAX_SNAPSHOTS)
+      this.snapshots.delete(this.snapshots.keys().next().value!);
     return snapshot;
   }
 
@@ -177,6 +185,23 @@ class ProjectConfigOwner {
       5_000,
       "Project config unavailable",
     );
+  }
+
+  /**
+   * Workspace listings and script status read every workspace's config on every listing and update.
+   * Answer them from the last snapshot and re-check it behind the caller: with many workspaces, a
+   * queued stat per workspace otherwise holds every listing for seconds, and times out under load.
+   */
+  async readSnapshot(repoRoot: string): Promise<Snapshot> {
+    const root = resolve(repoRoot);
+    const cached = this.snapshots.get(root);
+    if (!cached) return this.read(root);
+    const age = Date.now() - cached.checkedAt;
+    if (age < 0 || age >= SNAPSHOT_REVALIDATE_MS) {
+      // A failed re-check keeps the last snapshot; the next listing tries again.
+      void this.read(root).catch(() => undefined);
+    }
+    return cached;
   }
 
   private async load(root: string): Promise<Snapshot> {
@@ -284,6 +309,15 @@ export function resolveProjectConfigRoot(
 export async function readPaseoConfig(repoRoot: string): Promise<ReadPaseoConfigResult> {
   try {
     return (await projectConfig.read(repoRoot)).runtime;
+  } catch (error) {
+    return { ok: false, configPath: resolvePaseoConfigPath(repoRoot), error };
+  }
+}
+
+/** The last known config, re-checked behind the caller. For listings and script status, not for edits. */
+export async function readPaseoConfigSnapshot(repoRoot: string): Promise<ReadPaseoConfigResult> {
+  try {
+    return (await projectConfig.readSnapshot(repoRoot)).runtime;
   } catch (error) {
     return { ok: false, configPath: resolvePaseoConfigPath(repoRoot), error };
   }
