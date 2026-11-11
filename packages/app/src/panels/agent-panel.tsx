@@ -81,6 +81,7 @@ import {
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
+import { OverlayDismissalScope } from "@/components/ui/overlay-dismissal";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
@@ -1317,10 +1318,14 @@ function ChatSurface({
   disabled: boolean;
   fullscreen: boolean;
 }) {
+  // The tracks above the composer open their pages from outside it, so focusing the composer
+  // closes everything the chat opened.
   return (
-    <FileDropZone style={styles.container} disabled={disabled}>
-      <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
-    </FileDropZone>
+    <OverlayDismissalScope>
+      <FileDropZone style={styles.container} disabled={disabled}>
+        <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
+      </FileDropZone>
+    </OverlayDismissalScope>
   );
 }
 

@@ -1650,6 +1650,7 @@ export default function contribute(client: PluginClientContext) {
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
 | `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `focus(options?)`                                   | 把光标放进这个 composer，准备输入，光标就位后完成。`selection: { start, end }` 放置光标或选中文本，为 `prompt` 中的偏移量，并限制在其长度内；省略时光标保持原位。参见[聚焦 composer](#focus-a-composer)。                                                    |
 | `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
 | `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
 | `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
@@ -1669,9 +1670,26 @@ export default function contribute(client: PluginClientContext) {
 
 [Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`，还有一个资源管理器面板和一个 Command Center 条目，它们按引用访问 composer。
 
+### 聚焦 composer {#focus-a-composer}
+
+`insertText` 和 `setPrompt` 不会移动光标。在它们之后调用 `focus()`，用户就可以继续输入：
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
+
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板、菜单、选择器和图片预览，例如手机上放置你的项的控件面板。手机会弹出键盘。
+
+composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点（例如手机上正在听写时）。多次调用重叠时，由最后一次决定光标位置，之前的调用随其一起完成。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
+
+草稿和新建工作区 composer 只能从其中的项访问，所以 `focus()` 不会导航到它们。composer 在屏幕上时可用，用户已离开时会以 “The composer is not on screen.” 拒绝。锁定的 composer 接受聚焦。
+
 ### 按引用访问 composer {#reach-a-composer-by-reference}
 
-运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`，以及每个命令上下文中的 `composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent：
+运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`、每个命令上下文中的 `composers(selector)`，以及客户端上下文中的 `client.composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent。在不接收上下文的回调中（例如[胶囊的 `onPress`](#composer-pills)）使用 `client.composers`：
 
 ```tsx
 import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
@@ -1721,6 +1739,7 @@ export default function contribute(client: PluginClientContext) {
 - 运行中 Agent 的 composer 从不锁定。
 - `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
 - `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `focus()` 会先让 composer 显示出来，如[上文所述](#focus-a-composer)。
 - 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
 
 ## 新建工作区项 {#new-workspace-items}
@@ -1799,6 +1818,30 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+胶囊的 `onPress` 不接收参数。通过 [`client.composers`](#reach-a-composer-by-reference) 访问其 Agent 的 composer：
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },

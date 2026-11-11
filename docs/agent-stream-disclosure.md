@@ -39,6 +39,19 @@ The trigger can only stay put when the list has scroll room for the change. When
 content fits the viewport, or a collapse at the end would need an offset past the end, the list
 ends at its end and the trigger moves by the difference.
 
+## State that survives a remount
+
+The list mounts a row again whenever it opens the chat, brings a web row back into the history
+window, or reassigns a native row's LegendList container. State held in the row resets each time.
+Keep a disclosure's open state in the per-agent store the timeline provides, keyed by item id:
+`ToolCallExpansionContext` for tool calls, `UserMessageExpansionContext` for long user messages.
+
+Decide a row's first painted shape in the commit that mounts it. `MessagePreview` measures its body
+in a layout effect, which commits before paint on web and Fabric. `onLayout` lands after the first
+frame: a long message measured there paints capped with no fade or show more, then grows by the
+control's height a frame later. `onLayout` still tracks later size changes. A zero height comes from
+a hidden panel and is ignored.
+
 ## Web
 
 `holdRow` pins the row's trigger edge in the reading anchor and runs `apply`; the next reading
