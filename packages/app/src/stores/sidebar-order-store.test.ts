@@ -22,6 +22,7 @@ describe("migrateSidebarOrderState", () => {
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: { "project-a": ["host-a:main", "host-a:feature", "host-b:main"] },
+      workspaceSectionsByProject: {},
     });
   });
 
@@ -31,6 +32,34 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
+  });
+
+  it("normalizes project-scoped section layouts without duplicate workspace placement", () => {
+    const migrated = migrateSidebarOrderState({
+      workspaceSectionsByProject: {
+        " project-a ": [
+          {
+            id: " finance ",
+            name: " Finance ",
+            workspaceKeys: ["host-a:one", "host-a:one", ""],
+          },
+          {
+            id: "research",
+            name: "Research",
+            workspaceKeys: ["host-a:one", "host-a:two"],
+          },
+        ],
+      },
+    });
+
+    expect(migrated).toMatchObject({
+      workspaceSectionsByProject: {
+        "project-a": [
+          { id: "finance", name: "Finance", workspaceKeys: ["host-a:one"] },
+          { id: "research", name: "Research", workspaceKeys: ["host-a:two"] },
+        ],
+      },
+    });
   });
 });
 
@@ -100,6 +129,7 @@ it("preserves project, pinned and ordinary workspace order", () => {
     projectOrder: ["b", "a"],
     pinnedWorkspaceOrder: ["h:y", "h:x"],
     workspaceOrderByProject: { a: ["h:old", "h:new"] },
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -114,6 +144,7 @@ it("preserves whitespace in current project and pin identities during upgrade", 
     projectOrder: ["project "],
     pinnedWorkspaceOrder: ["host:workspace "],
     workspaceOrderByProject: {},
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -128,6 +159,7 @@ it("retains a pre-beta manual order when upgrading", () => {
     projectOrder: ["project"],
     pinnedWorkspaceOrder: [],
     workspaceOrderByProject: { project: ["host:b", "host:a"] },
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -136,6 +168,7 @@ it("starts with an empty manual order for beta users whose order was discarded",
     projectOrder: ["p"],
     pinnedWorkspaceOrder: ["h:a"],
     workspaceOrderByProject: {},
+    workspaceSectionsByProject: {},
   });
 });
 it("preserves spaces in saved workspace scopes and identities", () => {
