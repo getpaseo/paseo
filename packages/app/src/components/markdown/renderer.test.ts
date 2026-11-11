@@ -711,6 +711,11 @@ it.each([
       backgroundColor: theme.colors.surface2,
       borderColor: "transparent",
     });
+    expect(style.math).toMatchObject({
+      color: theme.colors.foreground,
+      backgroundColor: theme.colors.surface1,
+    });
+    expect(style.inlineMath).toMatchObject({ color: theme.colors.foreground });
     expect(style.link?.color).toBe(theme.colors.accentBright);
     expect(style.linkVariants?.["^(?!https?://).+"]).toEqual({
       color: theme.colors.accentBright,
