@@ -1,7 +1,7 @@
 import { useWorkspace } from "@getpaseo/plugin/client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import * as Clipboard from "expo-clipboard";
+import { copyText } from "@/plugins/react-native/clipboard";
 import { Copy } from "lucide-react-native";
 import { Text, View } from "react-native";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,12 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
-import type { DismissToast } from "@/components/toast-host";
+import { FilePathCopyModel, type FilePathClipboard } from "./copy-model";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
 import { resolveWorkspaceFilePaths } from "@/workspace/file-open";
+
+const clipboard: FilePathClipboard = { writeText: copyText };
 
 const ThemedCopy = withUnistyles(Copy);
 const ThemedSpinner = withUnistyles(LoadingSpinner);
@@ -23,48 +25,46 @@ const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMute
 
 /** The same path actions as Explorer, directly accessible from the file viewer. */
 export function FilePathActions({ path, workspaceId }: { path: string; workspaceId: string }) {
+  return (
+    <FilePathActionsForTarget
+      key={`${workspaceId}:${path}`}
+      path={path}
+      workspaceId={workspaceId}
+    />
+  );
+}
+
+function FilePathActionsForTarget({ path, workspaceId }: { path: string; workspaceId: string }) {
   const { t } = useTranslation();
   const toast = useToast();
   const compact = useIsCompactFormFactor();
   const workspaceRoot = useWorkspace(workspaceId, (workspace) => workspace.directory);
   const paths = workspaceRoot ? resolveWorkspaceFilePaths({ path, workspaceRoot }) : null;
   const relativePath = paths?.relativePath;
-  const [pending, setPending] = useState(false);
-  const copying = useRef(false);
-  const dismissError = useRef<DismissToast | null>(null);
+  const [model] = useState(() => new FilePathCopyModel(clipboard));
+  const status = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
+  const pending = status === "pending";
 
-  const dismissCopyError = useStableEvent(() => dismissError.current?.());
-  useEffect(() => () => dismissError.current?.(), [path]);
-
-  const copy = useStableEvent(async (value: string) => {
-    if (copying.current) return;
-    copying.current = true;
-    setPending(true);
-    dismissError.current?.();
-    try {
-      const copied = await Clipboard.setStringAsync(value);
-      if (!copied) throw new Error("Clipboard write failed");
+  useEffect(() => {
+    if (status === "copied") {
       toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
-    } catch {
-      dismissError.current = toast.show(
+    } else if (status === "error") {
+      return toast.show(
         <View style={styles.error}>
           <Text style={styles.message}>{t("workspace.tabs.toasts.copyFailed")}</Text>
-          <Button variant="ghost" size="sm" onPress={dismissCopyError}>
+          <Button variant="ghost" size="sm" onPress={model.dismissError}>
             {t("common.actions.dismiss")}
           </Button>
         </View>,
         { variant: "error", durationMs: null },
       );
-    } finally {
-      copying.current = false;
-      setPending(false);
     }
-  });
+  }, [model, status, t, toast]);
   const copyPath = useStableEvent(() => {
-    void copy(paths?.absolutePath ?? path);
+    void model.copy(paths?.absolutePath ?? path);
   });
   const copyRelativePath = useStableEvent(() => {
-    if (relativePath) void copy(relativePath);
+    if (relativePath) void model.copy(relativePath);
   });
   const iconSize = paneContentToolbarIconSize(compact);
 

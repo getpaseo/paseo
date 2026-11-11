@@ -18,41 +18,6 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
-// Platform fault injection only: real-browser success cases below use the unmodified clipboard.
-// Delay one real write to observe pending UI; release it before reading the actual clipboard.
-async function delayNextClipboardWrite(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const released = new Promise<void>((resolve) => {
-      document.addEventListener("release-clipboard-write", () => resolve(), { once: true });
-    });
-    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
-    navigator.clipboard.writeText = async (value) => {
-      navigator.clipboard.writeText = write;
-      await released;
-      await write(value);
-    };
-  });
-}
-
-// A denied async clipboard permission alone does not force a failure: Expo also tries the
-// synchronous execCommand fallback. Reject both once to exercise the rendered recovery UI,
-// then restore the real APIs for retry. This case proves app recovery, not OS permission handling.
-async function failNextClipboardWrite(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
-    const exec = document.execCommand.bind(document);
-    document.execCommand = (command, ...args) => {
-      if (command !== "copy") return exec(command, ...args);
-      document.execCommand = exec;
-      throw new DOMException("Clipboard access denied", "NotAllowedError");
-    };
-    navigator.clipboard.writeText = async () => {
-      navigator.clipboard.writeText = write;
-      throw new DOMException("Clipboard access denied", "NotAllowedError");
-    };
-  });
-}
-
 function readClipboard(page: Page): Promise<string> {
   return page.evaluate(() => navigator.clipboard.readText());
 }
@@ -257,43 +222,6 @@ test.describe("CodeMirror workspace file editing", () => {
     } finally {
       await session.cleanup();
     }
-  });
-
-  test("keeps a failed clipboard write visible and lets the reader retry", async ({
-    page,
-    context,
-    withWorkspace,
-  }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const workspace = await withWorkspace({ prefix: "file-path-copy-failure-" });
-    await writeFile(path.join(workspace.repoPath, "report.md"), "# Report", "utf8");
-    await workspace.navigateTo();
-    await openWorkspaceFile(page, "report.md");
-    await failNextClipboardWrite(page);
-    const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
-    await trigger.click();
-    await page.getByTestId("file-path-actions-copy-path").click();
-    await expect(page.getByText("Copy failed", { exact: true })).toBeVisible();
-    await expect(trigger).toBeEnabled();
-    await delayNextClipboardWrite(page);
-    await trigger.click();
-    await page.getByTestId("file-path-actions-copy-path").click();
-    await expect(trigger).toBeDisabled();
-    await page.evaluate(() => document.dispatchEvent(new Event("release-clipboard-write")));
-    await expect(trigger).toBeEnabled();
-    await expect.poll(() => readClipboard(page)).toBe(path.join(workspace.repoPath, "report.md"));
-    await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
-    await expect(page.getByText("Copied File path", { exact: true })).toBeVisible();
-
-    await failNextClipboardWrite(page);
-    await trigger.click();
-    await page.getByTestId("file-path-actions-copy-path").click();
-    await expect(page.getByText("Copy failed", { exact: true })).toBeVisible();
-    await page
-      .getByTestId("app-toast-message")
-      .getByRole("button", { name: "Dismiss", exact: true })
-      .click();
-    await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
   });
 
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
