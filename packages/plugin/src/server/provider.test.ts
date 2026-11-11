@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProviderInputSchema, type ProviderInput } from "./provider.js";
+import { ProviderEventSchema, ProviderInputSchema, type ProviderInput } from "./provider.js";
 
 type ReviewMode = "uncommitted" | "base" | "all";
 type Delivery = "auto" | "steer";
@@ -63,4 +63,25 @@ describe("Provider review attachments", () => {
       expect(ProviderInputSchema.parse(input)).toEqual(input);
     },
   );
+});
+
+describe("ProviderEventSchema", () => {
+  it("keeps the prompt a plugin provider puts on a sub_agent card", () => {
+    const prompt = "Map the repository layout.\n\nList the top-level folders.";
+    const parsed = ProviderEventSchema.parse({
+      type: "timeline.item",
+      sessionId: "session-1",
+      item: {
+        type: "tool_call",
+        id: "task-1",
+        callId: "task-1",
+        name: "Task",
+        status: "running",
+        error: null,
+        detail: { type: "sub_agent", subAgentType: "Explore", prompt, log: "" },
+      },
+    });
+
+    expect(parsed).toMatchObject({ item: { detail: { type: "sub_agent", prompt } } });
+  });
 });
