@@ -503,3 +503,83 @@ it("ignores an in-flight catalog snapshot after disconnect", async () => {
   expect(h.client.settings.reads).toBe(1);
   expect(h.evaluations()).toBe(1);
 });
+
+it("coalesces the eager catalog fetch with a synchronous subscription snapshot and reports lifecycle callbacks", async () => {
+  const h = harness();
+  const events: string[] = [];
+  h.sync({
+    prepare: async () => {
+      events.push("prepare");
+    },
+    onCatalogInstalled: (installed) => {
+      events.push(`installed:${installed.length}`);
+    },
+    onCatalogFailed: () => {
+      events.push("failed");
+    },
+  });
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.client.fetches).toBe(1);
+  expect(events).toEqual(["prepare", "installed:1"]);
+
+  h.client.snapshot();
+  await expect.poll(() => h.client.fetches).toBe(2);
+  expect(events).toEqual(["prepare", "installed:1", "installed:1"]);
+});
+
+it("restores a cached catalog only when starting a cold installation and skips cancelled reads", async () => {
+  const h = harness();
+  let reads = 0;
+  const saved: Catalog[] = [];
+  let pendingNetwork: PromiseWithResolvers<Catalog> | null = Promise.withResolvers<Catalog>();
+  class DelayedClient extends CatalogClient {
+    override getPluginCatalog() {
+      this.fetches++;
+      return pendingNetwork ? pendingNetwork.promise : super.getPluginCatalog();
+    }
+  }
+  const client = new DelayedClient();
+  const cachedCatalog = {
+    async read() {
+      reads++;
+      return catalog("one");
+    },
+    async write(_serverId: string, entries: Catalog) {
+      saved.push(entries);
+    },
+  };
+
+  const stop = h.sync({ client, cachedCatalog });
+  await expect.poll(() => h.registry.getSnapshot().length).toBe(1);
+  const retained = h.installed();
+  expect(reads).toBe(1);
+
+  const initialNetwork = pendingNetwork!;
+  pendingNetwork = null;
+  initialNetwork.resolve(catalog("one"));
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.installed()).toBe(retained);
+  expect(h.evaluations()).toBe(1);
+  expect(saved).toEqual([catalog("one")]);
+
+  stop();
+  const fetchesBeforeReconnect = client.fetches;
+  h.sync({ client, cachedCatalog });
+  await expect.poll(() => client.fetches).toBeGreaterThan(fetchesBeforeReconnect);
+  expect(reads).toBe(1);
+  expect(h.installed()).toBe(retained);
+
+  const cancelledRead = Promise.withResolvers<Catalog | null>();
+  const h2 = harness();
+  const stopCancelled = h2.sync({
+    cachedCatalog: {
+      read: () => cancelledRead.promise,
+      write: async () => {},
+    },
+  });
+  stopCancelled();
+  cancelledRead.resolve(catalog("one"));
+  await cancelledRead.promise;
+  expect(h2.registry.getSnapshot()).toEqual([]);
+});

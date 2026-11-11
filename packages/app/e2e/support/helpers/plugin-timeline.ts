@@ -259,6 +259,31 @@ export async function expectWholeCompletedCard(page: Page): Promise<void> {
   await expect(page.getByTestId("assistant-message")).toHaveCount(0);
 }
 
+export async function expectCachedCatalogTimelineBeforeNetworkRefresh(
+  page: Page,
+  info: TestInfo,
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+): Promise<void> {
+  gate.holdPluginCatalogResponses();
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect.poll(() => gate.hasHeldPluginCatalogResponse()).toBe(true);
+    await expect(
+      page.getByRole("heading", { name: /^Assistant (streaming|complete)$/ }),
+    ).toBeVisible();
+    await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+    await info.attach("cached-catalog-before-network", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  } finally {
+    gate.releaseHeldPluginCatalogResponses();
+  }
+  await expect(
+    page.getByRole("heading", { name: /^Assistant (streaming|complete)$/ }),
+  ).toBeVisible();
+}
+
 export async function expectBothConsecutiveTools(page: Page): Promise<void> {
   // read and grep are consecutive source calls in the fixture. Overview used to
   // send only the later call to the plugin, so the read card never existed.
