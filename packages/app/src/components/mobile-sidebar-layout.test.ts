@@ -23,4 +23,15 @@ describe("mobile sidebar layout", () => {
     expect(resolveMobileSidebarPersistedWidth({ width: 380, windowWidth: 390 })).toBeNull();
     expect(resolveMobileSidebarPersistedWidth({ width: 300, windowWidth: 390 })).toBe(300);
   });
+
+  it("snaps a near-full release back to the window when the saved width stays empty", () => {
+    const width = 380;
+    const windowWidth = 390;
+    expect(
+      resolveMobileSidebarWidth({
+        requestedWidth: resolveMobileSidebarPersistedWidth({ width, windowWidth }),
+        windowWidth,
+      }),
+    ).toBe(windowWidth);
+  });
 });

@@ -18,5 +18,6 @@ export function resolveMobileSidebarPersistedWidth(input: {
   width: number;
   windowWidth: number;
 }): number | null {
+  "worklet";
   return input.width >= input.windowWidth - MOBILE_SIDEBAR_FULL_SNAP ? null : input.width;
 }

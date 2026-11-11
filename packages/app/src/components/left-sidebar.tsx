@@ -644,7 +644,14 @@ function MobileSidebar({
           });
         })
         .onEnd(() => {
-          scheduleOnRN(commitWidth, resizeWidth.value);
+          const width = resizeWidth.value;
+          // A release inside the full-width snap stores null again, so the width
+          // effect does not run. Restore the visible width on the gesture thread.
+          resizeWidth.value = resolveMobileSidebarWidth({
+            requestedWidth: resolveMobileSidebarPersistedWidth({ width, windowWidth }),
+            windowWidth,
+          });
+          scheduleOnRN(commitWidth, width);
         })
         .onFinalize(() => {
           scheduleOnRN(hideResizeGrip);
