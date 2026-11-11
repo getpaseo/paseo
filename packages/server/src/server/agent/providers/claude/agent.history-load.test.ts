@@ -11,6 +11,10 @@ import { createTestPaseoDaemon } from "../../../test-utils/paseo-daemon.js";
 import type { ClaudeRewindSdk } from "./rewind.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { ensureAgentLoaded } from "../../agent-loading.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { withClaudeReplayHistory } from "./transcript-history.js";
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { ClaudeQueryFactory } from "./query.js";
@@ -595,6 +599,307 @@ describe("ClaudeAgentSession persisted history load", () => {
         historyPath: transcriptPath(),
       }),
     );
+  });
+
+  test.each([
+    { status: "turn_completed", outcome: "completed" },
+    { status: "turn_failed", outcome: "Error: resumed provider failure" },
+  ] as const)(
+    "records a distinct $status timing when the same agent runs after disk reload",
+    async ({ status, outcome }) => {
+      const logger = createTestLogger();
+      const storagePath = path.join(tempRoot, "agents");
+      const storage = new AgentStorage(storagePath, logger);
+      function assistantFrame(generation: number) {
+        return {
+          type: "assistant",
+          uuid: `transcript-reply-${generation}`,
+          session_id: SESSION_ID,
+          message: {
+            id: `provider-reply-${generation}`,
+            role: "assistant",
+            content: [{ type: "text", text: "same reply" }],
+          },
+        };
+      }
+      async function* sdkMessages(generation: number) {
+        yield { type: "system", subtype: "init", session_id: SESSION_ID };
+        yield assistantFrame(generation);
+        const failed = generation === 1 && status === "turn_failed";
+        const subtype = failed ? "error_during_execution" : "success";
+        yield {
+          type: "result",
+          subtype,
+          session_id: SESSION_ID,
+          errors: ["resumed provider failure"],
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        };
+      }
+      let generation = 0;
+      const queryFactory = vi.fn().mockImplementation(() =>
+        Object.assign(sdkMessages(generation++), {
+          close: () => undefined,
+          supportedModels: async () => [],
+          supportedCommands: async () => [],
+          applyFlagSettings: async () => undefined,
+        }),
+      );
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      const manager = new AgentManager({ clients: { claude: client }, registry: storage, logger });
+      const reloadedStorage = new AgentStorage(storagePath, logger);
+      const reloaded = new AgentManager({
+        clients: { claude: client },
+        registry: reloadedStorage,
+        logger,
+      });
+      let agentId: string | undefined;
+      try {
+        const agent = await manager.createAgent({ provider: "claude", cwd }, undefined, {
+          workspaceId: undefined,
+        });
+        agentId = agent.id;
+        await manager.runAgent(agent.id, "first prompt");
+        await manager.flush();
+        const firstTiming = (await storage.get(agent.id))!.turnTimings![0]!;
+        expect(firstTiming).toMatchObject({
+          status: "turn_completed",
+          messageIds: ["provider-reply-0"],
+        });
+        mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+        writeFileSync(transcriptPath(), JSON.stringify(assistantFrame(0)));
+        await manager.closeAgent(agent.id);
+        await manager.flush();
+        await ensureAgentLoaded(agent.id, {
+          agentManager: reloaded,
+          agentStorage: reloadedStorage,
+          logger,
+        });
+        expect((await reloadedStorage.get(agent.id))!.turnTimings).toEqual([firstTiming]);
+        const completed = await reloaded.runAgent(agent.id, "second prompt").then(
+          () => "completed",
+          (error: unknown) => String(error),
+        );
+        expect(completed).toBe(outcome);
+        await reloaded.flush();
+        const timeline = reloaded.fetchTimeline(agent.id, { direction: "tail", limit: 0 });
+        const reply = timeline.rows.find(
+          (row) =>
+            row.item.type === "assistant_message" && row.item.messageId === "provider-reply-1",
+        )!;
+        expect(reply.item).toEqual({
+          type: "assistant_message",
+          text: "same reply",
+          messageId: "provider-reply-1",
+        });
+        const currentPage = reloaded.fetchTimeline(agent.id, {
+          direction: "after",
+          cursor: { epoch: timeline.epoch, seq: reply.seqStart - 1 },
+          limit: 1,
+        });
+        const diskStorage = new AgentStorage(storagePath, logger);
+        const currentTimings = await diskStorage.getTurnTimings({
+          agentId: agent.id,
+          turnIds: new Set([reply.turnId!]),
+          messageIds: new Set(["provider-reply-1"]),
+        });
+        expect(currentPage.rows).toEqual([reply]);
+        expect(currentTimings).toMatchObject([{ status, messageIds: ["provider-reply-1"] }]);
+        const timings = (await diskStorage.get(agent.id))!.turnTimings!;
+        expect(timings).toHaveLength(2);
+        expect(timings[0]).toEqual(firstTiming);
+        expect(timings[1]!.turnId).not.toBe(firstTiming.turnId);
+        expect(timings[1]!.turnId).toBe(reply.turnId);
+        expect(currentTimings).toEqual([timings[1]]);
+        const historyPage = reloaded.fetchTimeline(agent.id, {
+          direction: "after",
+          cursor: { epoch: timeline.epoch, seq: 0 },
+          limit: 1,
+        });
+        expect(historyPage.rows[0]!.item).toEqual({
+          type: "assistant_message",
+          text: "same reply",
+          messageId: "provider-reply-0",
+        });
+        expect(historyPage.rows[0]!.turnId).toBeUndefined();
+        expect(
+          await diskStorage.getTurnTimings({
+            agentId: agent.id,
+            turnIds: new Set(),
+            messageIds: new Set(["provider-reply-0"]),
+          }),
+        ).toEqual([firstTiming]);
+        expect(queryFactory).toHaveBeenCalledTimes(2);
+      } finally {
+        if (agentId) {
+          await manager.closeAgent(agentId);
+          await reloaded.closeAgent(agentId);
+        }
+        await manager.flush();
+        await reloaded.flush();
+      }
+    },
+  );
+
+  test("reloads live foreground and autonomous timings with distinct transcript IDs", async () => {
+    const logger = createTestLogger();
+    const storagePath = path.join(tempRoot, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    let releaseAutonomous!: () => void;
+    const autonomous = new Promise<void>((resolve) => {
+      releaseAutonomous = resolve;
+    });
+    let releaseQuery!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      releaseQuery = resolve;
+    });
+    const replies = ["foreground", "autonomous"].map((owner) => ({
+      type: "assistant",
+      uuid: `transcript-${owner}`,
+      session_id: SESSION_ID,
+      timestamp: "2026-10-15T08:00:00.000Z",
+      message: {
+        id: `provider-${owner}`,
+        role: "assistant",
+        content: [{ type: "text", text: "identical reply" }],
+      },
+    }));
+    async function* sdkMessages() {
+      for (const reply of replies) {
+        yield { type: "system", subtype: "init", session_id: SESSION_ID };
+        yield {
+          type: "stream_event",
+          session_id: SESSION_ID,
+          event: { type: "message_start", message: { id: reply.message.id } },
+        };
+        yield {
+          type: "stream_event",
+          session_id: SESSION_ID,
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "identical reply" },
+          },
+        };
+        yield reply;
+        yield {
+          type: "result",
+          subtype: "success",
+          session_id: SESSION_ID,
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        };
+        await autonomous;
+      }
+      await closed;
+    }
+    const queryFactory = vi.fn().mockImplementation(() =>
+      Object.assign(sdkMessages(), {
+        close: releaseQuery,
+        supportedModels: async () => [],
+        supportedCommands: async () => [],
+        applyFlagSettings: async () => undefined,
+      }),
+    );
+    function client() {
+      return new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.220",
+      });
+    }
+    const manager = new AgentManager({ clients: { claude: client() }, registry: storage, logger });
+    const reloadedStorage = new AgentStorage(storagePath, logger);
+    const reloaded = new AgentManager({
+      clients: { claude: client() },
+      registry: reloadedStorage,
+      logger,
+    });
+    let agentId: string | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "claude", cwd }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      await manager.runAgent(agent.id, "prompt");
+      releaseAutonomous();
+      await vi.waitFor(async () => {
+        expect((await storage.get(agent.id))?.turnTimings).toHaveLength(2);
+      });
+      await manager.flush();
+      const timings = (await storage.get(agent.id))!.turnTimings!;
+      expect(timings.map((timing) => timing.messageIds)).toEqual([
+        ["provider-foreground"],
+        ["provider-autonomous"],
+      ]);
+      expect(timings.map((timing) => timing.turnId)).toEqual([
+        expect.stringMatching(/^foreground-turn-/),
+        expect.stringMatching(/^autonomous-turn-/),
+      ]);
+      mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+      const history = replies.toReversed();
+      writeFileSync(transcriptPath(), history.map((reply) => JSON.stringify(reply)).join("\n"));
+      releaseQuery();
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      const record = (await reloadedStorage.get(agent.id))!;
+      expect(record.turnTimings).toEqual(timings);
+      await ensureAgentLoaded(agent.id, {
+        agentManager: reloaded,
+        agentStorage: reloadedStorage,
+        logger,
+      });
+      const tail = reloaded.fetchTimeline(agent.id, { direction: "tail", limit: 1 });
+      expect(tail.rows[0]!.turnId).toBeUndefined();
+      expect(tail.hasOlder).toBe(true);
+      const older = reloaded.fetchTimeline(agent.id, {
+        direction: "before",
+        cursor: { epoch: tail.epoch, seq: tail.startSeq! },
+        limit: 1,
+      });
+      const after = reloaded.fetchTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: tail.epoch, seq: tail.endSeq! },
+        limit: 1,
+      });
+      for (const [page, expected] of [
+        [tail, [timings[0]]],
+        [older, [timings[1]]],
+        [after, []],
+      ] as const) {
+        const messageIds = new Set<string>();
+        for (const row of page.rows) {
+          expect(row.turnId).toBeUndefined();
+          if (row.item.type === "assistant_message" && row.item.messageId) {
+            messageIds.add(row.item.messageId);
+          }
+        }
+        expect(
+          await reloadedStorage.getTurnTimings({
+            agentId: agent.id,
+            turnIds: new Set(),
+            messageIds,
+          }),
+        ).toEqual(expected);
+      }
+      expect(tail.rows.map((row) => row.item)).toEqual([
+        { type: "assistant_message", text: "identical reply", messageId: "provider-foreground" },
+      ]);
+      expect(queryFactory).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseAutonomous();
+      releaseQuery();
+      if (agentId) {
+        await manager.closeAgent(agentId);
+        await reloaded.closeAgent(agentId);
+      }
+      await manager.flush();
+      await reloaded.flush();
+    }
   });
 
   test("logs a warning with the error when the transcript cannot be read", async () => {
