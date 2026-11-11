@@ -1,5 +1,7 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
+  AgentTimelineImage,
+  AgentTimelineImageReference,
   AgentProvider,
   AgentTimelineItem,
   JsonValue,
@@ -104,6 +106,8 @@ export interface UserMessageItem {
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
+  inlineImages?: AgentTimelineImage[];
+  imageRefs?: AgentTimelineImageReference[];
   attachments?: AgentAttachment[];
 }
 
@@ -116,6 +120,8 @@ export interface UserMessageInput {
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
+  inlineImages?: AgentTimelineImage[];
+  imageRefs?: AgentTimelineImageReference[];
   attachments?: AgentAttachment[];
 }
 
@@ -134,6 +140,8 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     text: input.text,
     timestamp: input.timestamp,
     ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+    ...(input.inlineImages?.length ? { inlineImages: input.inlineImages } : {}),
+    ...(input.imageRefs?.length ? { imageRefs: input.imageRefs } : {}),
     ...(input.attachments && input.attachments.length > 0
       ? { attachments: input.attachments }
       : {}),
@@ -265,8 +273,19 @@ function produceUserMessage(
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
+    inlineImages: incoming.inlineImages ?? existing.inlineImages,
+    imageRefs: incoming.imageRefs ?? existing.imageRefs,
   });
-  if (
+  if (sameUserMessage(existing, merged)) {
+    return { items, index, message: existing, matched: true };
+  }
+  const next = [...items];
+  next[index] = merged;
+  return { items: next, index, message: merged, matched: true };
+}
+
+function sameUserMessage(existing: UserMessageItem, merged: UserMessageItem): boolean {
+  return (
     existing.id === merged.id &&
     existing.clientMessageId === merged.clientMessageId &&
     existing.messageId === merged.messageId &&
@@ -274,13 +293,10 @@ function produceUserMessage(
     existing.text === merged.text &&
     existing.timestamp === merged.timestamp &&
     existing.images === merged.images &&
+    existing.inlineImages === merged.inlineImages &&
+    existing.imageRefs === merged.imageRefs &&
     existing.attachments === merged.attachments
-  ) {
-    return { items, index, message: existing, matched: true };
-  }
-  const next = [...items];
-  next[index] = merged;
-  return { items: next, index, message: merged, matched: true };
+  );
 }
 
 export interface UserMessageStreamUpsertInput {
@@ -914,6 +930,18 @@ export function handoffCreatedAgentUserMessageToStream(params: {
   });
 }
 
+function normalizeUserMessageContent(
+  text: string,
+  images?: AgentTimelineImage[],
+  imageRefs?: AgentTimelineImageReference[],
+) {
+  const normalized = normalizeChunk(text);
+  return {
+    ...normalized,
+    hasContent: normalized.hasContent || Boolean(images?.length || imageRefs?.length),
+  };
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
@@ -923,8 +951,10 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  inlineImages?: AgentTimelineImage[],
+  imageRefs?: AgentTimelineImageReference[],
 ): StreamItem[] {
-  const { chunk, hasContent } = normalizeChunk(text);
+  const { chunk, hasContent } = normalizeUserMessageContent(text, inlineImages, imageRefs);
   if (!hasContent) {
     return state;
   }
@@ -938,6 +968,8 @@ function appendUserMessage(
     turnId,
     text: chunk,
     timestamp,
+    inlineImages,
+    imageRefs,
   });
   return upsertUserMessage(state, nextItem);
 }
@@ -1537,15 +1569,19 @@ function reduceTimelineEvent(
   const item = event.item;
   switch (item.type) {
     case "user_message":
-      return appendUserMessage(
-        state,
-        item.text,
-        timestamp,
-        source,
-        item.messageId,
-        item.clientMessageId,
-        timelineCursor,
-        event.turnId,
+      return finalizeActiveThoughts(
+        appendUserMessage(
+          state,
+          item.text,
+          timestamp,
+          source,
+          item.messageId,
+          item.clientMessageId,
+          timelineCursor,
+          event.turnId,
+          item.images,
+          item.imageRefs,
+        ),
       );
     case "assistant_message":
       return appendAssistantMessage(
@@ -1897,7 +1933,11 @@ function applyCanonicalUserMessageEvent(params: {
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
-  const normalized = normalizeChunk(event.item.text);
+  const normalized = normalizeUserMessageContent(
+    event.item.text,
+    event.item.images,
+    event.item.imageRefs,
+  );
 
   const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
   const flushedHead = head.length > 0 ? [] : head;
@@ -1911,6 +1951,8 @@ function applyCanonicalUserMessageEvent(params: {
     timelineCursor,
     text: normalized.chunk,
     timestamp,
+    inlineImages: event.item.images,
+    imageRefs: event.item.imageRefs,
   });
   if (unmatchedInsert === "head") {
     const reconciled = upsertUserMessageAcrossStream({

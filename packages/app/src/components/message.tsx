@@ -8,6 +8,7 @@ import {
   AttachmentFrame,
   AttachmentLabel,
   AttachmentThumbnail,
+  AttachmentUriThumbnail,
 } from "@/components/attachment-pill";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -32,7 +33,14 @@ import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentTimelineImage,
+  AgentTimelineImageReference,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
+import { useQuery } from "@tanstack/react-query";
+import { Buffer } from "buffer";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -100,6 +108,8 @@ interface UserMessageProps {
   messageId?: string;
   message: string;
   images?: UserMessageImageAttachment[];
+  inlineImages?: AgentTimelineImage[];
+  imageRefs?: AgentTimelineImageReference[];
   attachments?: AgentAttachment[];
   timestamp: number;
   capabilities?: AgentCapabilityFlags;
@@ -390,7 +400,131 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+function UserMessageInlineImagePill({
+  uri,
+  onOpen,
+  accessibilityLabel,
+}: {
+  uri: string;
+  onOpen: (source: ImageLightboxSource) => void;
+  accessibilityLabel: string;
+}) {
+  const handlePress = useCallback(() => onOpen({ type: "uri", uri }), [onOpen, uri]);
+  return (
+    <AttachmentFrame
+      onPress={handlePress}
+      accessibilityLabel={accessibilityLabel}
+      testID="user-message-image"
+    >
+      <AttachmentUriThumbnail uri={uri} />
+    </AttachmentFrame>
+  );
+}
+
+function UserMessageReferencedImagePill({
+  image,
+  agentId,
+  serverId,
+  client,
+  onOpen,
+}: {
+  image: AgentTimelineImageReference;
+  agentId?: string;
+  serverId?: string;
+  client?: DaemonClient | null;
+  onOpen: (source: ImageLightboxSource) => void;
+}) {
+  const { t } = useTranslation();
+  const active = useRetainedPanelActive();
+  const query = useQuery({
+    queryKey: ["timeline-image", serverId, agentId, image.id, image.mimeType, image.size],
+    enabled: active && Boolean(client && agentId),
+    staleTime: Infinity,
+    queryFn: async () => {
+      if (!client || !agentId) throw new Error("Timeline image host is unavailable");
+      const bytes = await client.readTimelineImage(agentId, image.id);
+      if (bytes.byteLength !== image.size) throw new Error("Timeline image size mismatch");
+      return `data:${image.mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
+    },
+  });
+  if (query.data) {
+    return (
+      <UserMessageInlineImagePill
+        uri={query.data}
+        onOpen={onOpen}
+        accessibilityLabel={t("composer.attachments.openImage")}
+      />
+    );
+  }
+  return (
+    <AttachmentFrame>
+      <AttachmentLabel
+        title={
+          query.isError || !client || !agentId
+            ? t("message.attachments.imageLoadFailed")
+            : t("common.loading")
+        }
+        subtitle=""
+      />
+    </AttachmentFrame>
+  );
+}
+
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
+
+function UserMessageImagePreviews({
+  imageRefs,
+  inlinePreviews,
+  images,
+  agentId,
+  serverId,
+  client,
+  onOpen,
+  onOpenAttachment,
+  label,
+}: {
+  imageRefs: AgentTimelineImageReference[];
+  inlinePreviews: { id: string; uri: string }[];
+  images: UserMessageImageAttachment[];
+  agentId?: string;
+  serverId?: string;
+  client?: DaemonClient | null;
+  onOpen: (source: ImageLightboxSource) => void;
+  onOpenAttachment: (image: UserMessageImageAttachment) => void;
+  label: string;
+}) {
+  if (imageRefs.length) {
+    const previews = imageRefs.map((image, index) => ({ image, key: `${image.id}-${index}` }));
+    return previews.map(({ image, key }) => (
+      <UserMessageReferencedImagePill
+        key={key}
+        image={image}
+        agentId={agentId}
+        serverId={serverId}
+        client={client}
+        onOpen={onOpen}
+      />
+    ));
+  }
+  if (inlinePreviews.length) {
+    return inlinePreviews.map((preview) => (
+      <UserMessageInlineImagePill
+        key={preview.id}
+        uri={preview.uri}
+        onOpen={onOpen}
+        accessibilityLabel={label}
+      />
+    ));
+  }
+  return images.map((image) => (
+    <UserMessageImagePill
+      key={image.id}
+      image={image}
+      onOpen={onOpenAttachment}
+      accessibilityLabel={label}
+    />
+  ));
+}
 
 export const UserMessage = memo(function UserMessage({
   itemId,
@@ -400,6 +534,8 @@ export const UserMessage = memo(function UserMessage({
   messageId,
   message,
   images = [],
+  inlineImages = [],
+  imageRefs = [],
   attachments = [],
   timestamp,
   capabilities,
@@ -412,15 +548,22 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
-  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
-  const lightboxSource = useMemo<ImageLightboxSource | null>(
-    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
-    [lightboxMetadata],
+  const [lightboxSource, setLightboxSource] = useState<ImageLightboxSource | null>(null);
+  const handleLightboxClose = useCallback(() => setLightboxSource(null), []);
+  const handleOpenImage = useCallback((metadata: UserMessageImageAttachment) => {
+    setLightboxSource({ type: "attachment", metadata });
+  }, []);
+  const inlinePreviews = useMemo(
+    () =>
+      inlineImages.map((image, index) => ({
+        id: `image-${index}`,
+        uri: `data:${image.mimeType};base64,${image.data}`,
+      })),
+    [inlineImages],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
+  const hasImages = images.length + inlinePreviews.length + imageRefs.length > 0;
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
@@ -486,14 +629,17 @@ export const UserMessage = memo(function UserMessage({
           <MessagePreview itemId={itemId}>
             {hasImages ? (
               <View style={imagePreviewContainerStyle}>
-                {images.map((image) => (
-                  <UserMessageImagePill
-                    key={image.id}
-                    image={image}
-                    onOpen={setLightboxMetadata}
-                    accessibilityLabel={t("composer.attachments.openImage")}
-                  />
-                ))}
+                <UserMessageImagePreviews
+                  imageRefs={imageRefs}
+                  inlinePreviews={inlinePreviews}
+                  images={images}
+                  agentId={agentId}
+                  serverId={serverId}
+                  client={client}
+                  onOpen={setLightboxSource}
+                  onOpenAttachment={handleOpenImage}
+                  label={t("composer.attachments.openImage")}
+                />
               </View>
             ) : null}
             {hasAttachments ? (

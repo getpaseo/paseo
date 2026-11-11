@@ -4,6 +4,8 @@ import type {
   AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
+  AgentTimelineImage,
+  AgentTimelineImageReference,
   JsonValue,
   ProviderOptions,
   ToolPolicy,
@@ -398,7 +400,14 @@ export interface PluginTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: AgentTimelineImage[];
+      imageRefs?: AgentTimelineImageReference[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

@@ -414,6 +414,37 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it.each([true, false])("keeps submitted OMP attachments private with cwd=%s", (includeCwd) => {
+    const submittedUserMessages = {
+      native: {
+        clientMessageId: "client-image",
+        images: [
+          { data: "first-original", mimeType: "image/png" },
+          { data: "second-original", mimeType: "image/webp" },
+        ],
+      },
+    };
+    const metadata = { ...(includeCwd ? { cwd: "/tmp/project" } : {}), submittedUserMessages };
+    const agent = createManagedAgent({
+      provider: "omp",
+      config: { provider: "omp" },
+      persistence: { provider: "omp", sessionId: "images", metadata },
+    });
+    const record = toStoredAgentRecord(agent);
+    expect(record.persistence?.metadata).toEqual(metadata);
+    expect(agent.persistence?.metadata).toEqual(metadata);
+    const wireHandle = {
+      provider: "omp",
+      sessionId: "images",
+      ...(includeCwd ? { metadata: { cwd: "/tmp/project" } } : {}),
+    };
+    expect(toAgentPayload(agent).persistence).toEqual(wireHandle);
+    expect(buildStoredAgentPayload(record, ["omp"], ownOptionsOnly).persistence).toEqual(
+      wireHandle,
+    );
+    expect(record.persistence?.metadata?.submittedUserMessages).toEqual(submittedUserMessages);
+  });
+
   it("projects a closed agent's stored controls and options", () => {
     const controls: AgentOptionControl[] = [
       {
