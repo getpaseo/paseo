@@ -277,6 +277,52 @@
   font-size: 0.875em;
 }
 
+.changelog-all-changes {
+  margin-top: 1rem;
+}
+
+.changelog-all-changes-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.changelog-all-changes-summary::-webkit-details-marker {
+  display: none;
+}
+
+.changelog-all-changes-summary::before {
+  content: "+";
+  color: rgba(255, 255, 255, 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.changelog-all-changes-summary:hover {
+  color: var(--color-foreground);
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary::before {
+  content: "−";
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary {
+  margin-bottom: 1.25rem;
+}
+
+.changelog-all-changes-hide,
+.changelog-all-changes[open] .changelog-all-changes-show {
+  display: none;
+}
+
+.changelog-all-changes[open] .changelog-all-changes-hide {
+  display: inline;
+}
+
 /* Docs page prose styles — mirrors the original docs/*.tsx components */
 .docs-prose {
   color: rgba(255, 255, 255, 0.6);
