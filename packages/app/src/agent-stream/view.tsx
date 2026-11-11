@@ -1052,7 +1052,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const [timelineFooterHeight, setTimelineFooterHeight] = useState(0);
     const scrollToBottomOffset = resolveBottomOverlayControlOffset(
       bottomOverlayControlClearance,
-      timelineFooterHeight,
+      timelineFooterHeight > 0 ? timelineFooterHeight + bottomOverlayTailClearance : 0,
     );
     const listEmptyComponent = useMemo(
       () =>

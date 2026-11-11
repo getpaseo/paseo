@@ -74,6 +74,19 @@ export default function contribute(server) {
   return () => {};
 }`;
 
+async function runEachCleanup(steps: Array<() => Promise<unknown>>): Promise<void> {
+  const errors: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Footer plugin cleanup failed");
+}
+
 export async function withTimelineFooterPlugin(
   page: Page,
   info: TestInfo,
@@ -95,6 +108,8 @@ export async function withTimelineFooterPlugin(
   });
   const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "footer-plugin" });
   const previous = await client.getDaemonConfig();
+  let installed = false;
+  let failed = false;
   try {
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await writeFile(
@@ -105,16 +120,27 @@ export async function withTimelineFooterPlugin(
     await writeFile(path.join(directory, "index.server.ts"), serverSource);
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
+    installed = true;
     await client.invokePluginRpc(FOOTER_PLUGIN_ID, "seed", { agentId: agent.agentId });
     await openAgentRoute(page, agent);
     await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
     await run(agent);
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await client.removePlugin(FOOTER_PLUGIN_ID);
-    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false });
-    await client.close();
-    await agent.cleanup();
-    await rm(directory, { recursive: true, force: true });
+    // Every step runs, and a cleanup failure never hides the test's own error.
+    await runEachCleanup([
+      async () => {
+        if (installed) await client.removePlugin(FOOTER_PLUGIN_ID);
+      },
+      () => client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false }),
+      () => client.close(),
+      () => agent.cleanup(),
+      () => rm(directory, { recursive: true, force: true }),
+    ]).catch((error: unknown) => {
+      if (!failed) throw error;
+    });
   }
 }
 

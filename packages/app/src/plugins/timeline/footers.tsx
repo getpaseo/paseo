@@ -49,39 +49,35 @@ interface TimelineFootersProps {
   serverId: string;
   theme: PluginTheme;
   bottomOverlayClearance?: number;
-  /** Space the panel takes from the bottom of the chat, margin included; 0 when nothing is pinned. */
+  /** Height of the pinned panel, without the clearance below it; 0 when nothing is pinned. */
   onHeightChange?: (height: number) => void;
 }
 
-function TimelineFooters({
+interface PinnedFooter {
+  plugin: InstalledPlugin;
+  footer: PluginTimelineFooterContribution;
+}
+
+function FooterPanel({
+  footers,
   agentId,
-  serverId,
   theme,
   bottomOverlayClearance = 0,
   onHeightChange,
-}: TimelineFootersProps) {
+}: Omit<TimelineFootersProps, "serverId"> & { footers: PinnedFooter[] }) {
   const [contentHeight, setContentHeight] = useState(0);
-  const [panelHeight, setPanelHeight] = useState(0);
   const handleContentLayout = useCallback((event: LayoutChangeEvent) => {
     setContentHeight(event.nativeEvent.layout.height);
   }, []);
-  const handlePanelLayout = useCallback((event: LayoutChangeEvent) => {
-    setPanelHeight(event.nativeEvent.layout.height);
-  }, []);
-  const plugins = useInstalledPlugins();
-  const footers = plugins
-    .filter((plugin) => plugin.serverId === serverId)
-    .flatMap((plugin) => plugin.timelineFooters.map((footer) => ({ plugin, footer })));
-  const marginBottom = contentHeight > 0 ? bottomOverlayClearance : 0;
-  const occupied = footers.length > 0 && contentHeight > 0 ? panelHeight + marginBottom : 0;
-  useEffect(() => {
-    onHeightChange?.(occupied);
-  }, [occupied, onHeightChange]);
+  const handlePanelLayout = useCallback(
+    (event: LayoutChangeEvent) => onHeightChange?.(event.nativeEvent.layout.height),
+    [onHeightChange],
+  );
+  // The panel unmounts when the last footer goes; nothing pinned takes no space.
   useEffect(() => () => onHeightChange?.(0), [onHeightChange]);
-  if (footers.length === 0) return null;
   return (
     <ScrollView
-      style={[styles.footer, { marginBottom }]}
+      style={[styles.footer, { marginBottom: contentHeight > 0 ? bottomOverlayClearance : 0 }]}
       onLayout={handlePanelLayout}
       keyboardShouldPersistTaps="handled"
       testID="plugin-timeline-footer"
@@ -99,6 +95,15 @@ function TimelineFooters({
       </View>
     </ScrollView>
   );
+}
+
+function TimelineFooters({ serverId, ...panel }: TimelineFootersProps) {
+  const plugins = useInstalledPlugins();
+  const footers = plugins
+    .filter((plugin) => plugin.serverId === serverId)
+    .flatMap((plugin) => plugin.timelineFooters.map((footer) => ({ plugin, footer })));
+  if (footers.length === 0) return null;
+  return <FooterPanel footers={footers} {...panel} />;
 }
 
 export const PluginTimelineFooters = withUnistyles(TimelineFooters, (theme) => ({
