@@ -8,11 +8,14 @@ import {
   expectManagedSubagentArchived,
   expectManagedSubagentUnarchived,
   expectSubagentRowGone,
+  expectSubagentRowsInOrder,
   expectSubagentRowVisible,
+  expectSubagentsWorkingSummary,
   holdManagedSubagentArchiveRequest,
   openSubagentsTrack,
   rejectNextManagedSubagentArchiveRequest,
   seedParentWithSubagent,
+  seedSubagentFanOut,
 } from "../support/helpers/subagents";
 
 test.describe("Archive finished subagents", () => {
@@ -25,6 +28,30 @@ test.describe("Archive finished subagents", () => {
   test.afterAll(async () => {
     await workspace?.cleanup();
   });
+
+  for (const width of [1280, 390]) {
+    test(`shows running children before finished history at width ${width}`, async ({ page }) => {
+      const finishedTitles = Array.from(
+        { length: 12 },
+        (_, index) => `Finished child ${index + 1}`,
+      );
+      const runningTitles = ["Running child 1", "Running child 2"];
+      await page.setViewportSize({ width, height: 900 });
+      const agents = await seedSubagentFanOut(workspace, {
+        parentTitle: "Subagent ordering",
+        finishedTitles,
+        runningTitles,
+      });
+
+      await openAgentRoute(page, { workspaceId: agents.workspaceId, agentId: agents.parent.id });
+      await expectSubagentsWorkingSummary(page, runningTitles.length);
+      await openSubagentsTrack(page);
+      await expectSubagentRowsInOrder(page, {
+        leadingTitles: runningTitles,
+        finishedTitles,
+      });
+    });
+  }
 
   test("archives a finished managed child from the track", async ({ page }) => {
     const agents = await seedParentWithSubagent(workspace, {
