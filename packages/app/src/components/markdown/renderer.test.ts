@@ -15,6 +15,7 @@ import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
+import { htmlImageBox, splitHtmlImageBlocks } from "./html-image-blocks";
 
 it("recognizes complete known commands in inline code", () => {
   const names = new Set(["code-review", "review:fast"]);
@@ -779,6 +780,100 @@ describe("GitHub comment HTML normalization", () => {
   });
 });
 
+describe("HTML image blocks", () => {
+  // A README screenshot row; GitHub shows its cells side by side at the declared width.
+  const gallery = [
+    "<table>",
+    "  <tr>",
+    '    <td><img src="shots/one.png" width="120" alt="One"></td>',
+    '    <td><img src="shots/two.png" width="120" alt="Two"></td>',
+    "  </tr>",
+    "</table>",
+  ].join("\n");
+
+  it("lays out a README screenshot table as one row of images", () => {
+    expect(splitHtmlImageBlocks(`- Feature\n\n${gallery}\n\n## Next`)).toEqual([
+      { kind: "markdown", id: "0", source: "- Feature\n\n" },
+      {
+        kind: "images",
+        id: "1",
+        rows: [
+          {
+            id: "0",
+            align: "left",
+            images: [
+              { id: "0", src: "shots/one.png", alt: "One", width: 120 },
+              { id: "1", src: "shots/two.png", alt: "Two", width: 120 },
+            ],
+          },
+        ],
+      },
+      { kind: "markdown", id: "2", source: "\n\n## Next" },
+    ]);
+  });
+
+  it("keeps the alignment, links, and rows of a centered badge block", () => {
+    const badges = [
+      '<p align="center">',
+      '  <a href="https://example.com/ci"><img src="ci.svg" alt="CI"></a>&nbsp;',
+      '  <a href="docs/guide.md"><img src="docs.png" height="20px" alt="Docs"></a><br>',
+      '  <picture><source srcset="dark.png"><img src="light.png" width="64"></picture>',
+      "</p>",
+    ].join("\n");
+    expect(splitHtmlImageBlocks(badges)).toEqual([
+      {
+        kind: "images",
+        id: "0",
+        rows: [
+          {
+            id: "0",
+            align: "center",
+            images: [
+              { id: "0", src: "ci.svg", alt: "CI", href: "https://example.com/ci" },
+              { id: "1", src: "docs.png", alt: "Docs", href: "docs/guide.md", height: 20 },
+            ],
+          },
+          { id: "1", align: "center", images: [{ id: "0", src: "light.png", alt: "", width: 64 }] },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    ["text beside the images", '<div><img src="a.png"> Caption</div>'],
+    ["a heading", '<p align="center"><b>Title</b></p>'],
+    ["a collapsed section", '<details><summary>Shots</summary><img src="a.png"></details>'],
+    ["an image without a source", '<p><img alt="Missing"></p>'],
+    ["inline HTML in a paragraph", 'See <img src="a.png"> here'],
+    ["a table inside a list item", `- Shots\n\n${gallery.replace(/^/gm, "  ")}`],
+  ])("leaves %s to the Markdown engine", (_name, source) => {
+    expect(splitHtmlImageBlocks(source)).toEqual([{ kind: "markdown", id: "0", source }]);
+  });
+
+  it("gives every Markdown fragment the document's link definitions", () => {
+    const blocks = splitHtmlImageBlocks(
+      'See [guide].\n\n<p><img src="a.png"></p>\n\n[More][guide]\n\n[guide]: /docs/guide.md',
+    );
+    expect(blocks.map((block) => (block.kind === "markdown" ? block.source : "images"))).toEqual([
+      "[guide]: </docs/guide.md>\n\nSee [guide].\n\n",
+      "images",
+      "[guide]: </docs/guide.md>\n\n\n\n[More][guide]\n\n[guide]: /docs/guide.md",
+    ]);
+  });
+
+  it.each([
+    ["both dimensions", { width: 120, height: 60 }, { width: 200, height: 200 }, 120, 2],
+    ["a width", { width: 120 }, { width: 200, height: 100 }, 120, 2],
+    ["a width before decoding", { width: 120 }, undefined, 120, 1],
+    ["a height", { height: 20 }, { width: 100, height: 20 }, 100, 5],
+    ["no dimensions", {}, { width: 1600, height: 800 }, 640, 2],
+    ["no dimensions on a small image", {}, { width: 100, height: 50 }, 100, 2],
+    ["no dimensions before decoding", {}, undefined, 0, 1],
+  ])("sizes an image with %s", (_name, declared, natural, width, aspectRatio) => {
+    expect(htmlImageBox(declared, natural)).toEqual({ width, aspectRatio });
+  });
+});
+
 describe("indented HTML blocks", () => {
   // A README screenshot row: GitHub ignores the indentation of the nested tags.
   const gallery = [
@@ -946,7 +1041,7 @@ it("retries transient image decoding failures instead of caching an unavailable 
         else success(20, 20);
       }),
   });
-  expect(decoded).toBe(true);
+  expect(decoded).toEqual({ width: 20, height: 20 });
   expect(attempts).toBe(2);
   client.clear();
 });
