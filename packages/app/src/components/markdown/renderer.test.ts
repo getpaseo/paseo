@@ -1230,3 +1230,24 @@ it.each([
   }
   expect(list?.children?.flatMap(descendants).map((node) => node.type)).toContain(expectedType);
 });
+
+it.each(['<img src="literal.png">', "<b>literal</b>"])(
+  "keeps quoted HTML code literal inside details: %s",
+  async (literal) => {
+    const source = [
+      "<details>",
+      "- a",
+      "  > quoted",
+      "  >",
+      `  >     ${literal}`,
+      "</details>",
+    ].join("\n");
+    const prepared = prepareMarkdownSource(source);
+    const tree = await parseMarkdown(prepared.render(), { hardSoftBreaks: true, latexMath: false });
+    function descendants(node: ASTNode): ASTNode[] {
+      return [node, ...(node.children ?? []).flatMap(descendants)];
+    }
+    expect(descendants(tree).filter((node) => node.type === "CodeBlock")).toHaveLength(1);
+    expect(prepared.render()).toContain(`    ${literal}`);
+  },
+);
