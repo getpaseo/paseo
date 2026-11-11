@@ -1,6 +1,8 @@
 import { mkdir, rename, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,6 +36,58 @@ async function commitAll(repository: string, message: string): Promise<string> {
   await runGitCommand(["commit", "-m", message], { cwd: repository });
   const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
   return stdout.trim();
+}
+
+async function serveGitHttp(request: IncomingMessage, response: ServerResponse, root: string) {
+  const url = new URL(request.url!, "http://localhost");
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  const body = Buffer.concat(chunks);
+  const child = spawn("git", ["http-backend"], {
+    env: {
+      ...process.env,
+      GIT_PROJECT_ROOT: root,
+      GIT_HTTP_EXPORT_ALL: "1",
+      PATH_INFO: url.pathname,
+      QUERY_STRING: url.search.slice(1),
+      REQUEST_METHOD: request.method,
+      CONTENT_TYPE: request.headers["content-type"],
+      CONTENT_LENGTH: String(body.length),
+      HTTP_GIT_PROTOCOL: request.headers["git-protocol"] as string | undefined,
+    },
+  });
+  const closed = once(child, "close");
+  child.stdin.end(body);
+  const output: Buffer[] = [];
+  for await (const chunk of child.stdout) output.push(chunk as Buffer);
+  const [code] = await closed;
+  const data = Buffer.concat(output);
+  const end = data.indexOf("\r\n\r\n");
+  if (code !== 0 || end < 0) throw new Error("git http-backend failed");
+  for (const line of data.subarray(0, end).toString().split("\r\n")) {
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const name = line.slice(0, colon);
+    const value = line.slice(colon + 1).trim();
+    if (name.toLowerCase() === "status") response.statusCode = Number(value.slice(0, 3));
+    else response.setHeader(name, value);
+  }
+  response.end(data.subarray(end + 4));
+}
+
+function createGitFixtureServer(root: string, posts: string[]) {
+  return createServer((request, response) => {
+    if (
+      request.headers.authorization !==
+      `Basic ${Buffer.from("fixture:fake-secret").toString("base64")}`
+    ) {
+      response.writeHead(401, { "WWW-Authenticate": 'Basic realm="fixture"' }).end();
+      return;
+    }
+    const url = new URL(request.url!, "http://localhost");
+    if (request.method === "POST") posts.push(url.pathname);
+    void serveGitHttp(request, response, root).catch(() => response.writeHead(500).end());
+  });
 }
 
 /** Points https://github.com/fixture/repository.git at a local repository for the callback. */
@@ -116,6 +170,62 @@ describe("managed Git plugin sources", () => {
       { cwd: checkoutRoot.trim() },
     );
     expect(missing.split("\n")).toContain(`?${historyBlob.trim()}`);
+  }, 30_000);
+
+  it("fetches filtered checkout blobs for credentialed Git installs and updates", async () => {
+    const repository = await createRepository();
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-plugin-smart-http-"));
+    roots.push(root);
+    await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
+    const bare = path.join(root, "plugin.git");
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: bare });
+    const posts: string[] = [];
+    const server = createGitFixtureServer(root, posts);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-filter-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'credential.helper='"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/plugin.git`;
+      const sources = new ManagedPluginSources(home);
+      let candidate = await sources.prepareInstall({ source: remote });
+      candidate = await sources.place("managed-example", candidate);
+      sources.commit("managed-example", candidate.record);
+      expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+        "export default",
+      );
+      expect(posts.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(posts)).toEqual(new Set(["/plugin.git/git-upload-pack"]));
+      const installFetches = posts.length;
+      const config = await readFile(path.join(candidate.directory, ".git", "config"), "utf8");
+      expect(config).not.toMatch(/fixture:fake-secret/);
+      expect(config).toContain("https://paseo.invalid/plugin.git");
+      expect(config).toContain("partialclonefilter = blob:none");
+
+      await writeFile(
+        path.join(repository, "index.server.ts"),
+        "export default () => 'updated';\n",
+      );
+      const revision = await commitAll(repository, "update");
+      await runGitCommand(["push", bare, "main"], { cwd: repository });
+      const preview = await sources.preview("managed-example", candidate.directory);
+      expect(preview.target).toEqual({ kind: "git", commit: revision });
+      const updated = await sources.prepareUpdate(preview.proposal!, candidate.directory);
+      expect(await readFile(path.join(updated.directory, "index.server.ts"), "utf8")).toContain(
+        "updated",
+      );
+      expect(posts.length - installFetches).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   }, 30_000);
 
   it("offers current default HEAD after installing a tag", async () => {
