@@ -179,6 +179,14 @@ export declare const Loading: ComponentType;
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
 
+/** Host-owned fork menu for the completed assistant row being rendered. */
+export interface ForkMenuProps {
+  testID?: string;
+}
+
+/** Renders nothing outside an eligible timeline renderer, including read-only views. */
+export declare const ForkMenu: ComponentType<ForkMenuProps>;
+
 export interface MarkdownProps {
   children: string;
 }
