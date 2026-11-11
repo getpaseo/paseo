@@ -433,6 +433,8 @@ export interface PaseoAgentHandle {
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
+  /** Removes the agent's durable record and state without deleting its workspace files. */
+  delete(): Promise<void>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
@@ -1109,6 +1111,10 @@ function createAgentHandleFactory(
           current = { ...current, archivedAt: result.archivedAt };
         }
         return result;
+      },
+      delete: async () => {
+        await daemonClient.deleteAgent(id);
+        current = null;
       },
       detach: async () => {
         await daemonClient.detachAgent(id);
