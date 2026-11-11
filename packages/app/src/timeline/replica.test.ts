@@ -617,6 +617,10 @@ describe("conversation rewind through the owner", () => {
     return texts([...tail, ...(session?.agentStreamHead.get(AGENT_ID) ?? [])]);
   }
 
+  function latestRewind() {
+    return useSessionStore.getState().sessions[SERVER_ID]?.agentTimelineLatestRewind.get(AGENT_ID);
+  }
+
   it("retires B from the viewed and persisted timeline without refetching", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     const commits: CachedTimeline[] = [];
@@ -658,6 +662,7 @@ describe("conversation rewind through the owner", () => {
     expect(viewed()).toEqual(["A", "reply A", "C"]);
     expect(texts(commits.at(-1)?.items ?? [])).toEqual(["A", "reply A", "C"]);
     expect(commits.at(-1)?.range).toMatchObject({ epoch: "epoch-1", endSeq: 6 });
+    expect(latestRewind()).toEqual({ epoch: "epoch-1", seq: 5 });
     owner.dispose();
   });
 
@@ -679,6 +684,7 @@ describe("conversation rewind through the owner", () => {
     });
 
     expect(viewed()).toEqual(["A", "reply A", "C"]);
+    expect(latestRewind()).toEqual({ epoch: "epoch-1", seq: 5 });
     owner.dispose();
   });
 

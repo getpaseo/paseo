@@ -55,7 +55,7 @@ it("loads an older location and searches a response merged across suppressed tas
     },
     async load(_epoch, seq) {
       loaded.push(seq);
-      model.updateHistory("epoch", history);
+      model.updateHistory("epoch", history, null);
     },
     async reveal(_id, _query, occurrence) {
       revealed.push(occurrence);
@@ -64,7 +64,7 @@ it("loads an older location and searches a response merged across suppressed tas
     clear() {},
   });
   try {
-    model.updateHistory("epoch", []);
+    model.updateHistory("epoch", [], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
@@ -99,7 +99,7 @@ it("skips a source-only candidate and highlights a displayed match", async () =>
     clear() {},
   });
   try {
-    model.updateHistory("epoch", [message(1), message(2)]);
+    model.updateHistory("epoch", [message(1), message(2)], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().selectedItemId).toBe("row-2");
@@ -129,7 +129,7 @@ it("ignores replies after closing and does not navigate", async () => {
     },
     clear() {},
   });
-  model.updateHistory("epoch", [message(1)]);
+  model.updateHistory("epoch", [message(1)], null);
   model.open();
   model.setQuery("target");
   await expect.poll(() => calls).toEqual(["search"]);
@@ -155,7 +155,7 @@ it("retains a failed search for retry and distinguishes failure from zero matche
   };
   const model = new ChatFindModel(operations);
   try {
-    model.updateHistory("epoch", []);
+    model.updateHistory("epoch", [], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("error");
@@ -185,7 +185,7 @@ it("reports a failed timeline load as a connection failure", async () => {
     clear() {},
   });
   try {
-    model.updateHistory("epoch", []);
+    model.updateHistory("epoch", [], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("error");
@@ -207,12 +207,75 @@ it("reports a search result that outlived its epoch as a changed history", async
     clear() {},
   });
   try {
-    model.updateHistory("epoch", [message(1)]);
+    model.updateHistory("epoch", [message(1)], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
-    model.updateHistory("epoch-2", [message(1)]);
+    model.updateHistory("epoch-2", [message(1)], null);
     expect(model.getSnapshot()).toMatchObject({ phase: "error", failure: "historyChanged" });
+  } finally {
+    model.close();
+  }
+});
+
+it("reports results that a rewind took messages from as a changed history", async () => {
+  const model = new ChatFindModel({
+    async search() {
+      return response([{ seq: 2, role: "assistant" }]);
+    },
+    async load() {},
+    async reveal() {
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", [message(1), message(2)], null);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    expect(model.getSnapshot()).toMatchObject({ selectedItemId: "row-2", count: 1 });
+    // Another client rewinds the turn holding the match; the epoch stays.
+    model.updateHistory("epoch", [message(1)], 3);
+    expect(model.getSnapshot()).toMatchObject({
+      phase: "error",
+      failure: "historyChanged",
+      selectedItemId: null,
+    });
+  } finally {
+    model.close();
+  }
+});
+
+it("stops a search still receiving pages when a rewind lands between them", async () => {
+  let pages = 0;
+  let releaseSecondPage!: () => void;
+  const secondPage = new Promise<void>((resolve) => {
+    releaseSecondPage = resolve;
+  });
+  const model = new ChatFindModel({
+    async search(_query, cursor) {
+      pages += 1;
+      if (cursor === undefined)
+        return { ...response([{ seq: 2, role: "assistant" }]), nextCursor: 2 };
+      await secondPage;
+      return response([{ seq: 1, role: "assistant" }]);
+    },
+    async load() {},
+    async reveal() {
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", [message(1), message(2)], null);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => pages).toBe(2);
+    model.updateHistory("epoch", [message(1)], 3);
+    releaseSecondPage();
+    await expect.poll(() => model.getSnapshot().failure).toBe("historyChanged");
+    expect(model.getSnapshot()).toMatchObject({ phase: "error", selectedItemId: null });
   } finally {
     model.close();
   }
@@ -224,7 +287,7 @@ it("can load a search location before the initial chat history has arrived", asy
       return response([{ seq: 1, role: "assistant" }]);
     },
     async load() {
-      model.updateHistory("epoch", [message(1)]);
+      model.updateHistory("epoch", [message(1)], null);
     },
     async reveal() {
       return { count: 1, occurrence: 0 };
@@ -232,7 +295,7 @@ it("can load a search location before the initial chat history has arrived", asy
     clear() {},
   });
   try {
-    model.updateHistory(null, []);
+    model.updateHistory(null, [], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
@@ -260,7 +323,7 @@ it("reports the position across the whole chat and corrects it with rendered cou
     clear() {},
   });
   try {
-    model.updateHistory("epoch", [message(1), message(2)]);
+    model.updateHistory("epoch", [message(1), message(2)], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
@@ -297,7 +360,7 @@ it("counts one match per message from a host that reports no counts", async () =
     clear() {},
   });
   try {
-    model.updateHistory("epoch", [message(1), message(2)]);
+    model.updateHistory("epoch", [message(1), message(2)], null);
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");

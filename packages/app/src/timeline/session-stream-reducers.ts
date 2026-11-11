@@ -2038,6 +2038,10 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
+      for (const { event, seq, epoch } of events) {
+        if (event.type !== "rewind" || seq === undefined || epoch === undefined) continue;
+        useSessionStore.getState().recordAgentTimelineRewind(serverId, agentId, { epoch, seq });
+      }
       if (
         result.changedTail ||
         result.changedHead ||

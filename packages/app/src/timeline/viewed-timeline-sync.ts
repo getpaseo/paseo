@@ -236,6 +236,13 @@ function commitProcessedTimeline(input: {
   const agentId = payload.agentId;
   const store = useSessionStore.getState();
   if (result.commit !== "discard") {
+    const latestRewindSeq = Math.max(...(payload.retirements ?? []).map(({ seq }) => seq));
+    if (Number.isFinite(latestRewindSeq)) {
+      store.recordAgentTimelineRewind(serverId, agentId, {
+        epoch: payload.epoch,
+        seq: latestRewindSeq,
+      });
+    }
     store.applyAgentTimelineResponseState(serverId, agentId, {
       items: result.tail,
       head: result.head,

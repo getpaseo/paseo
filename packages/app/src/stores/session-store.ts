@@ -316,6 +316,12 @@ export interface AgentTimelineCursorState {
   }>;
 }
 
+/** The latest conversation rewind applied to an agent's history, by its sequence number. */
+export interface AgentTimelineRewind {
+  epoch: string;
+  seq: number;
+}
+
 export type AgentTimelineState =
   | { status: "cold" }
   | { status: "painted"; items: StreamItem[] }
@@ -490,6 +496,7 @@ export interface SessionState {
   agentTimelineUnsettledTurn: Map<string, UnsettledTurn>;
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineHasNewer: Map<string, boolean>;
+  agentTimelineLatestRewind: Map<string, AgentTimelineRewind>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
   historySyncGeneration: number;
   agentHistorySyncGeneration: Map<string, number>;
@@ -608,6 +615,12 @@ interface SessionStoreActions {
   setAgentTimelineHasNewer: (
     serverId: string,
     state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
+  ) => void;
+  /** Records a rewind applied to the agent's history; an older one of the same history is ignored. */
+  recordAgentTimelineRewind: (
+    serverId: string,
+    agentId: string,
+    rewind: AgentTimelineRewind,
   ) => void;
   setAgentTimelineOlderFetchInFlight: (
     serverId: string,
@@ -745,6 +758,7 @@ function createInitialSessionState(
     agentTimelineUnsettledTurn: new Map(),
     agentTimelineHasOlder: new Map(),
     agentTimelineHasNewer: new Map(),
+    agentTimelineLatestRewind: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
     historySyncGeneration: 0,
     agentHistorySyncGeneration: new Map(),
@@ -1381,6 +1395,24 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, agentTimelineHasNewer: nextState },
+            },
+          };
+        });
+      },
+
+      recordAgentTimelineRewind: (serverId, agentId, rewind) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const current = session.agentTimelineLatestRewind.get(agentId);
+          if (current && current.epoch === rewind.epoch && current.seq >= rewind.seq) return prev;
+          const next = new Map(session.agentTimelineLatestRewind);
+          next.set(agentId, rewind);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineLatestRewind: next },
             },
           };
         });
