@@ -681,6 +681,10 @@ about.
 ### Added
 ```
 
+- **Rank by what a user gains.** Changes the maintainer named as the headline lead, in the order
+  given. After those, a capability that did not exist before comes ahead of one that got faster or
+  steadier. Reread the bold words top to bottom before shipping: if the order matches the order you
+  collected the pull requests in, or the alphabet, it has not been ranked.
 - **The lead-in names what is new in four words at most.** Bold it, colon inside the bold. A reader
   who sees only the bold words should know what this release added or changed. A category lead-in
   such as `**Polish:**` gathers several related changes.
