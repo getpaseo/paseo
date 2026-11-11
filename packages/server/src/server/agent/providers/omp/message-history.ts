@@ -1,5 +1,11 @@
+import { questionToolMetadata } from "../question-metadata.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
-import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import type {
+  AgentMetadata,
+  AgentStreamEvent,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
@@ -192,6 +198,9 @@ export class OmpHistoryMapper {
         if (!detail) {
           continue;
         }
+        const questionMetadata = this.bridgedTools.has(tracked.toolName)
+          ? undefined
+          : questionToolMetadata({ toolName: tracked.toolName, args: tracked.args, result: null });
         events.push({
           type: "timeline",
           provider: this.provider,
@@ -201,6 +210,7 @@ export class OmpHistoryMapper {
             name: this.toolName(tracked, null),
             status: "running",
             detail,
+            ...(questionMetadata ? { metadata: questionMetadata } : {}),
             error: null,
           },
         });
@@ -228,6 +238,9 @@ export class OmpHistoryMapper {
         name: this.toolName(tracked, result),
         isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
         detail,
+        metadata: this.bridgedTools.has(tracked.toolName)
+          ? undefined
+          : questionToolMetadata({ toolName: tracked.toolName, args: tracked.args, result }),
         errorText: toolFailureMessage(result),
       }),
     };
@@ -300,6 +313,7 @@ function toToolResultTimelineItem(input: {
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
+  metadata?: AgentMetadata;
 }): AgentTimelineItem {
   if (input.isError) {
     return {
@@ -308,6 +322,7 @@ function toToolResultTimelineItem(input: {
       name: input.name,
       status: "failed",
       detail: input.detail,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
       error: input.errorText,
     };
   }
@@ -317,6 +332,7 @@ function toToolResultTimelineItem(input: {
     name: input.name,
     status: "completed",
     detail: input.detail,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
     error: null,
   };
 }

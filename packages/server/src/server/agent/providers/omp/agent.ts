@@ -1,4 +1,5 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { questionToolMetadata } from "../question-metadata.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -2164,6 +2165,9 @@ export class OmpAgentSession implements AgentSession {
       return false;
     }
     const bridgedTool = this.hostTools?.bridge?.tool(toolCall.toolName);
+    const questionMetadata = bridgedTool
+      ? undefined
+      : questionToolMetadata({ toolName: toolCall.toolName, args: toolCall.args, result });
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
@@ -2171,6 +2175,7 @@ export class OmpAgentSession implements AgentSession {
         ? `${bridgedTool.server} / ${bridgedTool.tool}`
         : resolveToolCallName(toolCall, result),
       detail,
+      ...(questionMetadata ? { metadata: questionMetadata } : {}),
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
