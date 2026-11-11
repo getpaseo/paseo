@@ -99,6 +99,18 @@ import {
 import { codexAppServerStartup } from "./codex/app-server-startup.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
+  LUNA_RESERVE_CONTINUE_PROMPT,
+  LUNA_RESERVE_MODEL,
+  LUNA_RESERVE_RATE_LIMITS_PARAMS,
+  type CodexAccountRateLimits,
+  isCodexUsageLimitError,
+  isLunaReserveContinuation,
+  lunaReserveContinuationClientId,
+  lunaReserveCovers,
+  ordinaryUsageRecovered,
+  parseCodexAccountRateLimits,
+} from "./codex/luna-reserve.js";
+import {
   type CodexHistoryRow,
   CodexThreadHistoryTooLargeError,
   readCodexThreadHistory,
@@ -2314,6 +2326,7 @@ const TurnCompletedNotificationSchema = z
         error: z
           .object({
             message: z.string().optional(),
+            codexErrorInfo: z.unknown().optional(),
           })
           .passthrough()
           .nullable()
@@ -2603,6 +2616,7 @@ type ParsedCodexNotification =
       kind: "turn_completed";
       status: string;
       errorMessage: string | null;
+      codexErrorInfo?: unknown;
       threadId: string | null;
     }
   | {
@@ -2755,6 +2769,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
+        codexErrorInfo: params.turn.error?.codexErrorInfo,
         threadId: params.threadId ?? null,
       }),
     ),
@@ -3537,6 +3552,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  private activeForegroundRunOptions: AgentRunOptions | undefined;
+  /** The model Luna Reserve stands in for, while the account's ordinary usage is used up. */
+  private lunaReserveFor: string | null = null;
+  /** Counts Stop requests, so a Luna Reserve continuation can tell one arrived meanwhile. */
+  private interruptRequests = 0;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   /** The tier the options ask for; `serviceTier` is what the current model can honor. */
   private requestedServiceTier: string | null = null;
@@ -4132,7 +4152,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
     }
     this.historyIndexed = true;
-    return { timeline, providerSubagentEvents };
+    return {
+      timeline: timeline.filter(
+        (entry) =>
+          entry.item.type !== "user_message" ||
+          !isLunaReserveContinuation(entry.item.clientMessageId),
+      ),
+      providerSubagentEvents,
+    };
   }
 
   // Turns and rewind route by the thread's earlier turns and sub-agents. A resumed
@@ -4345,6 +4372,18 @@ export class CodexAppServerAgentSession implements AgentSession {
         settings: this.resolvedCollaborationMode.settings,
       };
     }
+    if (this.onLunaReserve()) {
+      // Both model fields name the turn's model. A Fast tier chosen for the agent's own
+      // model does not carry over to the reserve.
+      params.model = LUNA_RESERVE_MODEL;
+      params.serviceTier = "default";
+      if (this.resolvedCollaborationMode) {
+        params.collaborationMode = {
+          mode: this.resolvedCollaborationMode.mode,
+          settings: { ...this.resolvedCollaborationMode.settings, model: LUNA_RESERVE_MODEL },
+        };
+      }
+    }
     if (this.config.cwd) {
       params.cwd = this.config.cwd;
     }
@@ -4522,9 +4561,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.ensureThread();
       }
 
+      await this.leaveLunaReserveIfUsageRecovered();
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
+      this.activeForegroundRunOptions = options;
       this.activeClientMessageId = options?.clientMessageId ?? null;
       this.currentTurnId = null;
       this.pendingForegroundTurnIdentification?.resolve(null);
@@ -5160,6 +5201,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.interruptRequests += 1;
     const pendingStart = this.pendingForegroundStart;
     if (pendingStart) {
       pendingStart.cancelRequested = true;
@@ -5893,7 +5935,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.handleTurnStartedNotification(parsed);
         return;
       case "turn_completed":
-        this.handleTurnCompletedNotification(parsed);
+        await this.handleTurnCompletedNotification(parsed);
         return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
@@ -6511,9 +6553,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: current });
   }
 
-  private handleTurnCompletedNotification(
+  private async handleTurnCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
-  ): void {
+  ): Promise<void> {
     const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (subAgentCallId) {
       if (parsed.threadId) this.settleChildCompaction(parsed.threadId);
@@ -6532,7 +6574,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (parsed.status !== "interrupted" && this.currentTurnId) {
       this.terminalProcessIdsByTurnId.delete(this.currentTurnId);
     }
-    if (parsed.status === "failed") {
+    const reserve = parsed.status === "failed" ? await this.continueOnLunaReserve(parsed) : null;
+    if (reserve === "continued") {
+      return;
+    }
+    if (reserve === "stopped") {
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } else if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
@@ -6558,6 +6606,109 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification = null;
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.resetTurnTrackingState();
+  }
+
+  private onLunaReserve(): boolean {
+    return this.lunaReserveFor !== null && this.lunaReserveFor === this.config.model;
+  }
+
+  private async readAccountRateLimits(): Promise<CodexAccountRateLimits | null> {
+    if (!this.client) return null;
+    try {
+      return parseCodexAccountRateLimits(
+        await this.client.request("account/rateLimits/read", LUNA_RESERVE_RATE_LIMITS_PARAMS),
+      );
+    } catch (error) {
+      this.logger.warn({ err: error }, "Could not read the Codex account's rate limits");
+      return null;
+    }
+  }
+
+  private emitLunaReserveNotice(message: string): void {
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: { type: "notification", level: "info", message },
+    });
+  }
+
+  /**
+   * When a turn on the reserve's own model fails because ordinary usage is used up, and the
+   * account offers Luna Reserve, run the rest of the same turn on the reserve. "reported"
+   * leaves the failure to the caller; "stopped" means the user stopped the turn meanwhile.
+   */
+  private async continueOnLunaReserve(
+    parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
+  ): Promise<"continued" | "stopped" | "reported"> {
+    const model = this.config.model;
+    const foregroundTurnId = this.activeForegroundTurnId;
+    const client = this.client;
+    if (
+      !isCodexUsageLimitError(parsed.codexErrorInfo) ||
+      !model ||
+      this.onLunaReserve() ||
+      !foregroundTurnId ||
+      !client
+    ) {
+      return "reported";
+    }
+    // From here a Stop belongs to the turn that may follow, not to the one that failed:
+    // it waits until that turn is identified, and no turn starts once Stop has arrived.
+    const interruptRequests = this.interruptRequests;
+    const stopped = () => this.interruptRequests !== interruptRequests;
+    this.currentTurnId = null;
+    let resolveIdentification!: (turnId: string | null) => void;
+    this.pendingForegroundTurnIdentification = {
+      foregroundTurnId,
+      promise: new Promise<string | null>((resolve) => {
+        resolveIdentification = resolve;
+      }),
+      resolve: (turnId) => resolveIdentification(turnId),
+    };
+    const limits = await this.readAccountRateLimits();
+    if (stopped()) return "stopped";
+    if (
+      !limits ||
+      !lunaReserveCovers(model, limits) ||
+      this.closed ||
+      this.activeForegroundTurnId !== foregroundTurnId
+    ) {
+      return "reported";
+    }
+    this.lunaReserveFor = model;
+    try {
+      const turnStart = await this.buildTurnStartParams(
+        LUNA_RESERVE_CONTINUE_PROMPT,
+        this.activeForegroundRunOptions,
+      );
+      if (stopped()) return "stopped";
+      turnStart.params.clientUserMessageId = lunaReserveContinuationClientId();
+      this.emitLunaReserveNotice(
+        "Ordinary Codex usage is used up. Continuing on Luna Reserve until it is available again.",
+      );
+      this.resetTurnTrackingState();
+      await client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
+      return "continued";
+    } catch (error) {
+      this.logger.warn({ err: error }, "Could not continue the Codex turn on Luna Reserve");
+      this.lunaReserveFor = null;
+      return "reported";
+    }
+  }
+
+  /** Before a new turn, go back to the agent's own model once the backend allows it again. */
+  private async leaveLunaReserveIfUsageRecovered(): Promise<void> {
+    if (this.lunaReserveFor === null) return;
+    const model = this.lunaReserveFor;
+    if (!this.onLunaReserve()) {
+      // The agent was moved to another model; the reserve no longer applies.
+      this.lunaReserveFor = null;
+      return;
+    }
+    const limits = await this.readAccountRateLimits();
+    if (!limits || !ordinaryUsageRecovered(limits)) return;
+    this.lunaReserveFor = null;
+    this.emitLunaReserveNotice(`Ordinary Codex usage is available again. Back on ${model}.`);
   }
 
   private resetTurnTrackingState(): void {
@@ -7207,6 +7358,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     if (!this.rememberCodexUserMessageTurn(timelineItem.messageId, parsed.turnId)) {
+      return;
+    }
+    // Still a turn of the thread, but Paseo's input rather than the user's.
+    if (isLunaReserveContinuation(timelineItem.clientMessageId)) {
       return;
     }
     const clientMessageId = timelineItem.clientMessageId ?? this.activeClientMessageId;
