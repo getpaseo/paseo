@@ -71,14 +71,15 @@ function createRuntime(options?: {
   getServerInfo?: (serverId: string) => DaemonServerInfo | null;
 }) {
   const engine = options?.engine ?? createAudioEngineMock();
+  const deactivateKeepAwake = vi.fn().mockResolvedValue(undefined);
   const runtime = createVoiceRuntime({
     engine,
     getServerInfo: options?.getServerInfo ?? (() => createServerInfo()),
     activateKeepAwake: vi.fn().mockResolvedValue(undefined),
-    deactivateKeepAwake: vi.fn().mockResolvedValue(undefined),
+    deactivateKeepAwake,
   });
 
-  return { runtime, engine };
+  return { runtime, engine, deactivateKeepAwake };
 }
 
 describe("voice runtime", () => {
@@ -480,6 +481,21 @@ describe("voice runtime", () => {
     expect(engine.stopCapture).toHaveBeenCalled();
     expect(runtime.getSnapshot().phase).toBe("disabled");
     expect(runtime.shouldPlayVoiceAudio("server-1")).toBe(false);
+  });
+
+  it("releases the microphone and wake lock when the daemon rejects stopping voice mode", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine, deactivateKeepAwake } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    vi.mocked(adapter.setVoiceMode).mockRejectedValue(new Error("socket closed"));
+
+    await expect(runtime.stopVoice()).rejects.toThrow("socket closed");
+
+    expect(engine.stopCapture).toHaveBeenCalled();
+    expect(deactivateKeepAwake).toHaveBeenCalled();
+    expect(runtime.getSnapshot().phase).toBe("disabled");
   });
 
   it("rolls daemon voice mode back when capture fails after enabling it", async () => {
