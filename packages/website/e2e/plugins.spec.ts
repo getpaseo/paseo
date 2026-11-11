@@ -9,6 +9,12 @@ async function openPlugins(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: /^Plugins/ })).toBeVisible();
 }
 
+async function waitForInteractivePage(page: Page) {
+  // Server-rendered content is visible before hydration attaches its click handlers.
+  // The language selector stays disabled until that page has hydrated.
+  await expect(page.getByRole("button", { name: "Language: English" }).first()).toBeEnabled();
+}
+
 function pluginCards(page: Page, section: string): Locator {
   return page
     .getByRole("region", { name: section })
@@ -61,62 +67,59 @@ async function scrollPluginCarousel(page: Page, section: string) {
   await expect(cards.first()).not.toBeInViewport();
 }
 
-// Temporary hosted probe; remove after diagnosing the author-navigation failure.
-for (let probe = 1; probe <= 50; probe += 1) {
-  test(`browses from the directory into a category, a plugin, and its author (probe ${probe})`, async ({
-    page,
-    context,
-  }) => {
-    // WebKit has no clipboard permission to grant; record what the page writes instead.
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: {
-          writeText: (text: string) => {
-            (window as unknown as { __copied?: string }).__copied = text;
-            return Promise.resolve();
-          },
+test("browses from the directory into a category, a plugin, and its author", async ({
+  page,
+  context,
+}) => {
+  // WebKit has no clipboard permission to grant; record what the page writes instead.
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          (window as unknown as { __copied?: string }).__copied = text;
+          return Promise.resolve();
         },
-      });
+      },
     });
-    await openPlugins(page);
-
-    await page
-      .getByRole("region", { name: "Categories" })
-      .getByRole("link", { name: /Git/ })
-      .click();
-    await expect(page).toHaveURL(/\/plugins\/category\/git$/);
-    await expect(page.getByRole("heading", { level: 1, name: /^Git/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
-
-    await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
-    await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
-    await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
-    await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
-    await expect(
-      page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Copy to clipboard" }).click();
-    await expect
-      .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied))
-      .toBe("paseo plugin add omercnet/fresh-worktrees");
-    await expect(page.getByRole("link", { name: "Git", exact: true })).toHaveAttribute(
-      "href",
-      "/plugins/category/git",
-    );
-    // The source is a folder in a monorepo; issues are filed on the repository.
-    await expect(page.getByRole("link", { name: "Report a bug" })).toHaveAttribute(
-      "href",
-      "https://github.com/omercnet/paseo-plugins/issues/new",
-    );
-
-    await page.getByRole("link", { name: "Omer Cohen" }).click();
-    await expect(page).toHaveURL(/\/plugins\/omercnet$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Omer Cohen" })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Agent Monitor/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Defer/ })).toHaveCount(0);
   });
-}
+  await openPlugins(page);
+  await waitForInteractivePage(page);
+
+  await page.getByRole("region", { name: "Categories" }).getByRole("link", { name: /Git/ }).click();
+  await expect(page).toHaveURL(/\/plugins\/category\/git$/);
+  await expect(page.getByRole("heading", { level: 1, name: /^Git/ })).toBeVisible();
+  await waitForInteractivePage(page);
+  await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
+
+  await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
+  await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
+  await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
+  await waitForInteractivePage(page);
+  await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Copy to clipboard" }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied))
+    .toBe("paseo plugin add omercnet/fresh-worktrees");
+  await expect(page.getByRole("link", { name: "Git", exact: true })).toHaveAttribute(
+    "href",
+    "/plugins/category/git",
+  );
+  // The source is a folder in a monorepo; issues are filed on the repository.
+  await expect(page.getByRole("link", { name: "Report a bug" })).toHaveAttribute(
+    "href",
+    "https://github.com/omercnet/paseo-plugins/issues/new",
+  );
+
+  await page.getByRole("link", { name: "Omer Cohen" }).click();
+  await expect(page).toHaveURL(/\/plugins\/omercnet$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Omer Cohen" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Agent Monitor/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Defer/ })).toHaveCount(0);
+});
 
 test("ranks plugins on browse pages by installs in a window, by newest, or by latest update", async ({
   page,
