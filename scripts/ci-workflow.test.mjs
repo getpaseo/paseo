@@ -26,7 +26,7 @@ const gatedCiJobs = new Map([
   ],
   [
     "server-tests-macos",
-    { name: "server-tests (macos-latest, file observation)", contract: "server" },
+    { name: "server-tests (macos-latest, file observation)", contracts: ["server", "app"] },
   ],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
@@ -202,6 +202,10 @@ test("ordinary CI keeps app tests without prebuilding Android modules", () => {
   const app = jobBlocks(source).get("app-tests").join("\n");
   assert.match(app, /npm run build:app-deps/);
   assert.match(app, /npm run test --workspace=@getpaseo\/app/);
+  assert.match(
+    jobBlocks(source).get("server-tests-macos").join("\n"),
+    /npm run test:ios --workspace=@getpaseo\/app/,
+  );
   assert.doesNotMatch(source, /test:android|expo prebuild|gradlew|actions\/setup-java/);
 });
 
