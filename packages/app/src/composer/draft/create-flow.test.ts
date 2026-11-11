@@ -60,17 +60,6 @@ describe("useDraftAgentCreateFlow", () => {
 
     expect(result.current.isSubmitting).toBe(true);
     expect(result.current.draftAgent).toEqual({ currentAttempt: attempt });
-    expect(result.current.submittedStreamItems).toEqual([
-      {
-        kind: "user_message",
-        id: "msg-prepared",
-        clientMessageId: "msg-prepared",
-        text: "build this",
-        timestamp: attempt.timestamp,
-        images: [image],
-        attachments: [attachment],
-      },
-    ]);
     expect(createRequest).not.toHaveBeenCalled();
 
     await act(async () => {

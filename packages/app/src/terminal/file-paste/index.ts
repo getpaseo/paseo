@@ -75,7 +75,7 @@ export class TerminalFilePasteQueue {
       this.setUploading(true);
       const path = await target.upload({ ...file, fileName: toShellSafeFileName(file.fileName) });
       if (isCurrent()) {
-        target.paste(prepareTerminalPath(path));
+        target.paste(`${prepareTerminalPath(path)} `);
         this.events.onUploaded();
       }
     } catch (error) {

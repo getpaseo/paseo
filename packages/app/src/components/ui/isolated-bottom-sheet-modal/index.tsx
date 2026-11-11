@@ -5,6 +5,7 @@ import {
 } from "@gorhom/bottom-sheet";
 import React from "react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import type { ElementRef, ReactNode } from "react";
 import { systemBackPress } from "./back-press";
 import {
@@ -123,19 +124,25 @@ export function useIsolatedBottomSheetVisibility({
   visible,
   isEnabled,
   onClose,
+  onBack,
 }: {
   visible: boolean;
   isEnabled?: boolean;
   onClose: () => void;
+  /** Offered Android Back before it closes the sheet; returns true when it handled the press. */
+  onBack?: () => boolean;
 }) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   const tracker = useMemo(
     () =>
       createBottomSheetVisibilityTracker({
         onClose: () => onCloseRef.current(),
         backPress: systemBackPress,
+        onBack: () => onBackRef.current?.() ?? false,
       }),
     [],
   );
@@ -157,6 +164,7 @@ export function useIsolatedBottomSheetVisibility({
   useEffect(() => {
     tracker.syncDesired({ visible, isEnabled });
   }, [isEnabled, tracker, visible]);
+  useDismissibleOverlay(visible && isEnabled !== false, onClose);
 
   return {
     sheetRef: setSheetRef,

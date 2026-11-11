@@ -12,6 +12,7 @@ import {
   type ManagedProcessInspection,
   type ManagedProcessSnapshot,
   type ManagedProcessTable,
+  windowsPowerShellPath,
 } from "./managed-processes.js";
 import { spawnProcess } from "../../utils/spawn.js";
 import {
@@ -333,7 +334,7 @@ describe("system managed process table", () => {
     });
     expect(commandRunner.commands).toEqual([
       {
-        command: "powershell.exe",
+        command: windowsPowerShellPath(),
         args: [
           "-NoProfile",
           "-NonInteractive",
@@ -342,6 +343,17 @@ describe("system managed process table", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("windowsPowerShellPath", () => {
+  test("names Windows PowerShell under SystemRoot, whatever PATH holds", () => {
+    expect(windowsPowerShellPath({ SystemRoot: "D:\\Win", PATH: "" })).toBe(
+      "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+    expect(windowsPowerShellPath({})).toBe(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
   });
 });
 

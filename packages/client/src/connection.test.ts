@@ -11,6 +11,7 @@ function connection(
     broadcasts?: boolean;
     browserHost?: { hostKind: string; supportedCommands: string[] };
     acknowledgeTimelineReads?: boolean;
+    timelineFreshnessCheck?: boolean;
   } = {},
 ) {
   const sent: Array<{
@@ -47,6 +48,7 @@ function connection(
                   workspaceMultiplicity: options.workspaceMultiplicity ?? true,
                   selectiveAgentTimeline: !options.broadcasts,
                   explicitEventSubscriptions: !options.broadcasts,
+                  timelineFreshnessCheck: options.timelineFreshnessCheck === true,
                 },
               },
             },
@@ -885,6 +887,29 @@ test("old attention stream events reach the current notification interface", asy
   } finally {
     await h.client.close();
   }
+});
+
+test("timeline cursors reach only hosts that answer freshness", async () => {
+  const cursors = { agent: { epoch: "epoch-1", seq: 9 } };
+  const sentCursors = async (timelineFreshnessCheck: boolean) => {
+    const h = connection({ timelineFreshnessCheck });
+    try {
+      const connected = h.client.connect();
+      h.open();
+      await connected;
+      const observation = h.client.observeTimeline(["agent"], { cursors });
+      await observation.ready;
+      await observation.release();
+      return h.sent.find(
+        (frame) => frame.message?.type === "agent.timeline.set_subscription.request",
+      )?.message;
+    } finally {
+      await h.client.close();
+    }
+  };
+
+  expect(await sentCursors(true)).toMatchObject({ cursors });
+  expect(await sentCursors(false)).not.toHaveProperty("cursors");
 });
 
 test("broadcast-only hosts expose local timeline readiness without sending an unsupported RPC", async () => {

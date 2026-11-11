@@ -23,6 +23,11 @@ const RECONCILIATION_DELAY_MS = 50;
 const MAX_CONCURRENT_CLASSIFICATIONS = 32;
 const MAX_QUEUED_CLASSIFICATIONS = 16_384;
 
+// "baseline" establishes coverage of what already exists when the subscription
+// starts, so it reports nothing. "changes" scans topology that appeared while
+// observed, so files found before their directory was covered are creates.
+type ReconcileMode = "baseline" | "changes";
+
 interface DirectorySnapshot {
   directories: Set<string>;
   filesDiscoveredBeforeCoverage: Set<string>;
@@ -62,7 +67,7 @@ class LinuxBackend implements ObservationBackend {
 
   async start(): Promise<void> {
     this.watchDirectory(this.host.root);
-    await this.enqueue([this.host.root]);
+    await this.enqueue([this.host.root], "baseline");
   }
 
   async updateIgnore(): Promise<void> {
@@ -75,7 +80,7 @@ class LinuxBackend implements ObservationBackend {
       }
     }
     this.cancelQueued();
-    await this.enqueue([this.host.root]);
+    await this.enqueue([this.host.root], "changes");
     await Promise.allSettled(inFlight);
   }
 
@@ -159,15 +164,17 @@ class LinuxBackend implements ObservationBackend {
       this.timer = null;
       const scopes = [...this.pendingScopes];
       this.pendingScopes.clear();
-      void this.enqueue(scopes).catch((error: unknown) => this.host.fail(toError(error)));
+      void this.enqueue(scopes, "changes").catch((error: unknown) =>
+        this.host.fail(toError(error)),
+      );
     }, RECONCILIATION_DELAY_MS);
     this.timer.unref();
   }
 
-  private enqueue(scopes: string[]): Promise<void> {
+  private enqueue(scopes: string[], mode: ReconcileMode): Promise<void> {
     this.queueDepth += 1;
     const result = this.reconcileTail
-      .then(() => this.run(scopes))
+      .then(() => this.run(scopes, mode))
       .finally(() => {
         this.queueDepth -= 1;
       });
@@ -175,12 +182,12 @@ class LinuxBackend implements ObservationBackend {
     return result;
   }
 
-  private async run(scopes: string[]): Promise<void> {
+  private async run(scopes: string[], mode: ReconcileMode): Promise<void> {
     if (!this.host.isActive()) return;
     this.inFlight = true;
     const startedAt = performance.now();
     try {
-      await this.reconcile(this.paths.collapse(scopes));
+      await this.reconcile(this.paths.collapse(scopes), mode);
     } catch (error) {
       this.host.metrics.reconciliationFailureCount += 1;
       throw error;
@@ -197,15 +204,17 @@ class LinuxBackend implements ObservationBackend {
     }
   }
 
-  private async reconcile(scopes: string[]): Promise<void> {
+  private async reconcile(scopes: string[], mode: ReconcileMode): Promise<void> {
     for (const scope of scopes) {
       const snapshot = await this.scan(scope);
       if (!this.host.isActive()) return;
       for (const directory of snapshot.directories) {
         if (!this.watchSnapshotDirectory(directory)) snapshot.directories.delete(directory);
       }
-      for (const path of snapshot.filesDiscoveredBeforeCoverage) {
-        this.host.queueEvent("create", path);
+      if (mode === "changes") {
+        for (const path of snapshot.filesDiscoveredBeforeCoverage) {
+          this.host.queueEvent("create", path);
+        }
       }
       for (const [directory, watcher] of this.watchers) {
         const disappeared =

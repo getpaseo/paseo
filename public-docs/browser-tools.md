@@ -33,7 +33,7 @@ Arguments marked `?` are optional.
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
 | `browser_snapshot`   | `browserId`                            | Return the page as an accessibility tree with element refs.                           |
 | `browser_screenshot` | `browserId, fullPage?`                 | Capture a PNG of the viewport, or the full page with `fullPage`.                      |
-| `browser_logs`       | `browserId, maxEntries?`               | Read recent console messages and network timing entries.                              |
+| `browser_logs`       | `browserId, maxEntries?`               | Read recent console messages and network entries: URL, timing, size and HTTP status.  |
 | `browser_wait`       | `browserId, text? \| url?, timeoutMs?` | Wait until the page contains text or reaches a URL fragment (exactly one of the two). |
 
 ## Interacting

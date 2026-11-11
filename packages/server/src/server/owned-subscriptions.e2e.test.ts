@@ -1,7 +1,8 @@
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 import { createPaseoApi } from "@getpaseo/client";
+import type { AgentManager } from "./agent/agent-manager.js";
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "vitest";
 import type { z } from "zod";
@@ -71,15 +72,18 @@ class SubscriptionPeer {
   async request(message: z.input<typeof SessionInboundMessageSchema>): Promise<void> {
     this.socket.send(JSON.stringify({ type: "session", message }));
     await expect
-      .poll(() =>
-        this.frames.some(
-          (frame) =>
-            frame.type === "session" &&
-            "payload" in frame.message &&
-            "requestId" in frame.message.payload &&
-            "requestId" in message &&
-            frame.message.payload.requestId === message.requestId,
-        ),
+      .poll(
+        () =>
+          this.frames.some(
+            (frame) =>
+              frame.type === "session" &&
+              "payload" in frame.message &&
+              "requestId" in frame.message.payload &&
+              "requestId" in message &&
+              frame.message.payload.requestId === message.requestId,
+          ),
+        // Diagnostics invoke external tools with their own multi-second deadlines.
+        { timeout: 10_000 },
       )
       .toBe(true);
   }
@@ -117,6 +121,16 @@ class SubscriptionPeer {
   close(): void {
     this.socket.terminate();
   }
+}
+
+function removedAgentIds(peer: SubscriptionPeer): string[] {
+  return peer.frames.flatMap((frame) =>
+    frame.type === "session" &&
+    frame.message.type === "agent_update" &&
+    frame.message.payload.kind === "remove"
+      ? [frame.message.payload.agentId]
+      : [],
+  );
 }
 
 test("a pure list reply belongs only to its source socket in a shared logical session", async () => {
@@ -224,6 +238,96 @@ test("combined filtered agent lists create independent server-owned observations
     await daemon.close();
   }
 });
+
+test.each([
+  {
+    state: "live",
+    prepare: async (_manager: AgentManager, _agentId: string) => {},
+  },
+  {
+    state: "stored-only",
+    prepare: (manager: AgentManager, agentId: string) => manager.closeAgent(agentId),
+  },
+])(
+  "$state agent deletion reaches directory observers across logical sessions without broadcasting its reply",
+  async ({ prepare }) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const admin = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.8.0",
+    });
+    const peers: SubscriptionPeer[] = [];
+    try {
+      await admin.connect();
+      const workspace = (
+        await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
+      ).workspace;
+      if (!workspace) throw new Error("Workspace creation failed");
+      const removed = await admin.createAgent({
+        provider: "codex",
+        cwd: daemon.staticDir,
+        workspaceId: workspace.id,
+      });
+      const survivor = await admin.createAgent({
+        provider: "codex",
+        cwd: daemon.staticDir,
+        workspaceId: workspace.id,
+      });
+      const sentinel = path.join(daemon.staticDir, "keep-project-file.txt");
+      await writeFile(sentinel, "keep this project file\n");
+      await prepare(daemon.daemon.agentManager, removed.id);
+      const requester = await SubscriptionPeer.connect(daemon.port, "deletion-origin");
+      const sibling = await SubscriptionPeer.connect(daemon.port, "deletion-origin");
+      const observer = await SubscriptionPeer.connect(daemon.port, "deletion-observer");
+      const legacy = await SubscriptionPeer.connect(daemon.port, "deletion-legacy", {
+        owned_subscriptions: false,
+      });
+      peers.push(requester, sibling, observer, legacy);
+      for (const [index, peer] of peers.entries()) {
+        await peer.request({
+          type: "fetch_agents_request",
+          requestId: `directory-${index}`,
+          subscribe: {},
+        });
+        const entries = peer.frames.flatMap((frame) =>
+          frame.type === "session" && frame.message.type === "fetch_agents_response"
+            ? frame.message.payload.entries.map((entry) => entry.agent.id)
+            : [],
+        );
+        expect(entries.sort()).toEqual([removed.id, survivor.id].sort());
+        peer.frames.length = 0;
+      }
+      await requester.request({
+        type: "delete_agent_request",
+        requestId: "delete-observed-agent",
+        agentId: removed.id,
+      });
+      await expect
+        .poll(() => peers.map(removedAgentIds))
+        .toEqual([[removed.id], [removed.id], [removed.id], [removed.id]]);
+      const replies = peers.map((peer) =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" && frame.message.type === "agent_deleted"
+            ? [frame.message.payload]
+            : [],
+        ),
+      );
+      expect(replies).toEqual([
+        [{ agentId: removed.id, requestId: "delete-observed-agent" }],
+        [],
+        [],
+        [],
+      ]);
+      expect(await daemon.daemon.agentStorage.get(removed.id)).toBeNull();
+      expect((await daemon.daemon.agentStorage.get(survivor.id))?.id).toBe(survivor.id);
+      expect(await readFile(sentinel, "utf8")).toBe("keep this project file\n");
+    } finally {
+      for (const peer of peers) peer.close();
+      await admin.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("workspace filters and identical queries coexist until their own release", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
@@ -679,7 +783,8 @@ test("same-workspace terminal directory observers do not share a teardown slot",
     peer.frames.length = 0;
     const result = await admin.createTerminal(daemon.staticDir, "Observed terminal", undefined, {
       workspaceId: workspace.id,
-      command: "/bin/cat",
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
     });
     expect(result.error).toBe(null);
     await expect
@@ -717,85 +822,100 @@ test("same-workspace terminal directory observers do not share a teardown slot",
   }
 });
 
-test("terminal output has separate server IDs and binary slots, including in a shared session", async () => {
-  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
-  const peers: SubscriptionPeer[] = [];
-  try {
-    await admin.connect();
-    const workspace = (
-      await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
-    ).workspace!;
-    const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
-      workspaceId: workspace.id,
-      command: "/bin/cat",
+test.each([false, true])(
+  "terminal output has separate server IDs and binary slots, including in a shared session (chunked=%s)",
+  async (chunked) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const admin = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.8.0",
     });
-    expect(result.error).toBe(null);
-    const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
-    peers.push(idle);
-    const peer = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
-    peers.push(peer);
-    for (const requestId of ["output-a", "output-b"]) {
-      await peer.request({
-        type: "subscribe_terminal_request",
-        requestId,
-        terminalId: result.terminal!.id,
+    const peers: SubscriptionPeer[] = [];
+    try {
+      await admin.connect();
+      const workspace = (
+        await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
+      ).workspace!;
+      const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
+        workspaceId: workspace.id,
+        command: process.execPath,
+        args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
       });
-    }
-    const replies = peer.frames.flatMap((frame) =>
-      frame.type === "session" &&
-      frame.message.type === "subscribe_terminal_response" &&
-      frame.message.payload.error === null
-        ? [frame.message.payload]
-        : [],
-    );
-    expect(replies).toHaveLength(2);
-    const ids = replies.map(
-      (reply) => (reply as typeof reply & { subscriptionId: string }).subscriptionId,
-    );
-    expect(ids.every((id) => typeof id === "string")).toBe(true);
-    expect(ids[0]).not.toBe(ids[1]);
-    expect(replies[0].slot).not.toBe(replies[1].slot);
-    await expect
-      .poll(() =>
-        peer.binaryFrames
-          .map(decodeTerminalStreamFrame)
-          .filter((frame) => frame?.opcode === TerminalStreamOpcode.Snapshot)
-          .map((frame) => frame!.slot),
-      )
-      .toEqual(expect.arrayContaining(replies.map((reply) => reply.slot)));
-    expect(idle.binaryFrames).toEqual([]);
-    await peer.request({
-      type: "subscription.release.request",
-      requestId: "release-output-a",
-      subscriptionId: ids[0],
-    });
-    peer.binaryFrames.length = 0;
-    admin.sendTerminalInput(result.terminal!.id, { type: "input", data: "remaining-observer\n" });
-    await expect
-      .poll(
-        () =>
+      expect(result.error).toBe(null);
+      const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session", {
+        terminal_chunked_replay: chunked,
+      });
+      peers.push(idle);
+      const peer = await SubscriptionPeer.connect(daemon.port, "terminal-output-session", {
+        terminal_chunked_replay: chunked,
+      });
+      peers.push(peer);
+      for (const requestId of ["output-a", "output-b"]) {
+        await peer.request({
+          type: "subscribe_terminal_request",
+          requestId,
+          terminalId: result.terminal!.id,
+        });
+      }
+      const replies = peer.frames.flatMap((frame) =>
+        frame.type === "session" &&
+        frame.message.type === "subscribe_terminal_response" &&
+        frame.message.payload.error === null
+          ? [frame.message.payload]
+          : [],
+      );
+      expect(replies).toHaveLength(2);
+      const ids = replies.map(
+        (reply) => (reply as typeof reply & { subscriptionId: string }).subscriptionId,
+      );
+      expect(ids.every((id) => typeof id === "string")).toBe(true);
+      expect(ids[0]).not.toBe(ids[1]);
+      expect(replies[0].slot).not.toBe(replies[1].slot);
+      await expect
+        .poll(() =>
           peer.binaryFrames
             .map(decodeTerminalStreamFrame)
-            .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
-            .map((frame) => Buffer.from(frame!.payload).toString())
-            .join(""),
-        { timeout: 5000 },
-      )
-      .toContain("remaining-observer");
-    expect(
-      peer.binaryFrames
-        .map(decodeTerminalStreamFrame)
-        .every((frame) => frame?.slot === replies[1].slot),
-    ).toBe(true);
-    expect(idle.binaryFrames).toEqual([]);
-    await admin.killTerminal(result.terminal!.id);
-  } finally {
-    for (const peer of peers) peer.close();
-    await admin.close();
-    await daemon.close();
-  }
-});
+            .filter(
+              (frame) =>
+                frame?.opcode ===
+                (chunked ? TerminalStreamOpcode.ReplayEnd : TerminalStreamOpcode.Restore),
+            )
+            .map((frame) => frame!.slot),
+        )
+        .toEqual(expect.arrayContaining(replies.map((reply) => reply.slot)));
+      expect(idle.binaryFrames).toEqual([]);
+      await peer.request({
+        type: "subscription.release.request",
+        requestId: "release-output-a",
+        subscriptionId: ids[0],
+      });
+      peer.binaryFrames.length = 0;
+      admin.sendTerminalInput(result.terminal!.id, { type: "input", data: "remaining-observer\n" });
+      await expect
+        .poll(
+          () =>
+            peer.binaryFrames
+              .map(decodeTerminalStreamFrame)
+              .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+              .map((frame) => Buffer.from(frame!.payload).toString())
+              .join(""),
+          { timeout: 5000 },
+        )
+        .toContain("remaining-observer");
+      expect(
+        peer.binaryFrames
+          .map(decodeTerminalStreamFrame)
+          .every((frame) => frame?.slot === replies[1].slot),
+      ).toBe(true);
+      expect(idle.binaryFrames).toEqual([]);
+      await admin.killTerminal(result.terminal!.id);
+    } finally {
+      for (const peer of peers) peer.close();
+      await admin.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("a modern connection and pure reads retain no client observation producers", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
@@ -860,6 +980,45 @@ test("config changes require their own event demand and cannot escape to an idle
     ).toBe(true);
   } finally {
     for (const peer of peers) peer.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
+test("a config change push carries profiles with the legacy featureValues the unchanged app reads", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let observer: SubscriptionPeer | undefined;
+  try {
+    await admin.connect();
+    await admin.patchDaemonConfig({
+      agentProfiles: [
+        { id: "p", name: "P", provider: "codex", options: {}, featureValues: { plan_mode: true } },
+      ],
+    });
+    observer = await SubscriptionPeer.connect(daemon.port, "config-push-session");
+    await observer.request({
+      type: "session.events.set_subscription.request",
+      requestId: "config-feed",
+      events: ["status.daemon_config_changed"],
+    });
+
+    await admin.patchDaemonConfig({ autoArchiveAfterMerge: true });
+
+    const peer = observer;
+    await expect
+      .poll(() =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" &&
+          frame.message.type === "status" &&
+          frame.message.payload.status === "daemon_config_changed"
+            ? [frame.message.payload.config?.agentProfiles?.[0]?.featureValues]
+            : [],
+        ),
+      )
+      .toEqual([{ plan_mode: true }]);
+  } finally {
+    observer?.close();
     await admin.close();
     await daemon.close();
   }
@@ -1423,7 +1582,7 @@ test("request outcomes for import and attention reach only their requesting sock
   });
   const requester = await SubscriptionPeer.connect(daemon.port, "reply-shared");
   const sibling = await SubscriptionPeer.connect(daemon.port, "reply-shared");
-  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await admin.connect();
     await requester.request({
@@ -1462,7 +1621,7 @@ test("request outcomes for import and attention reach only their requesting sock
       }),
     );
     const agent = await admin.createAgent({
-      provider: "codex",
+      provider: "mock",
       cwd: daemon.staticDir,
       title: "Attention",
     });
@@ -1753,3 +1912,115 @@ test("public project subscriptions request updates and release their producer de
     await daemon.close();
   }
 });
+
+test.each([
+  { closed: false, batch: false },
+  { closed: true, batch: false },
+  { closed: false, batch: true },
+  { closed: true, batch: true },
+])(
+  "clearing workspace attention reaches independent subscribers (closed=$closed, batch=$batch)",
+  async ({ closed, batch }) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const clients = Array.from(
+      { length: 4 },
+      () => new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` }),
+    );
+    const [actor, observer, unreadObserver, quiet] = clients;
+    const updates: SessionOutboundMessage[] = [];
+    const unreadUpdates: SessionOutboundMessage[] = [];
+    const quietUpdates: SessionOutboundMessage[] = [];
+    const responses: SessionOutboundMessage[] = [];
+    try {
+      await Promise.all(clients.map((client) => client.connect()));
+      const agentIds: string[] = [];
+      for (let index = 0; index < (batch ? 2 : 1); index += 1) {
+        const cwd = path.join(daemon.staticDir, `workspace-${index}`);
+        await mkdir(cwd);
+        const agent = await actor.createAgent({ provider: "codex", cwd });
+        await actor.sendMessage(agent.id, "Reply with OK.");
+        await actor.waitForFinish(agent.id, 5000);
+        await daemon.daemon.agentManager.clearAgentAttention(agent.id);
+        if (closed) await daemon.daemon.agentManager.closeAgent(agent.id);
+        agentIds.push(agent.id);
+      }
+      const snapshot = await observer.fetchAgents({
+        filter: { includeArchived: true },
+        subscribe: {},
+      });
+      const workspaceIds = agentIds.map(
+        (id) => snapshot.entries.find((entry) => entry.agent.id === id)!.agent.workspaceId!,
+      );
+      expect(new Set(workspaceIds).size).toBe(agentIds.length);
+      await unreadObserver.fetchAgents({ filter: { requiresAttention: true }, subscribe: {} });
+      actor.subscribeRawMessages((message) => responses.push(message));
+      observer.subscribeRawMessages((message) => updates.push(message));
+      unreadObserver.subscribeRawMessages((message) => unreadUpdates.push(message));
+      quiet.subscribeRawMessages((message) => quietUpdates.push(message));
+      const attention = (id: string) =>
+        updates
+          .flatMap((message) =>
+            message.type === "agent_update" &&
+            message.payload.kind === "upsert" &&
+            message.payload.agent.id === id
+              ? [message.payload.agent.requiresAttention]
+              : [],
+          )
+          .at(-1);
+      for (const [index, id] of agentIds.entries()) {
+        await actor.markWorkspaceUnread(workspaceIds[index]);
+        await expect.poll(() => attention(id)).toBe(true);
+        await expect
+          .poll(() =>
+            unreadUpdates.some(
+              (message) =>
+                message.type === "agent_update" &&
+                message.payload.kind === "upsert" &&
+                message.payload.agent.id === id,
+            ),
+          )
+          .toBe(true);
+      }
+      updates.length = unreadUpdates.length = quietUpdates.length = 0;
+      await actor.clearWorkspaceAttention(batch ? workspaceIds : workspaceIds[0]);
+      const response = responses.findLast(
+        (message) => message.type === "workspace.clear_attention.response",
+      );
+      expect(response?.payload).toEqual({
+        requestId: expect.any(String),
+        workspaceId: batch ? workspaceIds : workspaceIds[0],
+        clearedAgentIds: agentIds,
+        results: workspaceIds.map((workspaceId, index) => ({
+          workspaceId,
+          clearedAgentIds: [agentIds[index]],
+          success: true,
+          error: null,
+        })),
+        success: true,
+        error: null,
+      });
+      const fresh = await actor.fetchAgents();
+      for (const id of agentIds) {
+        expect(fresh.entries.find((entry) => entry.agent.id === id)?.agent.requiresAttention).toBe(
+          false,
+        );
+        expect(Boolean(daemon.daemon.agentManager.getAgent(id))).toBe(!closed);
+        await expect.poll(() => attention(id)).toBe(false);
+        await expect
+          .poll(() =>
+            unreadUpdates.some(
+              (message) =>
+                message.type === "agent_update" &&
+                message.payload.kind === "remove" &&
+                message.payload.agentId === id,
+            ),
+          )
+          .toBe(true);
+      }
+      expect(quietUpdates.filter((message) => message.type === "agent_update")).toEqual([]);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await daemon.close();
+    }
+  },
+);

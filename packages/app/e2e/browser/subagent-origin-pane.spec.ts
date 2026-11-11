@@ -38,8 +38,12 @@ async function openParentInRightPane(page: Page, parentId: string, workspaceId: 
   await expect(left).toBeVisible();
   await expect(right).toBeVisible();
   await expect(right).not.toHaveAttribute("data-testid", "workspace-pane-main");
+  // A later split can replace the parent pane's rail with compact chrome.
+  // Keep the pane identity instead of finding it again through that rail.
+  const rightPaneId = await right.getAttribute("data-testid");
+  expect(rightPaneId).not.toBeNull();
   await left.locator('[data-testid^="workspace-tab-draft_"]').click();
-  return { left, right };
+  return { left, right: page.getByTestId(rightPaneId!) };
 }
 
 test.beforeEach(async ({ page }) => {
@@ -120,6 +124,29 @@ test("opening an already-tabbed subagent reveals its left tab without a duplicat
     await expect(left.getByTestId(`workspace-tab-agent_${pair.child.id}`)).toBeVisible();
     await expect(right.getByTestId(`workspace-tab-agent_${pair.child.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`workspace-tab-agent_${pair.child.id}`)).toHaveCount(1);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("a subagent's parent pill returns to its parent", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "subagent-parent-pill-" });
+  try {
+    const pair = await seedParentWithSubagent(workspace, {
+      parentTitle: "Refactor auth flow",
+      childTitle: "Write session tests",
+    });
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await openAgentRoute(page, { workspaceId: pair.workspaceId, agentId: pair.child.id });
+
+    const pill = page.getByTestId("composer-parent-agent-pill");
+    await expect(pill).toHaveAccessibleName("Back to Refactor auth flow");
+    await pill.click();
+
+    await expect(page.getByTestId(`workspace-tab-agent_${pair.parent.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   } finally {
     await workspace.cleanup();
   }

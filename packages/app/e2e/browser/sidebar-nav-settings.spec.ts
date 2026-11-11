@@ -97,6 +97,7 @@ test("fixed footer line keeps its five icons, Help and Settings at the end", asy
   await setFooterItemVisible(page, "usage", true);
   await leaveSettings(page);
   await page.setViewportSize({ width: 390, height: 844 });
+  await openCompactSidebar(page);
   await expectCompactSidebarOpen(page);
   await expectFooterSeparator(page, true);
   await expectFooterIconRow(page);

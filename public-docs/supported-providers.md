@@ -78,6 +78,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Dirac](https://dirac.run), open-source agent with hash-anchored parallel edits.
 - [Factory Droid](https://factory.ai/product/cli), Factory AI's coding agent.
 - [fast-agent](https://fast-agent.ai/acp/), multi-provider coding agent.
+- [fx](#fx), Vercel Labs' native coding agent.
 - [Gajae Code](https://gajae-code.com), subscription-based coding agent with plan-before-mutation workflows.
 - [Gemini CLI](https://geminicli.com), Google's official Gemini CLI.
 - [GitHub Copilot](https://github.com/features/copilot/cli/), GitHub's AI pair programmer via ACP.
@@ -101,6 +102,20 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [VT Code](https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md), open-source multi-provider coding agent.
 
 The in-app catalog is the canonical, version-pinned source. Anything not listed here can still be added manually, see [Custom providers](/docs/custom-providers).
+
+### fx
+
+[Install fx](https://fx.sh/docs/getting-started/installation) on your daemon host and
+[connect a provider](https://fx.sh/docs/getting-started/authentication), for example with
+`fx login`. In **Settings → Hosts → your host → Providers**, find **fx** in the catalog and
+choose **Add**. Paseo launches `fx acp` and uses your fx credentials and settings. Until fx has
+credentials, the provider reports the sign-in message from fx.
+
+The model list comes from your active fx provider, so run `fx provider` to change the list a new
+agent starts from. Changing an agent's permission mode also changes fx's saved permission mode.
+See [fx's ACP guide](https://fx.sh/docs/using-fx/acp) for what fx supports. Use a
+[command override](/docs/custom-providers) if `fx` is outside your daemon's PATH; keep `acp` in
+the arguments.
 
 ### Hoplite
 

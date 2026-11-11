@@ -1,3 +1,4 @@
+import { maxSecuredPlaintextByteLength } from "@getpaseo/relay";
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   openClientSecureChannel,
@@ -155,18 +156,15 @@ export function createEncryptedTransport(
   const relayTransport: RelayTransport = {
     send: (data) => {
       if (typeof data === "string") {
-        base.send(data);
-        return;
+        return base.send(data);
       }
       if (ArrayBuffer.isView(data)) {
-        base.send(normalizeTransportPayload(data));
-        return;
+        return base.send(normalizeTransportPayload(data));
       }
       if (data instanceof ArrayBuffer) {
-        base.send(data);
-        return;
+        return base.send(data);
       }
-      base.send(String(data));
+      return base.send(String(data));
     },
     // The channel decides the close code. Report it now: a socket close event
     // arrives asynchronously, and the consumer must not act on an earlier
@@ -226,6 +224,8 @@ export function createEncryptedTransport(
   });
 
   return {
+    supportsDrain: base.supportsDrain,
+    maxFrameBytes: maxSecuredPlaintextByteLength(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES),
     send: (data) => {
       if (!channel) {
         throw new Error("Encrypted channel not ready");
@@ -239,8 +239,9 @@ export function createEncryptedTransport(
       // Encryption and its transport handoff are synchronous up to send's first await.
       // Reject capacity failures here so a routed sender loses only its own channel.
       assertOutboundCapacity(wireBytes);
-      void channel.send(payload).catch((error) => {
+      return channel.send(payload).catch((error) => {
         emitError(error);
+        throw error;
       });
     },
     close: (code?: number, reason?: string) => {

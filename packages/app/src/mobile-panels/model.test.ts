@@ -17,6 +17,7 @@ class MobilePanelsScenario {
   private startedRevision = -1;
   private state: MobilePanelMotionState;
   readonly commits: MobilePanelCommit[] = [];
+  readonly animations: MobilePanelView[] = [];
 
   constructor(target: MobilePanelView = "agent") {
     this.state = createMobilePanelMotionState({ target, revision: this.nextRevision });
@@ -73,6 +74,9 @@ class MobilePanelsScenario {
     this.state = transition.state;
     if (transition.commit) {
       this.commits.push(transition.commit);
+    }
+    if (transition.animationTarget) {
+      this.animations.push(transition.animationTarget);
     }
   }
 }
@@ -235,6 +239,29 @@ describe("mobile panel ownership", () => {
       revision: 1,
     });
     expect(panels.commits).toEqual([]);
+  });
+
+  it("returns an interrupted drag to the anchor when the command keeps its target", () => {
+    const panels = new MobilePanelsScenario();
+
+    panels.beginGesture("agent").command("agent").finishGesture("agent-list");
+
+    expect(panels.animations).toEqual(["agent"]);
+    expect(panels.snapshot()).toEqual({
+      target: "agent",
+      motionTarget: "agent",
+      settledTarget: "agent",
+      revision: 1,
+    });
+    expect(panels.commits).toEqual([]);
+  });
+
+  it("lets the command for a completed drag adopt the drag's finishing motion", () => {
+    const panels = new MobilePanelsScenario();
+
+    panels.beginGesture("agent").finishGesture("agent-list").command("agent-list");
+
+    expect(panels.animations).toEqual(["agent-list"]);
   });
 
   it("keeps the latest rapid command when position reaches a stale anchor", () => {

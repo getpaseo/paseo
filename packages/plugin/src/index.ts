@@ -3,6 +3,9 @@ export type {
   PluginTheme,
   PluginWorkspaceSnapshot,
   PluginAgentSnapshot,
+  PluginProjectSnapshot,
+  PluginTerminalSnapshot,
+  WorkspaceIndicator,
   PluginThemeColors,
   PluginThemeContribution,
   PluginAttachmentSourceContribution,
@@ -19,7 +22,16 @@ export {
   type PluginAttachmentItem,
   type PluginAttachmentSearchPayload,
 } from "./attachments.js";
-export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";
+export {
+  defineRpc,
+  defineSubscription,
+  type PluginRpcContract,
+  type PluginSubscriptionContract,
+  type RpcInput,
+  type RpcOutput,
+  type SubscriptionEvent,
+  type SubscriptionInput,
+} from "./rpc.js";
 
 export type { PluginText, PluginMessage } from "./text.js";
 export {

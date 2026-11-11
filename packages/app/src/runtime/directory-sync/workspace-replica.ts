@@ -14,6 +14,7 @@ import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   clearWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -107,6 +108,15 @@ export class WorkspaceDirectoryReplica {
         workspaces.set(workspaceId, workspace);
       }
     }
+    // A snapshot taken while an undo runs can predate the restore; the host publishes the row.
+    for (const [workspaceId, workspace] of this.workspaces) {
+      if (
+        !workspaces.has(workspaceId) &&
+        shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId })
+      ) {
+        workspaces.set(workspaceId, workspace);
+      }
+    }
     for (const workspace of workspaces.values()) this.applySetupStatus(workspace);
     this.workspaces = workspaces;
     this.projects = new Map(snapshot.projects);
@@ -173,6 +183,12 @@ export class WorkspaceDirectoryReplica {
       kind: "remove";
     },
   ): DirectoryReplicaMutation[] {
+    // The archive this remove reports is being undone; the host publishes the restored row.
+    if (
+      shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId: delta.id })
+    ) {
+      return [];
+    }
     this.deleteWorkspace(delta.id);
     const mutations: DirectoryReplicaMutation[] = [
       { kind: "workspace", type: "delete", id: delta.id },

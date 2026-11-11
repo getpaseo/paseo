@@ -41,7 +41,6 @@ export function DesktopPermissionsSection() {
     () => (
       <Button
         variant="ghost"
-        size="sm"
         leftIcon={refreshIcon}
         onPress={handleRefreshPress}
         disabled={isBusy}

@@ -80,7 +80,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
     this.nextError = error;
   }
 
-  override async list() {
+  override async listActive() {
     if (this.nextRead) {
       const pending = this.nextRead;
       this.nextRead = null;
@@ -91,7 +91,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
       this.nextError = null;
       throw error;
     }
-    return super.list();
+    return super.listActive();
   }
 }
 
@@ -494,6 +494,10 @@ describe("observed workspace placement", () => {
     await observed.advanceBy(RESCAN_INTERVAL_MS);
 
     expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
+    expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
+    const archived = await observed.placement("workspace-one");
+    await observed.advanceBy(RESCAN_INTERVAL_MS);
+    expect(await observed.placement("workspace-one")).toEqual(archived);
     expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
     observed.dispose();
   });
