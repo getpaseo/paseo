@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs, type Stats } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -23,6 +23,23 @@ interface FileLockOwner {
   token: string;
   createdAt: string;
 }
+
+interface FileLockRuntime {
+  sleep: (milliseconds: number) => Promise<void>;
+  /** Interleaving seam for tests: awaited once a recovery claim exists, before the claimed lock is verified. */
+  onRecoveryClaim?: (details: { lockPath: string; claimPath: string }) => Promise<void>;
+}
+
+export interface FileLockOptions {
+  /** Replaces the delay between lock attempts. */
+  sleep?: (milliseconds: number) => Promise<void>;
+  /** Interleaving seam for tests; see {@link FileLockRuntime.onRecoveryClaim}. */
+  onRecoveryClaim?: (details: { lockPath: string; claimPath: string }) => Promise<void>;
+}
+
+const LOCK_ATTEMPTS = 200;
+const LOCK_RETRY_DELAY_MS = 5;
+const MAX_RECOVERY_DEPTH = 8;
 
 type AtomicFileSourceStat = Pick<Stats, "dev" | "ino" | "uid" | "gid" | "mode">;
 
@@ -125,27 +142,59 @@ async function createOwnedLock(lockPath: string, owner: FileLockOwner): Promise<
   }
 }
 
-async function removeVerifiedDeadLock(lockPath: string, expected: FileLockOwner): Promise<boolean> {
-  const current = await readFileLock(lockPath);
-  if (!current || !sameFileLockOwner(current, expected) || isProcessRunning(current.pid)) {
-    return false;
-  }
-  await fs.unlink(lockPath);
-  return true;
+/**
+ * Path of the claim that grants the right to discard one specific lock instance.
+ * The observed owner's token names the claim, so every contender that read the same
+ * dead owner races for the same claim and only one can win it.
+ */
+export function fileLockRecoveryClaimPath(lockPath: string, ownerToken: string): string {
+  const digest = createHash("sha256").update(ownerToken, "utf8").digest("hex");
+  return `${lockPath}.recovery.${digest}`;
 }
 
-async function acquireRecoveryLock(lockPath: string, owner: FileLockOwner): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt++) {
-    if (await createOwnedLock(lockPath, owner)) return;
-    const existing = await readFileLock(lockPath);
-    if (!existing || isProcessRunning(existing.pid)) {
-      throw new Error("file_lock_recovery_busy");
+/**
+ * Discard `lockPath` when it still holds the dead `victim` we observed.
+ *
+ * Only the holder of the victim-derived claim may remove the lock, and a new lock can
+ * only appear at `lockPath` after that removal, so no live replacement can slip between
+ * the verification read and the unlink. A claim left behind by a dead recoverer is
+ * discarded through the same rule, which names the next claim after that claim's own token.
+ */
+async function discardDeadLock(
+  lockPath: string,
+  victim: FileLockOwner,
+  lockRuntime: FileLockRuntime,
+  depth: number,
+): Promise<void> {
+  const claimPath = fileLockRecoveryClaimPath(lockPath, victim.token);
+  const claimOwner = createFileLockOwner();
+  let claimed = false;
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS && !claimed; attempt++) {
+    if (await createOwnedLock(claimPath, claimOwner)) {
+      claimed = true;
+      break;
     }
-    if (!(await removeVerifiedDeadLock(lockPath, existing))) {
-      throw new Error("file_lock_recovery_changed");
+    const claimant = await readFileLock(claimPath);
+    if (!claimant) continue;
+    if (isProcessRunning(claimant.pid)) {
+      // A live recoverer is discarding this exact instance; wait for it to finish.
+      await lockRuntime.sleep(LOCK_RETRY_DELAY_MS);
+      continue;
     }
+    if (depth >= MAX_RECOVERY_DEPTH) throw new Error("file_lock_recovery_busy");
+    await discardDeadLock(claimPath, claimant, lockRuntime, depth + 1);
   }
-  throw new Error("file_lock_recovery_busy");
+  if (!claimed) throw new Error("file_lock_recovery_busy");
+  try {
+    await lockRuntime.onRecoveryClaim?.({ lockPath, claimPath });
+    const current = await readFileLock(lockPath);
+    if (!current || !sameFileLockOwner(current, victim) || isProcessRunning(current.pid)) {
+      return;
+    }
+    await fs.unlink(lockPath);
+  } finally {
+    await releaseOwnedLock(claimPath, claimOwner);
+  }
 }
 
 async function releaseOwnedLock(lockPath: string, owner: FileLockOwner): Promise<void> {
@@ -187,43 +236,32 @@ async function runWithOwnedLock<T>(
   return result as T;
 }
 
-async function recoverStaleFileLock(lockPath: string, expected: FileLockOwner): Promise<void> {
-  const recoveryPath = `${lockPath}.recovery`;
-  const recoveryOwner = createFileLockOwner();
-  await acquireRecoveryLock(recoveryPath, recoveryOwner);
-  await runWithOwnedLock(recoveryPath, recoveryOwner, async () => {
-    const current = await readFileLock(lockPath);
-    if (!current || !sameFileLockOwner(current, expected) || isProcessRunning(current.pid)) {
-      return;
-    }
-    await fs.unlink(lockPath);
-  });
-}
-
 export async function withExclusiveFileLock<T>(
   lockPath: string,
   operation: () => Promise<T>,
+  options?: FileLockOptions,
 ): Promise<T> {
+  const lockRuntime: FileLockRuntime = {
+    sleep: options?.sleep ?? sleep,
+    onRecoveryClaim: options?.onRecoveryClaim,
+  };
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
   const owner = createFileLockOwner();
-  let acquired = false;
-  for (let attempt = 0; attempt < 200; attempt++) {
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
     if (await createOwnedLock(lockPath, owner)) {
-      acquired = true;
-      break;
+      return runWithOwnedLock(lockPath, owner, operation);
     }
     const existing = await readFileLock(lockPath);
     if (!existing) continue;
     // A reused live PID is ambiguous because Node cannot inspect another process's
     // instance token portably. Keep the processStartedAt mismatch fail closed.
     if (!isProcessRunning(existing.pid)) {
-      await recoverStaleFileLock(lockPath, existing);
+      await discardDeadLock(lockPath, existing, lockRuntime, 0);
       continue;
     }
-    await sleep(5);
+    await lockRuntime.sleep(LOCK_RETRY_DELAY_MS);
   }
-  if (!acquired) throw new Error("file_lock_busy");
-  return runWithOwnedLock(lockPath, owner, operation);
+  throw new Error("file_lock_busy");
 }
 
 export async function writeFileAtomic(
