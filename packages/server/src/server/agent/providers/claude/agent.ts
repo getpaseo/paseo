@@ -2326,6 +2326,10 @@ class ClaudeAgentSession implements AgentSession {
   private planResumeMode: PermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
+  // A tool ID names one invocation. History replay and the live stream keep separate sets, so a
+  // reloaded transcript cannot mark a live call settled.
+  private readonly settledLiveToolUseIds = new Set<string>();
+  private readonly settledHistoryToolUseIds = new Set<string>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
   private subagentHandbackIds = new Set<string>();
@@ -5433,6 +5437,14 @@ class ClaudeAgentSession implements AgentSession {
     if (!item) {
       return;
     }
+    // Claude can repeat a tool_use after its tool_result, both live and in the transcript.
+    // A late start cannot reopen a call that already settled.
+    const settled = this.settledToolUseIds();
+    if (item.status === "running") {
+      if (settled.has(item.callId)) return;
+    } else {
+      settled.add(item.callId);
+    }
     if (target) {
       target.push(item);
       return;
@@ -5535,6 +5547,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async loadPersistedHistory(sessionId: string): Promise<void> {
+    this.settledHistoryToolUseIds.clear();
     let historyPath: string | null = null;
     this.replayingHistory = true;
     try {
@@ -6167,11 +6180,16 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  private settledToolUseIds(): Set<string> {
+    return this.replayingHistory ? this.settledHistoryToolUseIds : this.settledLiveToolUseIds;
+  }
+
   private upsertToolUseEntry(block: ClaudeContentChunk): ToolUseCacheEntry | null {
     const id = typeof block.id === "string" ? block.id : undefined;
     if (!id) {
       return null;
     }
+    if (this.settledToolUseIds().has(id)) return null;
     const existing = this.toolUseCache.get(id) ?? createDefaultToolUseCacheEntry(id, block);
 
     if (typeof block.name === "string" && block.name.length > 0) {

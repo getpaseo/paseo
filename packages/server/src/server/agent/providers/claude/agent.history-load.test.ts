@@ -597,6 +597,75 @@ describe("ClaudeAgentSession persisted history load", () => {
     );
   });
 
+  test.each([false, true])(
+    "duplicate tool starts cannot reopen a settled historical call (failed=%s)",
+    async (failed) => {
+      mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+      const tool = {
+        type: "tool_use",
+        id: "settled-shell",
+        name: "Bash",
+        input: { command: "echo done" },
+      };
+      const entries = [
+        {
+          type: "assistant",
+          uuid: "assistant-tool",
+          message: { role: "assistant", content: [tool] },
+        },
+        {
+          type: "user",
+          uuid: "tool-result",
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: tool.id, content: "done", is_error: failed },
+            ],
+          },
+        },
+        // Claude can append another copy of the original assistant tool_use after its result.
+        {
+          type: "assistant",
+          uuid: "assistant-tool",
+          message: { role: "assistant", content: [tool] },
+        },
+        {
+          type: "assistant",
+          uuid: "next-tool",
+          message: { role: "assistant", content: [{ ...tool, id: "new-shell" }] },
+        },
+      ];
+      writeFileSync(
+        transcriptPath(),
+        entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      );
+      const client = new ClaudeAgentClient({
+        logger: pino({ level: "silent" }),
+        resolveVersion: async () => "2.1.301",
+        queryFactory: vi.fn(() => {
+          throw new Error("Replay must not execute commands");
+        }),
+      });
+      const session = await client.resumeSession(
+        { provider: "claude", sessionId: SESSION_ID },
+        { cwd },
+      );
+      try {
+        const states: string[] = [];
+        const freshStates: string[] = [];
+        for await (const event of session.streamHistory()) {
+          if (event.type !== "timeline" || event.item.type !== "tool_call") continue;
+          if (event.item.callId === tool.id) states.push(event.item.status);
+          if (event.item.callId === "new-shell") freshStates.push(event.item.status);
+        }
+        expect(states).toEqual(["running", failed ? "failed" : "completed"]);
+        expect(freshStates).toEqual(["running"]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("logs a warning with the error when the transcript cannot be read", async () => {
     // A directory at the transcript path exists but cannot be read as a file.
     mkdirSync(transcriptPath(), { recursive: true });

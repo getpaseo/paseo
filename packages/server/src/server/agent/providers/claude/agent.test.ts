@@ -2943,6 +2943,54 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   }
 
+  test("does not restart a settled live tool when Claude repeats the assistant message", async () => {
+    const session = await createSessionForTest();
+    const tool = {
+      type: "tool_use",
+      id: "duplicate-live-shell",
+      name: "Bash",
+      input: { command: "echo done" },
+    };
+    try {
+      await session.translateMessageToEvents({
+        type: "assistant",
+        message: { role: "assistant", content: [tool] },
+      } as SDKMessage);
+      const result = await session.translateMessageToEvents({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: tool.id, content: "done" }],
+        },
+      } as SDKMessage);
+      expect(result).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ callId: tool.id, status: "completed" }),
+        }),
+      );
+      const duplicate = await session.translateMessageToEvents({
+        type: "assistant",
+        message: { role: "assistant", content: [tool] },
+      } as SDKMessage);
+      expect(
+        duplicate.filter((event) => event.type === "timeline" && event.item.type === "tool_call"),
+      ).toEqual([]);
+      const fresh = await session.translateMessageToEvents({
+        type: "assistant",
+        message: { role: "assistant", content: [{ ...tool, id: "fresh-live-shell" }] },
+      } as SDKMessage);
+      expect(fresh).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ callId: "fresh-live-shell", status: "running" }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("emits canonical task snapshots from Claude TaskCreate results", async () => {
     const session = await createSessionForTest();
     try {
