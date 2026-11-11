@@ -116,7 +116,12 @@ import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
-import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { PluginTimelineFooters } from "@/plugins/timeline/footers";
+import {
+  PluginTimelineItemView,
+  useInstalledTimelineFilter,
+  useInstalledTimelineTransform,
+} from "@/plugins/timeline";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -393,6 +398,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
+    const filterTimelineItems = useInstalledTimelineFilter(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const sessionStreamHead = useSessionStore((state) =>
@@ -532,6 +538,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           tail: effectiveStreamItems,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
+          filter: filterTimelineItems,
           display: chatDisplay,
           autoExpandReasoning,
           expandedTurnHostIds,
@@ -543,6 +550,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         effectiveStreamItems,
         effectiveStreamHead,
         transformTimelineItem,
+        filterTimelineItems,
         chatDisplay,
         autoExpandReasoning,
         expandedTurnHostIds,
@@ -1215,6 +1223,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isTimelineDetached={isTimelineDetached}
               bottomOffset={scrollToBottomOffset}
               onPress={scrollToBottom}
+            />
+            <PluginTimelineFooters
+              agentId={agentId}
+              serverId={resolvedServerId}
+              bottomOverlayClearance={bottomOverlayTailClearance}
             />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>

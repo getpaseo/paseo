@@ -1,0 +1,325 @@
+Review fixes for getpaseo/paseo#6613, 2026-10-12.
+
+Browser tests run against the actual Expo app and dedicated mock-provider daemons;
+no main daemon or provider credentials are used. PASEO_PASSWORD is cleared only
+for the isolated test process because this host exports a daemon password.
+
+The browser fixture registers a memo(forwardRef(...)) footer and appends actual
+stored plugin rows: missing renderer, schema-invalid data, valid replaced card,
+and an unmatched version. It checks zero replaced wrappers/errors, restoration
+of all three wrappers and two unavailable rows when unpinned, repinning/reload,
+independent real history scroll with footer movement <1px, clickable controls,
+footer crash recovery on session change, and isolation across two real daemons.
+Screenshots: review-desktop.png (1100x900), review-mobile.png (390x900).
+
+Only web exercised here. iOS, Android, and Electron QA remain outstanding.
+
+
+=== Targeted loader/model/presentation tests (79 passed) ===
+
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/evaluate.test.ts src/plugins/timeline/model.test.ts src/agent-stream/presentation.test.ts --maxWorkers=1 --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+
+ Test Files  3 passed (3)
+      Tests  79 passed (79)
+   Start at  16:49:20
+   Duration  88.37s (transform 136.17s, setup 309ms, import 174.39s, tests 202ms, environment 4ms)
+
+
+
+=== Remaining pre-existing inline renderer tests (4 passed) ===
+
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/timeline/view.test.tsx --maxWorkers=1 --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  16:47:42
+   Duration  22.99s (transform 18.18s, setup 63ms, import 21.28s, tests 335ms, environment 1.15s)
+
+
+
+=== Real app browser and isolated daemons (3 passed) ===
+
+
+> @getpaseo/app@0.11.1 test:e2e
+> playwright test --project=browser e2e/browser/plugin-timeline-footer.spec.ts
+
+[metro] Starting project at <checkout>/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:34139
+[metro] Logs for your project will appear below.
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓░░░░░░░ 61.1% (2005/4364)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (5436/5436)
+[metro] Web Bundled 8160ms packages/app/index.ts (5437 modules)
+[e2e] Metro warmed on port 34139
+
+Running 3 tests using 1 worker
+
+(node:14459) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:14459) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 35131, home: /tmp/paseo-e2e-worker-0-NwQ08B
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 1273ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 459ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (86 modules)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 302ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 28ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 423ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 42ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  1 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:24:7 › plugin footers pin outside real history and restore rows without gaps at width 1100 (48.0s)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 390ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 14ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 333ms packages/app/index.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 53ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web Bundled 414ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 35ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  2 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:24:7 › plugin footers pin outside real history and restore rows without gaps at width 390 (33.5s)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 387ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 22ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 375ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 35ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 455ms packages/app/index.ts (1 module)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 27ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 369ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 12ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  3 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:111:5 › a footer stays on its owning host when switching between real daemons (1.2m)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  3 passed (4.9m)
+
+
+=== App typecheck ===
+
+
+> @getpaseo/app@0.11.1 typecheck
+> tsgo --noEmit
+
+
+
+=== Changed-file lint ===
+
+
+> paseo@0.11.1 lint
+> oxlint packages/app/src/agent-stream/presentation.ts packages/app/src/agent-stream/presentation.test.ts packages/app/src/agent-stream/view.tsx packages/app/src/plugins/evaluate.ts packages/app/src/plugins/evaluate.test.ts packages/app/src/plugins/timeline/index.ts packages/app/src/plugins/timeline/model.ts packages/app/src/plugins/timeline/model.test.ts packages/app/src/plugins/timeline/view.tsx packages/app/src/plugins/timeline/view.test.tsx packages/app/e2e/browser/plugin-timeline-footer.spec.ts packages/app/e2e/support/helpers/plugin-timeline-footer.ts
+
+Found 0 warnings and 0 errors.
+Finished in 834ms on 12 files with 177 rules using 4 threads.
+
+
+=== Changed-file formatting ===
+
+
+> paseo@0.11.1 format:check:files
+> oxfmt --check packages/app/src/agent-stream/presentation.ts packages/app/src/agent-stream/presentation.test.ts packages/app/src/agent-stream/view.tsx packages/app/src/plugins/evaluate.ts packages/app/src/plugins/evaluate.test.ts packages/app/src/plugins/timeline/index.ts packages/app/src/plugins/timeline/model.ts packages/app/src/plugins/timeline/model.test.ts packages/app/src/plugins/timeline/view.tsx packages/app/src/plugins/timeline/view.test.tsx packages/app/e2e/browser/plugin-timeline-footer.spec.ts packages/app/e2e/support/helpers/plugin-timeline-footer.ts
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 101ms on 12 files using 4 threads.
+
+
+=== Intentional regression: function-only footer guard (expected failure, restored) ===
+
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/evaluate.test.ts -t accepts .* timeline footers --maxWorkers=1 --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+stderr | src/plugins/evaluate.test.ts
+[DraftStore] Attachment garbage collection failed Error: IndexedDB is unavailable in this runtime.
+    at ensureIndexedDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:27:11)
+    at <checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:34:21
+    at new Promise (<anonymous>)
+    at openAttachmentDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:33:10)
+    at Object.garbageCollect (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:192:24)
+    at <checkout>/packages/app/src/attachments/service.ts:188:17
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+ ❯ |unit| src/plugins/evaluate.test.ts (46 tests | 1 failed | 44 skipped) 11ms
+     × accepts memo timeline footers alongside other contributions 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/plugins/evaluate.test.ts > evaluatePluginClientBundle > accepts memo timeline footers alongside other contributions
+Error: Timeline footer pending is not a component
+ ❯ Object.addTimelineFooter src/plugins/evaluate.ts:417:15
+    415|         throw new Error(`Duplicate timeline footer: ${normalizedId}`);
+    416|       if (typeof contribution.Component !== "function")
+    417|         throw new Error(`Timeline footer ${normalizedId} is not a comp…
+       |               ^
+    418|       const replaces = contribution.replaces?.map((replaced) => {
+    419|         const kind = requireId(replaced.kind, "timeline footer kind");
+ ❯ module.exports.default src/plugins/evaluate.ts:487:19
+ ❯ runPluginClientBundle src/plugins/evaluate.ts:498:20
+ ❯ evaluatePluginClientBundle src/plugins/evaluate.test.ts:20:10
+ ❯ src/plugins/evaluate.test.ts:456:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 44 skipped (46)
+   Start at  16:48:06
+   Duration  17.55s (transform 14.85s, setup 49ms, import 17.34s, tests 11ms, environment 1ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path <checkout>/packages/app
+npm error workspace @getpaseo/app@0.11.1
+npm error location <checkout>/packages/app
+npm error command failed
+npm error command sh -c vitest run src/plugins/evaluate.test.ts -t 'accepts .* timeline footers' --maxWorkers=1 --bail=1
+
+
+=== Intentional regression: disable row filtering (expected failure, restored) ===
+
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/agent-stream/presentation.test.ts -t removes replaced history --maxWorkers=1 --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+stderr | src/agent-stream/presentation.test.ts
+[DraftStore] Attachment garbage collection failed Error: IndexedDB is unavailable in this runtime.
+    at ensureIndexedDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:27:11)
+    at <checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:34:21
+    at new Promise (<anonymous>)
+    at openAttachmentDb (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:33:10)
+    at Object.garbageCollect (<checkout>/packages/app/src/attachments/web/indexeddb-attachment-store.ts:192:24)
+    at <checkout>/packages/app/src/attachments/service.ts:188:17
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+ ❯ |unit| src/agent-stream/presentation.test.ts (25 tests | 1 failed | 24 skipped) 15ms
+     × removes replaced history and live rows before layout, and restores them when unregistered 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/agent-stream/presentation.test.ts > stream presentation through installed plugins > removes replaced history and live rows before layout, and restores them when unregistered
+AssertionError: expected [ { kind: 'plugin', …(7) }, …(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "data": {
++       "callId": "history",
++       "detail": {
++         "input": {
++           "callId": "history",
++         },
++         "output": {
++           "callId": "history",
++         },
++         "type": "unknown",
++       },
++       "error": null,
++       "name": "read",
++       "phase": "complete",
++       "status": "completed",
++     },
++     "id": "probe-plugin/tool-history/0",
++     "itemKind": "probe",
++     "kind": "plugin",
++     "pluginId": "probe-plugin",
++     "pluginItemId": "tool-history/0",
++     "timestamp": 2026-01-01T00:00:00.000Z,
++     "version": 1,
++   },
++   {
++     "data": {
++       "callId": "live",
++       "detail": {
++         "input": {
++           "callId": "live",
++         },
++         "output": {
++           "callId": "live",
++         },
++         "type": "unknown",
++       },
++       "error": null,
++       "name": "grep",
++       "phase": "complete",
++       "status": "completed",
++     },
++     "id": "probe-plugin/tool-live/0",
++     "itemKind": "probe",
++     "kind": "plugin",
++     "pluginId": "probe-plugin",
++     "pluginItemId": "tool-live/0",
++     "timestamp": 2026-01-01T00:00:00.000Z,
++     "version": 1,
++   },
++ ]
+
+ ❯ src/agent-stream/presentation.test.ts:147:26
+    145|       filter: (items) => filterReplacedTimelineItems(items, [plugin]),
+    146|     });
+    147|     expect(rows(hidden)).toEqual([]);
+       |                          ^
+    148|     plugin.timelineFooters = [];
+    149|     const restored = present({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 24 skipped (25)
+   Start at  16:48:24
+   Duration  11.98s (transform 9.64s, setup 54ms, import 11.76s, tests 15ms, environment 0ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path <checkout>/packages/app
+npm error workspace @getpaseo/app@0.11.1
+npm error location <checkout>/packages/app
+npm error command failed
+npm error command sh -c vitest run src/agent-stream/presentation.test.ts -t 'removes replaced history' --maxWorkers=1 --bail=1

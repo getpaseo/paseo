@@ -1,0 +1,414 @@
+PR #6613 CR follow-up, 2026-10-13
+Original PR head: 2401084d7aee74bb08debc1df7af315e2fa046a0
+Merged main: 058375dac8f0f1e1bd3d348a4cfa0793141e819a
+Fresh npm ci installation. Browser tests use isolated daemons and temporary workspaces. The inherited production-daemon password is omitted only from the test process environment.
+Web coverage: Chromium, 1100x900 and 390x900, plus two real daemons. Native and Electron QA remain outstanding.
+
+$ npm run build:server (exit 0)
+
+> paseo@0.11.2 build:server
+> npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli
+
+
+> paseo@0.11.2 build:server-deps
+> npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue "npm run build:highlight" "npm run build:plugin" "npm run build:relay"
+
+
+> paseo@0.11.2 build:client
+> npm run build --workspace=@getpaseo/client
+
+
+> @getpaseo/client@0.11.2 build
+> npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/protocol@0.11.2 prebuild
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.11.2 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.11.2 build
+> tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/relay@0.11.2 build
+> tsc -p tsconfig.json --incremental false
+
+[relay]
+[relay] > paseo@0.11.2 build:relay
+[relay] > npm run build --workspace=@getpaseo/relay
+[relay]
+[highlight]
+[highlight] > paseo@0.11.2 build:highlight
+[highlight] > npm run build --workspace=@getpaseo/highlight
+[highlight]
+[plugin]
+[plugin] > paseo@0.11.2 build:plugin
+[plugin] > npm run build --workspace=@getpaseo/plugin
+[plugin]
+[relay]
+[relay] > @getpaseo/relay@0.11.2 build
+[relay] > tsc -p tsconfig.json --incremental false
+[relay]
+[highlight]
+[highlight] > @getpaseo/highlight@0.11.2 build
+[highlight] > tsc -p tsconfig.json --incremental false
+[highlight]
+[plugin]
+[plugin] > @getpaseo/plugin@0.11.2 build
+[plugin] > tsc -p tsconfig.json --incremental false
+[plugin]
+[relay] npm run build:relay exited with code 0
+[highlight] npm run build:highlight exited with code 0
+[plugin] npm run build:plugin exited with code 0
+
+> @getpaseo/server@0.11.2 build
+> npm run build:lib && npm run build:scripts
+
+
+> @getpaseo/server@0.11.2 build:lib
+> tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true}); fs.rmSync('dist/server/builtin-plugins',{recursive:true,force:true}); fs.cpSync('../../plugins','dist/server/builtin-plugins',{recursive:true,filter:(source)=>!source.split(require('node:path').sep).some((segment)=>segment==='node_modules'||segment==='test')&&!/\.(test|spec)\.[cm]?[jt]sx?$/.test(source)&&!source.endsWith('.tsbuildinfo')});"
+
+
+> @getpaseo/server@0.11.2 build:scripts
+> tsc -p tsconfig.scripts.json --incremental false && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');"
+
+
+> @getpaseo/cli@0.11.2 build
+> tsc -p tsconfig.json --incremental false
+
+
+$ npm run build --workspace=@getpaseo/expo-two-way-audio (exit 0)
+
+> @getpaseo/expo-two-way-audio@0.11.2 build
+> tsc
+
+
+$ cd packages/app && npx vitest run src/agent-stream/presentation.test.ts --bail=1 (exit 0)
+
+ RUN  v4.1.7 /tmp/paseo-6613-review-fixes/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  26 passed (26)
+   Start at  07:49:46
+   Duration  38.03s (transform 32.38s, setup 97ms, import 37.45s, tests 191ms, environment 1ms)
+
+
+$ env -u PASEO_PASSWORD npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/plugin-timeline-footer.spec.ts --grep "closing the page"
+Intentional regression: restored the old screenshot-before-cleanup behavior. Expected exit 1; the original error is replaced and a project leaks. Restored the fix afterward.
+
+> @getpaseo/app@0.11.2 test:e2e
+> playwright test --project=browser e2e/browser/plugin-timeline-footer.spec.ts --grep closing the page
+
+[metro] Starting project at /tmp/paseo-6613-review-fixes/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:40713
+[metro] Logs for your project will appear below.
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 89.4% (4475/4733)
+[metro] Web Bundled 6012ms packages/app/index.ts (5463 modules)
+[e2e] Metro warmed on port 40713
+
+Running 1 test using 1 worker
+
+(node:1395424) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1395424) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 46307, home: /tmp/paseo-e2e-worker-0-c2b9oy
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 830ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 454ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (86 modules)
+[e2e] Worker 0 daemon stopped
+  ✘  1 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:37:5 › closing the page still removes the footer plugin and restores daemon configuration (21.4s)
+[e2e] Metro stopped
+
+
+  1) [browser] › e2e/browser/plugin-timeline-footer.spec.ts:37:5 › closing the page still removes the footer plugin and restores daemon configuration
+
+    Error: expect(received).rejects.toBe(expected) // Object.is equality
+
+    Expected: [Error: Footer action failed after closing the page]
+    Received: [Error: page.screenshot: Target page, context or browser has been closed]
+
+       at ../support/helpers/plugin-timeline-footer.ts:290
+
+      288 |         throw failure;
+      289 |       }),
+    > 290 |     ).rejects.toBe(failure);
+          |               ^
+      291 |     expect((await client.getPluginCatalog()).map((plugin) => plugin.id)).not.toContain(
+      292 |       FOOTER_PLUGIN_ID,
+      293 |     );
+        at closePageAndVerifyFooterCleanup (/tmp/paseo-6613-review-fixes/packages/app/e2e/support/helpers/plugin-timeline-footer.ts:290:15)
+        at /tmp/paseo-6613-review-fixes/packages/app/e2e/browser/plugin-timeline-footer.spec.ts:40:3
+
+    attachment #1: browser-console (text/plain) ────────────────────────────────────────────────────
+    [console:info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+    [console:log] Running application "main" with appParams:
+     {rootTag: #root, hydrate: undefined}
+    Development-level warnings: ON.
+    Performance optimizations: OFF.
+    [co...
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/plugin-timeline-footer-clo-4d6bb-stores-daemon-configuration-browser/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: project-leaks (text/plain) ──────────────────────────────────────────────────────
+    Test leaked daemon project records: prj_2f58015d0074297e
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/plugin-timeline-footer-clo-4d6bb-stores-daemon-configuration-browser/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/plugin-timeline-footer-clo-4d6bb-stores-daemon-configuration-browser/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [browser] › e2e/browser/plugin-timeline-footer.spec.ts:37:5 › closing the page still removes the footer plugin and restores daemon configuration
+npm error Lifecycle script `test:e2e` failed with error:
+npm error code 1
+npm error path /tmp/paseo-6613-review-fixes/packages/app
+npm error workspace @getpaseo/app@0.11.2
+npm error location /tmp/paseo-6613-review-fixes/packages/app
+npm error command failed
+npm error command sh -c playwright test --project=browser e2e/browser/plugin-timeline-footer.spec.ts --grep 'closing the page'
+
+$ env -u PASEO_PASSWORD npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/plugin-timeline-footer.spec.ts
+Both layout cases passed. The runner received SIGTERM (exit 143) before the other cases completed; those cases were rerun below.
+
+> @getpaseo/app@0.11.2 test:e2e
+> playwright test --project=browser e2e/browser/plugin-timeline-footer.spec.ts
+
+[metro] Starting project at /tmp/paseo-6613-review-fixes/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:38747
+[metro] Logs for your project will appear below.
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓░░░░░░░░░ 46.0% (1318/1960)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 89.7% (4539/4793)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 97.9% (5319/5377)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (5462/5462)
+[metro] Web Bundled 18028ms packages/app/index.ts (5463 modules)
+[e2e] Metro warmed on port 38747
+
+Running 4 tests using 1 worker
+
+(node:1419028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1419028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 46521, home: /tmp/paseo-e2e-worker-0-r9TCm8
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 975ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 307ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (86 modules)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 554ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 41ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 396ms packages/app/index.ts (1 module)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 30ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  1 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:14:7 › plugin footers pin outside real history and restore rows without gaps at width 1100 (47.6s)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 770ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 42ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 594ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 32ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 532ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 39ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  2 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:14:7 › plugin footers pin outside real history and restore rows without gaps at width 390 (50.6s)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 760ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 31ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 356ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 16ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 364ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 11ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 627ms packages/app/index.ts (1 module)
+
+$ env -u PASEO_PASSWORD npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/plugin-timeline-footer.spec.ts --grep "owning host|closing the page" (exit 0)
+Cleanup checks the configured plugin list, not only the enabled runtime catalog.
+
+> @getpaseo/app@0.11.2 test:e2e
+> playwright test --project=browser e2e/browser/plugin-timeline-footer.spec.ts --grep owning host|closing the page
+
+[metro] Starting project at /tmp/paseo-6613-review-fixes/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:36715
+[metro] Logs for your project will appear below.
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓░░░░░░░░░ 45.8% (1249/1846)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓░░░░░░░ 59.9% (2095/4407)
+[metro] Web packages/app/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (5462/5462)
+[metro] Web Bundled 12752ms packages/app/index.ts (5463 modules)
+[e2e] Metro warmed on port 36715
+
+Running 2 tests using 1 worker
+
+(node:1456589) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1456589) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 34487, home: /tmp/paseo-e2e-worker-0-uEIADL
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 832ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 338ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (86 modules)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 560ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 38ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 443ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 15ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 768ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 36ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  1 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:28:5 › a footer stays on its owning host when switching between real daemons (1.4m)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 603ms packages/app/index.ts (1 module)
+[metro] Web packages/app/src/attachments/web/indexeddb-attachment-store.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 18ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  2 [browser] › e2e/browser/plugin-timeline-footer.spec.ts:37:5 › closing the page still removes the footer plugin and restores daemon configuration (20.5s)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  2 passed (2.7m)
+
+$ npm run typecheck (exit 0)
+
+> paseo@0.11.2 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.11.2 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.11.2 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+> @getpaseo/protocol@0.11.2 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.11.2 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.11.2 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.11.2 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.11.2 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.11.2 typecheck
+> tsgo --noEmit
+
+
+$ npm run lint (exit 0)
+
+> paseo@0.11.2 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 6.4s on 4656 files with 177 rules using 4 threads.
+
+$ npm run format (exit 0)
+
+> paseo@0.11.2 format
+> oxfmt .
+
+Finished in 10160ms on 4990 files using 4 threads.
+
+$ npm run format:check (exit 0)
+
+> paseo@0.11.2 format:check
+> oxfmt --check .
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 13892ms on 4990 files using 4 threads.
