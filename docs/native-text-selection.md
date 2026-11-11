@@ -2,6 +2,21 @@
 
 Keep completed assistant prose in one native text view so selection crosses paragraphs, headings and lists. The shared [Markdown renderer](markdown-renderer.md) owns that view.
 
+## iOS double tap
+
+Double tap prose to start with its logical paragraph or list item selected, then drag the system handles to adjust either end. Wrapped lines and authored hard breaks stay inside that initial block; neighbouring list items stay separate. The native text view remains intact, so the handles can extend beyond the initial block.
+
+The Markdown package patch expands UIKit's initial word selection. Links, images, code blocks and task checkboxes retain their own taps. This requires a rebuilt iOS client; a plugin or JavaScript update cannot add the native behavior. Plugin renderers must leave native text selection enabled.
+
+## Android inverted chat
+
+Keep selection visibility handling in `modules/paseo-scroll`. Android's visibility
+rectangles ignore list inversion. React Native decomposes Android's `scale: -1`
+into rotation with positive `scaleY`, so test the composed matrix when deciding
+whether those requests should move the viewport. Native tests must apply the
+list's transform through React Native's view manager; assigning `scaleY` directly
+misses that decomposition.
+
 ## Diagrams in lists and quotes
 
 Selection stops at a Mermaid diagram. Native extracts Mermaid fences into separate views because the library exposes no native block renderer override. A diagram inside a list or quote therefore appears outside that container, and its following prose starts a separate Markdown fragment.
