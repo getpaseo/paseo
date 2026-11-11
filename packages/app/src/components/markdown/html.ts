@@ -36,6 +36,25 @@ const BLOCK_TAGS = new Set([
 ]);
 const EMPHASIS: Readonly<Record<string, string>> = { b: "**", strong: "**", i: "*", em: "*" };
 
+interface ContainerIndent {
+  start: number;
+  end: number;
+  indent: number;
+}
+
+function containerIndentAt(
+  offset: number,
+  outerIndent: number,
+  containers: ContainerIndent[],
+): number {
+  let indent = outerIndent;
+  for (const container of containers) {
+    if (offset >= container.start && offset < container.end)
+      indent = Math.max(indent, container.indent);
+  }
+  return indent;
+}
+
 /** Convert comment HTML to Markdown while preserving the original spelling of code. */
 export function normalizeMarkdownHtml(source: string): string {
   if (!source.includes("<")) return source;
@@ -55,18 +74,39 @@ export function normalizeMarkdownHtml(source: string): string {
   }
   findHtml(fromMarkdown(source), false);
   const codeRanges: { start: number; end: number }[] = [];
+  const markdownContainers: ContainerIndent[] = [];
   // Disable HTML parsing so code inside <details> remains visible to the Markdown parser.
   const tree = fromMarkdown(source, {
     extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }],
   });
-  function protectCode(node: Nodes) {
+  function readMarkdownContext(node: Nodes) {
     if (node.type === "code" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
-    } else if ("children" in node) node.children.forEach(protectCode);
+    }
+    if ((node.type === "listItem" || node.type === "blockquote") && node.position) {
+      const position = node.position;
+      const content = node.children[0]?.position;
+      // Outer containers already belong to the HTML node. Only discover Markdown
+      // containers that actually begin inside that HTML block, not earlier lists
+      // that the HTML-disabled parse might treat as lazy continuations.
+      const html = htmlRanges.find(
+        (range) =>
+          range.indent !== undefined &&
+          position.start.offset! >= range.start &&
+          position.start.offset! < range.end,
+      );
+      if (html && content)
+        markdownContainers.push({
+          start: Math.max(html.start, position.start.offset! - position.start.column + 1),
+          end: Math.min(html.end, position.end.offset!),
+          indent: content.start.column - 1,
+        });
+    }
+    if ("children" in node) node.children.forEach(readMarkdownContext);
   }
-  protectCode(tree);
+  readMarkdownContext(tree);
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
   let preDepth = 0;
@@ -125,7 +165,11 @@ export function normalizeMarkdownHtml(source: string): string {
     result += source
       .slice(range.start, end)
       .replace(range.indent === undefined ? HTML : HTML_OR_LINE_INDENT, (raw, offset) =>
-        convert(raw, range.start + offset, range.indent ?? 0),
+        convert(
+          raw,
+          range.start + offset,
+          containerIndentAt(range.start + offset, range.indent ?? 0, markdownContainers),
+        ),
       );
     cursor = end;
   }

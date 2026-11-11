@@ -804,6 +804,16 @@ describe("indented HTML blocks", () => {
   it.each([
     ["a standalone table", gallery.join("\n"), ["Document", "Image blob:one", "Image blob:two"]],
     [
+      "after a list",
+      ["- Feature", "", ...gallery].join("\n"),
+      [
+        "Document",
+        ["UnorderedList", ["ListItem", "Paragraph"]],
+        "Image blob:one",
+        "Image blob:two",
+      ],
+    ],
+    [
       "the document",
       ["Intro", "", ...gallery].join("\n"),
       ["Document", "Paragraph", "Image blob:one", "Image blob:two"],
@@ -1200,4 +1210,23 @@ it("keeps code-tag lines preformatted inside nested HTML", () => {
   const source = "<div><pre>\n    <code>first</code>\n        second\n</pre></div>";
   const tree = fromMarkdown(normalizeMarkdownHtml(source));
   expect(tree.children).toMatchObject([{ type: "code", value: "`first`\n    second" }]);
+});
+
+it.each([
+  ["an HTML image", '  <img src="a.png" alt="Shot">', "Image"],
+  ["quoted HTML text", "  > <b>quoted</b>", "Blockquote"],
+])("keeps %s in its Markdown list item inside details", async (_name, line, expectedType) => {
+  const prepared = prepareMarkdownSource(
+    ["<details>", "<summary>Steps</summary>", "- Parent", line, "</details>"].join("\n"),
+  );
+  const tree = await parseMarkdown(prepared.render(new Map([["a.png", "blob:shot"]])), {
+    hardSoftBreaks: true,
+    latexMath: false,
+  });
+  const list = tree.children?.find((node) => node.type === "UnorderedList");
+  expect(list?.children).toHaveLength(1);
+  function descendants(node: ASTNode): ASTNode[] {
+    return [node, ...(node.children ?? []).flatMap(descendants)];
+  }
+  expect(list?.children?.flatMap(descendants).map((node) => node.type)).toContain(expectedType);
 });
