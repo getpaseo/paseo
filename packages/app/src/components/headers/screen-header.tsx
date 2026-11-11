@@ -11,7 +11,7 @@ import {
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { WindowLayoutTopInset } from "@/window-layout";
+import { HeaderTopInset } from "./header-top-inset";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -46,7 +46,7 @@ export function ScreenHeader({
 
   return (
     <ComposerDockBackground style={styles.header} testID="composer-dock-header">
-      <WindowLayoutTopInset additionalPadding={topPadding} />
+      <HeaderTopInset additionalPadding={topPadding} />
       <WindowChromeSafeArea
         placement="inline"
         horizontalPadding={baseHorizontalPadding}

@@ -7,11 +7,14 @@ import {
   useWorkspaceHeaderWidth,
   type WorkspaceHeaderGeometry,
 } from "./use-workspace-header-width";
+import { HeaderTopInsetHost } from "@/components/headers/header-top-inset";
+import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 
 interface WorkspaceChromeProps {
   compactHeader: ReactNode | null;
   inlineHeader?: ReactNode;
   inlineHeaderActive?: boolean;
+  fullHeaderVisible: boolean;
   children: ReactNode;
 }
 
@@ -38,6 +41,7 @@ function WorkspaceChrome({
   compactHeader,
   inlineHeader,
   inlineHeaderActive = false,
+  fullHeaderVisible,
   children,
   width,
   onLayout,
@@ -45,15 +49,26 @@ function WorkspaceChrome({
   width: number | null;
   onLayout?: (event: LayoutChangeEvent) => void;
 }) {
+  const compact =
+    compactHeader !== null &&
+    !inlineHeaderActive &&
+    selectWorkspaceChrome({ width, compact: true, full: false });
   let chrome = children;
-  if (compactHeader !== null) {
-    chrome = inlineHeaderActive
-      ? inlineHeader
-      : selectWorkspaceChrome({ width, compact: compactHeader, full: children });
+  if (compactHeader !== null && inlineHeaderActive) {
+    chrome = inlineHeader;
+  } else if (compact) {
+    chrome = compactHeader;
   }
   return (
     <WorkspaceTabMeasurementScope>
-      <View onLayout={onLayout}>{chrome}</View>
+      <View onLayout={onLayout}>
+        <HeaderTopInsetHost
+          active={compact || inlineHeaderActive || fullHeaderVisible}
+          additionalPadding={compact ? HEADER_TOP_PADDING_MOBILE : 0}
+        >
+          {chrome}
+        </HeaderTopInsetHost>
+      </View>
     </WorkspaceTabMeasurementScope>
   );
 }

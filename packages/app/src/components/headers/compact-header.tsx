@@ -26,7 +26,8 @@ import {
 } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
-import { useTopBand, WindowLayoutTopInset } from "@/window-layout";
+import { useTopBand } from "@/window-layout";
+import { HeaderTopInset } from "./header-top-inset";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
@@ -80,7 +81,7 @@ export function CompactHeader({
   return (
     <IconButtonChromeProvider value="header-island">
       <View style={rootStyle}>
-        <WindowLayoutTopInset additionalPadding={HEADER_TOP_PADDING_MOBILE} />
+        <HeaderTopInset additionalPadding={HEADER_TOP_PADDING_MOBILE} />
         <View style={inTopBand ? styles.topBandRow : styles.row}>
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}

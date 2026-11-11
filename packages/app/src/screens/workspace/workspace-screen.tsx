@@ -3793,6 +3793,7 @@ function WorkspaceScreenContent({
           compactHeader={centerColumnCompactHeader}
           inlineHeader={inlineWorkspaceHeader}
           inlineHeaderActive={usesInlineWorkspaceHeader}
+          fullHeaderVisible={showScreenHeader}
         >
           {fullWorkspaceActions}
           {renderWorkspaceScreenHeader()}
