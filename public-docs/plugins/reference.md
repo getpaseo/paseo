@@ -1592,10 +1592,8 @@ Agent snapshot fields:
 label:
 
 ```tsx
-const { indicator, indicatorLabel } = useAgent(agentId, ({ indicator, indicatorLabel }) => ({
-  indicator,
-  indicatorLabel,
-}));
+const state = useAgent(agentId, ({ indicator, indicatorLabel }) => ({ indicator, indicatorLabel }));
+if (!state) return null; // The agent is unavailable.
 ```
 
 `indicator` is `running` during a turn and while background work the turn left behind, such as a

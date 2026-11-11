@@ -1350,10 +1350,8 @@ Agent 快照字段：
 `indicator` 是侧边栏为该 Agent 显示的状态，`indicatorLabel` 是它的本地化标签：
 
 ```tsx
-const { indicator, indicatorLabel } = useAgent(agentId, ({ indicator, indicatorLabel }) => ({
-  indicator,
-  indicatorLabel,
-}));
+const state = useAgent(agentId, ({ indicator, indicatorLabel }) => ({ indicator, indicatorLabel }));
+if (!state) return null; // The agent is unavailable.
 ```
 
 回合进行中，以及回合留下的后台工作（例如 shell 或监视器）仍在运行时，`indicator` 为 `running`；后台工作结束、用户尚未查看完成结果时为 `attention`；查看之后为 `done`；有待处理的权限请求时为 `needs_input`；有未读的错误时为 `failed`。展示 Agent 状态时使用它，不要从 `status` 和 `requiresAttention` 自行推导。`status` 仍是 daemon 的原始生命周期状态；`attentionReason: "finished"` 表示回合已结束，与后台工作是否仍在运行无关。要读取后台工作本身，使用 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle)。

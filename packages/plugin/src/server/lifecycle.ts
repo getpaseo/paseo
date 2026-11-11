@@ -138,7 +138,9 @@ export interface PluginHookRequests {
 
 /** What a hook may return. An omitted `metadata` stays as it was. */
 type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
-  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata"> & {
+  // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
+  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
+    readonly background?: boolean;
     metadata?: Readonly<Record<string, JsonValue>>;
   };
 };
