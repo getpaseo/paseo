@@ -1,8 +1,29 @@
+import { fileURLToPath } from "node:url";
 import type {
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
 import type { AcpToolCallPayload, JsonValue } from "./wire.js";
+
+export interface SubagentLaunchInfo {
+  childSessionId: string;
+  toolCallId: string;
+  title?: string;
+  description?: string;
+  subAgentType?: string;
+  logPath?: string;
+  cwd: string;
+}
+
+export type SubagentControlAction =
+  | { kind: "send_message"; recipientId: string; message?: string }
+  | { kind: "kill"; conversationIds: string[] }
+  | { kind: "kill_all" };
+
+export interface BackgroundTaskInfo {
+  taskId: string;
+  persistent: boolean;
+}
 
 export function mergeAcpToolCall(
   previous: AcpToolCallPayload | undefined,
@@ -51,9 +72,41 @@ export function inferToolName(tool: AcpToolCallPayload): string {
 function inferToolNameFromInput(input: Record<string, unknown>): string | undefined {
   const explicit = stringField(input, "toolName") ?? stringField(input, "_toolName");
   if (explicit) return explicit;
+  const controlName = inferControlOrScheduleToolName(input);
+  if (controlName) return controlName;
   for (const [field, toolName] of INPUT_FIELD_TOOL_NAMES) {
     if (field in input) return toolName;
   }
+  return inferFallbackFileToolName(input);
+}
+
+function inferControlOrScheduleToolName(input: Record<string, unknown>): string | undefined {
+  if ("Recipient" in input && "Message" in input) return "send_message";
+  if ("Action" in input && "TaskId" in input) return "manage_task";
+  if (isManageSubagentsInput(input)) return "manage_subagents";
+  if (isScheduleInput(input)) return "schedule";
+  return undefined;
+}
+
+function isManageSubagentsInput(input: Record<string, unknown>): boolean {
+  if (!("Action" in input)) return false;
+  return (
+    "ConversationIds" in input ||
+    input.Action === "kill_all" ||
+    (input.Action === "list" && !("TaskId" in input))
+  );
+}
+
+function isScheduleInput(input: Record<string, unknown>): boolean {
+  if ("DurationSeconds" in input || "CronExpression" in input) return true;
+  return (
+    "Prompt" in input &&
+    !("TypeName" in input) &&
+    ("TimerCondition" in input || "IsDaemon" in input)
+  );
+}
+
+function inferFallbackFileToolName(input: Record<string, unknown>): string | undefined {
   if ("Replacement" in input && "Target" in input) return "edit_file";
   if ("Content" in input && ("TargetFile" in input || "Path" in input)) return "write_to_file";
   if ("Path" in input && !("Content" in input)) return "view_file";
@@ -393,6 +446,158 @@ function extractSubagentId(output: string | undefined): string | undefined {
     /conversation:\/\/([0-9a-f-]{36})/i.exec(output)?.[1] ??
     /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(output)?.[1]
   );
+}
+
+export function extractSubagentLaunchInfo(
+  tool: AcpToolCallPayload,
+  defaultCwd: string,
+): SubagentLaunchInfo | undefined {
+  if (tool.status === "failed") return undefined;
+  const name = inferToolName(tool);
+  const rawInput = asRecord(tool.rawInput) ?? {};
+  if (!isSubagentLaunchCall(name, rawInput)) return undefined;
+
+  const rawOutput = asRecord(tool.rawOutput);
+  const childSessionId = resolveLaunchedSubagentId(rawOutput, extractToolOutputText(tool));
+  if (!childSessionId) return undefined;
+
+  return buildSubagentLaunchInfo(tool, childSessionId, rawInput, rawOutput, defaultCwd);
+}
+
+function isSubagentLaunchCall(name: string, rawInput: Record<string, unknown>): boolean {
+  if (name === "invoke_subagent" || "TypeName" in rawInput) return true;
+  return name === "tool" && "Prompt" in rawInput && "Role" in rawInput;
+}
+
+function resolveLaunchedSubagentId(
+  rawOutput: Record<string, unknown> | undefined,
+  output: string | undefined,
+): string | undefined {
+  return (
+    firstString(rawOutput?.conversationIds) ??
+    stringField(rawOutput, "conversationId") ??
+    extractSubagentId(output)
+  );
+}
+
+function buildSubagentLaunchInfo(
+  tool: AcpToolCallPayload,
+  childSessionId: string,
+  rawInput: Record<string, unknown>,
+  rawOutput: Record<string, unknown> | undefined,
+  defaultCwd: string,
+): SubagentLaunchInfo {
+  const subAgentType = stringField(rawInput, "TypeName");
+  const role = stringField(rawInput, "Role");
+  const title = role ?? subAgentType ?? tool.title?.trim();
+  const description = stringField(rawInput, "Prompt");
+  const logPath =
+    uriToFilePath(stringField(rawOutput, "logAbsoluteUri")) ??
+    uriToFilePath(firstString(rawOutput?.logAbsoluteUris));
+  const cwd = uriToFilePath(firstString(rawOutput?.workspaceUris)) ?? defaultCwd;
+
+  const info: SubagentLaunchInfo = {
+    childSessionId,
+    toolCallId: tool.toolCallId,
+    cwd,
+  };
+  if (title) info.title = title;
+  if (description) info.description = description;
+  if (subAgentType) info.subAgentType = subAgentType;
+  if (logPath) info.logPath = logPath;
+  return info;
+}
+
+export function extractSubagentControlAction(
+  tool: AcpToolCallPayload,
+): SubagentControlAction | undefined {
+  if (tool.status === "failed") return undefined;
+  const name = inferToolName(tool);
+  const rawInput = asRecord(tool.rawInput) ?? {};
+  if (name === "send_message" || ("Recipient" in rawInput && "Message" in rawInput)) {
+    const recipientId = stringField(rawInput, "Recipient");
+    if (!recipientId) return undefined;
+    const message = stringField(rawInput, "Message");
+    return { kind: "send_message", recipientId, ...(message ? { message } : {}) };
+  }
+  if (name === "manage_subagents" || ("Action" in rawInput && "ConversationIds" in rawInput)) {
+    const action = stringField(rawInput, "Action");
+    if (action === "kill_all") {
+      return { kind: "kill_all" };
+    }
+    if (action === "kill") {
+      const ids = stringArray(rawInput.ConversationIds);
+      if (ids.length > 0) return { kind: "kill", conversationIds: ids };
+    }
+  }
+  return undefined;
+}
+
+export function extractBackgroundTaskLaunch(
+  tool: AcpToolCallPayload,
+): BackgroundTaskInfo | undefined {
+  if (tool.status === "failed") return undefined;
+  const name = inferToolName(tool);
+  const rawInput = asRecord(tool.rawInput) ?? {};
+  const rawOutput = asRecord(tool.rawOutput);
+  const output = extractToolOutputText(tool);
+  const persistent =
+    rawInput.IsDaemon === true ||
+    rawInput.IsDaemon === "true" ||
+    (name === "schedule" &&
+      Boolean(stringField(rawInput, "CronExpression")) &&
+      rawInput.MaxIterations !== 1 &&
+      rawInput.MaxIterations !== "1");
+
+  const bgMatch = output
+    ? /Tool is running as a background task with task id:\s*([^\s"'<>]+)/i.exec(output)
+    : null;
+  if (bgMatch?.[1]) {
+    return { taskId: bgMatch[1], persistent };
+  }
+
+  const explicitTaskId = stringField(rawOutput, "taskId") ?? stringField(rawOutput, "TaskId");
+  if (explicitTaskId) {
+    return { taskId: explicitTaskId, persistent };
+  }
+
+  if (name === "schedule" && (tool.status === "completed" || tool.status === "in_progress")) {
+    const scheduleTaskMatch = output
+      ? /\b([^\s"'<>]*task-\d+|schedule-[^\s"'<>]+)\b/i.exec(output)
+      : null;
+    return {
+      taskId: scheduleTaskMatch?.[1] ?? `schedule:${tool.toolCallId}`,
+      persistent,
+    };
+  }
+  return undefined;
+}
+
+export function extractBackgroundTaskKill(tool: AcpToolCallPayload): string | undefined {
+  if (tool.status === "failed") return undefined;
+  const name = inferToolName(tool);
+  const rawInput = asRecord(tool.rawInput) ?? {};
+  if (name === "manage_task" && stringField(rawInput, "Action") === "kill") {
+    return stringField(rawInput, "TaskId");
+  }
+  return undefined;
+}
+
+function uriToFilePath(uri: string | undefined): string | undefined {
+  if (!uri) return undefined;
+  if (uri.startsWith("file://")) {
+    try {
+      return fileURLToPath(uri);
+    } catch {
+      return uri.slice("file://".length);
+    }
+  }
+  return uri.startsWith("/") || /^[A-Za-z]:[\\/]/.test(uri) ? uri : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
 function joinChunkField(chunks: unknown, key: string): string | undefined {

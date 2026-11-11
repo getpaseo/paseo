@@ -27,7 +27,7 @@ Paseo 通过 `agy acp --stdio` 驱动 Antigravity，并提供三种权限模式�
 
 此集成使用你已安装的 CLI 和登录状态，未经 Google 认可。
 
-轮次中途引导功能不可用。配置的 MCP 服务器和系统提示词会转发给 ACP 会话，附加的图片会以文件引用的形式传给 Agent 读取。
+轮次中途引导功能不可用。配置的 MCP 服务器和系统提示词会转发给 ACP 会话，附加的图片会以文件引用的形式传给 Agent 读取。此外，Paseo 还会在用量面板中展示 Antigravity 账号配额窗口与 AI Credits 余额，将原生子代理实时同步到子代理面板，并在后台命令、定时任务或子代理执行完成时自动唤醒会话。
 
 如果 `agy` 不在 daemon 的 PATH 中，请在 `~/.paseo/config.json` 中覆盖它的命令。使用 `env` 设置 Provider 专用的环境变量：
 

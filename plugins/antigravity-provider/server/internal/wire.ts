@@ -135,6 +135,7 @@ const acpUsageUpdateSchema = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   cachedInputTokens: z.number().optional(),
+  cachedReadTokens: z.number().optional(),
   cost: z
     .object({
       amount: z.number(),
@@ -189,6 +190,24 @@ export const acpSessionResultSchema = z.object({
     .nullable()
     .optional(),
   configOptions: z.array(z.record(z.string(), z.unknown())).nullable().optional(),
+  _meta: z
+    .object({
+      antigravity: z
+        .object({
+          tier: z
+            .object({
+              id: z.string().optional(),
+              name: z.string().optional(),
+              upgradeUri: z.string().optional(),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const acpPromptResultSchema = z.object({
@@ -198,6 +217,10 @@ export const acpPromptResultSchema = z.object({
       inputTokens: z.number().optional(),
       outputTokens: z.number().optional(),
       cachedInputTokens: z.number().optional(),
+      cachedReadTokens: z.number().optional(),
+      cachedWriteTokens: z.number().optional(),
+      thoughtTokens: z.number().optional(),
+      totalTokens: z.number().optional(),
       totalCostUsd: z.number().optional(),
     })
     .optional(),

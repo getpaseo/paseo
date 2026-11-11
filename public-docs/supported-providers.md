@@ -34,7 +34,10 @@ Interactive `ask_question` prompts are surfaced as question cards in Paseo.
 This integration uses your installed CLI and sign-in. It is not endorsed by Google.
 
 Mid-turn steering is unavailable. Configured MCP servers and system prompts are forwarded to the
-ACP session, and attached images are passed as file references for the agent to read.
+ACP session, and attached images are passed as file references for the agent to read. Paseo also
+surfaces Antigravity account quota windows and AI Credits in the usage panel, streams native
+subagents into the subagents track, and wakes sessions automatically when background commands,
+schedules, or subagents complete.
 
 If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env`
 for provider-specific environment variables:

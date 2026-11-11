@@ -43,10 +43,11 @@ async function harness(env: Record<string, string> = {}) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-test-"));
   temporary.push(cwd);
   const log = path.join(cwd, "argv.ndjson");
+  const dataDir = path.join(cwd, "agy-data");
   const launch: ProviderLaunch = {
     command: process.execPath,
     args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
+    env: { AGY_TEST_LOG: log, ANTIGRAVITY_EXECUTABLE_DATA_DIR: dataDir, ...env },
   };
   const connection = await provider.connect({
     versions: [1],
@@ -186,6 +187,7 @@ async function harness(env: Record<string, string> = {}) {
     events,
     launch,
     cwd,
+    dataDir,
     wait,
     request,
     open,
@@ -208,8 +210,10 @@ it("starts via agy acp --stdio without full-access warnings, passes systemPrompt
     "prompt.message",
     "prompt.command",
     "prompt.image",
+    "session.can_stop_runtime",
     "session.configure",
     "session.persistence",
+    "session.subsession",
     "permission",
   ]);
   await h.open();

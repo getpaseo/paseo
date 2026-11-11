@@ -12,17 +12,20 @@ import {
 import { getCatalog, getStatus } from "./internal/catalog.js";
 import { Session } from "./internal/session.js";
 import { AntigravityError } from "./internal/wire.js";
+import type { Usage } from "./usage.js";
 
 const capabilities = [
   "prompt.message",
   "prompt.command",
   "prompt.image",
+  "session.can_stop_runtime",
   "session.configure",
   "session.persistence",
+  "session.subsession",
   "permission",
 ] as const;
 
-export function createAntigravityProvider(): ProviderRegistration {
+export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
   return {
     id: "antigravity",
     label: "Antigravity",
@@ -35,6 +38,7 @@ export function createAntigravityProvider(): ProviderRegistration {
           available: false,
           diagnostic: "agy not found on PATH. Install Antigravity, then run `agy` and sign in.",
         };
+      usage?.rememberLaunch(launch);
       return getStatus(launch);
     },
     async getCatalogCacheKey({ launch }) {
@@ -55,8 +59,9 @@ export function createAntigravityProvider(): ProviderRegistration {
           "The daemon must supply the Antigravity launch",
           "MISSING_LAUNCH",
         );
+      usage?.rememberLaunch(request.launch);
       const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
-      return createConnection(request.launch, negotiated);
+      return createConnection(request.launch, negotiated, usage);
     },
   };
 }
@@ -64,6 +69,7 @@ export function createAntigravityProvider(): ProviderRegistration {
 function createConnection(
   launch: ProviderLaunch,
   negotiated: readonly string[],
+  usage?: Usage,
 ): ProviderConnection {
   const sessions = new Map<string, Session>();
   const listeners = new Set<(event: ProviderEvent) => void>();
@@ -95,6 +101,14 @@ function createConnection(
           catalog: catalog(),
         });
         return;
+      case "session.can_stop_runtime":
+        emit({
+          type: "session.can_stop_runtime",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          canStop: session(input.sessionId).canStopRuntime(),
+        });
+        return;
       case "session.open": {
         if (sessions.has(input.sessionId))
           throw new AntigravityError(
@@ -110,6 +124,7 @@ function createConnection(
           catalog,
           launch,
           emit,
+          usage,
         });
         sessions.set(input.sessionId, opened);
         try {
