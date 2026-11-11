@@ -254,6 +254,7 @@ URI 中的 `password=` 总是优先于环境变量，因此你可以全局设置
 - `PASEO_ALLOWED_HOSTS`，`PASEO_HOSTNAMES` 的已弃用别名
 - `PASEO_WEB_UI_ENABLED`，启用或关闭由 daemon 提供的 Web UI
 - `PASEO_WEB_UI_DIST_DIR`，覆盖 daemon Web UI 的构建目录
+- `PASEO_BASE_PATH`，在 URL 路径前缀下提供 daemon，参见 [在路径前缀下提供服务](/docs/web-ui#serving-under-a-path-prefix)
 - `PASEO_TRUSTED_PROXIES`，为 `X-Forwarded-*` 请求头配置受信任的反向代理范围
 - `PASEO_LOG_CONSOLE_LEVEL`，覆盖 `log.console.level`
 - `PASEO_LOG_FILE_LEVEL`，覆盖 `log.file.level`

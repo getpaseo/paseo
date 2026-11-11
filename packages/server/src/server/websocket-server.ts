@@ -131,6 +131,7 @@ import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
+import { isDaemonWebSocketPath } from "./base-path.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
@@ -191,6 +192,8 @@ interface WebSocketServerConfig {
   daemonStatusRpc?: boolean;
   relayConfig?: boolean;
   startPaused?: boolean;
+  /** Normalized base path; the endpoint is also served at `${basePath}/ws`. */
+  basePath?: string;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -899,6 +902,7 @@ export class VoiceAssistantWebSocketServer {
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const password = auth?.password;
+    const basePath = wsConfig.basePath ?? "";
     const wss = new WebSocketServer({
       server,
       path: "/ws",
@@ -913,6 +917,8 @@ export class VoiceAssistantWebSocketServer {
         );
       },
     });
+    // ws matches a single path; accept the base-path alias as well.
+    wss.shouldHandle = (req) => isDaemonWebSocketPath(req.url, basePath);
     wss.on("connection", (ws, request) => {
       void this.attachAuthenticatedSocket(ws, request, password);
     });

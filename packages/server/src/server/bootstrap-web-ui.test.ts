@@ -17,10 +17,12 @@ interface InitialDaemonConnectionHint {
   listen: string;
   useTls: boolean;
   label: string;
+  basePath?: string;
 }
 
 function fetchDaemonWebUi(options: {
   port: number;
+  path?: string;
   headers?: Record<string, string>;
 }): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -28,7 +30,7 @@ function fetchDaemonWebUi(options: {
       {
         hostname: "127.0.0.1",
         port: options.port,
-        path: "/",
+        path: options.path ?? "/",
         headers: {
           host: `daemon.example.test:${options.port}`,
           ...options.headers,
@@ -71,6 +73,11 @@ describe("daemon web UI bootstrap", () => {
     await writeFile(
       path.join(distDir, "index.html"),
       "<!DOCTYPE html><html><head></head><body>app</body></html>",
+    );
+    await mkdir(path.join(distDir, "_expo", "static", "js", "web"), { recursive: true });
+    await writeFile(
+      path.join(distDir, "_expo", "static", "js", "web", "entry.js"),
+      "console.log('entry');",
     );
     return distDir;
   }
@@ -213,5 +220,107 @@ describe("daemon web UI bootstrap", () => {
       useTls: false,
       label: expectedHostName,
     });
+  });
+
+  describe("under a base path", () => {
+    const basePath = "/user/alice/paseo";
+
+    async function connectWebSocket(url: string): Promise<void> {
+      const client = new DaemonClient({
+        url,
+        clientId: "base-path-test",
+        clientType: "browser",
+      });
+      try {
+        await client.connect();
+        expect(client.getLastServerInfoMessage()?.hostname).toBe(expectedHostName);
+      } finally {
+        await client.close();
+      }
+    }
+
+    test("serves the web UI, assets, and API under the prefix and advertises it in the hint", async () => {
+      const distDir = await createWebUiDist();
+      daemonHandle = await createTestPaseoDaemon({
+        mcpEnabled: false,
+        basePath,
+        webUi: { enabled: true, distDir },
+      });
+      const origin = `http://127.0.0.1:${daemonHandle.port}`;
+
+      const asset = await fetch(`${origin}${basePath}/_expo/static/js/web/entry.js`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toBe("application/javascript; charset=utf-8");
+      expect(await asset.text()).toBe("console.log('entry');");
+
+      const deepLink = await fetch(`${origin}${basePath}/h/example/agent/123`);
+      expect(deepLink.status).toBe(200);
+      expect(await deepLink.text()).toContain("<body>app</body>");
+
+      const status = await fetch(`${origin}${basePath}/api/status`);
+      expect(await status.json()).toMatchObject({ hostname: expectedHostName });
+
+      for (const indexPath of [basePath, `${basePath}/`, `${basePath}/?x=1`]) {
+        expect(
+          readInjectedConnectionHint(
+            await fetchDaemonWebUi({ port: daemonHandle.port, path: indexPath }),
+          ),
+        ).toEqual({
+          listen: `daemon.example.test:${daemonHandle.port}`,
+          useTls: false,
+          label: expectedHostName,
+          basePath,
+        });
+      }
+    });
+
+    test("accepts WebSocket connections at the prefixed and the root endpoint", async () => {
+      daemonHandle = await createTestPaseoDaemon({ mcpEnabled: false, basePath });
+      await connectWebSocket(`ws://127.0.0.1:${daemonHandle.port}${basePath}/ws`);
+      await connectWebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`);
+    });
+
+    test("keeps serving unprefixed requests from proxies that strip the prefix", async () => {
+      const distDir = await createWebUiDist();
+      daemonHandle = await createTestPaseoDaemon({
+        mcpEnabled: false,
+        basePath,
+        webUi: { enabled: true, distDir },
+      });
+      const origin = `http://127.0.0.1:${daemonHandle.port}`;
+
+      const asset = await fetch(`${origin}/_expo/static/js/web/entry.js`);
+      expect(await asset.text()).toBe("console.log('entry');");
+      const hint = readInjectedConnectionHint(await fetchDaemonWebUi({ port: daemonHandle.port }));
+      expect(hint.basePath).toBe(basePath);
+    });
+
+    test("does not treat a sibling path that shares the prefix as the base path", async () => {
+      const distDir = await createWebUiDist();
+      daemonHandle = await createTestPaseoDaemon({
+        mcpEnabled: false,
+        basePath,
+        webUi: { enabled: true, distDir },
+      });
+      const response = await fetch(
+        `http://127.0.0.1:${daemonHandle.port}${basePath}-other/_expo/static/js/web/entry.js`,
+      );
+      // Falls through to the SPA fallback instead of resolving the asset.
+      expect(await response.text()).toContain("<body>app</body>");
+    });
+  });
+
+  test("leaves the hint without a base path when none is configured", async () => {
+    const distDir = await createWebUiDist();
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: { enabled: true, distDir },
+    });
+    const hint = readInjectedConnectionHint(await fetchDaemonWebUi({ port: daemonHandle.port }));
+    expect(hint).not.toHaveProperty("basePath");
+    const prefixed = await fetch(
+      `http://127.0.0.1:${daemonHandle.port}/user/alice/paseo/_expo/static/js/web/entry.js`,
+    );
+    expect(await prefixed.text()).toContain("<body>app</body>");
   });
 });
