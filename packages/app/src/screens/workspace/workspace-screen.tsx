@@ -2,6 +2,7 @@ import {
   AdaptiveWorkspaceChrome,
   type WorkspaceCompactHeaderTabs,
 } from "./adaptive-workspace-chrome";
+import { useWorkspaceViewport } from "./use-workspace-viewport";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -13,7 +14,7 @@ import {
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
-import type { LayoutChangeEvent } from "react-native";
+import type { ViewProps } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ForgeShorthandProvider } from "@/git/forge-shorthand";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
@@ -807,7 +808,7 @@ function WorkspacePanelSurface({
   workspaceKey,
   onLayout,
 }: {
-  onLayout: (event: LayoutChangeEvent) => void;
+  onLayout: ViewProps["onLayout"];
   workspaceKey: string;
   launcher: NewTabLauncher;
   children: ReactNode;
@@ -3710,11 +3711,7 @@ function WorkspaceScreenContent({
     </DesktopCenterColumnChrome>
   );
 
-  const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);
-  const measureWorkspaceWidth = useCallback(
-    (event: LayoutChangeEvent) => setWorkspaceViewportWidth(event.nativeEvent.layout.width),
-    [],
-  );
+  const { width: workspaceViewportWidth, onLayout: measureWorkspaceWidth } = useWorkspaceViewport();
   const sharedExplorer = useMemo(() => {
     if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return null;
     const explorerPane = findPaneById(workspaceLayout.root, explorerSidebarPaneId);

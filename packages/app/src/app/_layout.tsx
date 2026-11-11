@@ -6,7 +6,11 @@ import {
   WindowLayoutDivisionGap,
   useWindowLayout,
   resolveDesktopDivisionLayout,
+  resolveWorkspaceActionPlacement,
+  type DesktopDivisionLayout,
+  type WindowLayout,
 } from "@/window-layout";
+import { WorkspaceWidthProvider } from "@/window-layout/workspace-width";
 import { AddHostProvider, AddHostFlowHost } from "@/hosts/add-host";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -69,6 +73,7 @@ import {
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
+  resolveDesktopSidebarWidth,
   resolveSidebarActivity,
   resolveLeftSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
@@ -399,8 +404,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
+  const windowLayout = useWindowLayout();
   const divisionLayout = resolveDesktopDivisionLayout({
-    geometry: useWindowLayout(),
+    geometry: windowLayout,
     windowWidth,
     windowHeight,
     leftInset: insets.left,
@@ -578,24 +584,63 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 
   return (
-    <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation === "overlay"}>
+    <AppContainerLifetime
+      sidebarGesturesEnabled={sidebarPresentation === "overlay"}
+      isCompactLayout={isCompactLayout}
+      windowWidth={windowWidth}
+      viewportWidth={viewportWidth}
+      sidebarWidth={sidebarWidth}
+      sidebarVisible={desktopSidebarVisible}
+      windowLayout={windowLayout}
+      divisionLayout={divisionLayout}
+    >
       <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
     </AppContainerLifetime>
   );
 }
 
+interface AppContainerLifetimeProps {
+  children: ReactNode;
+  sidebarGesturesEnabled: boolean;
+  isCompactLayout: boolean;
+  windowWidth: number;
+  viewportWidth: number;
+  sidebarWidth: number;
+  sidebarVisible: boolean;
+  windowLayout: WindowLayout | null;
+  divisionLayout: DesktopDivisionLayout | null;
+}
+
 function AppContainerLifetime({
   children,
   sidebarGesturesEnabled,
-}: {
-  children: ReactNode;
-  sidebarGesturesEnabled: boolean;
-}) {
+  isCompactLayout,
+  windowWidth,
+  viewportWidth,
+  sidebarWidth,
+  sidebarVisible,
+  windowLayout,
+  divisionLayout,
+}: AppContainerLifetimeProps) {
+  const consumesHorizontalInsets =
+    !isCompactLayout || resolveWorkspaceActionPlacement(windowLayout) === "vertical-bar";
+  const contentViewportWidth = consumesHorizontalInsets ? viewportWidth : windowWidth;
+  const allocatedSidebarWidth =
+    divisionLayout?.sidebarWidth ??
+    resolveDesktopSidebarWidth({ requestedWidth: sidebarWidth, viewportWidth });
+  const divisionContentWidth = isCompactLayout ? null : (divisionLayout?.contentWidth ?? null);
   return (
     <ComposerEditingSessionsProvider>
       <CommandCenterProvider>
         <MobileGestureWrapper chromeEnabled={sidebarGesturesEnabled}>
-          {children}
+          <WorkspaceWidthProvider
+            viewportWidth={contentViewportWidth}
+            sidebarWidth={allocatedSidebarWidth}
+            sidebarVisible={sidebarVisible}
+            divisionContentWidth={divisionContentWidth}
+          >
+            {children}
+          </WorkspaceWidthProvider>
         </MobileGestureWrapper>
       </CommandCenterProvider>
     </ComposerEditingSessionsProvider>

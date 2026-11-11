@@ -118,6 +118,11 @@ The dock reserves at least 240 points and the workspace 360. App navigation yiel
 share the remaining width with both. This keeps a portrait tablet from rendering three unusably
 narrow columns; widening restores navigation without changing its saved open state.
 
+Native dock sizing follows the app shell's allocation instead of retained `onLayout` measurements:
+navigation may yield during the same render that reveals Explorer. Keep live resizing and the dock's
+visibility/width update on the UI thread; React-only visibility can expose the hidden dock's old width
+before its layout update. Web keeps measuring its split-pane viewport.
+
 Compact panel gestures own overlay visibility; the workspace layout owns its tab selection and
 contents on every platform. Explicit pane destinations bypass compact sheet placement, so choosing
 a panel in Explorer's + menu keeps it there. Ordinary compact file and subagent look-ups still use

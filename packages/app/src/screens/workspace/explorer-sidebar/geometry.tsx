@@ -4,6 +4,7 @@ import {
   runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
@@ -22,11 +23,13 @@ import {
   resolveExplorerSidebarWidth,
   type ExplorerSidebarResize,
 } from "@/components/explorer-sidebar-layout";
+import { useWorkspaceWidth } from "@/window-layout/workspace-width";
 import type { ExplorerGeometryInput, ExplorerGeometry } from "./geometry-types";
 export function useExplorerGeometry({
   width,
-  containerWidth,
+  requestedWidth,
   overlay,
+  isOpen,
   resizeEnabled,
   onResize,
 }: ExplorerGeometryInput): ExplorerGeometry {
@@ -35,13 +38,23 @@ export function useExplorerGeometry({
   const startWidth = useSharedValue(width);
   const resize = useSharedValue<ExplorerSidebarResize | null>(null);
   const [resizePressed, setResizePressed] = useState(false);
+  const { contentWidth } = useWorkspaceWidth();
+  const allocation = useDerivedValue(() => {
+    const containerWidth = contentWidth.value;
+    return {
+      width: resolveExplorerSidebarWidth({ requestedWidth, containerWidth }),
+      containerWidth,
+      overlay,
+      resizeEnabled,
+    };
+  }, [contentWidth, requestedWidth, overlay, resizeEnabled]);
   useAnimatedReaction(
-    () => ({ resize: resize.value, width, containerWidth, overlay, resizeEnabled }),
-    ({ resize: currentResize, ...allocation }) => {
-      const nextResize = reconcileExplorerSidebarResize(currentResize, allocation);
+    () => ({ resize: resize.value, allocation: allocation.value }),
+    ({ resize: currentResize, allocation: currentAllocation }) => {
+      const nextResize = reconcileExplorerSidebarResize(currentResize, currentAllocation);
       if (nextResize !== currentResize) resize.value = nextResize;
     },
-    [containerWidth, overlay, resize, resizeEnabled, width],
+    [allocation, resize],
   );
 
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
@@ -56,19 +69,11 @@ export function useExplorerGeometry({
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
           const currentWidth = resolveExplorerSidebarFrameWidth({
-            width,
-            containerWidth,
-            overlay,
-            resizeEnabled,
+            ...allocation.value,
             resize: resize.value,
             resizeWidth: resizeWidth.value,
           });
-          resize.value = beginExplorerSidebarResize(resize.value, {
-            width,
-            containerWidth,
-            overlay,
-            resizeEnabled,
-          });
+          resize.value = beginExplorerSidebarResize(resize.value, allocation.value);
           startWidth.value = currentWidth + event.translationX;
           resizeWidth.value = currentWidth;
         })
@@ -76,7 +81,7 @@ export function useExplorerGeometry({
           if (!resize.value) return;
           resizeWidth.value = resolveExplorerSidebarWidth({
             requestedWidth: startWidth.value - event.translationX,
-            containerWidth,
+            containerWidth: allocation.value.containerWidth,
           });
         })
         .onEnd((_event, success) => {
@@ -94,34 +99,28 @@ export function useExplorerGeometry({
         }),
     [
       resizeEnabled,
+      allocation,
       onResize,
-      containerWidth,
       hideResizeGrip,
-      overlay,
       resize,
       resizeWidth,
       showResizeGrip,
       startWidth,
-      width,
     ],
   );
-  // Reanimated retains the last animated value when its style is removed. Keep this
-  // style attached across folding and explicitly size overlays to the workspace viewport.
-  const animatedWidthStyle = useAnimatedStyle(() => {
-    if (overlay) return { width: containerWidth };
-    {
-      return {
-        width: resolveExplorerSidebarFrameWidth({
-          width,
-          containerWidth,
-          overlay,
-          resizeEnabled,
-          resize: resize.value,
-          resizeWidth: resizeWidth.value,
-        }),
-      };
-    }
-  }, [containerWidth, overlay, resizeEnabled, width]);
+  // Fabric must receive visibility and width together. Revealing from React first can expose
+  // the hidden dock's previous width. Hidden overlays retain their native scroll ranges.
+  const animatedWidthStyle = useAnimatedStyle(
+    () => ({
+      display: overlay || isOpen ? "flex" : "none",
+      width: resolveExplorerSidebarFrameWidth({
+        ...allocation.value,
+        resize: resize.value,
+        resizeWidth: resizeWidth.value,
+      }),
+    }),
+    [allocation, overlay, isOpen],
+  );
   return {
     frameStyle: animatedWidthStyle,
     panelStyle: {

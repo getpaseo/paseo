@@ -37,8 +37,10 @@ function ExplorerFrameBase({
   );
   const geometry = useExplorerGeometry({
     width: resolveExplorerSidebarWidth({ requestedWidth: storedWidth, containerWidth }),
+    requestedWidth: storedWidth,
     containerWidth,
     overlay,
+    isOpen,
     resizeEnabled,
     onResize,
   });

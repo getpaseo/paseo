@@ -117,3 +117,16 @@ export function resolveDesktopDivisionLayout(input: {
   if (sidebarWidth <= 0 || contentWidth <= 0) return null;
   return { sidebarWidth, gap: division.width, contentWidth };
 }
+
+export interface WorkspaceContentWidthInput {
+  viewportWidth: number;
+  sidebarWidth: number;
+  sidebarVisible: boolean;
+  divisionContentWidth: number | null;
+}
+
+export function resolveWorkspaceContentWidth(input: WorkspaceContentWidthInput): number {
+  "worklet";
+  if (input.divisionContentWidth !== null) return input.divisionContentWidth;
+  return Math.max(0, input.viewportWidth - (input.sidebarVisible ? input.sidebarWidth : 0));
+}

@@ -32,6 +32,7 @@ import {
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import { useWorkspaceWidth } from "@/window-layout/workspace-width";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -733,7 +734,7 @@ function DesktopSidebar({
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
 
   const startWidth = useSharedValue(visibleSidebarWidth);
-  const resizeWidth = useSharedValue(visibleSidebarWidth);
+  const { sidebarWidth: resizeWidth } = useWorkspaceWidth();
   const [resizePressed, setResizePressed] = useState(false);
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
