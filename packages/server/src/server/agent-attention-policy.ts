@@ -4,6 +4,8 @@ export const PRESENCE_THRESHOLD_MS = 180_000;
 
 export interface ClientPresenceState {
   appVisible: boolean;
+  // Null until the first heartbeat. Presence still comes from lastActivityAtMs.
+  deviceType: "web" | "mobile" | null;
   lastActivityAtMs: number | null;
   focusedAgentId: string | null;
   focusedTerminalId: string | null;
@@ -49,7 +51,9 @@ export function computeNotificationPlan({
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
 
   for (const [clientIndex, state] of allStates.entries()) {
-    if (!state.appVisible) {
+    // Backgrounded phones get a push. Hidden web and desktop clients stay
+    // eligible because shouldNotify is their local OS notification.
+    if (!state.appVisible && state.deviceType === "mobile") {
       continue;
     }
 
@@ -62,7 +66,7 @@ export function computeNotificationPlan({
       continue;
     }
 
-    if (isFocusedOnTarget(state, focusTarget)) {
+    if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
       return { inAppRecipientIndex: null, shouldPush: false };
     }
 
