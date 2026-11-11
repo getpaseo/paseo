@@ -1,11 +1,14 @@
-import { EXPLORER_WORKSPACE_MIN_WIDTH } from "@/components/explorer-sidebar-layout";
-import { SETTINGS_DESKTOP_SPLIT_MIN_WIDTH } from "@/constants/layout";
+import { SETTINGS_DESKTOP_DETAIL_MIN_WIDTH } from "@/constants/layout";
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   type LeftSidebarPresentation,
 } from "@/stores/panel-store";
 import type { DesktopDivisionLayout } from "@/window-layout";
+import {
+  MIN_WORKSPACE_BODY_WIDTH,
+  resolveExplorerSidebarWidth,
+} from "@/components/explorer-sidebar-layout";
 
 const MIN_DESKTOP_CENTER_WIDTH = 400;
 
@@ -95,12 +98,31 @@ export function resolveDesktopSidebarWidth(input: {
   });
 }
 
-export function resolveDesktopAppContentMinimum(input: {
+interface DesktopAppContentMinimumInput {
   isSettingsRoute: boolean;
-  explorerVisible?: boolean;
-}): number {
-  if (input.isSettingsRoute) return SETTINGS_DESKTOP_SPLIT_MIN_WIDTH;
-  return input.explorerVisible ? EXPLORER_WORKSPACE_MIN_WIDTH : 0;
+  isWorkspaceExplorerOpen: boolean;
+  requestedSidebarWidth: number;
+  requestedExplorerSidebarWidth?: number;
+  viewportWidth: number;
+}
+
+export function resolveDesktopAppContentMinimum(input: DesktopAppContentMinimumInput): number {
+  if (input.isSettingsRoute) {
+    const sidebarWidth = resolveDesktopSidebarWidth({
+      requestedWidth: input.requestedSidebarWidth,
+      viewportWidth: input.viewportWidth,
+    });
+    return sidebarWidth + SETTINGS_DESKTOP_DETAIL_MIN_WIDTH;
+  }
+  if (input.isWorkspaceExplorerOpen) {
+    // Resolve against the viewport so navigation cannot shrink Explorer when it returns.
+    const explorerWidth = resolveExplorerSidebarWidth({
+      requestedWidth: input.requestedExplorerSidebarWidth,
+      containerWidth: input.viewportWidth,
+    });
+    return explorerWidth + MIN_WORKSPACE_BODY_WIDTH;
+  }
+  return 0;
 }
 
 export function canDesktopAppSidebarShare(input: {
@@ -109,12 +131,12 @@ export function canDesktopAppSidebarShare(input: {
   viewportWidth: number;
 }): boolean {
   return (
-    input.viewportWidth -
-      resolveDesktopSidebarWidth({
-        requestedWidth: input.requestedSidebarWidth,
-        viewportWidth: input.viewportWidth,
-      }) >=
-    input.contentMinimumWidth
+    input.viewportWidth >=
+    resolveDesktopSidebarWidth({
+      requestedWidth: input.requestedSidebarWidth,
+      viewportWidth: input.viewportWidth,
+    }) +
+      input.contentMinimumWidth
   );
 }
 
