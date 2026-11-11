@@ -52,7 +52,9 @@ describe("@gotgenes/pi-subagents adapter", () => {
       });
       for (const event of events) await store.apply("parent", "pi", event.event);
       expect(events.map(({ event }) => event.type)).toEqual(["upsert", "remove"]);
-      expect(store.list("parent")).toMatchObject([{ id: "previous-child", status: "completed" }]);
+      expect(await store.list("parent")).toMatchObject([
+        { id: "previous-child", status: "completed" },
+      ]);
     },
   );
 

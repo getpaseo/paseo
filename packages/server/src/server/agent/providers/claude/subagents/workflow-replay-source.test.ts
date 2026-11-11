@@ -88,7 +88,7 @@ describe("Claude workflow replay", () => {
       await store.apply("parent", "claude", event);
     }
 
-    expect(store.get("parent", TOOL_CALL_ID)).toMatchObject({
+    expect(await store.get("parent", TOOL_CALL_ID)).toMatchObject({
       id: TOOL_CALL_ID,
       title: "Workflow",
       description: "Runs one deterministic child and returns its structured result",
@@ -113,7 +113,7 @@ describe("Claude workflow replay", () => {
       await store.apply("parent", "claude", event);
     }
 
-    expect(store.get("parent", TOOL_CALL_ID)).toMatchObject({
+    expect(await store.get("parent", TOOL_CALL_ID)).toMatchObject({
       id: TOOL_CALL_ID,
       title: "Workflow",
       description: "Structured result workflow",
