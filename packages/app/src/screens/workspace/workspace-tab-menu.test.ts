@@ -370,7 +370,10 @@ describe("buildWorkspaceTabMenuEntries", () => {
 });
 
 describe("buildWorkspaceTabActionEntries", () => {
-  function actionEntries(tab: WorkspaceTabDescriptor, onReloadAgent = vi.fn()) {
+  function actionEntries(
+    tab: WorkspaceTabDescriptor,
+    handlers: { onReloadAgent?: () => void; onCloseTab?: (tabId: string) => void } = {},
+  ) {
     return buildWorkspaceTabActionEntries({
       tab,
       menuTestIDBase: "sidebar-tab",
@@ -378,14 +381,22 @@ describe("buildWorkspaceTabActionEntries", () => {
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
-      onReloadAgent,
+      onReloadAgent: handlers.onReloadAgent ?? vi.fn(),
       onRenameTab: vi.fn(),
+      onCloseTab: handlers.onCloseTab ?? vi.fn(),
     });
   }
 
-  it("offers an agent's own actions without any close rows", () => {
+  function select(entries: ReturnType<typeof actionEntries>, key: string) {
+    const entry = entries.find((candidate) => candidate.key === key);
+    if (entry?.kind !== "item") throw new Error(`No item ${key}`);
+    entry.onSelect();
+  }
+
+  it("offers an agent's own actions and Close, without the neighbour close rows", () => {
     const onReloadAgent = vi.fn();
-    const entries = actionEntries(createAgentTab(), onReloadAgent);
+    const onCloseTab = vi.fn();
+    const entries = actionEntries(createAgentTab(), { onReloadAgent, onCloseTab });
 
     expect(entries.map((entry) => (entry.kind === "item" ? entry.label : entry.kind))).toEqual([
       "Copy resume command",
@@ -393,10 +404,13 @@ describe("buildWorkspaceTabActionEntries", () => {
       "Rename",
       "separator",
       "Reload agent",
+      "separator",
+      "Close",
     ]);
-    const reload = entries.find((entry) => entry.kind === "item" && entry.key === "reload-agent");
-    if (reload?.kind === "item") reload.onSelect();
+    select(entries, "reload-agent");
+    select(entries, "close");
     expect(onReloadAgent).toHaveBeenCalledWith("agent-123");
+    expect(onCloseTab).toHaveBeenCalledWith("agent_123");
   });
 
   it("keeps a file's Open with slot after copying its path", () => {
@@ -407,17 +421,22 @@ describe("buildWorkspaceTabActionEntries", () => {
       target: { kind: "file", path: "src/a.ts" },
     });
 
-    expect(entries.map((entry) => entry.key)).toEqual(["copy-file-path", "file-panel-open-with"]);
+    expect(entries.map((entry) => entry.key)).toEqual([
+      "copy-file-path",
+      "file-panel-open-with",
+      "close-separator",
+      "close",
+    ]);
   });
 
-  it("has nothing for a tab with no actions of its own", () => {
-    expect(
-      actionEntries({
-        key: "new_tab_1",
-        tabId: "new_tab_1",
-        kind: "new_tab",
-        target: { kind: "new_tab" },
-      }),
-    ).toEqual([]);
+  it("offers only Close for a tab with no actions of its own", () => {
+    const entries = actionEntries({
+      key: "new_tab_1",
+      tabId: "new_tab_1",
+      kind: "new_tab",
+      target: { kind: "new_tab" },
+    });
+
+    expect(entries.map((entry) => entry.key)).toEqual(["close"]);
   });
 });

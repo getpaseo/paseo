@@ -13,6 +13,7 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { useWorkspaceTabActions } from "@/screens/workspace/use-workspace-tab-actions";
+import { useWorkspaceTabClose } from "@/screens/workspace/use-workspace-tab-close";
 import {
   useWorkspaceTabRename,
   WorkspaceTabRenameModal,
@@ -101,6 +102,11 @@ function SidebarWorkspaceTabList({
   const soleTabHasSubagents = useHasSubagents(serverId, soleAgentId);
   const activeTarget = tabs.find((tab) => tab.tabId === activeTabId)?.target ?? null;
   const tabActions = useWorkspaceTabActions(serverId);
+  const { closeTabById } = useWorkspaceTabClose({
+    serverId,
+    workspaceId,
+    onTabClosed: ignoreTabClosed,
+  });
   const rename = useSidebarWorkspaceTabRename(serverId, workspaceId);
   const menuActions = useMemo<SidebarWorkspaceTabMenuActions>(
     () => ({
@@ -110,8 +116,9 @@ function SidebarWorkspaceTabList({
       onCopyFilePath: tabActions.copyFilePath,
       onReloadAgent: tabActions.reloadAgent,
       onRenameTab: rename.handleRenameTab,
+      onCloseTab: closeTabById,
     }),
-    [tabActions, rename.handleRenameTab],
+    [tabActions, rename.handleRenameTab, closeTabById],
   );
   // A subagent's own tab is listed under its parent's tab rather than beside it.
   const nestedTabIds = useNestedSubagentTabIds(serverId, tabs);
@@ -170,6 +177,9 @@ function SidebarWorkspaceTabList({
     </View>
   );
 }
+
+// The sidebar keeps no state per tab that a close would need to clear.
+function ignoreTabClosed(): void {}
 
 type SidebarWorkspaceTabMenuActions = Omit<
   Parameters<typeof buildWorkspaceTabActionEntries>[0],
@@ -286,19 +296,17 @@ function SidebarWorkspaceTabRow({
         ) : null}
       </PressHighlight>
       {trailing}
-      {menuEntries.length > 0 ? (
-        <View
-          style={showMenu ? styles.menuSlot : styles.menuSlotHidden}
-          pointerEvents={showMenu ? "auto" : "none"}
-        >
-          <MobileTabTrailingAccessory
-            menuTestIDBase={menuTestIDBase}
-            presentationLabel={label}
-            menuEntries={menuEntries}
-            openWith={openWith}
-          />
-        </View>
-      ) : null}
+      <View
+        style={showMenu ? styles.menuSlot : styles.menuSlotHidden}
+        pointerEvents={showMenu ? "auto" : "none"}
+      >
+        <MobileTabTrailingAccessory
+          menuTestIDBase={menuTestIDBase}
+          presentationLabel={label}
+          menuEntries={menuEntries}
+          openWith={openWith}
+        />
+      </View>
     </View>
   );
 }

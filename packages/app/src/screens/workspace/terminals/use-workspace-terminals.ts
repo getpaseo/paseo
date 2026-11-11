@@ -14,7 +14,6 @@ import {
   collectScriptTerminalIds,
   collectStandaloneTerminalIds,
   reconcilePendingScriptTerminals,
-  removeTerminalFromPayload,
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
@@ -175,19 +174,6 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       onTerminalCreateFailed(error instanceof Error ? error.message : String(error));
     },
   });
-  const killMutation = useMutation({
-    mutationFn: async (terminalId: string) => {
-      if (!client) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      const payload = await client.killTerminal(terminalId);
-      if (!payload.success) {
-        throw new Error("Unable to close terminal");
-      }
-      return payload;
-    },
-  });
-
   useEffect(() => {
     if (!pendingCreateInput) {
       return;
@@ -266,34 +252,17 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     [onScriptTerminalSelected],
   );
 
-  const removeTerminalFromCache = useCallback(
-    (terminalId: string) => {
-      queryClient.setQueryData<ListTerminalsPayload>(
-        queryKey,
-        removeTerminalFromPayload(terminalId),
-      );
-    },
-    [queryClient, queryKey],
-  );
-
-  const invalidateTerminals = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
-
   return {
     canCreateNow,
     createMutation,
     createTerminal,
     handleScriptTerminalStarted,
     handleViewScriptTerminal,
-    invalidateTerminals,
-    killMutation,
     knownTerminalIds,
     liveTerminalIds,
     pendingCreateInput,
     query,
     queryKey,
-    removeTerminalFromCache,
     standaloneTerminalIds,
     terminals,
   };

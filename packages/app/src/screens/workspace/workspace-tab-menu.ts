@@ -73,7 +73,6 @@ interface BuildWorkspaceTabMenuEntriesInput extends WorkspaceTabItemActionsInput
   surface: WorkspaceTabMenuSurface;
   index: number;
   tabCount: number;
-  onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -170,6 +169,7 @@ interface WorkspaceTabItemActionsInput {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onCloseTab: (tabId: string) => Promise<void> | void;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -272,10 +272,26 @@ function buildReloadAgentEntry(
   };
 }
 
+function buildCloseEntry(
+  input: WorkspaceTabItemActionsInput,
+  labels: WorkspaceTabMenuLabels,
+): WorkspaceTabMenuEntry {
+  return {
+    kind: "item",
+    key: "close",
+    label: labels.close,
+    icon: "x",
+    testID: `${input.menuTestIDBase}-close`,
+    onSelect: () => {
+      void input.onCloseTab(input.tab.tabId);
+    },
+  };
+}
+
 /**
- * A tab's own actions without the close rows, for a surface that lists tabs outside their
- * workspace, such as the sidebar: closing needs the workspace screen's terminal, sheet and
- * archive handling, which only exists while that workspace is on screen.
+ * A tab's own actions and Close, without the rows that close its neighbours, for a surface that
+ * lists tabs outside their strip, such as the sidebar: "above", "below" and "others" only read
+ * against the strip the tab sits in.
  */
 export function buildWorkspaceTabActionEntries(
   input: WorkspaceTabItemActionsInput,
@@ -287,6 +303,8 @@ export function buildWorkspaceTabActionEntries(
     if (entries.length > 0) entries.push({ kind: "separator", key: "reload-separator" });
     entries.push(reload);
   }
+  if (entries.length > 0) entries.push({ kind: "separator", key: "close-separator" });
+  entries.push(buildCloseEntry(input, labels));
   return entries;
 }
 
@@ -299,7 +317,6 @@ export function buildWorkspaceTabMenuEntries(
     index,
     tabCount,
     menuTestIDBase,
-    onCloseTab,
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
@@ -352,16 +369,7 @@ export function buildWorkspaceTabMenuEntries(
   });
   const reload = buildReloadAgentEntry(input, labels);
   if (reload) entries.push(reload);
-  entries.push({
-    kind: "item",
-    key: "close",
-    label: labels.close,
-    icon: "x",
-    testID: `${menuTestIDBase}-close`,
-    onSelect: () => {
-      void onCloseTab(tab.tabId);
-    },
-  });
+  entries.push(buildCloseEntry(input, labels));
 
   return entries;
 }
