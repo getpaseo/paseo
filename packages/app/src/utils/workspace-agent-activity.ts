@@ -1,6 +1,6 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
-import { deriveSidebarStateBucket } from "./sidebar-agent-state";
+import { deriveSidebarStateBucket, type SidebarStateBucket } from "./sidebar-agent-state";
 
 export interface WorkspaceAgentActivity {
   agentId: string;
@@ -11,6 +11,17 @@ export interface WorkspaceAgentActivity {
 function workspaceAgentStatus(agent: Agent): Agent["status"] {
   if (agent.turn.phase === "open") return "running";
   return agent.status === "running" ? "idle" : agent.status;
+}
+
+/** The state the sidebar shows for one agent; plugins read the same value as its indicator. */
+export function deriveAgentSidebarStateBucket(agent: Agent): SidebarStateBucket {
+  return deriveSidebarStateBucket({
+    status: workspaceAgentStatus(agent),
+    backgroundWork: agent.backgroundWork,
+    pendingPermissionCount: agent.pendingPermissions.length,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason,
+  });
 }
 
 export function buildWorkspaceAgentActivityIndex(
@@ -38,13 +49,7 @@ export function buildWorkspaceAgentActivityIndex(
     }
     latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
 
-    const status = deriveSidebarStateBucket({
-      status: workspaceAgentStatus(agent),
-      backgroundWork: agent.backgroundWork,
-      pendingPermissionCount: agent.pendingPermissions.length,
-      requiresAttention: agent.requiresAttention,
-      attentionReason: agent.attentionReason,
-    });
+    const status = deriveAgentSidebarStateBucket(agent);
     activityByWorkspaceId.set(agent.workspaceId, {
       agentId: agent.id,
       status,

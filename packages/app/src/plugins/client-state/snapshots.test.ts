@@ -1,7 +1,9 @@
 import { i18n } from "@/i18n/i18next";
 import { fr } from "@/i18n/resources/fr";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
+import type { PluginAgentSnapshot } from "@getpaseo/plugin";
 import {
   createPluginAgentSnapshot,
   createPluginWorkspaceSnapshot,
@@ -107,6 +109,80 @@ describe("sidebar entity snapshots", () => {
     expect(
       createPluginWorkspaceSnapshot(idle, "host-1", { workspaceAgentActivity: activity }),
     ).toBe(after);
+  });
+
+  it("gives an agent the indicator the sidebar shows through its turn and background work", () => {
+    const sidebarBucket = (state: Agent) =>
+      buildWorkspaceAgentActivityIndex(new Map([[state.id, state]])).get(workspace.id)?.status;
+    const idle = {
+      ...agent,
+      requiresAttention: false,
+      attentionReason: null,
+      pendingPermissions: [],
+    } satisfies Agent;
+    const openTurn = {
+      phase: "open" as const,
+      turnId: "turn-1",
+      startedAt: null,
+      cancellationRequestId: null,
+    };
+    const states: [string, Agent, PluginAgentSnapshot["indicator"]][] = [
+      ["turn running", { ...idle, status: "running", turn: openTurn }, "running"],
+      [
+        "turn ended, background shell live",
+        {
+          ...idle,
+          status: "idle",
+          requiresAttention: true,
+          attentionReason: "finished",
+          backgroundWork: { count: 1 },
+        },
+        "running",
+      ],
+      [
+        "background shell gone, finish unread",
+        {
+          ...idle,
+          status: "idle",
+          requiresAttention: true,
+          attentionReason: "finished",
+          backgroundWork: { count: 0 },
+        },
+        "attention",
+      ],
+      ["finish read", { ...idle, status: "idle", backgroundWork: { count: 0 } }, "done"],
+      [
+        "permission pending",
+        {
+          ...idle,
+          status: "running",
+          turn: openTurn,
+          requiresAttention: true,
+          attentionReason: "permission",
+          pendingPermissions: [
+            { id: "permission-1", provider: "codex", name: "Bash", kind: "tool" },
+          ],
+        },
+        "needs_input",
+      ],
+    ];
+    for (const [step, state, expected] of states) {
+      const snapshot = createPluginAgentSnapshot(state, workspace.id);
+      expect({ step, indicator: snapshot.indicator }).toEqual({ step, indicator: expected });
+      expect({ step, indicator: snapshot.indicator }).toEqual({
+        step,
+        indicator: sidebarBucket(state),
+      });
+    }
+    const running = createPluginAgentSnapshot(states[0][1], workspace.id);
+    expect(running.indicatorLabel).toBe("Working");
+  });
+
+  it("marks a background agent", () => {
+    expect(createPluginAgentSnapshot(agent, workspace.id).background).toBe(false);
+    expect(createPluginAgentSnapshot({ ...agent, background: true }, workspace.id).background).toBe(
+      true,
+    );
   });
 
   it("reads projects without requiring a workspace", () => {

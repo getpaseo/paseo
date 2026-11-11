@@ -10,13 +10,18 @@ import { cloneAndFreeze } from "../freeze";
 
 import { entityRefs } from "./refs";
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import { deriveAgentSidebarStateBucket } from "@/utils/workspace-agent-activity";
 
 interface CachedWorkspace {
   language: string;
   snapshot: PluginWorkspaceSnapshot;
 }
 const workspaceSnapshots = new WeakMap<WorkspaceDescriptor, Map<string, CachedWorkspace>>();
-const agentSnapshots = new WeakMap<Agent, Map<string, PluginAgentSnapshot>>();
+interface CachedAgent {
+  language: string;
+  snapshot: PluginAgentSnapshot;
+}
+const agentSnapshots = new WeakMap<Agent, Map<string, CachedAgent>>();
 
 export function createPluginWorkspaceSnapshot(
   workspace: WorkspaceDescriptor,
@@ -75,7 +80,8 @@ export function createPluginWorkspaceSnapshot(
 
 export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): PluginAgentSnapshot {
   const cached = agentSnapshots.get(agent)?.get(workspaceId);
-  if (cached) return cached;
+  if (cached && cached.language === i18n.language) return cached.snapshot;
+  const indicator = deriveAgentSidebarStateBucket(agent);
   const parent = getParentAddressFromLabels(agent.labels, agent.serverId);
   const snapshot = Object.freeze({
     ref: entityRefs.agent(agent.serverId, agent.id),
@@ -86,6 +92,9 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     workspaceId,
     provider: agent.provider,
     status: agent.status,
+    indicator,
+    indicatorLabel: i18n.t(indicatorLabelKeys[indicator]),
+    background: agent.background ?? false,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.lastActivityAt.toISOString(),
@@ -100,8 +109,8 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     labels: Object.freeze({ ...agent.labels }),
     metadata: cloneAndFreeze(agent.metadata ?? {}),
   });
-  const byWorkspace = agentSnapshots.get(agent) ?? new Map<string, PluginAgentSnapshot>();
-  byWorkspace.set(workspaceId, snapshot);
+  const byWorkspace = agentSnapshots.get(agent) ?? new Map<string, CachedAgent>();
+  byWorkspace.set(workspaceId, { language: i18n.language, snapshot });
   agentSnapshots.set(agent, byWorkspace);
   return snapshot;
 }

@@ -91,6 +91,10 @@ export function AgentRow({
     () => ({ color: view.theme.colors.foreground, fontSize: 12 }),
     [view.theme],
   );
+  const detail = useMemo(
+    () => ({ color: view.theme.colors.foregroundMuted, fontSize: 11 }),
+    [view.theme],
+  );
   if (!agent) return null;
   return (
     <Pressable
@@ -101,6 +105,9 @@ export function AgentRow({
     >
       <Text numberOfLines={1} style={style}>
         {agent.title ?? agent.provider}
+      </Text>
+      <Text numberOfLines={1} style={detail}>
+        {agent.indicatorLabel}
       </Text>
     </Pressable>
   );

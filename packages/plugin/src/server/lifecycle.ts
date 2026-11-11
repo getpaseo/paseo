@@ -71,6 +71,8 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   /** Data plugins stored on the agent. Paseo never reads a key. */
   metadata: Record<string, JsonValue>;
 }
@@ -83,6 +85,8 @@ export interface PluginSessionOpenRequest {
   reason: "create" | "resume" | "refresh" | "import";
   purpose: "interactive" | "history";
   readonly title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
   tools: AgentToolDefinition[];

@@ -2,15 +2,26 @@ import type { PluginAgentSnapshot } from "@getpaseo/plugin";
 import { ScrollView, View } from "react-native";
 import { useAgents, type PluginSidebarViewProps } from "@getpaseo/plugin/client";
 import { AgentRow, Heading } from "./rows";
-export function agentTask(agent: PluginAgentSnapshot) {
-  if (agent.attentionReason === "permission") return "Respond";
-  if (agent.requiresAttention || agent.status === "error") return "Review";
-  if (agent.status === "running" || agent.status === "initializing") return "Wait";
-  return "Start";
-}
-function Task({ title, view }: { title: string; view: PluginSidebarViewProps }) {
+
+const tasks: { title: string; indicators: PluginAgentSnapshot["indicator"][] }[] = [
+  { title: "Respond", indicators: ["needs_input"] },
+  { title: "Review", indicators: ["failed", "attention"] },
+  { title: "Wait", indicators: ["running"] },
+  { title: "Start", indicators: ["done"] },
+];
+
+function Task({
+  title,
+  indicators,
+  view,
+}: {
+  title: string;
+  indicators: PluginAgentSnapshot["indicator"][];
+  view: PluginSidebarViewProps;
+}) {
+  // Background agents are helpers the user never opens; leave them out like the sidebar does.
   const agents = useAgents({
-    where: (item) => agentTask(item) === title,
+    where: (item) => !item.background && indicators.includes(item.indicator),
     orderBy: ["lastActivityAt", "desc"],
   });
   return (
@@ -25,10 +36,9 @@ function Task({ title, view }: { title: string; view: PluginSidebarViewProps }) 
 export function Agents(view: PluginSidebarViewProps) {
   return (
     <ScrollView>
-      <Task title="Respond" view={view} />
-      <Task title="Review" view={view} />
-      <Task title="Wait" view={view} />
-      <Task title="Start" view={view} />
+      {tasks.map((task) => (
+        <Task key={task.title} title={task.title} indicators={task.indicators} view={view} />
+      ))}
     </ScrollView>
   );
 }
