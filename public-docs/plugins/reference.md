@@ -83,6 +83,7 @@ The required root manifest is `paseo-plugin.json`:
 | `translations` | No       | Listing text in other languages, read by the registry and ignored by Paseo. See [other languages](/docs/plugins/publishing#other-languages).        |
 | `requirements` | No       | Supported Paseo versions, described below.                                                                                                          |
 | `build`        | No       | Preparation commands, described in the CLI reference.                                                                                               |
+| `gitFiles`     | No       | Git installation files and directories, described under plugin sources.                                                                             |
 
 Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
 segments. Registry listings for visual plugins require an interface image even though `media` is
@@ -2915,6 +2916,31 @@ paseo plugin install npm:@acme/plugins@^1.2.0:plugins/review
 `--ref` applies only to Git and accepts a branch, tag, or commit for this installation. Without it,
 Paseo installs the remote's default HEAD. Installation selectors do not constrain later updates. The legacy
 `--path relative/plugin/path` option is equivalent to a subdirectory suffix, including for npm.
+
+### Git installation files
+
+Git plugins can declare the files and directories needed for installation in `paseo-plugin.json`:
+
+```json
+{
+  "id": "review",
+  "gitFiles": ["index.server.ts", "src", "package.json", "package-lock.json", "scripts"]
+}
+```
+
+Each entry is a literal file or directory path relative to the plugin manifest. Use forward slashes;
+empty paths, `.` or `..` segments, Git metadata paths, glob characters, and trailing slashes are not
+accepted. A directory includes its contents recursively. The manifest itself and repository-root
+`.gitmodules`, when present, are included automatically. List every source, asset, configuration,
+and build input the plugin needs; an entry that does not exist in the selected commit fails the
+installation. If a required file is omitted, preparation or compilation may fail.
+
+Paseo selects the reviewed commit first, then uses its manifest to fetch and check out the declared
+paths. This applies to installation and updates, including plugins in subdirectories. It does not
+apply to directory or npm sources. A plugin without `gitFiles` keeps the complete checkout. To
+preserve existing Git sources, a manifest that is a symlink or is inside a submodule also uses the
+complete checkout. The download reduction depends on the Git server supporting partial clones;
+older Paseo versions may ignore this field and fetch the complete checkout.
 
 ### npm installation and publishing
 

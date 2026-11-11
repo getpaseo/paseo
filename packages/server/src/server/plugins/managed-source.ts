@@ -5,7 +5,7 @@ import {
 import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import compareVersions from "semver/functions/compare.js";
@@ -21,7 +21,7 @@ import {
 } from "@getpaseo/protocol/messages";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
-import { readPluginManifest, type PluginManifest } from "./manifest.js";
+import { parsePluginManifest, readPluginManifest, type PluginManifest } from "./manifest.js";
 import {
   acquireNpm,
   isNpmSource,
@@ -189,6 +189,7 @@ export class ManagedPluginSources {
         const commit = await resolveRequestedRef(sourceRoot, input.ref);
         if (target?.kind === "git" && commit !== target.commit)
           throw new Error("Git target changed since review");
+        await configureGitFiles(sourceRoot, commit, pluginPath, remote);
         await checkout(sourceRoot, commit, remote);
         record = { kind: "git", remote };
       }
@@ -556,6 +557,51 @@ async function checkout(checkoutRoot: string, commit: string, remote: string): P
       envOverlay,
       timeout: GIT_TIMEOUT_MS,
     });
+  } catch (error) {
+    throw redactRemoteError(error, remote);
+  }
+}
+
+async function configureGitFiles(
+  checkoutRoot: string,
+  commit: string,
+  pluginPath: string,
+  remote: string,
+): Promise<void> {
+  const { envOverlay } = gitRemote(remote);
+  const relativePlugin = pluginPath.split(path.sep).join("/");
+  const manifestPath = path.posix.join(relativePlugin, "paseo-plugin.json");
+  const options = { cwd: checkoutRoot, envOverlay, timeout: GIT_TIMEOUT_MS };
+  try {
+    const manifestEntry = await runGitCommand(
+      ["ls-tree", "-z", commit, "--", `:(literal)${manifestPath}`],
+      options,
+    );
+    // Symlinked manifests and manifests inside submodules need the normal checkout first.
+    if (!/^100(?:644|755) blob /.test(manifestEntry.stdout)) return;
+    const { stdout } = await runGitCommand(["show", `${commit}:${manifestPath}`], options);
+    const manifest = parsePluginManifest(stdout);
+    if (!manifest.gitFiles) return;
+    const paths = manifest.gitFiles.map((entry) => path.posix.join(relativePlugin, entry));
+    if (paths.some((entry) => /[\r\n]/.test(entry)))
+      throw new Error("Git plugin installation paths cannot contain newlines");
+    for (const entry of paths) {
+      const found = await runGitCommand(
+        ["ls-tree", "-z", commit, "--", `:(literal)${entry}`],
+        options,
+      );
+      if (!found.stdout) throw new Error(`Git plugin installation path does not exist: ${entry}`);
+    }
+    const escapePattern = (entry: string) => entry.replace(/[\\*?[\]!#]/g, "\\$&");
+    const patterns = [manifestPath, ".gitmodules", ...paths].map(
+      (entry) => `/${escapePattern(entry)}`,
+    );
+    await runGitCommand(["config", "core.sparseCheckout", "true"], options);
+    await runGitCommand(["config", "core.sparseCheckoutCone", "false"], options);
+    await writeFile(
+      path.join(checkoutRoot, ".git", "info", "sparse-checkout"),
+      `${patterns.join("\n")}\n`,
+    );
   } catch (error) {
     throw redactRemoteError(error, remote);
   }
