@@ -7271,11 +7271,11 @@ export class DaemonClient {
   async openNetworkTunnel(): Promise<NetworkTunnel> {
     // COMPAT(networkTunnel): added in v0.12.0, remove after 2027-10-08.
     if (this.lastServerInfoMessage?.features?.networkTunnel !== true) {
-      throw new NetworkTunnelRpcError(
-        "open",
-        "unsupported_feature",
-        "Update the host to use network tunneling.",
-      );
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "unsupported_feature",
+        message: "Update the host to use network tunneling.",
+      });
     }
     const openingTransport = this.transport;
     let payload: CorrelatedResponsePayload<"network.tunnel.open.response">;
@@ -7302,28 +7302,36 @@ export class DaemonClient {
       });
     } catch (error) {
       if (error instanceof DaemonRpcError) {
-        throw new NetworkTunnelRpcError("open", error.code ?? "rpc_error", error.message);
+        throw new NetworkTunnelRpcError({
+          operation: "open",
+          code: error.code ?? "rpc_error",
+          message: error.message,
+        });
       }
       throw error;
     }
     if (this.transport !== openingTransport || this.connectionState.status !== "connected") {
-      throw new NetworkTunnelRpcError(
-        "open",
-        "disconnected",
-        "The host connection changed before the network tunnel opened.",
-      );
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "disconnected",
+        message: "The host connection changed before the network tunnel opened.",
+      });
     }
     if (!payload.ok) {
-      throw new NetworkTunnelRpcError("open", payload.error.code, payload.error.message);
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: payload.error.code,
+        message: payload.error.message,
+      });
     }
     if (!tunnel) {
       // Refuse at open rather than tear the tunnel down in the middle of a download.
       await this.closeNetworkTunnelSubscription(payload.subscriptionId);
-      throw new NetworkTunnelRpcError(
-        "open",
-        "protocol_error",
-        "The host answered with tunnel limits above the ones this client asked for.",
-      );
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "protocol_error",
+        message: "The host answered with tunnel limits above the ones this client asked for.",
+      });
     }
     return tunnel;
   }
@@ -7372,19 +7380,27 @@ export class DaemonClient {
       });
     } catch (error) {
       if (error instanceof DaemonRpcError) {
-        throw new NetworkTunnelRpcError("close", error.code ?? "rpc_error", error.message);
+        throw new NetworkTunnelRpcError({
+          operation: "close",
+          code: error.code ?? "rpc_error",
+          message: error.message,
+        });
       }
       throw error;
     }
     if (!payload.ok) {
-      throw new NetworkTunnelRpcError("close", payload.error.code, payload.error.message);
+      throw new NetworkTunnelRpcError({
+        operation: "close",
+        code: payload.error.code,
+        message: payload.error.message,
+      });
     }
     if (payload.subscriptionId !== subscriptionId) {
-      throw new NetworkTunnelRpcError(
-        "close",
-        "invalid_response",
-        "Network tunnel close response did not match the subscription",
-      );
+      throw new NetworkTunnelRpcError({
+        operation: "close",
+        code: "invalid_response",
+        message: "Network tunnel close response did not match the subscription",
+      });
     }
   }
 

@@ -811,7 +811,9 @@ describe("provider recovery", () => {
   });
   it.each(["permission_denied", "access_denied"])("stops retrying after %s", async (code) => {
     const h = recoveryHarness();
-    h.openTunnel.mockRejectedValue(new NetworkTunnelRpcError("open", code, "Denied"));
+    h.openTunnel.mockRejectedValue(
+      new NetworkTunnelRpcError({ operation: "open", code, message: "Denied" }),
+    );
     const unmount = h.mount();
     await settle();
     expect(useNetworkRoutingStatus.getState().hosts[serverId].status).toBe("permission_denied");
@@ -830,7 +832,11 @@ describe("provider recovery", () => {
     async (change) => {
       const h = recoveryHarness();
       h.openTunnel.mockRejectedValueOnce(
-        new NetworkTunnelRpcError("open", "permission_denied", "Denied"),
+        new NetworkTunnelRpcError({
+          operation: "open",
+          code: "permission_denied",
+          message: "Denied",
+        }),
       );
       const unmount = h.mount();
       await settle();

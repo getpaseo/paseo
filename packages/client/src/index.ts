@@ -8,6 +8,7 @@ export type {
   NetworkTunnelStreamHandlers,
   NetworkTunnelTarget,
   NetworkTunnelErrorCode,
+  NetworkTunnelRpcErrorInit,
 } from "./network-tunnel.js";
 export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";

@@ -90,14 +90,21 @@ export class NetworkTunnelError extends Error {
   }
 }
 
+export interface NetworkTunnelRpcErrorInit {
+  operation: "open" | "close";
+  code: string;
+  message: string;
+}
+
 export class NetworkTunnelRpcError extends Error {
-  constructor(
-    readonly operation: "open" | "close",
-    readonly code: string,
-    message: string,
-  ) {
+  readonly operation: "open" | "close";
+  readonly code: string;
+
+  constructor({ operation, code, message }: NetworkTunnelRpcErrorInit) {
     super(message);
     this.name = "NetworkTunnelRpcError";
+    this.operation = operation;
+    this.code = code;
   }
 }
 
@@ -147,7 +154,17 @@ function parseIpv4(host: string): Uint8Array | null {
   return octets;
 }
 
-function parseIpv6Part(part: string, isLast: boolean): number[] | null {
+interface Ipv6Part {
+  part: string;
+  isLast: boolean;
+}
+
+interface Ipv6Side {
+  side: string;
+  endsAddress: boolean;
+}
+
+function parseIpv6Part({ part, isLast }: Ipv6Part): number[] | null {
   if (part.includes(".")) {
     if (!isLast) return null;
     const ipv4 = parseIpv4(part);
@@ -158,12 +175,15 @@ function parseIpv6Part(part: string, isLast: boolean): number[] | null {
   return [Number.parseInt(part, 16)];
 }
 
-function parseIpv6Side(side: string, sideEndsAddress: boolean): number[] | null {
+function parseIpv6Side({ side, endsAddress }: Ipv6Side): number[] | null {
   if (side.length === 0) return [];
   const parts = side.split(":");
   const groups: number[] = [];
   for (let index = 0; index < parts.length; index += 1) {
-    const parsed = parseIpv6Part(parts[index], sideEndsAddress && index === parts.length - 1);
+    const parsed = parseIpv6Part({
+      part: parts[index],
+      isLast: endsAddress && index === parts.length - 1,
+    });
     if (!parsed) return null;
     groups.push(...parsed);
   }
@@ -177,8 +197,8 @@ function parseIpv6(host: string): Uint8Array | null {
 
   const leftText = compressedAt === -1 ? host : host.slice(0, compressedAt);
   const rightText = compressedAt === -1 ? "" : host.slice(compressedAt + 2);
-  const left = parseIpv6Side(leftText, compressedAt === -1);
-  const right = parseIpv6Side(rightText, true);
+  const left = parseIpv6Side({ side: leftText, endsAddress: compressedAt === -1 });
+  const right = parseIpv6Side({ side: rightText, endsAddress: true });
   if (!left || !right) return null;
 
   const missing = 8 - left.length - right.length;
@@ -218,11 +238,13 @@ function tunnelTarget(host: string, port: number): TunnelTarget {
   return { atyp: 3, address: unwrapped, port };
 }
 
-function notify(
-  callback: () => void,
-  failed: (error: unknown, handler: string) => void,
-  handler: string,
-): void {
+interface HandlerCall {
+  callback: () => void;
+  failed: (error: unknown, handler: string) => void;
+  handler: string;
+}
+
+function notify({ callback, failed, handler }: HandlerCall): void {
   try {
     callback();
   } catch (error) {
@@ -230,14 +252,10 @@ function notify(
   }
 }
 
-function notifyAsync(
-  callback: () => void,
-  failed: (error: unknown, handler: string) => void,
-  handler: string,
-): () => void {
+function notifyAsync(call: HandlerCall): () => void {
   let subscribed = true;
   queueMicrotask(() => {
-    if (subscribed) notify(callback, failed, handler);
+    if (subscribed) notify(call);
   });
   return () => {
     subscribed = false;
@@ -252,21 +270,37 @@ function isTunnelCloseReason(reason: number): reason is TunnelCloseReasonCode {
   );
 }
 
+interface NetworkTunnelStreamInit {
+  streamId: string;
+  subscriptionId: string;
+  limits: NetworkTunnelLimits;
+  handlers: NetworkTunnelStreamHandlers;
+  send: (frame: TunnelFrame) => void;
+  finished: (streamId: string) => void;
+  handlerError: (error: unknown, handler: string) => void;
+}
+
 class NetworkTunnelStreamImpl implements NetworkTunnelStream {
+  readonly streamId: string;
+  private readonly subscriptionId: string;
+  private readonly limits: NetworkTunnelLimits;
+  private readonly handlers: NetworkTunnelStreamHandlers;
+  private readonly send: (frame: TunnelFrame) => void;
+  private readonly finished: (streamId: string) => void;
+  private readonly handlerError: (error: unknown, handler: string) => void;
   private state: StreamState = "connecting";
   private outgoingCredit = 0;
   private incomingCredit: number;
 
-  constructor(
-    readonly streamId: string,
-    private readonly subscriptionId: string,
-    private readonly limits: NetworkTunnelLimits,
-    private readonly handlers: NetworkTunnelStreamHandlers,
-    private readonly send: (frame: TunnelFrame) => void,
-    private readonly finished: (streamId: string) => void,
-    private readonly handlerError: (error: unknown, handler: string) => void,
-  ) {
-    this.incomingCredit = limits.initialWindowBytes;
+  constructor(init: NetworkTunnelStreamInit) {
+    this.streamId = init.streamId;
+    this.subscriptionId = init.subscriptionId;
+    this.limits = init.limits;
+    this.handlers = init.handlers;
+    this.send = init.send;
+    this.finished = init.finished;
+    this.handlerError = init.handlerError;
+    this.incomingCredit = init.limits.initialWindowBytes;
   }
 
   write(data: Uint8Array): void {
@@ -328,7 +362,11 @@ class NetworkTunnelStreamImpl implements NetworkTunnelStream {
     if (this.state !== "connecting") return false;
     this.state = "connected";
     this.outgoingCredit = this.limits.initialWindowBytes;
-    notify(this.handlers.onConnected, this.handlerError, "onConnected");
+    notify({
+      callback: this.handlers.onConnected,
+      failed: this.handlerError,
+      handler: "onConnected",
+    });
     return true;
   }
 
@@ -338,7 +376,11 @@ class NetworkTunnelStreamImpl implements NetworkTunnelStream {
       return false;
     }
     this.incomingCredit -= payload.length;
-    notify(() => this.handlers.onData(payload), this.handlerError, "onData");
+    notify({
+      callback: () => this.handlers.onData(payload),
+      failed: this.handlerError,
+      handler: "onData",
+    });
     return true;
   }
 
@@ -346,7 +388,11 @@ class NetworkTunnelStreamImpl implements NetworkTunnelStream {
     if (this.state !== "connected") return false;
     if (credit > this.limits.initialWindowBytes - this.outgoingCredit) return false;
     this.outgoingCredit += credit;
-    notify(() => this.handlers.onCredit(credit), this.handlerError, "onCredit");
+    notify({
+      callback: () => this.handlers.onCredit(credit),
+      failed: this.handlerError,
+      handler: "onCredit",
+    });
     return true;
   }
 
@@ -372,8 +418,19 @@ class NetworkTunnelStreamImpl implements NetworkTunnelStream {
   private finish(reason: number): void {
     this.state = "closed";
     this.finished(this.streamId);
-    notify(() => this.handlers.onClose(reason), this.handlerError, "onClose");
+    notify({
+      callback: () => this.handlers.onClose(reason),
+      failed: this.handlerError,
+      handler: "onClose",
+    });
   }
+}
+
+interface NetworkTunnelInit {
+  subscriptionId: string;
+  limits: NetworkTunnelLimits;
+  connection: NetworkTunnelConnection;
+  finished: (subscriptionId: string) => void;
 }
 
 class NetworkTunnelImpl implements NetworkTunnel {
@@ -384,13 +441,15 @@ class NetworkTunnelImpl implements NetworkTunnel {
   private readonly closedStreamIds = new RecentIds();
   private readonly closedListeners = new Set<(reason: NetworkTunnelClosedReason) => void>();
 
-  constructor(
-    readonly subscriptionId: string,
-    limits: NetworkTunnelLimits,
-    private readonly connection: NetworkTunnelConnection,
-    private readonly finished: (subscriptionId: string) => void,
-  ) {
+  readonly subscriptionId: string;
+  private readonly connection: NetworkTunnelConnection;
+  private readonly finished: (subscriptionId: string) => void;
+
+  constructor({ subscriptionId, limits, connection, finished }: NetworkTunnelInit) {
+    this.subscriptionId = subscriptionId;
     this.limits = limits;
+    this.connection = connection;
+    this.finished = finished;
   }
 
   openStream(
@@ -415,18 +474,18 @@ class NetworkTunnelImpl implements NetworkTunnel {
       streamId,
       target: destination,
     });
-    const stream = new NetworkTunnelStreamImpl(
+    const stream = new NetworkTunnelStreamImpl({
       streamId,
-      this.subscriptionId,
-      this.limits,
+      subscriptionId: this.subscriptionId,
+      limits: this.limits,
       handlers,
-      (frame) => this.send(frame),
-      (closedStreamId) => {
+      send: (frame) => this.send(frame),
+      finished: (closedStreamId) => {
         this.streams.delete(closedStreamId);
         this.closedStreamIds.add(closedStreamId);
       },
-      this.connection.handlerError,
-    );
+      handlerError: this.connection.handlerError,
+    });
     this.streams.set(streamId, stream);
     try {
       this.transmit(openFrame);
@@ -446,7 +505,11 @@ class NetworkTunnelImpl implements NetworkTunnel {
   onClosed(listener: (reason: NetworkTunnelClosedReason) => void): () => void {
     const closedReason = this.closedReason;
     if (closedReason) {
-      return notifyAsync(() => listener(closedReason), this.connection.handlerError, "onClosed");
+      return notifyAsync({
+        callback: () => listener(closedReason),
+        failed: this.connection.handlerError,
+        handler: "onClosed",
+      });
     }
     this.closedListeners.add(listener);
     return () => this.closedListeners.delete(listener);
@@ -540,7 +603,11 @@ class NetworkTunnelImpl implements NetworkTunnel {
     this.streams.clear();
     this.finished(this.subscriptionId);
     for (const listener of this.closedListeners) {
-      notify(() => listener(reason), this.connection.handlerError, "onClosed");
+      notify({
+        callback: () => listener(reason),
+        failed: this.connection.handlerError,
+        handler: "onClosed",
+      });
     }
     this.closedListeners.clear();
   }
@@ -553,9 +620,14 @@ export class NetworkTunnelRegistry {
   constructor(private readonly connection: NetworkTunnelConnection) {}
 
   open(subscriptionId: string, limits: NetworkTunnelLimits): NetworkTunnel {
-    const tunnel = new NetworkTunnelImpl(subscriptionId, limits, this.connection, (closedId) => {
-      this.tunnels.delete(closedId);
-      this.closedSubscriptionIds.add(closedId);
+    const tunnel = new NetworkTunnelImpl({
+      subscriptionId,
+      limits,
+      connection: this.connection,
+      finished: (closedId) => {
+        this.tunnels.delete(closedId);
+        this.closedSubscriptionIds.add(closedId);
+      },
     });
     this.tunnels.set(subscriptionId, tunnel);
     return tunnel;
