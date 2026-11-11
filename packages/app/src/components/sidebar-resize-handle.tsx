@@ -101,7 +101,7 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
   const gripStyle = [
     styles.grip,
     edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
-    pressed ? styles.visibleGrip : styles.hiddenGrip,
+    pressed ? styles.visibleGrip : styles.idleGrip,
   ];
 
   return (
@@ -155,8 +155,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 2,
     backgroundColor: theme.colors.foreground,
   },
-  hiddenGrip: {
-    opacity: 0,
+  idleGrip: {
+    opacity: 0.15,
   },
   visibleGrip: {
     opacity: 0.3,
