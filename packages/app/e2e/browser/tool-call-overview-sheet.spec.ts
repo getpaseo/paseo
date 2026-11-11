@@ -1,8 +1,15 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
+import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
+import { gateSecondToolCall } from "../support/helpers/tool-call-gate";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  readReactRenders,
+  recordReactRenders,
+  resetReactRenders,
+} from "../support/helpers/react-renders";
 
 type WebSocketMessage = string | Buffer;
 
@@ -115,23 +122,27 @@ async function holdStreamAfterFirstCompletedToolCall(page: Page, agentId: string
     });
   });
 
+  function appendCompletedCalls(extraCompletedCalls: number) {
+    if (extraCompletedCalls > 0 && (!firstCallId || !firstCompletedMessage)) {
+      throw new Error("Expected the first completed tool call before release");
+    }
+    for (let index = 0; index < extraCompletedCalls; index += 1) {
+      sendToPage?.(
+        cloneToolCallWithId(
+          firstCompletedMessage as WebSocketMessage,
+          `${firstCallId}:${sequenceOffset + index}`,
+          sequenceOffset + index + 1,
+        ),
+      );
+    }
+    sequenceOffset += extraCompletedCalls;
+  }
   return {
     waitForFirstCompleted: () => firstCompleted,
+    appendCompletedCalls,
     release(extraCompletedCalls = 0) {
       isHolding = false;
-      if (extraCompletedCalls > 0 && (!firstCallId || !firstCompletedMessage)) {
-        throw new Error("Expected the first completed tool call before release");
-      }
-      for (let index = 0; index < extraCompletedCalls; index += 1) {
-        sendToPage?.(
-          cloneToolCallWithId(
-            firstCompletedMessage as WebSocketMessage,
-            `${firstCallId}:${index}`,
-            index + 1,
-          ),
-        );
-      }
-      sequenceOffset = extraCompletedCalls;
+      appendCompletedCalls(extraCompletedCalls);
       for (const message of heldMessages.splice(0)) {
         sendToPage?.(shiftTimelineSequence(message, sequenceOffset));
       }
@@ -139,17 +150,24 @@ async function holdStreamAfterFirstCompletedToolCall(page: Page, agentId: string
   };
 }
 
-async function configureOverviewToolCalls(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+type OverviewChatDisplay = "collapseToolCalls" | "collapseTurns";
+
+// Expand thinking keeps reasoning out of tool call runs, so the first tool call starts alone.
+async function configureOverviewToolCalls(page: Page, chatDisplay: OverviewChatDisplay) {
+  await page.addInitScript((display) => {
     localStorage.setItem(
       "@paseo:app-settings",
-      JSON.stringify({ toolCallDetailLevel: "overview" }),
+      JSON.stringify({ chatDisplay: display, autoExpandReasoning: true }),
     );
-  });
+  }, chatDisplay);
 }
 
-async function createOverviewAgent(page: Page, title: string) {
-  await configureOverviewToolCalls(page);
+async function createOverviewAgent(
+  page: Page,
+  title: string,
+  chatDisplay: OverviewChatDisplay = "collapseToolCalls",
+) {
+  await configureOverviewToolCalls(page, chatDisplay);
   return seedMockAgentWorkspace({
     repoPrefix: "tool-call-overview-sheet-",
     title,
@@ -204,6 +222,36 @@ function readScrollMetrics(root: HTMLElement) {
   };
 }
 
+const FIRST_CALL_DETAILS = "export function ConversationList()";
+
+function firstToolCall(page: Page): Locator {
+  return page.getByTestId("tool-call-badge").filter({ hasText: "conversation-list.tsx" }).first();
+}
+
+async function openToolDetails(badge: Locator): Promise<void> {
+  await badge.getByRole("button").first().click();
+}
+
+async function timelineRowOf(locator: Locator) {
+  const row = await locator.locator("xpath=ancestor::*[@data-history-row-id][1]").elementHandle();
+  if (!row) throw new Error("Expected the locator inside a timeline row");
+  return row;
+}
+
+/** Whether the locator renders inside this exact row node, i.e. the row was not remounted. */
+async function isInsideRow(
+  locator: Locator,
+  row: Awaited<ReturnType<typeof timelineRowOf>>,
+): Promise<boolean> {
+  return locator.evaluate((node, previousRow) => previousRow.contains(node), row);
+}
+
+async function topOf(row: Locator): Promise<number> {
+  const box = await row.boundingBox();
+  if (!box) throw new Error("Expected a visible timeline row");
+  return box.y;
+}
+
 test.describe("compact overview tool calls", () => {
   test.use({ viewport: COMPACT_VIEWPORT, hasTouch: true });
 
@@ -219,8 +267,16 @@ test.describe("compact overview tool calls", () => {
       await agent.client.sendAgentMessage(agent.agentId, "Exercise the overview tool-call sheet.");
       await gate.waitForFirstCompleted();
 
+      const single = firstToolCall(page);
+      await expect(single).toBeVisible();
+      await expect(page.getByTestId("tool-call-group")).toHaveCount(0);
+      await openToolDetails(single);
+      await expect(page.getByTestId("tool-call-sheet-close")).toBeVisible();
+      await page.getByTestId("tool-call-sheet-close").click();
+      gate.appendCompletedCalls(1);
       const group = page.getByTestId("tool-call-group").first();
       await expect(group).toBeVisible();
+      await expect(page.getByTestId("tool-call-group-sheet")).toBeHidden();
       await group.click();
 
       const sheet = page.getByTestId("tool-call-group-sheet");
@@ -261,27 +317,86 @@ test.describe("compact overview tool calls", () => {
   });
 });
 
-test("keeps overview tool calls inline on desktop", async ({ page }) => {
+for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
+  test(`keeps an opened lone tool call open when it becomes a group (${display})`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const agent = await createOverviewAgent(page, "Desktop overview tool calls", display);
+    await recordReactRenders(page);
+    try {
+      const gate = await gateSecondToolCall(page, agent.agentId);
+      await openOverviewAgent(page, agent);
+      await agent.client.sendAgentMessage(agent.agentId, "Exercise desktop overview tool calls.");
+      await gate.waitForFirstCompleted();
+      const lone = firstToolCall(page);
+      const group = page.getByTestId("tool-call-group").first();
+      const details = page.getByText(FIRST_CALL_DETAILS);
+
+      await test.step("a lone tool call shows as itself", async () => {
+        await expect(lone).toBeVisible();
+        await expect(group).toHaveCount(0);
+      });
+
+      await gate.waitForSecondRunning();
+      await test.step("opening it re-renders that tool call and nothing else", async () => {
+        await resetReactRenders(page);
+        await openToolDetails(lone);
+        await expect(details).toBeVisible();
+        const renders = await readReactRenders(page);
+        expect(renders.AgentStreamView ?? 0).toBe(0);
+        expect(renders.StreamRowContent ?? 0).toBe(0);
+        expect(renders.ToolCall).toBe(1);
+      });
+
+      await test.step("the second call forms an open group around the opened call", async () => {
+        // Reading above the tail, the row holds still; at the tail the new rows push it up.
+        await scrollChatAwayFromBottom(page, { deltaY: -160, minDistanceFromBottom: 72 });
+        const loneTop = await topOf(lone);
+        const loneRow = await timelineRowOf(lone);
+        await resetReactRenders(page);
+        gate.releaseSecondRunning();
+        await expect(group.getByTestId("tool-call-badge")).toHaveCount(2);
+        await expect(group.getByText(FIRST_CALL_DETAILS)).toBeVisible();
+        expect(await isInsideRow(group, loneRow)).toBe(true);
+        expect(Math.abs((await topOf(group)) - loneTop)).toBeLessThanOrEqual(2);
+        expect((await readReactRenders(page)).AgentStreamView).toBeGreaterThan(0);
+        await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
+      });
+
+      await test.step("closing and reopening the group keeps the call open", async () => {
+        await openToolDetails(group);
+        await expect(group.getByTestId("tool-call-badge")).toHaveCount(0);
+        await expect(details).toHaveCount(0);
+        await openToolDetails(group);
+        await expect(group.getByTestId("tool-call-badge")).toHaveCount(2);
+        await expect(group.getByText(FIRST_CALL_DETAILS)).toBeVisible();
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}
+
+test("forms a closed group when the lone tool call was left closed", async ({ page }) => {
   test.setTimeout(120_000);
-  const agent = await createOverviewAgent(page, "Desktop overview tool calls");
-
+  const agent = await createOverviewAgent(page, "Closed desktop overview tool calls");
   try {
-    const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId);
+    const gate = await gateSecondToolCall(page, agent.agentId);
     await openOverviewAgent(page, agent);
-    await agent.client.sendAgentMessage(agent.agentId, "Exercise desktop overview tool calls.");
+    await agent.client.sendAgentMessage(agent.agentId, "Leave the first tool call closed.");
     await gate.waitForFirstCompleted();
+    const lone = firstToolCall(page);
     const group = page.getByTestId("tool-call-group").first();
+    await expect(lone).toBeVisible();
+    await expect(group).toHaveCount(0);
+
+    await gate.waitForSecondRunning();
+    const loneTop = await topOf(lone);
+    gate.releaseSecondRunning();
     await expect(group).toBeVisible();
-
-    // Keep streaming layout changes out of the pointer-down/pointer-up interval.
-    const header = group.getByRole("button").first();
-    await header.click();
-    await expect(group.getByTestId("tool-call-badge").first()).toBeVisible();
-    await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
-
-    gate.release(1);
-    await expect.poll(() => group.getByTestId("tool-call-badge").count()).toBeGreaterThanOrEqual(2);
-    await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
+    await expect(group.getByTestId("tool-call-badge")).toHaveCount(0);
+    expect(Math.abs((await topOf(group)) - loneTop)).toBeLessThanOrEqual(2);
   } finally {
     await agent.cleanup();
   }

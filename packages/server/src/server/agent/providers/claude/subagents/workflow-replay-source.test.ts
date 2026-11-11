@@ -1,3 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import { describe, expect, it } from "vitest";
 
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
@@ -35,7 +41,7 @@ function parentEntries(
 }
 
 describe("Claude workflow replay", () => {
-  it("parses the persisted run summary observed from Claude Code 2.1.220", () => {
+  it("parses the persisted run summary observed from Claude Code 2.1.220", async () => {
     expect(
       parseClaudeWorkflowRun(
         JSON.stringify({
@@ -62,8 +68,8 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("rebuilds the same generic completed descriptor through the parent Workflow call", () => {
-    const observations = observeReplayWorkflows({
+  it("rebuilds the same generic completed descriptor through the parent Workflow call", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [
         {
           runId: RUN_ID,
@@ -91,8 +97,8 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("rebuilds a workflow when Claude persists its result as structured text blocks", () => {
-    const observations = observeReplayWorkflows({
+  it("rebuilds a workflow when Claude persists its result as structured text blocks", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [{ runId: RUN_ID, summary: "Structured result workflow", status: "completed" }],
       parentEntries: parentEntries([
         {
@@ -114,7 +120,7 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("replays the workflow result without exposing its script or child prompt", () => {
+  it("replays the workflow result without exposing its script or child prompt", async () => {
     const workflow = parseClaudeWorkflowRun(
       JSON.stringify({
         runId: RUN_ID,
@@ -128,7 +134,7 @@ describe("Claude workflow replay", () => {
     expect(workflow).not.toBeNull();
     if (!workflow) throw new Error("expected workflow");
 
-    const observations = observeReplayWorkflows({
+    const observations = await observeReplayWorkflows({
       workflows: [workflow],
       parentEntries: parentEntries(),
     });
@@ -145,9 +151,9 @@ describe("Claude workflow replay", () => {
     expect(JSON.stringify(observations)).not.toContain("SECRET CHILD PROMPT");
   });
 
-  it("does not duplicate a result already present in the child transcript", () => {
+  it("does not duplicate a result already present in the child transcript", async () => {
     const report = "What Paseo is\nA local-first coding-agent environment.";
-    const observations = observeReplayWorkflows({
+    const observations = await observeReplayWorkflows({
       workflows: [
         { runId: RUN_ID, summary: "Inspect Paseo", status: "completed", result: { report } },
       ],
@@ -166,8 +172,8 @@ describe("Claude workflow replay", () => {
     ).toHaveLength(1);
   });
 
-  it("fails a nonterminal persisted run because its former runtime cannot update it", () => {
-    const observations = observeReplayWorkflows({
+  it("fails a nonterminal persisted run because its former runtime cannot update it", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [{ runId: RUN_ID, summary: "Interrupted workflow", status: "running" }],
       parentEntries: parentEntries(),
     });
@@ -179,9 +185,9 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("drops a run that no parent Workflow tool call declared", () => {
+  it("drops a run that no parent Workflow tool call declared", async () => {
     expect(
-      observeReplayWorkflows({
+      await observeReplayWorkflows({
         workflows: [{ runId: RUN_ID, status: "completed" }],
         parentEntries: [],
       }),
@@ -194,4 +200,30 @@ describe("Claude workflow replay", () => {
       expect(parseClaudeWorkflowRun(contents)).toBeNull();
     },
   );
+});
+
+it("awaits image materialization before publishing replay observations", async () => {
+  const bytes = Buffer.from("async replay image fixture");
+  const convertEntry = async () => {
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
+      { data: bytes.toString("base64"), mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+    return item ? [item] : [];
+  };
+  const observations = await observeReplayWorkflows({
+    workflows: [{ runId: RUN_ID, status: "completed" }],
+    parentEntries: parentEntries(),
+    entriesByRunId: new Map([[RUN_ID, [{ type: "assistant", message: { content: [] } }]]]),
+    convertEntry,
+  });
+  const image = observations.find(
+    (observation) =>
+      observation.kind === "timeline" && observation.item.type === "assistant_message",
+  );
+  if (!image || image.kind !== "timeline" || image.item.type !== "assistant_message")
+    throw new Error("Expected replay image");
+  const source = image.item.text.match(/!\[Image\]\(([^)]+)\)/)?.[1];
+  expect(source).toBeTruthy();
+  expect(await readFile(fileURLToPath(source!))).toEqual(bytes);
 });

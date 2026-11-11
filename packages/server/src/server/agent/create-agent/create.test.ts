@@ -69,6 +69,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
       getAgent: vi.fn(() => snapshot),
       tryRunOutOfBand: vi.fn(() => false),
       hasInFlightRun: vi.fn(() => false),
+      reloadStalePluginSession: async () => {},
       streamAgent,
       waitForAgentRunStart: vi.fn(async () => undefined),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -146,7 +147,7 @@ test("session create applies the resolved mode from the provider create config",
   const stub = createProviderSnapshotManagerStub();
   stub.resolveCreateConfig.mockResolvedValue({
     modeId: "build",
-    featureValues: { auto_accept: true },
+    providerOptions: { auto_accept: true },
   });
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
@@ -170,7 +171,7 @@ test("session create applies the resolved mode from the provider create config",
   expect(createAgent).toHaveBeenCalledWith(
     expect.objectContaining({
       modeId: "build",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     }),
     undefined,
     expect.anything(),

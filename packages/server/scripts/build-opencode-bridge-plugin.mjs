@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,4 +27,10 @@ for (const directory of ["", "v2/"]) {
     target: "es2022",
     outfile: outputPath,
   });
+  if (directory === "v2/") {
+    await copyFile(
+      new URL("../src/server/agent/providers/opencode/v2/state.mjs", import.meta.url),
+      path.join(path.dirname(outputPath), "state.mjs"),
+    );
+  }
 }

@@ -8,6 +8,7 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemToCheckoutRequest,
+  startsNewBranch,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -385,4 +386,21 @@ describe("starting-ref search", () => {
       ).toEqual(visible);
     },
   );
+});
+
+describe("startsNewBranch", () => {
+  it("is true for a branch-off and for no request, which is the default base on a detached HEAD", () => {
+    expect(startsNewBranch(undefined)).toBe(true);
+    expect(startsNewBranch({ action: "branch-off", refName: "main" })).toBe(true);
+  });
+
+  it("is false for a checkout of a branch or a change request", () => {
+    expect(startsNewBranch({ action: "checkout", refName: "feature" })).toBe(false);
+    expect(
+      startsNewBranch({
+        checkoutSource: { kind: "change_request", forge: "github", number: 7 },
+      }),
+    ).toBe(false);
+    expect(startsNewBranch({ githubPrNumber: 7 })).toBe(false);
+  });
 });

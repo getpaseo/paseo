@@ -1,9 +1,9 @@
+import { selectProjectedTimelinePage } from "./test-utils/timeline-page-reference.js";
 import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineRow } from "./agent-manager.js";
 import {
   projectTimelineRows,
-  selectProjectedTimelinePage,
   selectTimelineWindowByProjectedLimit,
 } from "./timeline-projection.js";
 
@@ -533,6 +533,154 @@ describe("selectProjectedTimelinePage", () => {
       },
     };
   }
+
+  test("whole-turn pages extend past the soft target and keep prompt jumps whole", () => {
+    const rows: AgentTimelineRow[] = Array.from({ length: 125 }, (_, index) => ({
+      seq: index + 1,
+      timestamp: new Date(1000 + index).toISOString(),
+      turnId: ["short", "long", "latest"][Number(index >= 3) + Number(index >= 123)],
+      item: {
+        type: "tool_call",
+        callId: `tool-${index}`,
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "unknown", input: null, output: null },
+      },
+    }));
+    const tail = selectProjectedTimelinePage({
+      rows,
+      direction: "tail",
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(tail.entries.map((entry) => entry.seqStart)).toEqual(
+      rows.slice(3).map((row) => row.seq),
+    );
+    expect(tail).toMatchObject({ startSeq: 4, endSeq: 125, hasOlder: true, hasNewer: false });
+    const before = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 124,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(before.entries.map((entry) => entry.seqStart)).toEqual(
+      rows.slice(3, 123).map((row) => row.seq),
+    );
+    expect(before.endSeq).toBe(123);
+    const older = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 4,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(older.entries.map((entry) => entry.seqStart)).toEqual([1, 2, 3]);
+    expect(older.hasOlder).toBe(false);
+    const jump = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 70,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(jump.entries.map((entry) => entry.seqStart)).toEqual(
+      rows.slice(3, 123).map((row) => row.seq),
+    );
+    expect(jump).toMatchObject({ startSeq: 4, endSeq: 123, hasOlder: true, hasNewer: true });
+    const nearPreviousPrompt = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 10,
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(nearPreviousPrompt).toMatchObject({ startSeq: 1, endSeq: 123 });
+    expect(
+      selectProjectedTimelinePage({ rows, direction: "tail", limit: 40 }).entries,
+    ).toHaveLength(40);
+  });
+
+  test("whole-turn pages share short runs and use the same deterministic legacy triggers", () => {
+    const rows: AgentTimelineRow[] = Array.from({ length: 24 }, (_, index) => ({
+      seq: index + 1,
+      timestamp: new Date(1000 + index).toISOString(),
+      item:
+        index % 2 === 0
+          ? { type: "user_message", text: `prompt-${index}` }
+          : { type: "assistant_message", text: `reply-${index}` },
+    }));
+    const page = selectProjectedTimelinePage({
+      rows,
+      direction: "tail",
+      limit: 7,
+      wholeTurns: true,
+    });
+    expect(page.entries.map((entry) => entry.seqStart)).toEqual([17, 18, 19, 20, 21, 22, 23, 24]);
+    expect(
+      selectProjectedTimelinePage({ rows, direction: "tail", limit: 0, wholeTurns: true }).entries,
+    ).toHaveLength(24);
+    rows.push({
+      ...toolRow(25, "completed"),
+      item: { ...toolRow(25, "completed").item, name: "heartbeat" } as AgentTimelineRow["item"],
+    });
+    rows.push({
+      seq: 26,
+      timestamp: new Date().toISOString(),
+      item: { type: "assistant_message", text: "awake" },
+    });
+    expect(
+      selectProjectedTimelinePage({
+        rows,
+        direction: "tail",
+        limit: 1,
+        wholeTurns: true,
+      }).entries.map((entry) => entry.seqStart),
+    ).toEqual([25, 26]);
+  });
+
+  test("whole-turn tails close interleaved source coverage without changing forward catch-up", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: new Date(1).toISOString(),
+        turnId: "first",
+        item: { type: "user_message", text: "go" },
+      },
+      { ...toolRow(2, "running"), turnId: "first" },
+      {
+        seq: 3,
+        timestamp: new Date(3).toISOString(),
+        turnId: "second",
+        item: { type: "user_message", text: "next" },
+      },
+      {
+        seq: 4,
+        timestamp: new Date(4).toISOString(),
+        turnId: "second",
+        item: { type: "assistant_message", text: "done" },
+      },
+      { ...toolRow(5, "completed"), turnId: "first" },
+    ];
+    expect(
+      selectProjectedTimelinePage({ rows, direction: "tail", limit: 1, wholeTurns: true }),
+    ).toMatchObject({
+      startSeq: 1,
+      endSeq: 5,
+      hasOlder: false,
+      hasNewer: false,
+    });
+    expect(
+      selectProjectedTimelinePage({
+        rows,
+        direction: "after",
+        cursorSeq: 2,
+        limit: 1,
+        wholeTurns: true,
+      }),
+    ).toEqual(selectProjectedTimelinePage({ rows, direction: "after", cursorSeq: 2, limit: 1 }));
+  });
 
   test("tail page returns full projected items instead of tool lifecycle deltas", () => {
     const rows: AgentTimelineRow[] = [

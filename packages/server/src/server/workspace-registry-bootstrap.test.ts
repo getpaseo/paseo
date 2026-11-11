@@ -87,7 +87,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     expect(await projectRegistry.list()).toEqual([]);
-    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(await workspaceRegistry.listAll()).toEqual([]);
   });
 
   test("skips a legacy agent whose cwd is a file", async () => {
@@ -128,7 +128,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     expect(await projectRegistry.list()).toEqual([]);
-    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(await workspaceRegistry.listAll()).toEqual([]);
   });
 
   test("propagates a Git failure for an existing legacy directory", async () => {
@@ -233,7 +233,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       logger,
     });
 
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listAll();
     expect(workspaces).toHaveLength(1);
     expect(workspaces[0]?.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
     expect(workspaces[0]?.cwd).toBe(NON_GIT_PROJECT);
@@ -307,8 +307,8 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     expect(await projectRegistry.list()).toHaveLength(1);
-    expect(await workspaceRegistry.list()).toHaveLength(1);
-    expect((await workspaceRegistry.list())[0]?.workspaceId).toBe("ws-existing");
+    expect(await workspaceRegistry.listAll()).toHaveLength(1);
+    expect((await workspaceRegistry.listAll())[0]?.workspaceId).toBe("ws-existing");
   });
 
   test("materializes legacy remote worktrees into one readable project", async () => {
@@ -366,7 +366,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       displayName: "acme/legacy-project",
     });
 
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listAll();
     expect(
       workspaces
         .map(({ projectId, cwd, kind, displayName }) => ({ projectId, cwd, kind, displayName }))
@@ -449,7 +449,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     expect((await agentStorage.get("legacy-agent"))?.workspaceId).toBe("ws-older");
-    expect(await workspaceRegistry.list()).toHaveLength(2);
+    expect(await workspaceRegistry.listAll()).toHaveLength(2);
   });
 
   test("migrated legacy agents stay owned by the deterministic workspace when a same-cwd workspace is added later", async () => {
@@ -568,7 +568,7 @@ describe("bootstrapWorkspaceRegistries", () => {
       logger,
     });
 
-    const workspaces = await workspaceRegistry.list();
+    const workspaces = await workspaceRegistry.listAll();
     expect(workspaces).toHaveLength(1);
     expect(workspaces[0]?.workspaceId).toBe("ws-existing");
     expect(workspaces[0]?.cwd).toBe(NON_GIT_PROJECT);

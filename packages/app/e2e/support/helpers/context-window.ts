@@ -49,17 +49,97 @@ export async function moveOntoContextWindowDetails(page: Page, card: Locator): P
   await page.mouse.move(meter.x + meter.width / 2, box.y + box.height / 2, { steps: 20 });
 }
 
+/** The hover card as one painted frame showed it, or unmounted. */
+export interface ContextWindowFrame {
+  mounted: boolean;
+  bottom: number | null;
+  loading: boolean;
+  usageCards: number;
+}
+
+/**
+ * Reads the hover card as it was painted, every frame, until stopped, so a state that lasted one
+ * frame is seen. Stop it only after everything has settled.
+ */
+export async function recordContextWindowFrames(
+  page: Page,
+): Promise<{ stop: () => Promise<ContextWindowFrame[]> }> {
+  await page.evaluate(() => {
+    const recorder = window as unknown as {
+      __contextWindowFrames: ContextWindowFrame[];
+      __contextWindowRecording: boolean;
+    };
+    recorder.__contextWindowFrames = [];
+    recorder.__contextWindowRecording = true;
+    const findCard = () =>
+      document.querySelector<HTMLElement>('[data-testid="context-window-details"]');
+    const read = (card: HTMLElement | null): ContextWindowFrame => ({
+      mounted: card !== null,
+      bottom: card?.getBoundingClientRect().bottom ?? null,
+      loading: card?.innerText.includes("Loading usage...") ?? false,
+      usageCards: card?.querySelectorAll('[data-testid^="usage-report-"]').length ?? 0,
+    });
+    // A card that just resized has not been painted yet: its frame is read from an observer,
+    // which runs before that paint.
+    let watched: HTMLElement | null = null;
+    let paintedHeight: number | null = null;
+    let observer: ResizeObserver | null = null;
+    const watch = (card: HTMLElement) => {
+      observer = new ResizeObserver(() => {
+        paintedHeight = card.offsetHeight;
+        recorder.__contextWindowFrames.push(read(card));
+      });
+      observer.observe(card);
+    };
+    const channel = new MessageChannel();
+    // A message posted from an animation frame runs after that frame's paint.
+    channel.port1.addEventListener("message", () => {
+      const card = findCard();
+      if (card !== watched) {
+        observer?.disconnect();
+        watched = card;
+        paintedHeight = null;
+        if (card) watch(card);
+      }
+      if (!card || card.offsetHeight === paintedHeight) {
+        recorder.__contextWindowFrames.push(read(card));
+      }
+    });
+    channel.port1.start();
+    const sample = () => {
+      if (!recorder.__contextWindowRecording) return;
+      channel.port2.postMessage(null);
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  return {
+    stop: () =>
+      page.evaluate(() => {
+        const recorder = window as unknown as {
+          __contextWindowFrames: ContextWindowFrame[];
+          __contextWindowRecording: boolean;
+        };
+        recorder.__contextWindowRecording = false;
+        return recorder.__contextWindowFrames;
+      }),
+  };
+}
+
 export async function leaveContextWindowMeter(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
   await expect(contextWindowDetails(page)).toHaveCount(0);
 }
 
-/** Compact screens open the meter's details in a sheet. */
-export async function pressContextWindowMeter(page: Page, name = METER_NAME): Promise<Locator> {
+/** Clicking the meter opens its details in the active layout. */
+export async function pressContextWindowMeter(
+  page: Page,
+  name: string | RegExp = METER_NAME,
+): Promise<Locator> {
   await page.getByRole("button", { name, exact: true }).click({ timeout: 30_000 });
-  const sheet = contextWindowDetails(page);
-  await expect(sheet).toBeVisible();
-  return sheet;
+  const details = contextWindowDetails(page);
+  await expect(details).toBeVisible();
+  return details;
 }
 
 export async function closeContextWindowSheet(page: Page): Promise<void> {
@@ -136,6 +216,8 @@ export interface AgentUsageScript {
   agentRequests(): string[];
   /** Each scoped agent Refresh, by agent ID. */
   refreshedAgents(): string[];
+  /** Reloads the agent's session, which starts it under a new usage scope, as a resume does. */
+  resumeAgent(agent: MockAgentSession): Promise<void>;
 }
 
 /**
@@ -166,6 +248,8 @@ export async function scriptAgentUsage(page: Page): Promise<AgentUsageScript> {
       usage
         .listRequests()
         .flatMap((request) => (request.forceRefresh && request.agentId ? [request.agentId] : [])),
+    resumeAgent: (agent) =>
+      usage.untilUsageScopeChanges(agent.agentId, () => agent.client.refreshAgent(agent.agentId)),
   };
 }
 

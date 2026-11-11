@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ import path from "node:path";
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -15,6 +16,7 @@ import type {
   AgentRunOptions,
   AgentRunResult,
   AgentSession,
+  AgentSelectOption,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentSlashCommand,
@@ -37,6 +39,26 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 const TEST_FEATURE_ID = "test_feature";
+const TEST_THINKING_OPTIONS: AgentSelectOption[] = [
+  { id: "low", label: "Low", isDefault: true },
+  { id: "high", label: "High" },
+];
+
+const TEST_MODELS: Record<string, Array<{ id: string; label: string }>> = {
+  claude: [
+    { id: "haiku", label: "Haiku" },
+    { id: "sonnet", label: "Sonnet" },
+  ],
+  codex: [
+    { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+    { id: "gpt-5.4", label: "gpt-5.4" },
+  ],
+  opencode: [
+    { id: "test-model", label: "Test Model" },
+    { id: "test-model-alt", label: "Test Model Alt" },
+  ],
+};
+
 const TEST_MODES: AgentMode[] = [
   { id: "bypassPermissions", label: "Bypass", description: "No permissions" },
   { id: "default", label: "Default", description: "Ask for permissions" },
@@ -60,14 +82,19 @@ interface FakeAgentSessionOptions {
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
+  steerActiveTurn?: AgentSession["steerActiveTurn"];
+  onInterrupt?: () => void;
   historyEvents?: readonly AgentStreamEvent[];
 }
 
 export interface TestAgentClientOptions {
   beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
+  beforeResumeSession?: (handle: AgentPersistenceHandle) => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
+  steerActiveTurn?: AgentSession["steerActiveTurn"];
+  onInterrupt?: () => void;
   supportsMcpServers?: boolean;
   historyEvents?: readonly AgentStreamEvent[];
 }
@@ -340,6 +367,8 @@ class FakeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
 
+  readonly steerActiveTurn: AgentSession["steerActiveTurn"];
+  private readonly onInterrupt: (() => void) | undefined;
   private readonly closeSession: (() => Promise<void>) | undefined;
   private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
   private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
@@ -354,6 +383,8 @@ class FakeAgentSession implements AgentSession {
     this.config = options.config;
     this.id = options.sessionId ?? randomUUID();
     this.memoryMarker = options.memoryMarker ?? null;
+    this.steerActiveTurn = options.steerActiveTurn;
+    this.onInterrupt = options.onInterrupt;
     this.closeSession = options.closeSession;
     this.onStartTurn = options.onStartTurn;
     this.beforeTurnComplete = options.beforeTurnComplete;
@@ -370,14 +401,13 @@ class FakeAgentSession implements AgentSession {
     return this.providerName;
   }
 
-  get features(): AgentFeature[] {
+  get controls(): AgentOptionControl[] {
     return [
       {
         type: "toggle",
-        id: TEST_FEATURE_ID,
+        key: TEST_FEATURE_ID,
         label: "Test feature",
         description: "Deterministic provider feature used by MCP integration tests.",
-        value: this.config.featureValues?.[TEST_FEATURE_ID] === true,
       },
     ];
   }
@@ -864,11 +894,8 @@ class FakeAgentSession implements AgentSession {
     this.config.modeId = modeId;
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    this.config.featureValues = {
-      ...this.config.featureValues,
-      [featureId]: value,
-    };
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    this.config.providerOptions = { ...this.config.providerOptions, ...options };
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -896,6 +923,7 @@ class FakeAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.onInterrupt?.();
     this.interruptSignal.resolve();
   }
 
@@ -1234,6 +1262,8 @@ class FakeAgentClient implements AgentClient {
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
+      steerActiveTurn: this.options.steerActiveTurn,
+      onInterrupt: this.options.onInterrupt,
       historyEvents: this.options.historyEvents,
     });
   }
@@ -1243,6 +1273,7 @@ class FakeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.options.beforeResumeSession?.(handle);
     const cfg: AgentSessionConfig = {
       provider: this.provider,
       cwd: overrides?.cwd ?? process.cwd(),
@@ -1261,6 +1292,8 @@ class FakeAgentClient implements AgentClient {
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
+      steerActiveTurn: this.options.steerActiveTurn,
+      onInterrupt: this.options.onInterrupt,
       historyEvents: this.options.historyEvents,
     });
   }
@@ -1268,30 +1301,18 @@ class FakeAgentClient implements AgentClient {
   async fetchCatalog(
     _options: FetchCatalogOptions,
   ): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
-    if (this.provider === "claude") {
-      return {
-        models: [
-          { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
-          { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
-        ],
-        modes: TEST_MODES,
-      };
-    }
-    if (this.provider === "codex") {
-      return {
-        models: [
-          {
-            provider: this.provider,
-            id: "gpt-5.4-mini",
-            label: "gpt-5.4-mini",
-            isDefault: true,
-          },
-        ],
-        modes: TEST_MODES,
-      };
-    }
+    // Every provider lists two models that each list thinking options, so the live model and
+    // thinking switches have listed values to switch between.
+    const listed = TEST_MODELS[this.provider] ?? TEST_MODELS.opencode;
     return {
-      models: [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }],
+      models: listed.map((model, index) => ({
+        provider: this.provider,
+        id: model.id,
+        label: model.label,
+        isDefault: index === 0,
+        thinkingOptions: TEST_THINKING_OPTIONS,
+        defaultThinkingOptionId: "low",
+      })),
       modes: TEST_MODES,
     };
   }

@@ -4,6 +4,9 @@ import path from "node:path";
 import type { Locator, TestInfo } from "@playwright/test";
 import { test, expect, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
+import { scrollAgentChatToBottom, waitForScrollableChat } from "./agent-bottom-anchor";
+import { expectTurnCopyButton } from "./agent-stream";
+import { submitMessage } from "./composer";
 import { buildAgentRoute } from "./mock-agent";
 import { openCommandCenter } from "./command-center";
 import {
@@ -88,7 +91,7 @@ export default function contribute(client) {
   header("locked", { title: "Production locked", icon: "Lock", disabled: true, behavior: { kind: "action", onPress() {} } });
   const review = pill("review", { title: "Run review", icon: "Scan", label: "Review", behavior: { kind: "action", async onPress() { await new Promise((resolve) => { finishReview = resolve; }); review.update({ label: "Reviewed" }); } } });
   const pillMenu = pill("checks", { title: "Composer checks", icon: "ListChecks", label: "Checks", behavior: menu });
-  pill("usage", { title: "Composer status", icon: StatusIcon, label: "Status", behavior: { kind: "popover", Content: Details } });
+  const usage = pill("usage", { title: "Composer status", icon: StatusIcon, label: "Status", behavior: { kind: "popover", Content: Details } });
   const command = (id, title, onSelect) => client.addCommandCenterItem({ id, title, icon: "Settings", context: "workspace", onSelect });
   command("finish", "Finish deployment", () => finish());
   command("finish-review", "Finish review", () => finishReview());
@@ -102,10 +105,16 @@ export default function contribute(client) {
   command("hide-menu", "Hide composer menu", () => pillMenu.update({ visible: false }));
   command("show-menu", "Show composer menu", () => pillMenu.update({ visible: true }));
   const lifetime = new AbortController();
+  let pillsHidden = false;
   const applyWorkspace = (workspace) => {
     if (workspace.id !== workspaceId) return;
+    const hidePills = workspace.name === "No composer pills";
     deploy.update({ visible: workspace.name !== "Compact checks" });
-    pillMenu.update({ visible: workspace.name !== "Hide composer menu" });
+    pillMenu.update({ visible: workspace.name !== "Hide composer menu" && !hidePills });
+    if (hidePills === pillsHidden) return;
+    pillsHidden = hidePills;
+    review.update({ visible: !hidePills });
+    usage.update({ visible: !hidePills });
   };
   void client.paseo.workspaces.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {
     subscription.subscribe({
@@ -244,6 +253,38 @@ async function captureSchemes(page: Page, info: TestInfo, name: string, subject:
   await page.emulateMedia({ colorScheme: "light" });
 }
 
+const COMPOSER_PILLS = ["Run review", "Composer checks", "Composer status"] as const;
+
+function chevronOf(page: Page, title: string): Locator {
+  return page
+    .getByRole("button", { name: title, exact: true })
+    .getByTestId("plugin-button-chevron");
+}
+
+/** Composer pills that open a menu or popover carry a chevron; a one-tap action does not. */
+async function expectComposerPillChevrons(page: Page) {
+  await expect(chevronOf(page, "Composer checks")).toHaveCount(1);
+  await expect(chevronOf(page, "Composer status")).toHaveCount(1);
+  await expect(chevronOf(page, "Run review")).toHaveCount(0);
+}
+
+async function setComposerPillsShown(
+  page: Page,
+  showcase: { setTitle(title: string): Promise<unknown> },
+  shown: boolean,
+) {
+  await showcase.setTitle(shown ? "Button showcase" : "No composer pills");
+  for (const title of COMPOSER_PILLS) {
+    await expect(page.getByRole("button", { name: title, exact: true })).toHaveCount(shown ? 1 : 0);
+  }
+}
+
+async function lastTurnTop(page: Page): Promise<number> {
+  const box = await page.getByRole("button", { name: "Copy turn" }).last().boundingBox();
+  expect(box).not.toBeNull();
+  return box!.y;
+}
+
 async function expectHeaderTextTruncated(page: Page) {
   const title = page.getByTestId("workspace-header-title");
   const subtitle = page.getByTestId("workspace-header-subtitle");
@@ -276,6 +317,7 @@ export async function withButtonShowcase(
   run: (buttons: {
     openWideMenusAndPopovers(): Promise<void>;
     runAndUpdateActions(): Promise<void>;
+    keepTrackSpaceWithoutPills(): Promise<void>;
     openCompactSheets(): Promise<void>;
     useCompactWorkspaceMenu(): Promise<void>;
     hideAndUnloadOpenButtons(): Promise<void>;
@@ -348,11 +390,7 @@ export async function withButtonShowcase(
               .getByRole("button", { name: "Header checks", exact: true })
               .getByTestId("plugin-button-chevron"),
           ).toHaveCount(1);
-          await expect(
-            page
-              .getByRole("button", { name: "Composer checks", exact: true })
-              .getByTestId("plugin-button-chevron"),
-          ).toHaveCount(0);
+          await expectComposerPillChevrons(page);
           await expectSurfaceVisible(page);
           await captureSchemes(
             page,
@@ -476,10 +514,31 @@ export async function withButtonShowcase(
             "Review ready",
           );
         }),
+      keepTrackSpaceWithoutPills: () =>
+        test.step("the composer track keeps its space when every pill leaves and returns", async () => {
+          await page.setViewportSize(WIDE);
+          await submitMessage(page, "Stream a turn under the composer pills");
+          await expectTurnCopyButton(page);
+          await waitForScrollableChat(page, { minScrollableDistance: 200, timeout: 30_000 });
+          for (const viewport of [WIDE, COMPACT]) {
+            await page.setViewportSize(viewport);
+            await scrollAgentChatToBottom(page);
+            const top = await lastTurnTop(page);
+            await setComposerPillsShown(page, showcase, false);
+            expect(await lastTurnTop(page)).toBe(top);
+            await setComposerPillsShown(page, showcase, true);
+            expect(await lastTurnTop(page)).toBe(top);
+          }
+          await page.setViewportSize(WIDE);
+        }),
       openCompactSheets: () =>
         test.step("compact header leaves plugin actions to the workspace menu while composer triggers open sheets", async () => {
           await page.setViewportSize(COMPACT);
-          await expect(page.getByTestId("plugin-button-chevron")).toHaveCount(0);
+          await expect(
+            page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
+          ).toHaveCount(0);
+          await expectComposerPillChevrons(page);
+          await expect(page.getByTestId("plugin-button-chevron")).toHaveCount(2);
           await expect(
             page.getByRole("button", { name: "Composer checks", exact: true }),
           ).toContainText("Checks");

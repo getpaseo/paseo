@@ -248,7 +248,7 @@ test("ordinary Hub requests survive daemon restart and restore an archived works
     }),
   ).toMatchObject({ payload: { agentId, accepted: true } });
   expect(hub.providerPromptTexts().filter((text) => text === "follow up")).toHaveLength(1);
-}, 20_000);
+});
 
 test("Hub completes the standard hello before rejecting a second hello", async () => {
   const hub = await launchRelationship();

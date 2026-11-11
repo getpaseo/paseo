@@ -813,13 +813,14 @@ describe("checkout PR schemas", () => {
   });
 });
 
-test.each([undefined, false, true])(
-  "accepts optional Hoplite capability (%s)",
-  (hopliteProvider) => {
-    const features = hopliteProvider === undefined ? {} : { hopliteProvider };
-    expect(
-      ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "test", features })
-        .features,
-    ).toEqual(features);
-  },
-);
+test.each(
+  ["hopliteProvider", "fxProvider"].flatMap((name) =>
+    [undefined, false, true].map((value) => [name, value] as const),
+  ),
+)("accepts optional bundled provider capability (%s: %s)", (name, value) => {
+  const features = value === undefined ? {} : { [name]: value };
+  expect(
+    ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "test", features })
+      .features,
+  ).toEqual(features);
+});

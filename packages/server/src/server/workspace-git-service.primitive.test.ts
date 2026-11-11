@@ -991,8 +991,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(subscribe).toHaveBeenCalledTimes(2);
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(2));
+    // Setup itself does no snapshot read; once the watcher covers the tree, one
+    // checkout read catches changes made since the forced read.
+    await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalledTimes(2));
 
     subscription.unsubscribe();
     service.dispose();
@@ -2221,7 +2223,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
 
-    service.dispose();
+    await service.dispose();
   });
 
   test("onWorkspaceStateMayHaveChanged preserves includeForge when a file watcher fires within the debounce window", async () => {

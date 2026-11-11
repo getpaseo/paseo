@@ -159,4 +159,52 @@ describe("native headless terminal state", () => {
       { char: "B", width: 1 },
     ]);
   });
+
+  // Apple Color Emoji and Noto Color Emoji are two cells wide. The native
+  // renderer scales a cluster to its column slot, so a one-column emoji
+  // renders at half size. Each emoji cluster must occupy one wide cell.
+  test.each([
+    ["presentation emoji", "😀"],
+    ["thumbs up", "👍"],
+    ["check mark", "✅"],
+    ["VS16 heart", "❤️"],
+    ["skin-tone modifier", "👋🏽"],
+    ["regional-indicator flag", "🇰🇷"],
+    ["ZWJ family", "👨‍👩‍👧"],
+    ["ZWJ technologist", "👩‍💻"],
+  ])("gives a %s cluster one two-column cell", async (_name, cluster) => {
+    const terminal = createNativeHeadlessTerminal({ rows: 2, cols: 12 });
+
+    await terminal.write(`A${cluster}B`);
+    const [row] = terminal.getBufferWindow({ startRow: 0, rowCount: 1 }).rows;
+
+    expect(row.slice(0, 4).map((cell) => ({ char: cell.char, width: cell.width }))).toEqual([
+      { char: "A", width: 1 },
+      { char: cluster, width: 2 },
+      { char: " ", width: 0 },
+      { char: "B", width: 1 },
+    ]);
+    expect(terminal.getViewportState().cursor.col).toBe(4);
+  });
+
+  // A host without grapheme widths answers cursor reports and replays with
+  // xterm's default table. The native buffer matches it so the cursor lands
+  // where the host put it.
+  test("measures with xterm's default table for hosts without grapheme widths", async () => {
+    const terminal = createNativeHeadlessTerminal({
+      rows: 2,
+      cols: 12,
+      characterWidths: "legacy",
+    });
+
+    await terminal.write("A😀B");
+    const [row] = terminal.getBufferWindow({ startRow: 0, rowCount: 1 }).rows;
+
+    expect(row.slice(0, 3).map((cell) => ({ char: cell.char, width: cell.width }))).toEqual([
+      { char: "A", width: 1 },
+      { char: "😀", width: 1 },
+      { char: "B", width: 1 },
+    ]);
+    expect(terminal.getViewportState().cursor.col).toBe(3);
+  });
 });

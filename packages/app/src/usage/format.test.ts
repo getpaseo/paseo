@@ -7,6 +7,7 @@ import {
   formatPct,
   formatProviderUsageLabel,
   formatResetLabel,
+  formatResetTime,
   formatRunsOutLabel,
 } from "./format";
 
@@ -36,8 +37,8 @@ describe("formatAmount", () => {
     const threeDaysAgo = new Date(NOW - 3 * 24 * 60 * 60 * 1000).toISOString();
 
     expect(formatPct(7, "en")).toBe("7%");
-    expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("resets 2h");
-    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("runs out 2h");
+    expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("resets in 2h");
+    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("runs out in 2h");
 
     await i18n.changeLanguage("ja");
     expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("2時間後にリセット");
@@ -91,6 +92,70 @@ describe("formatAmount", () => {
     );
     expect(formatProviderUsageLabel("credits", "Credits")).toBe("크레딧");
     expect(formatProviderUsageLabel("custom_limit", "Custom limit")).toBe("Custom limit");
+  });
+});
+
+describe("reset countdown", () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+  const countdown = (ms: number) => formatResetLabel(new Date(NOW + ms).toISOString(), false, NOW);
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("keeps counting down inside a day instead of sitting on the rounded-down day", () => {
+    expect(countdown(2 * DAY + 23 * HOUR + 10 * MINUTE)).toBe("resets in 2d 23h");
+    expect(countdown(2 * DAY + 22 * HOUR + 10 * MINUTE)).toBe("resets in 2d 22h");
+  });
+
+  it("says two units, dropping a unit that is zero", () => {
+    expect(countdown(DAY + 30 * MINUTE)).toBe("resets in 1d");
+    expect(countdown(4 * HOUR + 59 * MINUTE)).toBe("resets in 4h 59m");
+    expect(countdown(HOUR)).toBe("resets in 1h");
+    expect(countdown(37 * MINUTE)).toBe("resets in 37m");
+    expect(countdown(59 * 1000)).toBe("resets in 0m");
+  });
+
+  it("joins the at-risk countdown the same way", () => {
+    const iso = new Date(NOW + 3 * HOUR + 5 * MINUTE).toISOString();
+    expect(formatRunsOutLabel(iso, NOW)).toBe("runs out in 3h 5m");
+  });
+});
+
+describe("exact reset time", () => {
+  // Local-time dates, so the thresholds hold in any timezone the tests run in.
+  const now = new Date(2026, 9, 29, 12, 0).getTime();
+  const at = (...args: [number, number, number, number, number]) =>
+    formatResetTime(new Date(...args).toISOString(), now)?.replace(/\s/g, " ");
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("shows only the time within 24 hours", () => {
+    expect(at(2026, 9, 29, 15, 0)).toMatch(/^(3:00 PM|15:00)$/);
+    expect(at(2026, 9, 30, 11, 59)).toMatch(/^(11:59 AM|11:59)$/);
+  });
+
+  it("adds the weekday within 7 days", () => {
+    expect(at(2026, 9, 30, 12, 0)).toMatch(/^Fri (12:00 PM|12:00)$/);
+    expect(at(2026, 10, 5, 11, 59)).toMatch(/^Thu (11:59 AM|11:59)$/);
+  });
+
+  it("adds the date after 7 days", () => {
+    expect(at(2026, 10, 5, 12, 0)).toMatch(/^Nov 5, (12:00 PM|12:00)$/);
+  });
+
+  it("names the weekday in the app language", async () => {
+    await i18n.changeLanguage("fr");
+    expect(at(2026, 9, 31, 15, 0)).toMatch(/^sam\.? /);
+  });
+
+  it("says nothing for a time that has passed", () => {
+    expect(formatResetTime(new Date(now - 1).toISOString(), now)).toBeNull();
+    expect(formatResetTime(null, now)).toBeNull();
   });
 });
 

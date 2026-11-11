@@ -3,8 +3,76 @@ import {
   buildForgeBlobUrl,
   buildForgeBranchTreeUrl,
   buildForgeChecksUrl,
+  buildForgeReferenceUrl,
   hasForgeWebUrls,
 } from "./forge-url";
+
+describe("buildForgeReferenceUrl", () => {
+  it.each([
+    ["github", "git@github.com:acme/repo.git", "#", null, "https://github.com/acme/repo/issues/12"],
+    ["github", "git@github.com:acme/repo.git", "!", null, null],
+    [
+      "github",
+      "https://github.com/acme/repo",
+      "#",
+      "other/tools",
+      "https://github.com/other/tools/issues/12",
+    ],
+    ["gitlab", "git@gitlab.com:g/sub/p.git", "#", null, "https://gitlab.com/g/sub/p/-/issues/12"],
+    [
+      "gitlab",
+      "git@gitlab.com:g/sub/p.git",
+      "!",
+      null,
+      "https://gitlab.com/g/sub/p/-/merge_requests/12",
+    ],
+    [
+      "gitlab",
+      "https://gitlab.corp:8443/g/p.git",
+      "!",
+      "g/q",
+      "https://gitlab.corp:8443/g/q/-/merge_requests/12",
+    ],
+    [
+      "codeberg",
+      "https://codeberg.org/acme/repo.git",
+      "!",
+      null,
+      "https://codeberg.org/acme/repo/pulls/12",
+    ],
+    [
+      "gitea",
+      "http://forge.test:3000/team/repo.git",
+      "#",
+      null,
+      "http://forge.test:3000/team/repo/issues/12",
+    ],
+    [
+      "github",
+      "http://github.com/acme/repo.git",
+      "#",
+      null,
+      "https://github.com/acme/repo/issues/12",
+    ],
+    [
+      "forgejo",
+      "git@forge.example:acme/repo.git",
+      "#",
+      null,
+      "https://forge.example/acme/repo/issues/12",
+    ],
+    ["bitbucket", "git@bitbucket.org:acme/repo.git", "#", null, null],
+    ["github", null, "#", null, null],
+    ["github", "git@github.com:acme/repo.git", "#", "../escape", null],
+  ] as const)("builds %s %s %s in %s", (forge, remoteUrl, sigil, repo, expected) => {
+    expect(buildForgeReferenceUrl(forge, { remoteUrl, repo, sigil, number: 12 })).toBe(expected);
+  });
+
+  it("rejects non-positive numbers", () => {
+    const remoteUrl = "git@github.com:acme/repo.git";
+    expect(buildForgeReferenceUrl("github", { remoteUrl, sigil: "#", number: 0 })).toBeNull();
+  });
+});
 
 describe("buildForgeChecksUrl", () => {
   it.each([

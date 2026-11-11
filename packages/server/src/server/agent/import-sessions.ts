@@ -64,7 +64,7 @@ export class ImportSessionsRequestError extends Error {
 export interface ListImportableProviderSessionsInput {
   request: FetchRecentProviderSessionsRequestMessage;
   agentManager: Pick<AgentManager, "listAgents" | "listImportableSessions">;
-  agentStorage: Pick<AgentStorage, "list">;
+  agentStorage: Pick<AgentStorage, "listAll">;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
 }
 
@@ -342,12 +342,13 @@ function parseRecentProviderSessionsSince(since: string | undefined): number | n
 
 async function collectImportedProviderSessions(
   agentManager: Pick<AgentManager, "listAgents">,
-  agentStorage: Pick<AgentStorage, "list">,
+  agentStorage: Pick<AgentStorage, "listAll">,
   providerFilter: Set<string> | undefined,
 ): Promise<{ handles: Set<string>; count: number }> {
   const handles = new Set<string>();
   const sessions = new Set<string>();
-  const records = await agentStorage.list();
+  // Explicit provider-history import deduplicates against archived as well as active sessions.
+  const records = await agentStorage.listAll();
   const storedRecordsById = new Map(records.map((record) => [record.id, record]));
 
   const collect = (
@@ -380,7 +381,7 @@ function toProviderSessionHandleKey(provider: string, providerHandleId: string):
   return `${provider}\0${providerHandleId}`;
 }
 
-function isMetadataGenerationSession(input: { firstPromptPreview: string | null }): boolean {
+export function isMetadataGenerationSession(input: { firstPromptPreview: string | null }): boolean {
   return (
     input.firstPromptPreview?.trimStart().startsWith(METADATA_GENERATION_PROMPT_PREFIX) ?? false
   );

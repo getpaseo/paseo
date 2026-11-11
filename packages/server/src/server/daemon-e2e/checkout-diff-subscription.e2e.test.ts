@@ -142,7 +142,8 @@ test("keeps the socket usable after rejecting an oversized structured diff", asy
     commitFile(cwd, "large-b.js", "const value = 0;\n");
     // Short lines stay eligible for highlighting; a giant single line is skipped
     // before token expansion and cannot exercise the structured-payload limit.
-    const denseExpression = `const value = ${"a+".repeat(100)}a;\n`.repeat(4_000);
+    // Stay below the full-source highlighting budget as well.
+    const denseExpression = `const value = ${"a+".repeat(100)}a;\n`.repeat(3_500);
     writeFileSync(path.join(cwd, "large-a.js"), denseExpression);
     writeFileSync(path.join(cwd, "large-b.js"), denseExpression);
 

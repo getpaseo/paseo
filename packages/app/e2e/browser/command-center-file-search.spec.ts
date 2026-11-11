@@ -5,8 +5,10 @@ import {
   holdDirectorySuggestionResponses,
   expectOneLineTruncatedFileResult,
   expectStableCommandCenterLayout,
+  expectLayoutObservationToCatchPanelShift,
   failDirectorySuggestionRequests,
   startCommandCenterLayoutObservation,
+  shiftOutsideCommandCenter,
 } from "../support/helpers/command-center-file-search";
 import {
   scrollCommandCenterAwayFromSelection,
@@ -84,7 +86,9 @@ test("workspace file search stays geometrically stable through delayed loading a
     await expect(panel.getByTestId("command-center-file-search-loading")).toBeVisible();
     await expect(panel.getByText("Searching files...", { exact: true })).toHaveCount(0);
     await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await shiftOutsideCommandCenter(page);
     await expectStableCommandCenterLayout(page);
+    await expectLayoutObservationToCatchPanelShift(page);
 
     await row.click();
     await expectFileTabOpen(page, FILE_PATH);

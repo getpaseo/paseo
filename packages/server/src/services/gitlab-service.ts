@@ -728,6 +728,7 @@ function toCurrentPullRequestStatus(
     state: mapMergeRequestState(mr.state),
     baseRefName: mr.target_branch,
     headRefName: mr.source_branch,
+    ...(mr.sha ? { headSha: mr.sha } : {}),
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
@@ -987,6 +988,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         (mr) =>
           mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
       ) ??
+      candidates[0] ??
       null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
   }

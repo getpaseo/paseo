@@ -127,7 +127,7 @@ buildNpmPackage {
         # The Nix output is not a distributable DMG, so leave it unsigned and
         # disable the hardened runtime that requires a matching signature.
         CSC_IDENTITY_AUTO_DISCOVERY=false \
-          ../../node_modules/.bin/electron-builder \
+          npm exec --offline -- electron-builder \
             --config electron-builder.yml \
             --dir \
             --mac \

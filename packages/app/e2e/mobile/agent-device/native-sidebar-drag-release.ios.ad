@@ -6,6 +6,11 @@ env APP_ID=sh.paseo.debug
 # Hold past drag arming (180ms), then release.
 open "${APP_ID}"
 press "label=\"Open menu\""
+wait "id=\"sidebar-close\"" 10000
+press "id=\"sidebar-close\""
+# The close target must clear system controls, including a trailing status column.
+wait "label=\"Open menu\"" 5000
+press "label=\"Open menu\""
 wait "id=\"${WORKSPACE_ROW}\"" 10000
 longpress "id=\"${WORKSPACE_ROW}\"" 250
 press "id=\"${WORKSPACE_ROW}\""

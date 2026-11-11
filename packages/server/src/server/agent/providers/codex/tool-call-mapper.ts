@@ -4,6 +4,7 @@ import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import {
   extractCodexShellOutput,
   normalizeToolCallStatus,
+  TOOL_CALL_DIFF_MAX_CHARS,
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
@@ -400,7 +401,7 @@ function contentToDeletionDiff(filePath: string, content: string): string {
   output.push(`diff --git a/${filePath} b/${filePath}`);
   output.push(`--- a/${filePath}`);
   output.push(`+++ /dev/null`);
-  const nonEmpty = lines.filter((l) => l.length > 0 || lines.indexOf(l) < lines.length - 1);
+  const nonEmpty = lines.slice(0, lines.at(-1) === "" ? -1 : undefined);
   if (nonEmpty.length > 0) {
     output.push(`@@ -1,${nonEmpty.length} +0,0 @@`);
     for (const line of nonEmpty) {
@@ -713,6 +714,7 @@ interface CodexFileChangeEntry {
   path: string;
   kind?: string;
   diff?: string;
+  movePath?: string;
 }
 
 function parseFileChangePath(
@@ -740,6 +742,9 @@ function parseFileChangePath(
 }
 
 function parseFileChangeKind(entry: Record<string, unknown>): string | undefined {
+  if (isRecord(entry.kind) && typeof entry.kind.type === "string") {
+    return entry.kind.type;
+  }
   return (
     (typeof entry.kind === "string" && entry.kind) ||
     (typeof entry.type === "string" && entry.type) ||
@@ -767,10 +772,14 @@ function toFileChangeEntry(
   if (!path) {
     return null;
   }
+  const kind = isRecord(entry.kind) ? entry.kind : undefined;
+  const movePath = entry.move_path ?? kind?.move_path;
   return {
     path,
     kind: parseFileChangeKind(entry),
     diff: parseFileChangeDiff(entry),
+    movePath:
+      typeof movePath === "string" ? normalizeCodexFilePath(movePath, options?.cwd) : undefined,
   };
 }
 
@@ -839,6 +848,105 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
   return asEditTextFields(file.diff);
 }
 
+function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
+  // Codex formats a content-preserving move as a notice, not added file text.
+  const isMoveOnlyNotice = file.movePath && file.diff?.startsWith("\n\nMoved to: ");
+  const { unifiedDiff, newString } = isMoveOnlyNotice ? {} : resolveFileChangeTextFields(file);
+  if (!unifiedDiff && !newString) {
+    if (file.kind === "add") {
+      return [
+        `diff --git a/${file.path} b/${file.path}`,
+        "--- /dev/null",
+        `+++ b/${file.path}`,
+      ].join("\n");
+    }
+    return file.movePath
+      ? [
+          `diff --git a/${file.path} b/${file.movePath}`,
+          `rename from ${file.path}`,
+          `rename to ${file.movePath}`,
+        ].join("\n")
+      : "";
+  }
+  if (unifiedDiff?.startsWith("diff --git")) {
+    return unifiedDiff.replace(/\r?\n$/, "");
+  }
+  const destination = file.movePath ?? file.path;
+  const header = `diff --git a/${file.path} b/${destination}`;
+  if (unifiedDiff?.startsWith("--- ")) {
+    return `${header}\n${unifiedDiff.replace(/\r?\n$/, "")}`;
+  }
+  const left = file.kind === "add" ? "/dev/null" : `a/${file.path}`;
+  const right = file.kind === "delete" ? "/dev/null" : `b/${destination}`;
+  const lines = [header, `--- ${left}`, `+++ ${right}`];
+  if (unifiedDiff) {
+    lines.push(unifiedDiff.replace(/\r?\n$/, ""));
+  } else if (newString) {
+    const contentLines = newString.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+    lines.push(`@@ -0,0 +1,${contentLines.length} @@`);
+    for (const line of contentLines) lines.push(`+${line}`);
+  }
+  return lines.join("\n");
+}
+
+function splitFileDiffPreview(diff: string): { header: string; body: string } {
+  const hunk = diff.indexOf("\n@@");
+  const bodyStart = hunk < 0 ? -1 : diff.indexOf("\n", hunk + 1);
+  return bodyStart < 0
+    ? { header: diff, body: "" }
+    : { header: diff.slice(0, bodyStart + 1), body: diff.slice(bodyStart + 1) };
+}
+
+export function fileChangesToPreview(files: CodexFileChangeEntry[]): {
+  filePath: string | undefined;
+  unifiedDiff: string;
+} {
+  const diffs = files
+    .map((file) => ({ filePath: file.path, diff: fileChangeToUnifiedDiff(file) }))
+    .filter((file) => file.diff.length > 0);
+  const filePath = diffs[0]?.filePath ?? files[0]?.path;
+  const combined = diffs.map((file) => file.diff).join("\n\n");
+  if (combined.length <= TOOL_CALL_DIFF_MAX_CHARS) return { filePath, unifiedDiff: combined };
+
+  const marker = "\n...[truncated]";
+  const omittedNotice = (count: number) =>
+    count > 0 ? `\n\n...[${count} more files omitted]` : "";
+  const previews = diffs.map((file) => splitFileDiffPreview(file.diff));
+  const visible: typeof previews = [];
+  let minimumSize = 0;
+  for (const preview of previews) {
+    // Keep whole labels and a useful body excerpt, or explicitly omit the file.
+    const required =
+      preview.header.length + Math.max(marker.length, Math.min(80, preview.body.length));
+    const nextSize = minimumSize + required + (visible.length > 0 ? 2 : 0);
+    if (
+      nextSize + omittedNotice(previews.length - visible.length - 1).length >
+      TOOL_CALL_DIFF_MAX_CHARS
+    )
+      break;
+    visible.push(preview);
+    minimumSize = nextSize;
+  }
+  const omitted = omittedNotice(previews.length - visible.length);
+  const headersSize = visible.reduce((size, preview) => size + preview.header.length, 0);
+  const bodyBudget = Math.floor(
+    (TOOL_CALL_DIFF_MAX_CHARS -
+      headersSize -
+      Math.max(0, visible.length - 1) * 2 -
+      omitted.length) /
+      Math.max(1, visible.length),
+  );
+  const unifiedDiff =
+    visible
+      .map(
+        ({ header, body }) =>
+          header +
+          (body.length <= bodyBudget ? body : body.slice(0, bodyBudget - marker.length) + marker),
+      )
+      .join("\n\n") + omitted;
+  return { filePath, unifiedDiff };
+}
+
 function mapFileChangeItem(
   item: z.infer<typeof CodexFileChangeItemSchema>,
   options?: CodexMapperOptions,
@@ -873,17 +981,17 @@ function mapFileChangeItem(
   const error = item.error ?? null;
   const status = normalizeToolCallStatus(item.status, error, output);
   const firstFile = files[0];
-  const firstTextFields = resolveFileChangeTextFields(firstFile);
-  const hasFirstTextFields = Object.keys(firstTextFields).length > 0;
+  const preview = files.length > 1 ? fileChangesToPreview(files) : undefined;
+  const filePath = preview?.filePath ?? firstFile?.path;
+  const textFields = preview
+    ? { unifiedDiff: preview.unifiedDiff }
+    : resolveFileChangeTextFields(firstFile);
+  const hasTextFields = Boolean(textFields.unifiedDiff || textFields.newString);
   const input = toNullableObject({
     ...inputBase,
-    ...(firstFile?.path && hasFirstTextFields ? { path: firstFile.path } : {}),
-    ...(hasFirstTextFields && firstTextFields.unifiedDiff
-      ? { patch: firstTextFields.unifiedDiff }
-      : {}),
-    ...(hasFirstTextFields && firstTextFields.newString
-      ? { content: firstTextFields.newString }
-      : {}),
+    ...(filePath && hasTextFields ? { path: filePath } : {}),
+    ...(hasTextFields && textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+    ...(hasTextFields && textFields.newString ? { content: textFields.newString } : {}),
   });
 
   return {
@@ -950,6 +1058,7 @@ function mapCollabAgentToolCallItem(
     type: "sub_agent",
     subAgentType: "Sub-agent",
     ...(item.prompt ? { description: item.prompt } : {}),
+    // COMPAT(subagent-log): remove after 2027-04-30.
     log: "",
     actions: [],
   };
@@ -1006,6 +1115,7 @@ function mapSubAgentActivityItem(
       type: "sub_agent",
       subAgentType: nativeName,
       description,
+      // COMPAT(subagent-log): remove after 2027-04-30.
       log: "",
       actions: [],
     },

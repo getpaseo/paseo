@@ -12,7 +12,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { PaneFind, findShortcutPlatform, isFindShortcut, type PaneFindHandle } from "@/pane-find";
 import { usePaneFocus } from "@/panels/pane-context";
-import { hasActiveWebOverlay } from "@/lib/overlay-root";
+import { hasActiveOverlay } from "@/keyboard";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { FileFindModel } from "./model.web";
@@ -39,7 +39,7 @@ export function FileFind({
   useEffect(() => {
     if (!isInteractive || !active) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
+      if (event.defaultPrevented || hasActiveOverlay() || isImeComposingKeyboardEvent(event))
         return;
       if (isFindShortcut(event, findShortcutPlatform())) {
         event.preventDefault();

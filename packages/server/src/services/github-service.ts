@@ -346,6 +346,7 @@ const CurrentPullRequestStatusSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().optional(),
+  updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
@@ -524,7 +525,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_STATUS_FACTS_QUERY = `
@@ -640,6 +641,7 @@ const BatchPollPrNodeSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().catch(""),
+  updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   reviewDecision: z.unknown().optional(),
@@ -744,6 +746,7 @@ fragment PaseoPollPullRequest on PullRequest {
   baseRefName
   headRefName
   headRefOid
+  updatedAt
   mergedAt
   mergeable
   reviewDecision
@@ -1118,6 +1121,7 @@ interface ResolvedPullRequestCandidate {
   status: CurrentPullRequestStatus;
   headSha?: string;
   headRepositoryOwner?: string;
+  updatedAt?: string;
 }
 
 export function createGitHubService(options: CreateGitHubServiceOptions = {}): GitHubService {
@@ -2968,7 +2972,7 @@ async function resolveCurrentPullRequestView(options: {
         headRepositoryOwner: options.headRepositoryOwner,
       })
     : null;
-  if (viewMatch) {
+  if (viewMatch?.status.state === "open") {
     return viewMatch.status;
   }
 
@@ -2980,12 +2984,13 @@ async function resolveCurrentPullRequestView(options: {
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
     if (!forkOwner) {
-      return null;
+      return viewMatch?.status ?? null;
     }
     if (parentOwner && parentName) {
       return resolveForkPullRequestView({
         ...options,
         forkOwner,
+        viewMatch,
         repo: `${parentOwner}/${parentName}`,
       });
     }
@@ -2998,7 +3003,7 @@ async function resolveCurrentPullRequestView(options: {
     run: options.run,
   });
   const match = pickPullRequestCandidate({
-    candidates,
+    candidates: viewMatch ? [...candidates, viewMatch] : candidates,
     headRef: options.headRef,
     headSha: options.headSha,
     headRepositoryOwner,
@@ -3019,6 +3024,7 @@ async function resolveForkPullRequestView(options: {
   headRef: string;
   headSha?: string;
   forkOwner: string;
+  viewMatch: ResolvedPullRequestCandidate | null;
   repo: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
@@ -3034,12 +3040,15 @@ async function resolveForkPullRequestView(options: {
     ),
   );
   const match = pickPullRequestCandidate({
-    candidates: candidates.filter(
-      (candidate): candidate is ResolvedPullRequestCandidate => candidate !== null,
-    ),
+    candidates: [
+      ...candidates.filter(
+        (candidate): candidate is ResolvedPullRequestCandidate =>
+          candidate !== null && candidate.headRepositoryOwner === options.forkOwner,
+      ),
+      ...(options.viewMatch ? [options.viewMatch] : []),
+    ],
     headRef: options.headRef,
     headSha: options.headSha,
-    headRepositoryOwner: options.forkOwner,
   });
   return match?.status ?? null;
 }
@@ -3337,6 +3346,7 @@ function toBatchCurrentPullRequestItem(
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     ...(node.headRefOid ? { headRefOid: node.headRefOid } : {}),
+    updatedAt: node.updatedAt,
     mergedAt: node.mergedAt ?? null,
     ...(statusCheckRollup ? { statusCheckRollup } : {}),
     reviewDecision: node.reviewDecision,
@@ -3357,6 +3367,7 @@ function toCurrentPullRequestCandidate(
   const headSha = item.headRefOid;
   return {
     status,
+    updatedAt: item.updatedAt,
     ...(headSha ? { headSha } : {}),
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
@@ -3378,12 +3389,6 @@ function pickPullRequestCandidate(options: {
 }): ResolvedPullRequestCandidate | null {
   const matching = options.candidates.filter((candidate) => {
     if (!isCandidateForHeadRef(candidate, options.headRef)) {
-      return false;
-    }
-    if (
-      candidate.status.state !== "open" &&
-      (!options.headSha || candidate.headSha !== options.headSha)
-    ) {
       return false;
     }
     if (!options.headRepositoryOwner) {
@@ -3411,17 +3416,17 @@ function comparePullRequestCandidatePreference(
   if (leftExact !== rightExact) {
     return leftExact ? -1 : 1;
   }
-  return 0;
+  return (
+    (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
+    (right.status.number ?? 0) - (left.status.number ?? 0)
+  );
 }
 
 function getPullRequestStateRank(status: CurrentPullRequestStatus): number {
-  if (status.state === "open" || status.isDraft) {
+  if (status.state === "open") {
     return 0;
   }
-  if (status.state === "merged") {
-    return 1;
-  }
-  return 2;
+  return 1;
 }
 
 type GitHubCloneProtocol = "https" | "ssh";
@@ -3969,6 +3974,7 @@ function toCurrentPullRequestStatus(
     state,
     baseRefName: item.baseRefName,
     headRefName: item.headRefName || fallbackHeadRefName,
+    ...(item.headRefOid ? { headSha: item.headRefOid } : {}),
     isMerged: mergedAt !== null,
     isDraft: item.isDraft ?? false,
     mergeable: item.mergeable,

@@ -52,6 +52,8 @@ async function waitForWorkspaceRoute(page: Page, route: string) {
 test.describe("Workspace pane mounting", () => {
   test("workspace navigation keeps the existing agent composer mounted", async ({ page }) => {
     test.setTimeout(90_000);
+    // Keep both split panes wide enough for the tab-rail interactions below.
+    await page.setViewportSize({ width: 1600, height: 900 });
     const serverId = getServerId();
 
     const workspace = await seedWorkspace({ repoPrefix: "pane-remount-" });

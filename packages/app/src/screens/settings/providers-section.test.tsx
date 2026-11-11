@@ -171,6 +171,11 @@ vi.mock("@/components/settings/headings/settings-info-tip", () => ({
   SettingsInfoTip: () => null,
 }));
 
+vi.mock("@/components/ui/external-link", () => ({
+  ExternalLink: () => null,
+  ExternalLinkLabel: () => null,
+}));
+
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children?: React.ReactNode }) =>
     React.createElement("div", null, children),

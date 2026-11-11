@@ -1,3 +1,4 @@
+import { collectTimelineSnapshot } from "../test-utils/v2-timeline.js";
 import { V2Timeline } from "./timeline.js";
 import type { SessionMessageAssistant } from "@opencode/client";
 import { describe, expect, test } from "vitest";
@@ -80,7 +81,7 @@ describe("OpenCode v2 token streaming", () => {
     }
   });
 
-  test("deduplicates snapshots before and after deltas using per-type ordinals", () => {
+  test("deduplicates snapshots before and after deltas using per-type ordinals", async () => {
     const timeline = new V2Timeline();
     const text = { assistantMessageID: "answer", type: "text", ordinal: 0 } as const;
     const reasoning = { ...text, type: "reasoning" } as const;
@@ -99,24 +100,28 @@ describe("OpenCode v2 token streaming", () => {
       },
       { type: "text", text: "Hello" },
     ]);
-    expect(timeline.messages([snapshot])).toMatchObject([{ item: { text: "lo" } }]);
+    expect(await collectTimelineSnapshot(timeline, [snapshot])).toMatchObject([
+      { item: { text: "lo" } },
+    ]);
     expect(timeline.delta({ ...text, delta: "lo" })).toBeNull();
-    expect(timeline.messages([snapshot])).toEqual([]);
+    expect(await collectTimelineSnapshot(timeline, [snapshot])).toEqual([]);
     expect(timeline.delta({ ...text, delta: "!" })).toMatchObject({ item: { text: "!" } });
-    expect(timeline.messages([snapshot])).toEqual([]);
+    expect(await collectTimelineSnapshot(timeline, [snapshot])).toEqual([]);
   });
 
-  test("recovers missed fragments from snapshots after reconnect", () => {
+  test("recovers missed fragments from snapshots after reconnect", async () => {
     const timeline = new V2Timeline();
     const part = { assistantMessageID: "answer", type: "text", ordinal: 0 } as const;
     timeline.startPart(part);
     expect(timeline.delta({ ...part, delta: "Hel" })).toMatchObject({ item: { text: "Hel" } });
     timeline.resetStreams();
     expect(timeline.delta({ ...part, delta: "!" })).toBeNull();
-    expect(timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toMatchObject([
-      { item: { text: "lo!" } },
-    ]);
-    expect(timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toEqual([]);
+    expect(
+      await collectTimelineSnapshot(timeline, [assistant([{ type: "text", text: "Hello!" }])]),
+    ).toMatchObject([{ item: { text: "lo!" } }]);
+    expect(
+      await collectTimelineSnapshot(timeline, [assistant([{ type: "text", text: "Hello!" }])]),
+    ).toEqual([]);
   });
 
   test("withholds streamed prose during a structured-output turn", async () => {
@@ -203,3 +208,62 @@ describe("OpenCode v2 token streaming", () => {
     }
   });
 });
+
+test.each(["text", "reasoning"] as const)(
+  "publishes snapshot %s before a live suffix during image materialization",
+  async (type) => {
+    const timeline = new V2Timeline();
+    const part = { assistantMessageID: "answer", type, ordinal: 0 };
+    timeline.startPart(part);
+    const emitted: AgentStreamEvent[] = [];
+    let settled = false;
+    const snapshot = timeline
+      .messages(
+        [
+          assistant([
+            { type, text: "Hello" },
+            {
+              type: "tool",
+              id: "screenshot",
+              name: "paseo_browser_screenshot",
+              executed: false,
+              state: {
+                status: "completed",
+                input: {},
+                content: [
+                  { type: "file", uri: "data:image/png;base64,aGVsbG8=", mime: "image/png" },
+                ],
+                metadata: {},
+              },
+              time: { created: 2, ran: 2, completed: 2 },
+            },
+          ]),
+        ],
+        (event) => {
+          emitted.push(event);
+        },
+      )
+      .then(() => {
+        settled = true;
+        return undefined;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    const delta = timeline.delta({ ...part, delta: "Hello world" });
+    if (delta) emitted.push(delta);
+    await snapshot;
+    const text = emitted.flatMap((event) => {
+      if (event.type !== "timeline") return [];
+      if (
+        type === "text" &&
+        event.item.type === "assistant_message" &&
+        !event.item.text.includes("![Image]")
+      )
+        return [event.item.text];
+      if (type === "reasoning" && event.item.type === "reasoning") return [event.item.text];
+      return [];
+    });
+    expect(text).toEqual(["Hello", " world"]);
+    expect(text.join("")).toBe("Hello world");
+  },
+);

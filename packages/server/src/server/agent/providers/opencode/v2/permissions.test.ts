@@ -4,6 +4,102 @@ import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { V2Api } from "./api.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
+import type { AgentPermissionResponse } from "../../../agent-sdk-types.js";
+
+describe("OpenCode v2 denial reasons", () => {
+  test.each<{
+    response: AgentPermissionResponse;
+    decision: "reject" | "once" | "always";
+    message?: string;
+  }>([
+    {
+      response: { behavior: "deny", message: "Use the existing file instead." },
+      decision: "reject",
+      message: "Use the existing file instead.",
+    },
+    { response: { behavior: "deny" }, decision: "reject" },
+    { response: { behavior: "allow" }, decision: "once" },
+    { response: { behavior: "allow", selectedActionId: "always" }, decision: "always" },
+  ])("preserves a permission response: $response", async ({ response, decision, message }) => {
+    const harness = new V2Harness();
+    let pending = true;
+    harness.api.permission.list = async () =>
+      pending
+        ? [{ id: "approval", sessionID: "session", action: "shell", resources: ["pwd"] }]
+        : [];
+    const replies: Parameters<V2Api["permission"]["reply"]>[0][] = [];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input);
+      pending = false;
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      await session.respondToPermission("approval", response);
+      expect(replies).toEqual([
+        {
+          sessionID: "session",
+          requestID: "approval",
+          decision,
+          ...(message === undefined ? {} : { message }),
+        },
+      ]);
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([true, false])(
+    "explains cards superseded by a steer when clearing is %s",
+    async (clearPendingPermissions) => {
+      const harness = new V2Harness();
+      harness.autoComplete = false;
+      let pending = true;
+      harness.api.permission.list = async () =>
+        pending
+          ? [{ id: "approval", sessionID: "session", action: "shell", resources: ["pwd"] }]
+          : [];
+      const replies: Parameters<V2Api["permission"]["reply"]>[0][] = [];
+      harness.api.permission.reply = async (input) => {
+        replies.push(input);
+        pending = false;
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+      try {
+        const { turnId } = await session.startTurn("Run pwd");
+        await expect.poll(() => harness.prompts).toEqual(["Run pwd"]);
+        await expect(
+          session.steerActiveTurn!("go ahead", { expectedTurnId: turnId, clearPendingPermissions }),
+        ).resolves.toEqual({ status: "accepted" });
+        expect(harness.prompts).toEqual(["Run pwd", "go ahead"]);
+        expect(replies).toEqual(
+          clearPendingPermissions
+            ? [
+                {
+                  sessionID: "session",
+                  requestID: "approval",
+                  decision: "reject",
+                  message:
+                    "The user answered with a message instead of approving. Their message follows.",
+                },
+              ]
+            : [],
+        );
+        expect(session.getPendingPermissions()).toHaveLength(clearPendingPermissions ? 0 : 1);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+});
 
 describe("OpenCode v2 questions", () => {
   test("maps selected labels to native values and parses numeric and boolean answers", async () => {

@@ -41,7 +41,6 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
             <View style={styles.callout}>
               <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
               <Button
-                size="sm"
                 variant="secondary"
                 onPress={handleUnarchive}
                 disabled={!isConnected || isUnarchiving}
