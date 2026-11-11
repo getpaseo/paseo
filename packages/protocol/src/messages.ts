@@ -4157,6 +4157,10 @@ export const ServerInfoStatusPayloadSchema = z
         // The goal setting isolation ("auto", "worktree" or "workspace"). An older daemon drops
         // the setting silently and cuts a worktree for every agent.
         goalIsolation: z.boolean().optional(),
+        // COMPAT(goalPolicyReview): added in v0.15.5, remove gate after 2027-11-11.
+        // The goal setting policyPaths: a merge that changes one of them is reviewed again on the
+        // integration branch. An older daemon drops the setting silently and skips that review.
+        goalPolicyReview: z.boolean().optional(),
         // COMPAT(goalRecovery): added in v0.13.13, remove gate after 2027-10-28.
         // Recovering a failed goal through its Lead (recovery.* events) and guidance for the
         // goal's workers on goal.retry. An older daemon refuses the recovery RPCs and drops

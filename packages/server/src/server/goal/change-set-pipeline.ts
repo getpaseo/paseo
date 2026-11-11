@@ -29,6 +29,7 @@ import {
 import { goalRoleThinking } from "@getpaseo/protocol/goal/thinking";
 import type { GitPort } from "./git-ops.js";
 import { isolationOf } from "./isolation.js";
+import { policyPathsChanged } from "./policy-paths.js";
 import { isWithinClaim } from "./workspace-touches.js";
 import type { WorkspaceSnapshot } from "./workspace-commit.js";
 import type { WorkspaceSnapshotStore } from "./workspace-snapshot-store.js";
@@ -43,6 +44,7 @@ import type {
 import {
   ReplyParseError,
   buildReviewCorrectionPrompt,
+  buildIntegrationReviewPrompt,
   buildReviewPrompt,
   buildVerifyPrompt,
   describeRework,
@@ -121,6 +123,20 @@ type VerifierBaseline =
 function changedFiles(before: WorkspaceSnapshot, after: WorkspaceSnapshot): string[] {
   const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
   return [...paths].filter((p) => before[p] !== after[p]).sort();
+}
+
+/** One reviewer agent's job: where it works, what it is asked, and how to tell it left things alone. */
+interface ReviewerRun {
+  cwd: string;
+  workspaceId: string;
+  title: string;
+  changeSetId: string;
+  prompt: string;
+  /** True if the reviewer changed nothing; otherwise puts the tree back and returns false. */
+  leftAlone: () => Promise<boolean>;
+  /** Where the reviewer works and what it reviews, for the correction message. */
+  where: string;
+  subject: string;
 }
 
 export class ChangeSetPipeline {
@@ -499,19 +515,70 @@ export class ChangeSetPipeline {
   }
 
   private async askForVerdict(goal: Goal, task: Task, cs: ChangeSet) {
+    return this.runReviewer(goal, {
+      cwd: cs.cwd,
+      workspaceId: cs.workspaceId,
+      title: `Review: ${task.title}`,
+      changeSetId: cs.id,
+      prompt: buildReviewPrompt(goal, task, cs),
+      leftAlone: () => this.leftWorktreeAlone(cs),
+      where: "the worktree",
+      subject: "the original change",
+    });
+  }
+
+  /**
+   * Review the merge of a change that touched policy paths, on the integration branch, before it
+   * counts as integrated. The verdict is only about `mergedCommit`.
+   */
+  private async askForIntegrationVerdict(input: {
+    goal: Goal;
+    task: Task;
+    cs: ChangeSet;
+    integration: Integration;
+    mergedCommit: string;
+    policyFiles: readonly string[];
+  }) {
+    const { goal, task, cs, integration, mergedCommit, policyFiles } = input;
+    return this.runReviewer(goal, {
+      cwd: integration.cwd,
+      workspaceId: integration.workspaceId,
+      title: `Integrated review: ${task.title}`,
+      changeSetId: cs.id,
+      prompt: buildIntegrationReviewPrompt({
+        goal,
+        task,
+        changeSet: cs,
+        beforeCommit: integration.headCommit,
+        mergedCommit,
+        policyFiles,
+      }),
+      leftAlone: async () => {
+        const untouched =
+          (await this.git.head(integration.cwd)) === mergedCommit &&
+          (await this.git.isClean(integration.cwd));
+        if (!untouched) await this.git.resetHard({ cwd: integration.cwd, commit: mergedCommit });
+        return untouched;
+      },
+      where: "the integration worktree",
+      subject: "the merged commit",
+    });
+  }
+
+  private async runReviewer(goal: Goal, run: ReviewerRun) {
     const config = goal.config;
     if (!config) return null;
     const { agentId, thinking } = await this.agents.createAgent({
       provider: config.reviewProvider ?? config.leadProvider,
       ...thinkingInput(goalRoleThinking(config, "reviewer")),
       permission: goalPermissionPolicy(config),
-      cwd: cs.cwd,
-      workspaceId: cs.workspaceId,
-      title: `Review: ${task.title}`,
+      cwd: run.cwd,
+      workspaceId: run.workspaceId,
+      title: run.title,
       labels: {
         "paseo.goal-id": goal.id,
         "paseo.goal-role": "reviewer",
-        "paseo.goal-changeset": cs.id,
+        "paseo.goal-changeset": run.changeSetId,
       },
     });
     this.trackAgent(goal.id, agentId, true);
@@ -519,12 +586,12 @@ export class ChangeSetPipeline {
       // abort() could not see this agent while it was being created, so the goal may have ended
       // meanwhile. Do not start a billable turn for it; the finally block discards the agent.
       if (this.host.isStopped() || this.store.get(goal.id)?.status !== "executing") return null;
-      let prompt = buildReviewPrompt(goal, task, cs);
+      let prompt = run.prompt;
       let problem = "";
       for (let attempt = 0; attempt < REPLY_ATTEMPTS; attempt += 1) {
         const result = await this.host.runTurn(goal.id, agentId, prompt, {
           role: "reviewer",
-          changeSetId: cs.id,
+          changeSetId: run.changeSetId,
           ...(thinking ? { thinking } : {}),
         });
         if (this.host.isStopped() || this.store.get(goal.id)?.status !== "executing") return null;
@@ -532,13 +599,12 @@ export class ChangeSetPipeline {
           // A failed turn's error says why, such as a request nobody answered in time.
           throw new Error(`Reviewer did not finish (${turnEnd(result)})`);
         }
-        // A reviewer only reads. If it changed the author's worktree, undo that and
-        // do not trust the verdict it gave from a changed tree.
-        if (!(await this.leftWorktreeAlone(cs))) {
-          problem =
-            "You changed files or commits in the worktree. A reviewer must not modify anything.";
+        // A reviewer only reads. If it changed anything, undo that and do not trust the verdict it
+        // gave from a changed tree.
+        if (!(await run.leftAlone())) {
+          problem = `You changed files or commits in ${run.where}. A reviewer must not modify anything.`;
           prompt = buildReviewCorrectionPrompt(
-            `${problem} Your changes were undone; review the original change again.`,
+            `${problem} Your changes were undone; review ${run.subject} again.`,
           );
           continue;
         }
@@ -553,7 +619,7 @@ export class ChangeSetPipeline {
       throw new Error(`Reviewer gave no usable verdict: ${problem}`);
     } finally {
       this.trackAgent(goal.id, agentId, false);
-      // The reviewer works in the author's worktree: stop the agent, keep the workspace.
+      // The reviewer works in an existing worktree: stop the agent, keep the workspace.
       if (!this.host.isStopped()) await this.host.discard(agentId, null);
     }
   }
@@ -621,8 +687,19 @@ export class ChangeSetPipeline {
       // The test command may have left files or commits behind. Put the branch back
       // to exactly the merge that was tested, so the next merge starts clean.
       await this.git.resetHard({ cwd: integration.cwd, commit: merged.headCommit });
+      const review = await this.reviewIntegration({ goal, cs, integration, merged });
+      if (review.kind === "stopped") return;
+      if (review.kind === "changes_requested") {
+        await this.git.resetHard({ cwd: integration.cwd, commit: integration.headCommit });
+        await this.transition(goalId, cs.id, "changes_requested", {
+          findings: review.findings,
+          ...(testSummary.output ? { testSummary: testSummary.output } : {}),
+        });
+        return;
+      }
       await this.transition(goalId, cs.id, "integrated", {
         integratedCommit: merged.headCommit,
+        ...(review.kind === "approved" ? { integrationReviewedCommit: merged.headCommit } : {}),
         ...(testSummary.output ? { testSummary: testSummary.output } : {}),
       });
     } catch (error) {
@@ -638,6 +715,51 @@ export class ChangeSetPipeline {
       });
       await this.host.failGoal(goalId, `Integrating ${cs.id} failed: ${message}`);
     }
+  }
+
+  /**
+   * A merge that changed a policy path (`policyPaths`) is reviewed again on the integration
+   * branch before it counts as integrated, because the change was reviewed against an older base
+   * and a passing test command may not cover the combination. The approval is for this merged
+   * commit only. Any other merge skips the review.
+   */
+  private async reviewIntegration(input: {
+    goal: Goal;
+    cs: ChangeSet;
+    integration: Integration;
+    merged: { headCommit: string };
+  }): Promise<
+    | { kind: "skipped" }
+    | { kind: "approved" }
+    | { kind: "changes_requested"; findings: string }
+    | { kind: "stopped" }
+  > {
+    const { goal, cs, integration, merged } = input;
+    const patterns = goal.config?.policyPaths;
+    if (!patterns || patterns.length === 0) return { kind: "skipped" };
+    const changed = await this.git.changedPaths({
+      cwd: integration.cwd,
+      from: integration.headCommit,
+      to: merged.headCommit,
+    });
+    const policyFiles = policyPathsChanged(changed, patterns);
+    if (policyFiles.length === 0) return { kind: "skipped" };
+    const task = goal.tasks.find((t) => t.id === cs.taskId);
+    if (!task) return { kind: "skipped" };
+    const verdict = await this.askForIntegrationVerdict({
+      goal,
+      task,
+      cs,
+      integration,
+      mergedCommit: merged.headCommit,
+      policyFiles,
+    });
+    if (!verdict || this.host.isStopped()) return { kind: "stopped" };
+    if (verdict.verdict === "approve") return { kind: "approved" };
+    return {
+      kind: "changes_requested",
+      findings: verdict.findings.map((f) => `- ${f}`).join("\n"),
+    };
   }
 
   private async runTests(

@@ -155,6 +155,11 @@ export class FakeGit implements GitPort {
   async currentBranch(): Promise<string> {
     return "paseo-goal/integration";
   }
+  /** Paths `changedPaths` reports for a merged commit; empty for any other. */
+  changedByCommit = new Map<string, string[]>();
+  async changedPaths(input: { cwd: string; from: string; to: string }): Promise<string[]> {
+    return this.changedByCommit.get(input.to) ?? [];
+  }
   async merge(input: { cwd: string; commit: string }): Promise<MergeOutcome> {
     this.merges.push(input);
     const error = this.mergeErrors.shift();

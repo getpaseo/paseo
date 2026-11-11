@@ -1393,8 +1393,16 @@ const CHANGE_SET_TRANSITIONS: Record<ChangeSetStatus, readonly ChangeSetStatus[]
   in_review: ["approved", "awaiting_human", "changes_requested", "rejected"],
   awaiting_human: ["approved", "changes_requested", "rejected"],
   approved: ["integrating"],
-  // Back to approved when a restart interrupts a merge, so it can be retried.
-  integrating: ["integrated", "conflicted", "test_failed", "approved", "rejected"],
+  // Back to approved when a restart interrupts a merge, so it can be retried. changes_requested:
+  // the integrated review of a merge that touched a policy path found problems.
+  integrating: [
+    "integrated",
+    "conflicted",
+    "test_failed",
+    "changes_requested",
+    "approved",
+    "rejected",
+  ],
   integrated: [],
   changes_requested: ["superseded", "rejected"],
   conflicted: ["superseded", "rejected"],
@@ -1521,6 +1529,16 @@ function transitionChangeSet(
   if (event.to === "integrated" && !event.integratedCommit) {
     throw new GoalTransitionError(event.type, "integrated requires integratedCommit");
   }
+  if (
+    event.integrationReviewedCommit !== undefined &&
+    (event.to !== "integrated" || event.integrationReviewedCommit !== event.integratedCommit)
+  ) {
+    // An integrated review approves one merged commit; it cannot stand for another.
+    throw new GoalTransitionError(
+      event.type,
+      "integrationReviewedCommit must equal the integratedCommit it approves",
+    );
+  }
   const next: ChangeSet = {
     ...current,
     ...stageTimes(current, event.to, event.at),
@@ -1528,6 +1546,9 @@ function transitionChangeSet(
     findings: event.findings ?? current.findings,
     testSummary: event.testSummary ?? current.testSummary,
     integratedCommit: event.integratedCommit ?? current.integratedCommit,
+    ...(event.integrationReviewedCommit !== undefined
+      ? { integrationReviewedCommit: event.integrationReviewedCommit }
+      : {}),
     // A change set that ends keeps the reason it needed fixing; live ones start clean.
     error:
       event.error ?? (event.to === "superseded" || event.to === "rejected" ? current.error : null),

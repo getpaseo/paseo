@@ -123,6 +123,11 @@ export const GoalConfigSchema = z.object({
   verifyThinking: z.string().trim().min(1).optional(),
   // Shell command run in the integration worktree after each merge. A non-zero exit rejects the merge.
   testCommand: z.string().trim().min(1).optional(),
+  // Paths whose change needs a second review of the merged result. A merge that changes one of
+  // them is reviewed again on the integration branch before it counts as integrated; the
+  // approval names the merged commit. A directory ends in `/`; `*` matches within one folder
+  // and `**` across folders. Absent: no integrated review. Needs goalPolicyReview.
+  policyPaths: z.array(z.string().trim().min(1).max(256)).max(50).optional(),
   // Hold every reviewed change set until a person approves it.
   requireHumanApproval: z.boolean().optional(),
   // Review, conflict and test-failure rework rounds allowed per change.
@@ -184,6 +189,7 @@ export const GoalConfigChangesSchema = z.object({
   autoApprovePlan: z.boolean().optional(),
   requireHumanApproval: z.boolean().optional(),
   testCommand: z.string().trim().min(1).nullable().optional(),
+  policyPaths: z.array(z.string().trim().min(1).max(256)).max(50).nullable().optional(),
   maxParallel: boundedInt(B.maxParallel).optional(),
   maxAttempts: boundedInt(B.maxAttempts).optional(),
   maxReworkRounds: boundedInt(B.maxReworkRounds).nullable().optional(),
@@ -372,6 +378,9 @@ export const ChangeSetSchema = z.object({
   findings: z.string().nullable(),
   testSummary: z.string().nullable(),
   integratedCommit: z.string().nullable(),
+  // The merged commit the integrated review approved. Set only when the merge changed a path in
+  // policyPaths, and equal to integratedCommit then: the approval covers that commit alone.
+  integrationReviewedCommit: z.string().optional(),
   error: z.string().nullable(),
   // Why a rejected change set was rejected, when it is known. CHANGE_SET_INTEGRATION_FAILED
   // marks a change set whose merge step failed after review and approval; with
@@ -842,6 +851,8 @@ export const GoalEventSchema = z.discriminatedUnion("type", [
     findings: z.string().optional(),
     testSummary: z.string().optional(),
     integratedCommit: z.string().optional(),
+    // The merged commit an integrated review approved; see ChangeSet.integrationReviewedCommit.
+    integrationReviewedCommit: z.string().optional(),
     error: z.string().optional(),
     // Why a change set moved to rejected; CHANGE_SET_INTEGRATION_FAILED when the merge step
     // failed. A string, not an enum, so a later reason does not break an older reader.

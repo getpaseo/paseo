@@ -268,6 +268,29 @@ describe("git ops against real repositories", () => {
     expect(await port.isClean(work)).toBe(false);
   });
 
+  test("changedPaths lists what differs between two commits, a moved file under both names", async () => {
+    const before = git(work, "rev-parse", "HEAD");
+    await mkdir(join(work, "acl"));
+    await writeFile(join(work, "acl", "roles.ts"), "export {};\n");
+    await writeFile(join(work, "shared.txt"), "changed\n");
+    git(work, "add", "-A");
+    git(work, "-c", "commit.gpgsign=false", "commit", "-m", "edit");
+    git(work, "mv", "acl/roles.ts", "acl/permissions.ts");
+    git(work, "-c", "commit.gpgsign=false", "commit", "-m", "move");
+    const after = git(work, "rev-parse", "HEAD");
+
+    expect((await port.changedPaths({ cwd: work, from: before, to: after })).sort()).toEqual([
+      "acl/permissions.ts",
+      "shared.txt",
+    ]);
+    const mid = git(work, "rev-parse", "HEAD~1");
+    expect((await port.changedPaths({ cwd: work, from: mid, to: after })).sort()).toEqual([
+      "acl/permissions.ts",
+      "acl/roles.ts",
+    ]);
+    expect(await port.changedPaths({ cwd: work, from: after, to: after })).toEqual([]);
+  });
+
   test("resolveCommit gives the full id of a commit id, and null for refs and anything else", async () => {
     await writeFile(join(integration, "merged.txt"), "x\n");
     git(integration, "add", "-A");

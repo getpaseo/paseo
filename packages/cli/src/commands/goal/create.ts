@@ -41,6 +41,7 @@ export interface GoalCreateOptions extends GoalCommandOptions {
   maxCost?: string;
   deadline?: string;
   testCommand?: string;
+  policyPath?: string[];
   requireApproval?: boolean;
   maxRework?: string;
   maxTasks?: string;
@@ -90,6 +91,16 @@ function isolationOption(options: GoalCreateOptions): Pick<GoalConfig, "isolatio
     : {};
 }
 
+/** What happens to a change after review: the test command, policy paths, approval, rework. */
+function mergeGateSettings(options: GoalCreateOptions): Partial<GoalConfig> {
+  return {
+    ...(options.testCommand ? { testCommand: options.testCommand } : {}),
+    ...(options.policyPath?.length ? { policyPaths: options.policyPath } : {}),
+    ...(options.requireApproval ? { requireHumanApproval: true } : {}),
+    ...(options.maxRework ? { maxReworkRounds: Number.parseInt(options.maxRework, 10) } : {}),
+  };
+}
+
 // A goal runs under the Manager only when --cwd is given; without it the goal is
 // manual and only records plans and state.
 function buildConfig(options: GoalCreateOptions): GoalConfig | undefined {
@@ -118,9 +129,7 @@ function buildConfig(options: GoalCreateOptions): GoalConfig | undefined {
     ...(options.reviewThinking ? { reviewThinking: options.reviewThinking } : {}),
     ...(options.verifyThinking ? { verifyThinking: options.verifyThinking } : {}),
     ...(options.branchPrefix ? { branchPrefix: options.branchPrefix } : {}),
-    ...(options.testCommand ? { testCommand: options.testCommand } : {}),
-    ...(options.requireApproval ? { requireHumanApproval: true } : {}),
-    ...(options.maxRework ? { maxReworkRounds: Number.parseInt(options.maxRework, 10) } : {}),
+    ...mergeGateSettings(options),
     ...(buildLimits(options) ? { limits: buildLimits(options) } : {}),
     ...(options.onPermission
       ? {

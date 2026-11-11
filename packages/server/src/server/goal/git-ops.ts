@@ -50,6 +50,11 @@ export interface GitPort {
   resolveCommit(cwd: string, id: string): Promise<string | null>;
   currentBranch(cwd: string): Promise<string>;
   /**
+   * Paths that differ between two commits, renames counted as a delete and an add so that
+   * the old path of a moved file is reported too.
+   */
+  changedPaths(input: { cwd: string; from: string; to: string }): Promise<string[]>;
+  /**
    * Merge a commit into the branch checked out at cwd. A conflict is aborted and reported.
    * Refuses when a tracked file has uncommitted changes. Untracked files do not block it:
    * git itself refuses a merge that would overwrite one, and that failure is thrown.
@@ -222,6 +227,11 @@ export function createGitPort(): GitPort {
       // A ref whose name looks like hex resolves too; only an id that is a prefix of the commit's
       // own counts, so a moving branch can never stand in for a fixed commit.
       return resolved && resolved.startsWith(id.toLowerCase()) ? resolved : null;
+    },
+
+    async changedPaths({ cwd, from, to }) {
+      const diff = await git(cwd, ["diff", "--name-only", "--no-renames", `${from}..${to}`]);
+      return diff.stdout.split("\n").filter((line) => line.length > 0);
     },
 
     async isClean(cwd) {

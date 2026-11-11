@@ -91,6 +91,11 @@ export function createGoalCommand(): Command {
         "--test-command <cmd>",
         "Shell command run after each merge; a failure sends the change back",
       )
+      .option(
+        "--policy-path <path>",
+        "A path or directory (end it with /) that needs a second review of the merged result when a merge changes it (repeatable; * and ** match)",
+        (value: string, previous: string[] = []) => [...previous, value],
+      )
       .option("--require-approval", "Hold every reviewed change until you approve it")
       .option("--max-rework <n>", "Rework rounds allowed per change (0-5, default 2)")
       .option("--max-tasks <n>", "Tasks allowed in a plan (default 25)")
@@ -175,6 +180,11 @@ export function createGoalCommand(): Command {
       .option("--require-approval", "Hold every reviewed change until you approve it")
       .option("--no-require-approval", "Merge reviewed changes without waiting for you")
       .option("--test-command <cmd>", "Shell command run after each merge, or none")
+      .option(
+        "--policy-path <path>",
+        "Path that needs a second review of the merged result when a merge changes it (repeatable); none clears them",
+        (value: string, previous: string[] = []) => [...previous, value],
+      )
       .option("--max-parallel <n>", "Tasks to run at once (1-8)")
       .option("--max-attempts <n>", "Attempts per task (1-5)")
       .option("--max-rework <n>", "Rework rounds per change (0-5), or none for the default")

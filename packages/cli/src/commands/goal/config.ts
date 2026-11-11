@@ -21,6 +21,7 @@ export interface GoalConfigOptions extends GoalCommandOptions {
   autoApprove?: boolean;
   requireApproval?: boolean;
   testCommand?: string;
+  policyPath?: string[];
   maxParallel?: string;
   maxAttempts?: string;
   maxRework?: string;
@@ -55,6 +56,15 @@ function numberChange(
 function textChange(value: string | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   return value === CLEAR ? null : value;
+}
+
+/** Policy paths: `none` alone clears them, otherwise the paths given replace the list. */
+function pathsChange(values: string[] | undefined): string[] | null | undefined {
+  if (values === undefined) return undefined;
+  if (values.length === 1 && values[0] === CLEAR) return null;
+  if (values.includes(CLEAR))
+    throw new Error(`--policy-path ${CLEAR} cannot be combined with paths`);
+  return values;
 }
 
 /** A setting that must have a value: `none` is refused. */
@@ -93,6 +103,7 @@ export function buildConfigChanges(options: GoalConfigOptions): GoalConfigChange
     autoApprovePlan: options.autoApprove,
     requireHumanApproval: options.requireApproval,
     testCommand: textChange(options.testCommand),
+    policyPaths: pathsChange(options.policyPath),
     maxParallel: requiredNumber(options.maxParallel, "--max-parallel"),
     maxAttempts: requiredNumber(options.maxAttempts, "--max-attempts"),
     maxReworkRounds: numberChange(options.maxRework, "--max-rework"),

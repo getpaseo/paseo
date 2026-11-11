@@ -140,6 +140,16 @@ describe("goal config flags", () => {
     });
   });
 
+  test("policy paths replace the list, and none alone clears it", () => {
+    expect(buildConfigChanges({ policyPath: ["src/auth/", "**/*.policy.json"] } as never)).toEqual({
+      policyPaths: ["src/auth/", "**/*.policy.json"],
+    });
+    expect(buildConfigChanges({ policyPath: ["none"] } as never)).toEqual({ policyPaths: null });
+    expect(() => buildConfigChanges({ policyPath: ["none", "src/"] } as never)).toThrow(
+      /cannot be combined with paths/,
+    );
+  });
+
   test("a bad value or no change is refused before anything is sent", () => {
     expect(() => buildConfigChanges({ onPermission: "ask" } as never)).toThrow(
       /--on-permission must be one of fail, wait, auto/,

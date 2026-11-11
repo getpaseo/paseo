@@ -2081,6 +2081,8 @@ export class VoiceAssistantWebSocketServer {
               goalLeadInterventions: true,
               // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02.
               goalIsolation: true,
+              // COMPAT(goalPolicyReview): added in v0.15.5, remove gate after 2027-11-11.
+              goalPolicyReview: true,
               // COMPAT(goalTimeBase): added in v0.13.13, remove gate after 2027-10-28.
               goalTimeBase: true,
               // COMPAT(goalRecovery): added in v0.13.13, remove gate after 2027-10-28.

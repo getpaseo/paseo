@@ -72,6 +72,37 @@ export function buildReviewPrompt(goal: Goal, task: Task, changeSet: ChangeSet):
   ].join("\n");
 }
 
+/** Review of a merge that changed policy paths, on the integration branch. */
+export function buildIntegrationReviewPrompt(input: {
+  goal: Goal;
+  task: Task;
+  changeSet: ChangeSet;
+  beforeCommit: string;
+  mergedCommit: string;
+  policyFiles: readonly string[];
+}): string {
+  const { goal, task, changeSet, beforeCommit, mergedCommit, policyFiles } = input;
+  const criteria = goal.criteria.map((c) => `- ${c.text}`).join("\n") || "- (none given)";
+  return [
+    `You are an independent reviewer for the goal "${goal.title}". You did not write the change below.`,
+    "",
+    `Change ${changeSet.id} implements this task: ${task.title}`,
+    task.description,
+    "",
+    `Acceptance criteria for the whole goal:\n${criteria}`,
+    "",
+    "The change was reviewed and approved against the base it was written on. Since then other changes were merged, and this merge touched paths the goal marks as policy-sensitive (access, roles, permissions or similar). The tests passed, but they may not cover how this change combines with what is already merged.",
+    `Review the merged result: the integration branch went from ${beforeCommit} to ${mergedCommit}, which is checked out in your working directory.`,
+    `Run \`git diff ${beforeCommit}..${mergedCommit}\` and read the changed files and the code around them.`,
+    `Policy-sensitive files changed:\n${policyFiles.join("\n")}`,
+    "",
+    "Check that the policy still holds with this change in place: no role, permission or access path is widened or left uncovered, and the combination with the changes already merged behaves as intended. You may run tests and read any file. Do not modify files and do not commit.",
+    "Reply with a short explanation followed by exactly one fenced ```json block:",
+    '{"verdict": "approve" | "request_changes", "findings": ["each problem, specific enough to fix"]}',
+    "Use request_changes only for problems that must be fixed. findings may be empty only for approve.",
+  ].join("\n");
+}
+
 export function buildReviewCorrectionPrompt(problem: string): string {
   return `Your reply could not be used: ${problem}\nReply again with one fenced \`\`\`json block in the format requested.`;
 }
