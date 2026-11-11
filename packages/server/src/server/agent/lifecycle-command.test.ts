@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -163,10 +163,6 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 
 const logger = createTestLogger();
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 describe("agent lifecycle commands", () => {
   test("cancels only when the agent has an in-flight run", async () => {
     const storage = new FakeLifecycleAgentStorage();
@@ -201,32 +197,25 @@ describe("agent lifecycle commands", () => {
     });
   });
 
-  test("reconciles a stored agent that has no live runtime instead of reporting not found", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-10T10:00:00.000Z"));
-    const storage = new FakeLifecycleAgentStorage();
-    const manager = new FakeLifecycleAgentManager(storage);
-    storage.records.set("agent-1", {
-      ...storedAgent("agent-1"),
-      lastStatus: "running",
-    });
+  test.each(["closed", "idle", "error", "running", "initializing"] as const)(
+    "accepts Stop on a stored %s agent without modifying its record",
+    async (lastStatus) => {
+      const storage = new FakeLifecycleAgentStorage();
+      const manager = new FakeLifecycleAgentManager(storage);
+      const record = { ...storedAgent("agent-1"), lastStatus };
+      storage.records.set("agent-1", record);
 
-    const result = await cancelAgentRunCommand(
-      { agentManager: manager, agentStorage: storage, logger },
-      "agent-1",
-    );
-
-    expect(result).toEqual({
-      agent: { id: "agent-1", cwd: "/workspace/project", lifecycle: "closed" },
-      cancelled: false,
-    });
-    expect(manager.cancelledAgentIds).toEqual([]);
-    expect(storage.records.get("agent-1")).toEqual({
-      ...storedAgent("agent-1"),
-      lastStatus: "closed",
-      updatedAt: "2026-05-10T10:00:00.000Z",
-    });
-  });
+      await expect(
+        cancelAgentRunCommand({ agentManager: manager, agentStorage: storage, logger }, "agent-1"),
+      ).resolves.toEqual({
+        agent: { id: "agent-1", cwd: record.cwd, lifecycle: lastStatus },
+        cancelled: false,
+      });
+      expect(manager.cancelledAgentIds).toEqual([]);
+      expect(storage.upserts).toEqual([]);
+      expect(storage.records.get("agent-1")).toEqual(record);
+    },
+  );
 
   test("still reports not found when no stored record exists", async () => {
     const storage = new FakeLifecycleAgentStorage();
@@ -238,24 +227,6 @@ describe("agent lifecycle commands", () => {
         "missing-agent",
       ),
     ).rejects.toThrow("Agent missing-agent not found");
-    expect(storage.upserts).toEqual([]);
-  });
-
-  test("leaves an already-settled stored agent untouched", async () => {
-    const storage = new FakeLifecycleAgentStorage();
-    const manager = new FakeLifecycleAgentManager(storage);
-    storage.records.set("agent-1", storedAgent("agent-1"));
-
-    const result = await cancelAgentRunCommand(
-      { agentManager: manager, agentStorage: storage, logger },
-      "agent-1",
-    );
-
-    expect(result).toEqual({
-      agent: { id: "agent-1", cwd: "/workspace/project", lifecycle: "closed" },
-      cancelled: false,
-    });
-    expect(manager.cancelledAgentIds).toEqual([]);
     expect(storage.upserts).toEqual([]);
   });
 

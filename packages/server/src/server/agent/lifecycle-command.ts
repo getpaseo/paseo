@@ -62,7 +62,7 @@ async function requestAgentRunCancellation(
   const { agentManager, logger } = dependencies;
   const agent = agentManager.getAgent(agentId);
   if (!agent) {
-    return reconcileStoredAgentWithoutRun(dependencies, agentId);
+    return storedAgentWithoutRun(dependencies, agentId);
   }
 
   const hasInFlightRun = agentManager.hasInFlightRun(agentId);
@@ -92,7 +92,7 @@ async function requestAgentRunCancellation(
   };
 }
 
-async function reconcileStoredAgentWithoutRun(
+async function storedAgentWithoutRun(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentStorage" | "logger">,
   agentId: string,
 ): Promise<RequestedAgentRunCancellation> {
@@ -101,25 +101,6 @@ async function reconcileStoredAgentWithoutRun(
   if (!record) {
     logger.trace({ agentId }, "cancelAgentRunCommand: agent not found");
     throw new Error(`Agent ${agentId} not found`);
-  }
-
-  // The record outlived its runtime (crash, eviction, or restart without
-  // resume): there is no run to interrupt, so reconcile a stale active
-  // status instead of reporting the agent missing.
-  if (record.lastStatus === "running" || record.lastStatus === "initializing") {
-    const previousMs = Date.parse(record.updatedAt);
-    const nowMs = Date.now();
-    const updatedAt = new Date(nowMs > previousMs ? nowMs : previousMs + 1).toISOString();
-    logger.info(
-      { agentId, lastStatus: record.lastStatus },
-      "cancelAgentRunCommand: reconciling stored agent without a live runtime",
-    );
-    await agentStorage.upsert({ ...record, lastStatus: "closed", updatedAt });
-    return {
-      agent: { id: record.id, cwd: record.cwd, lifecycle: "closed" },
-      cancelled: false,
-      cancellation: { status: "not_running" },
-    };
   }
 
   logger.trace(
