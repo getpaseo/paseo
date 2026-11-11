@@ -8,7 +8,6 @@ export interface PrepareWorkspaceTabInput {
   target: WorkspaceTabTarget;
   pin?: boolean;
   placement?: WorkspaceTabPlacement;
-  asTab?: boolean;
 }
 
 export interface PrepareWorkspaceTabDeps {
@@ -18,7 +17,6 @@ export interface PrepareWorkspaceTabDeps {
     intent: "reveal";
     pin?: boolean;
     placement?: WorkspaceTabPlacement;
-    asTab?: boolean;
   }) => string | null;
 }
 
@@ -46,6 +44,5 @@ export function prepareWorkspaceTab(
     intent: "reveal",
     pin: input.pin === true && target.kind === "agent",
     placement: input.placement,
-    asTab: input.asTab,
   });
 }

@@ -1,5 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useUsageHostId } from "./hosts";
+import { useUsageHostReports } from "./queries";
 import {
   isUsagePinned,
   setUsageDisplayAs,
@@ -21,6 +23,12 @@ export interface UsageDisplay {
 interface UsagePreferencesState {
   preferences: UsagePreferences;
   display: UsageDisplay;
+}
+
+/** The device's usage preferences, with pins resolved against a host's reports. */
+export function useUsagePreferences(serverId?: string): UsagePreferencesState {
+  const defaultServerId = useUsageHostId();
+  return useUsageDisplay(useUsageHostReports(serverId ?? defaultServerId));
 }
 
 /** The device's usage preferences, with pins resolved against the given reports. */

@@ -28,18 +28,23 @@ import type {
   WorkspaceScriptLinkTarget,
 } from "@/utils/workspace-script-links";
 import type { Theme } from "@/styles/theme";
-import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
 import { scriptToneColorMapping } from "./script-status";
-import type { WorkspaceScriptActions } from "./use-workspace-script-actions";
+import {
+  useWorkspaceScriptActions,
+  type WorkspaceScriptActions,
+} from "./use-workspace-script-actions";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
 interface WorkspaceScriptsButtonProps {
-  actions: WorkspaceScriptActions;
+  serverId: string;
+  workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
   liveTerminalIds?: readonly string[];
+  onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
@@ -443,14 +448,22 @@ function ScriptRow({
 }
 
 export function WorkspaceScriptsButton({
-  actions,
+  serverId,
+  workspaceId,
   scripts,
   liveTerminalIds = [],
+  onScriptTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
   hideLabels,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
+  const actions = useWorkspaceScriptActions({
+    serverId,
+    workspaceId,
+    scripts,
+    onScriptTerminalStarted,
+  });
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
 
   const triggerStyle = useCallback(
@@ -518,7 +531,10 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
-    height: HEADER_CONTROL_HEIGHT,
+    height: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: theme.borderRadius.md,

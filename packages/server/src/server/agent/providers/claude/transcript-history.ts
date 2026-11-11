@@ -1,6 +1,5 @@
 import { assignTaskNotificationReplayIds } from "./task-notification-tool-call.js";
-import fs, { type FileHandle } from "node:fs/promises";
-import { setImmediate } from "node:timers/promises";
+import fs from "node:fs";
 import path from "node:path";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import {
@@ -25,11 +24,11 @@ interface RecordLocation {
 }
 
 /** Chunk in bytes so UTF-8 and multi-chunk records are decoded once, at a line boundary. */
-async function* locatedRecords(
+function* locatedRecords(
   file: string,
-  fd: FileHandle,
-): AsyncGenerator<{ entry: TranscriptEntry; location: RecordLocation }> {
-  const stat = await fd.stat();
+  fd: number,
+): Generator<{ entry: TranscriptEntry; location: RecordLocation }> {
+  const stat = fs.fstatSync(fd);
   // Opening a directory succeeds on some platforms; it must never look like empty history.
   if (stat.isDirectory()) {
     throw Object.assign(new Error(`EISDIR: illegal operation on a directory, read '${file}'`), {
@@ -44,7 +43,7 @@ async function* locatedRecords(
   let length = 0;
   while (remaining > 0) {
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
-    const { bytesRead: count } = await fd.read(buffer, 0, buffer.length, null);
+    const count = fs.readSync(fd, buffer, 0, buffer.length, null);
     if (count === 0) break;
     remaining -= count;
     let start = 0;
@@ -65,8 +64,6 @@ async function* locatedRecords(
       if (entry) yield { entry, location };
       start = end + 1;
     }
-    // Bound parsing work as well as IO; microtasks alone do not service timers or sockets.
-    await setImmediate();
     if (start < count) {
       pieces.push(buffer.subarray(start, count));
       length += count - start;
@@ -88,25 +85,20 @@ async function* locatedRecords(
 /** Indexed sources parse only their own records using descriptors owned by this replay. */
 function indexedRecords(
   locations: readonly RecordLocation[],
-  descriptors: ReadonlyMap<string, FileHandle>,
-): AsyncIterable<TranscriptEntry> {
+  descriptors: ReadonlyMap<string, number>,
+): Iterable<TranscriptEntry> {
   return {
-    async *[Symbol.asyncIterator]() {
+    *[Symbol.iterator]() {
       yield* assignTaskNotificationReplayIds(readEntries());
     },
   };
-  async function* readEntries(): AsyncGenerator<TranscriptEntry> {
+  function* readEntries(): Generator<TranscriptEntry> {
     for (const location of locations) {
       const fd = descriptors.get(location.file)!;
       const buffer = Buffer.allocUnsafe(location.length);
       let read = 0;
       while (read < buffer.length) {
-        const { bytesRead: count } = await fd.read(
-          buffer,
-          read,
-          buffer.length - read,
-          location.offset + read,
-        );
+        const count = fs.readSync(fd, buffer, read, buffer.length - read, location.offset + read);
         if (count === 0)
           throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
         read += count;
@@ -135,9 +127,9 @@ function parseRecord(line: string): TranscriptEntry | null {
   }
 }
 
-async function readOptionalFile(file: string): Promise<string | null> {
+function readOptionalFile(file: string): string | null {
   try {
-    return await fs.readFile(file, "utf8");
+    return fs.readFileSync(file, "utf8");
   } catch {
     return null;
   }
@@ -146,40 +138,31 @@ async function readOptionalFile(file: string): Promise<string | null> {
 /** Discover sources without retaining transcript contents. Unrelated sidechains stay excluded
  * by the replay ownership resolver; workflow children retain their separate run ownership. */
 export interface ClaudeReplayHistory {
-  parentEntries: AsyncIterable<TranscriptEntry>;
+  parentEntries: Iterable<TranscriptEntry>;
   subagents: {
     agentId: string;
     meta: ClaudeSubagentMeta | null;
-    entries: AsyncIterable<TranscriptEntry>;
+    entries: Iterable<TranscriptEntry>;
   }[];
   workflows: ClaudeWorkflowRun[];
-  workflowEntriesByRunId: Map<string, AsyncIterable<TranscriptEntry>>;
+  workflowEntriesByRunId: Map<string, Iterable<TranscriptEntry>>;
 }
 
 /** Own descriptors through every pass so unlink or rename cannot invalidate discovered history.
  * Sources must be consumed before the callback returns. No transcript copies are needed. */
-export async function withClaudeReplayHistory<T>(
+export function withClaudeReplayHistory<T>(
   historyPath: string,
-  consume: (history: ClaudeReplayHistory) => Promise<T>,
-): Promise<T> {
-  const descriptors = new Map<string, FileHandle>();
+  consume: (history: ClaudeReplayHistory) => T,
+): T {
+  const descriptors = new Map<string, number>();
   try {
-    return await consume(await indexHistory(historyPath, descriptors));
+    return consume(indexHistory(historyPath, descriptors));
   } finally {
-    await closeReplaySources(descriptors.values());
+    for (const fd of descriptors.values()) fs.closeSync(fd);
   }
 }
 
-async function closeReplaySources(descriptors: Iterable<FileHandle>): Promise<void> {
-  const results = await Promise.allSettled([...descriptors].map((fd) => fd.close()));
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure) throw failure.reason;
-}
-
-async function indexHistory(
-  historyPath: string,
-  descriptors: Map<string, FileHandle>,
-): Promise<ClaudeReplayHistory> {
+function indexHistory(historyPath: string, descriptors: Map<string, number>): ClaudeReplayHistory {
   const sessionDirectory = path.join(
     path.dirname(historyPath),
     path.basename(historyPath, ".jsonl"),
@@ -191,7 +174,8 @@ async function indexHistory(
   const directories = [sidechainDirectory];
   while (directories.length) {
     const directory = directories.pop()!;
-    for (const entry of await optionalDirectory(directory)) {
+    if (!fs.existsSync(directory)) continue;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         directories.push(file);
@@ -210,23 +194,23 @@ async function indexHistory(
       }
       const agentId = /^agent-(.+)\.meta\.json$/.exec(entry.name)?.[1];
       if (!agentId) continue;
-      const contents = await readOptionalFile(file);
+      const contents = readOptionalFile(file);
       const meta = contents === null ? null : parseClaudeSubagentMeta(contents);
       if (meta) metaByAgentId.set(agentId, meta);
     }
   }
   const parentLocations: RecordLocation[] = [];
   const locationsByAgentId = new Map<string, RecordLocation[]>();
-  async function scan(
+  function scan(
     file: string,
     visit: (entry: TranscriptEntry, location: RecordLocation) => void,
-  ): Promise<void> {
-    const fd = await fs.open(file, "r");
+  ): void {
+    const fd = fs.openSync(file, "r");
     descriptors.set(file, fd);
-    for await (const { entry, location } of locatedRecords(file, fd)) visit(entry, location);
+    for (const { entry, location } of locatedRecords(file, fd)) visit(entry, location);
   }
   for (const file of sidechainFiles) {
-    await scan(file, (entry, location) => {
+    scan(file, (entry, location) => {
       if (file === historyPath && entry.isSidechain !== true) parentLocations.push(location);
       if (entry.isSidechain !== true || typeof entry.agentId !== "string") return;
       const locations = locationsByAgentId.get(entry.agentId) ?? [];
@@ -234,11 +218,11 @@ async function indexHistory(
       locationsByAgentId.set(entry.agentId, locations);
     });
   }
-  const workflowEntriesByRunId = new Map<string, AsyncIterable<TranscriptEntry>>();
+  const workflowEntriesByRunId = new Map<string, Iterable<TranscriptEntry>>();
   for (const [runId, files] of workflowFiles) {
     const locations: RecordLocation[] = [];
     for (const file of files)
-      await scan(file, (entry, location) => {
+      scan(file, (entry, location) => {
         if (entry.type !== "user" || isToolResult(entry)) locations.push(location);
       });
     locations.sort((a, b) => {
@@ -256,28 +240,21 @@ async function indexHistory(
       meta: metaByAgentId.get(agentId) ?? null,
       entries: indexedRecords(locations, descriptors),
     })),
-    workflows: await readWorkflows(sessionDirectory),
+    workflows: readWorkflows(sessionDirectory),
     workflowEntriesByRunId,
   };
 }
 
-async function readWorkflows(sessionDirectory: string): Promise<ClaudeWorkflowRun[]> {
+function readWorkflows(sessionDirectory: string): ClaudeWorkflowRun[] {
   const workflows: ClaudeWorkflowRun[] = [];
   const workflowDirectory = path.join(sessionDirectory, "workflows");
-  for (const entry of await optionalDirectory(workflowDirectory)) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const contents = await readOptionalFile(path.join(workflowDirectory, entry.name));
-    const workflow = contents === null ? null : parseClaudeWorkflowRun(contents);
-    if (workflow) workflows.push(workflow);
+  if (fs.existsSync(workflowDirectory)) {
+    for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const contents = readOptionalFile(path.join(workflowDirectory, entry.name));
+      const workflow = contents === null ? null : parseClaudeWorkflowRun(contents);
+      if (workflow) workflows.push(workflow);
+    }
   }
   return workflows;
-}
-
-async function optionalDirectory(directory: string) {
-  try {
-    return await fs.readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
 }

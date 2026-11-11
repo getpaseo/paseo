@@ -36,11 +36,6 @@ type BottomSheetPhase = "closed" | "presenting" | "presented" | "dismissing";
 export function createBottomSheetVisibilityTracker(opts: {
   onClose: () => void;
   backPress?: BackPressSource;
-  /**
-   * Offered the Back press before the sheet takes it as a close. Returns true when it handled
-   * the press itself, such as stepping back a page inside the sheet.
-   */
-  onBack?: () => boolean;
 }): BottomSheetVisibilityTracker {
   let controller: BottomSheetController | null = null;
   let visible = false;
@@ -65,7 +60,6 @@ export function createBottomSheetVisibilityTracker(opts: {
     }
     releaseBackPress =
       opts.backPress?.subscribe(() => {
-        if (opts.onBack?.()) return true;
         dismiss();
         return true;
       }) ?? null;

@@ -83,7 +83,7 @@ export async function getClaudeModelsWithSettings(
     const manifestModel = getClaudeModels(claudeCodeVersion).find(
       (candidate) => candidate.id === model.id,
     );
-    models.push(resolveConfiguredClaudeModel({ ...manifestModel, ...model }));
+    models.push({ ...manifestModel, ...model });
   }
 
   return models;

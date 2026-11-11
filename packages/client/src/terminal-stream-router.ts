@@ -1,17 +1,14 @@
 import {
+  decodeTerminalSnapshotPayload,
   TerminalStreamOpcode,
-  TerminalReplayMetadataSchema,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-
-export type TerminalReplayEvent =
-  | { type: "begin"; rows?: number; cols?: number; retainedHistoryLines?: number }
-  | { type: "data"; data: Uint8Array }
-  | { type: "end" };
+import type { TerminalState } from "@getpaseo/protocol/messages";
 
 export type TerminalStreamEvent = { terminalId: string; subscriptionId: string } & (
   | { type: "output"; data: Uint8Array }
-  | { type: "replay"; replay: TerminalReplayEvent }
+  | { type: "snapshot"; state: TerminalState }
+  | { type: "restore"; data: Uint8Array }
 );
 
 export class TerminalStreamRouter {
@@ -64,42 +61,20 @@ export class TerminalStreamRouter {
       let event: TerminalStreamEvent;
       if (frame.opcode === TerminalStreamOpcode.Output)
         event = { ...identity, type: "output", data: frame.payload };
-      else if (frame.opcode === TerminalStreamOpcode.Restore) {
-        // COMPAT(terminalSingleRestore): added after v0.14.0; remove when ANSI host floor supports chunked replay after 2027-04-30.
-        for (const replay of [
-          { type: "begin" },
-          { type: "data", data: frame.payload },
-          { type: "end" },
-        ] as TerminalReplayEvent[])
-          this.deliver(registration.receive, { ...identity, type: "replay", replay });
-        continue;
-      } else if (frame.opcode === TerminalStreamOpcode.ReplayBegin) {
-        let raw: unknown;
+      else if (frame.opcode === TerminalStreamOpcode.Restore)
+        event = { ...identity, type: "restore", data: frame.payload };
+      else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
+        const state = decodeTerminalSnapshotPayload(frame.payload);
+        if (!state) return;
+        event = { ...identity, type: "snapshot", state };
+      } else return;
+      registration.receive(event);
+      for (const listener of this.listeners) {
         try {
-          raw = JSON.parse(new TextDecoder().decode(frame.payload));
+          listener(event);
         } catch {
-          return;
+          /* Passive diagnostics cannot interrupt delivery. */
         }
-        const parsed = TerminalReplayMetadataSchema.safeParse(raw);
-        if (!parsed.success) return;
-        const metadata = parsed.data;
-        event = { ...identity, type: "replay", replay: { type: "begin", ...metadata } };
-      } else if (frame.opcode === TerminalStreamOpcode.ReplayData)
-        event = { ...identity, type: "replay", replay: { type: "data", data: frame.payload } };
-      else if (frame.opcode === TerminalStreamOpcode.ReplayEnd)
-        event = { ...identity, type: "replay", replay: { type: "end" } };
-      else return;
-      this.deliver(registration.receive, event);
-    }
-  }
-
-  private deliver(receive: (event: TerminalStreamEvent) => void, event: TerminalStreamEvent): void {
-    receive(event);
-    for (const listener of this.listeners) {
-      try {
-        listener(event);
-      } catch {
-        /* Passive diagnostics cannot interrupt delivery. */
       }
     }
   }

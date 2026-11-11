@@ -19,7 +19,6 @@ interface DaemonSelfUpdateRestartIntent {
   clientId: string;
   requestId: string;
   reason: string;
-  keepTerminals: boolean;
 }
 
 export interface DaemonSelfUpdateSessionControllerOptions {
@@ -89,8 +88,6 @@ export class DaemonSelfUpdateSessionController {
         clientId: this.clientId,
         requestId: msg.requestId,
         reason: "daemon_update",
-        // A self-update restart keeps terminals: the worker outlives the daemon.
-        keepTerminals: true,
       });
     } catch (error) {
       if (error instanceof DaemonSelfUpdateInProgressError) {

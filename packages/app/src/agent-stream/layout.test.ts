@@ -104,7 +104,7 @@ function layoutFor(input: {
       strategy,
       streamHead: input.head ?? [],
     }),
-    timingByItemId: timingFor(...(input.timingIds ?? [])),
+    timingByAssistantId: timingFor(...(input.timingIds ?? [])),
   });
 }
 
@@ -148,7 +148,7 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
-  it("keeps separate footers for an assistant turn and an adjacent tool-only turn", () => {
+  it("places one response footer after an adjacent tagged tool-only turn", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const nextTool = toolCall("next-tool", 2, "turn-2");
     const layout = layoutFor({
@@ -157,8 +157,8 @@ describe("layoutStream", () => {
       timingIds: [priorAssistant.id],
     });
 
-    expect(layout.auxiliaryTurnFooter?.itemId).toBe(nextTool.id);
-    expect(footerOwners(layout)).toEqual([priorAssistant.id, nextTool.id]);
+    expect(layout.auxiliaryTurnFooter?.itemId).toBe(priorAssistant.id);
+    expect(footerOwners(layout)).toEqual([priorAssistant.id]);
   });
 
   it("recomputes cached history layout when only the live boundary turn changes", () => {
@@ -171,7 +171,7 @@ describe("layoutStream", () => {
       isTurnActive: true,
       history,
       liveHead,
-      timingByItemId: timingFor(priorAssistant.id),
+      timingByAssistantId: timingFor(priorAssistant.id),
     });
 
     liveHead[0] = { ...liveHead[0]!, turnId: "turn-2" };
@@ -180,7 +180,7 @@ describe("layoutStream", () => {
       isTurnActive: true,
       history,
       liveHead,
-      timingByItemId: timingFor(priorAssistant.id),
+      timingByAssistantId: timingFor(priorAssistant.id),
     });
 
     expect(footerOwners(first)).toEqual([]);
@@ -289,7 +289,7 @@ describe("layoutStream", () => {
     expect(layout.auxiliaryTurnFooter).toBeNull();
     expect(assistantRow.completedFooter?.itemId).toBe(assistant.id);
     expect(assistantRow.belowItem?.id).toBe("u2");
-    expect(assistantRow.frameOrder).toBe("content-then-footer");
+    expect(assistantRow.frameOrder).toBe("footer-then-content");
   });
 
   it("keeps an accepted steer inline while its canonical turn is active", () => {

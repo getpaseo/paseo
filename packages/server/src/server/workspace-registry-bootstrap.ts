@@ -64,7 +64,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   // COMPAT(worktree-branch-identity): added in v0.4.0 on 2026-08-15; remove after
   // 2027-02-15. Older worktrees did not pin branch-off/check-out branch identity.
   // Seed it from the registry value clients already display, never from live Git.
-  for (const workspace of await options.workspaceRegistry.listActive()) {
+  for (const workspace of await options.workspaceRegistry.list()) {
     if (
       workspace.archivedAt ||
       !workspace.isPaseoOwnedWorktree ||
@@ -74,7 +74,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       continue;
     }
     try {
-      await pinPaseoWorktreeBranchIdentityIfMissing(workspace.worktreeRoot, workspace.branch);
+      pinPaseoWorktreeBranchIdentityIfMissing(workspace.worktreeRoot, workspace.branch);
     } catch (error) {
       options.logger.warn(
         { err: error, workspaceId: workspace.workspaceId },
@@ -89,14 +89,12 @@ export async function bootstrapWorkspaceRegistries(options: {
   }
 
   const existingWorkspaceIdsByCwd = new Map(
-    // Startup backfill resolves workspace ownership across archived records too.
-    (await options.workspaceRegistry.listAll()).map((workspace) => [
+    (await options.workspaceRegistry.list()).map((workspace) => [
       path.resolve(workspace.cwd),
       workspace.workspaceId,
     ]),
   );
-  // Startup backfill repairs agents without workspace membership, including archived history.
-  const records = await options.agentStorage.listAll();
+  const records = await options.agentStorage.list();
   // A legacy agent can outlive its working directory. Reconciliation treats a
   // missing directory as absent rather than asking Git about it; bootstrap must
   // do the same before materializing its first workspace record.

@@ -342,14 +342,7 @@ function proxyHttpRequest({
       proxyRes.pipe(res, { end: true });
     },
   );
-  let clientClosed = false;
-  res.on("close", () => {
-    if (res.writableFinished) return;
-    clientClosed = true;
-    proxyReq.destroy();
-  });
   proxyReq.on("error", (err) => {
-    if (clientClosed) return;
     logger.warn(
       { err, hostname: route.hostname, port: route.port },
       "Service proxy: upstream unreachable",
@@ -404,9 +397,6 @@ function proxyUpgradeRequest({
     socket.end();
   });
   socket.on("error", () => {
-    targetSocket.destroy();
-  });
-  socket.on("close", () => {
     targetSocket.destroy();
   });
 }

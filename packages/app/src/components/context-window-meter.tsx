@@ -1,11 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import {
-  Pressable,
-  type PressableStateCallbackType,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -15,7 +9,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { useHostReportsUsage } from "@/usage";
 import type { Theme } from "@/styles/theme";
-import { TOOLBAR_DISC_SIZE, type ToolbarRing } from "@/components/ui/control-geometry";
 import { ContextWindowDetails } from "./context-window-details";
 import { ContextWindowSheet } from "./context-window-sheet";
 import { formatContextPercentage } from "./context-window-meter.utils";
@@ -27,8 +20,8 @@ interface ContextWindowMeterProps {
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
-  /** The ring's box and stroke when it sits in an icon toolbar. */
-  toolbarRing?: ToolbarRing;
+  /** Optional glyph envelope for icon-toolbar alignment. */
+  glyphSize?: number;
 }
 
 const SVG_SIZE = 14;
@@ -77,7 +70,7 @@ function getProgressColor(percentage: number, theme: Theme): string {
   return theme.colors.foregroundMuted;
 }
 
-function getMeterGeometry(showPercentage: boolean, ring?: ToolbarRing) {
+function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   if (showPercentage) {
     return {
       svgSize: COMPACT_SVG_SIZE,
@@ -86,8 +79,8 @@ function getMeterGeometry(showPercentage: boolean, ring?: ToolbarRing) {
       containerStyle: styles.containerWithLabel,
     };
   }
-  const resolvedSize = ring?.size ?? SVG_SIZE;
-  const resolvedStrokeWidth = ring?.strokeWidth ?? STROKE_WIDTH;
+  const resolvedSize = glyphSize ?? SVG_SIZE;
+  const resolvedStrokeWidth = glyphSize ? 2 : STROKE_WIDTH;
   return {
     svgSize: resolvedSize,
     radius: (resolvedSize - resolvedStrokeWidth) / 2,
@@ -119,9 +112,8 @@ const ContextWindowRing = withUnistyles(function ContextWindowRing({
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      {...(isNative
-        ? { accessibilityElementsHidden: true, importantForAccessibility: "no-hide-descendants" }
-        : { "aria-hidden": true })}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
     >
       <Circle
         cx={center}
@@ -157,7 +149,7 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
-  toolbarRing,
+  glyphSize,
 }: ContextWindowMeterProps) {
   const { t, i18n } = useTranslation();
   const { width } = useWindowDimensions();
@@ -171,7 +163,7 @@ export function ContextWindowMeter({
   const closeSheet = useCallback(() => setIsSheetOpen(false), []);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
-  const geometry = getMeterGeometry(showPercentage, toolbarRing);
+  const geometry = getMeterGeometry(showPercentage, glyphSize);
 
   const context = useMemo(
     () =>
@@ -190,10 +182,6 @@ export function ContextWindowMeter({
   const formattedSessionCost =
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
   const containerStyle = geometry.containerStyle;
-  const pressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [containerStyle, pressed && styles.pressed],
-    [containerStyle],
-  );
   const ring = (
     <ContextWindowRing
       size={geometry.svgSize}
@@ -217,7 +205,7 @@ export function ContextWindowMeter({
     return (
       <>
         <Pressable
-          style={pressableStyle}
+          style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
@@ -251,7 +239,7 @@ export function ContextWindowMeter({
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
         <TooltipTrigger asChild triggerRefProp="ref">
           <Pressable
-            style={pressableStyle}
+            style={containerStyle}
             testID="context-window-meter"
             accessibilityRole="image"
             accessibilityLabel={accessibilityLabel}
@@ -317,22 +305,19 @@ export function ContextWindowMeter({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    width: TOOLBAR_DISC_SIZE,
-    height: TOOLBAR_DISC_SIZE,
+    width: 28,
+    height: 28,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   containerWithLabel: {
-    height: TOOLBAR_DISC_SIZE,
+    height: 28,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
-  },
-  pressed: {
-    backgroundColor: theme.colors.surface2,
   },
   percentageLabel: {
     color: theme.colors.foregroundMuted,

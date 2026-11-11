@@ -1,6 +1,5 @@
 import { WebSocket } from "ws";
 import { z } from "zod";
-import { webSocketProxyAgent } from "../network/index.js";
 import type { WebSocketLike } from "../websocket-server.js";
 
 const SOCKET_PING_INTERVAL_MS = 10_000;
@@ -167,7 +166,6 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
   openSocket(input: HubSocketCredentials, events: HubSocketEvents): HubSocketConnection {
     let sessionProtocol: "legacy" | "session-v1" = "legacy";
     const socket = new WebSocket(input.webSocketUrl, {
-      agent: webSocketProxyAgent(input.webSocketUrl),
       handshakeTimeout: this.requestTimeoutMs,
       headers: {
         authorization: `Bearer ${input.credential}`,

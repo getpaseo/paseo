@@ -1,5 +1,5 @@
 import { formatPluginInstallation } from "@getpaseo/protocol/plugin-source-reference";
-import { PluginSettingsButton } from "@/plugins/settings";
+import { PluginSettingsMenuItems } from "@/plugins/settings";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -29,10 +29,10 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { resolvePluginPageState } from "@/screens/settings/plugins-page-state";
 import { openPluginInstallForm } from "@/screens/settings/plugin-install-form-model";
 import { pluginRegistry, useInstalledPlugins } from "@/plugins/registry";
-import { pluginDisplayName, usePluginList } from "@/plugins/plugin-list";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
+const pluginQueryKey = (serverId: string) => ["plugins", serverId] as const;
 const PLUGIN_SOURCE_DOCS_URL = "https://paseo.sh/docs/plugins/reference#plugin-sources";
 type PluginRowAction = "reload" | "enable" | "disable" | "remove";
 
@@ -49,6 +49,7 @@ function pluginRowAction(action: string | undefined): PluginRowAction | undefine
 
 function PluginActionsMenu({
   plugin,
+  serverId,
   pending,
   pendingAction,
   onAction,
@@ -56,18 +57,19 @@ function PluginActionsMenu({
   supportsLogs,
 }: {
   plugin: PluginListItem;
+  serverId: string;
   pending: boolean;
   pendingAction?: PluginRowAction;
   onAction(action: PluginRowAction, plugin: PluginListItem): void;
-  onOpenLogs(plugin: PluginListItem): void;
+  onOpenLogs(pluginId: string): void;
   supportsLogs: boolean;
 }) {
   const { t } = useTranslation();
   const reload = useCallback(() => onAction("reload", plugin), [onAction, plugin]);
   const remove = useCallback(() => onAction("remove", plugin), [onAction, plugin]);
-  const openLogs = useCallback(() => onOpenLogs(plugin), [onOpenLogs, plugin]);
+  const openLogs = useCallback(() => onOpenLogs(plugin.id), [onOpenLogs, plugin.id]);
   const removeIcon = useMemo(() => <Trash2 size={16} color={styles.dangerIcon.color} />, []);
-  const menuLabel = t("settings.plugins.actions.menu", { name: pluginDisplayName(plugin) });
+  const menuLabel = t("settings.plugins.actions.menu", { id: plugin.id });
 
   return (
     <DropdownMenu compactMode="sheet">
@@ -81,6 +83,7 @@ function PluginActionsMenu({
         <MoreHorizontal size={18} color={styles.menuIcon.color} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220} sheetTitle={menuLabel}>
+        <PluginSettingsMenuItems serverId={serverId} pluginId={plugin.id} disabled={pending} />
         {supportsLogs ? (
           <DropdownMenuItem onSelect={openLogs} disabled={pending}>
             {t("settings.plugins.logs.action")}
@@ -125,7 +128,7 @@ function PluginRow({
   pending: boolean;
   pendingAction?: PluginRowAction;
   onAction(action: PluginRowAction, plugin: PluginListItem): void;
-  onOpenLogs(plugin: PluginListItem): void;
+  onOpenLogs(pluginId: string): void;
   supportsLogs: boolean;
 }) {
   const { t } = useTranslation();
@@ -142,14 +145,10 @@ function PluginRow({
     () => <StatusBadge label={statusLabel} variant={badgeVariant} />,
     [badgeVariant, statusLabel],
   );
-  const name = pluginDisplayName(plugin);
-  // A display name hides the id that the CLI and plugin routes use, so show it beneath.
-  const shownId = name === plugin.id ? null : plugin.id;
   const hint = useMemo(
     () =>
-      shownId || plugin.description || plugin.installation ? (
+      plugin.description || plugin.installation ? (
         <View>
-          {shownId ? <Text style={styles.pluginSource}>{shownId}</Text> : null}
           {plugin.description ? (
             <Text style={styles.pluginDescription}>{plugin.description}</Text>
           ) : null}
@@ -158,21 +157,20 @@ function PluginRow({
           ) : null}
         </View>
       ) : undefined,
-    [shownId, plugin.description, plugin.installation],
+    [plugin.description, plugin.installation],
   );
-  const toggleLabel = `${name}: ${t(
+  const toggleLabel = `${plugin.id}: ${t(
     plugin.enabled ? "settings.plugins.actions.disable" : "settings.plugins.actions.enable",
   )}`;
   return (
     <SettingsRow
-      label={name}
+      label={plugin.id}
       labelAccessory={statusBadge}
       hint={hint}
       error={clientError ?? plugin.error}
       testID={`plugin-row-${plugin.id}`}
     >
-      <View style={styles.pluginControls} accessibilityLabel={`${name} ${statusLabel}`}>
-        <PluginSettingsButton serverId={serverId} pluginId={plugin.id} />
+      <View style={styles.pluginControls} accessibilityLabel={`${plugin.id} ${statusLabel}`}>
         <Switch
           value={plugin.enabled}
           onValueChange={toggle}
@@ -181,6 +179,7 @@ function PluginRow({
         />
         <PluginActionsMenu
           plugin={plugin}
+          serverId={serverId}
           pending={pending}
           pendingAction={pendingAction}
           onAction={onAction}
@@ -194,16 +193,15 @@ function PluginRow({
 
 function PluginLogsSheet({
   client,
-  plugin,
+  pluginId,
   serverId,
   onClose,
 }: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  plugin: PluginListItem;
+  pluginId: string;
   serverId: string;
   onClose(): void;
 }) {
-  const pluginId = plugin.id;
   const { t } = useTranslation();
   const logs = useFetchQuery({
     queryKey: ["plugin-logs", serverId, pluginId],
@@ -216,16 +214,16 @@ function PluginLogsSheet({
   }, [logs]);
   const header = useMemo<SheetHeader>(
     () => ({
-      title: t("settings.plugins.logs.title", { name: pluginDisplayName(plugin) }),
+      title: t("settings.plugins.logs.title", { id: pluginId }),
       actions: (
-        <Button variant="outline" onPress={refresh} disabled={logs.isFetching}>
+        <Button variant="outline" size="sm" onPress={refresh} disabled={logs.isFetching}>
           {logs.isFetching
             ? t("settings.plugins.logs.refreshing")
             : t("settings.plugins.logs.refresh")}
         </Button>
       ),
     }),
-    [logs.isFetching, plugin, refresh, t],
+    [logs.isFetching, pluginId, refresh, t],
   );
 
   let content = <Text style={styles.logsState}>{t("settings.plugins.logs.loading")}</Text>;
@@ -237,7 +235,7 @@ function PluginLogsSheet({
         title={t("settings.plugins.logs.errorTitle")}
         description={errorMessage(logs.error)}
       >
-        <Button variant="outline" onPress={refresh}>
+        <Button variant="outline" size="sm" onPress={refresh}>
           {t("settings.plugins.logs.refresh")}
         </Button>
       </Alert>
@@ -278,6 +276,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const { config, patchConfig } = useDaemonConfig(serverId);
   const refreshQueue = useRef(Promise.resolve());
   useInstalledPlugins();
+  const queryKey = useMemo(() => pluginQueryKey(serverId), [serverId]);
   const [installForm] = useState(openPluginInstallForm);
   const installState = useSyncExternalStore(
     installForm.subscribe,
@@ -294,11 +293,20 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     ),
     [t],
   );
-  const [logsPlugin, setLogsPlugin] = useState<PluginListItem | null>(null);
+  const [logsPluginId, setLogsPluginId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(
     null,
   );
-  const plugins = usePluginList(serverId);
+  const plugins = useFetchQuery({
+    queryKey,
+    queryFn: async () => {
+      if (!client) throw new Error("Plugin host is offline");
+      return client.listPlugins();
+    },
+    enabled: Boolean(client && connected && supported),
+    dataShape: "list",
+    staleTimeMs: 1_000,
+  });
   const refetchPlugins = plugins.refetch;
   const refresh = useCallback(async () => {
     if (!client) return;
@@ -348,28 +356,27 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
       run: async () => {
         const installed = await client.installPluginSource(input);
         installForm.reset();
-        return t("settings.plugins.feedback.installed", { name: pluginDisplayName(installed) });
+        return t("settings.plugins.feedback.installed", { id: installed.id });
       },
     });
   }, [client, installForm, installState.canSubmit, mutation, sourceInstallSupported, t]);
   const action = useCallback(
     (name: PluginRowAction, plugin: PluginListItem) => {
       if (!client) return;
-      const pluginName = pluginDisplayName(plugin);
       const run = async () => {
         if (name === "remove") {
           const confirmed = await confirmDialog({
-            title: t("settings.plugins.removeConfirmTitle", { name: pluginName }),
+            title: t("settings.plugins.removeConfirmTitle", { id: plugin.id }),
             message: t("settings.plugins.removeConfirmMessage"),
             confirmLabel: t("settings.plugins.actions.remove"),
             destructive: true,
           });
-          if (!confirmed) return t("settings.plugins.feedback.kept", { name: pluginName });
+          if (!confirmed) return t("settings.plugins.feedback.kept", { id: plugin.id });
           await client.removePlugin(plugin.id);
         } else {
           await client[`${name}Plugin`](plugin.id);
         }
-        return t(`settings.plugins.feedback.${name}`, { name: pluginName });
+        return t(`settings.plugins.feedback.${name}`, { id: plugin.id });
       };
       setFeedback(null);
       mutation.mutate({ action: name, pluginId: plugin.id, run });
@@ -401,7 +408,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const retry = useCallback(() => {
     void refetchPlugins();
   }, [refetchPlugins]);
-  const closeLogs = useCallback(() => setLogsPlugin(null), []);
+  const closeLogs = useCallback(() => setLogsPluginId(null), []);
 
   if (pageState === "offline") {
     return (
@@ -426,7 +433,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
         title={t("settings.plugins.states.errorTitle")}
         description={errorMessage(plugins.error)}
       >
-        <Button variant="outline" onPress={retry}>
+        <Button variant="outline" size="sm" onPress={retry}>
           {t("settings.plugins.states.retry")}
         </Button>
       </Alert>
@@ -447,7 +454,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
                 pending={mutation.isPending}
                 pendingAction={pending ? pluginRowAction(mutation.variables?.action) : undefined}
                 onAction={action}
-                onOpenLogs={setLogsPlugin}
+                onOpenLogs={setLogsPluginId}
                 supportsLogs={logsSupported}
               />
             );
@@ -521,10 +528,10 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
         ) : null}
         {catalogContent}
       </SettingsSection>
-      {client && logsPlugin ? (
+      {client && logsPluginId ? (
         <PluginLogsSheet
           client={client}
-          plugin={logsPlugin}
+          pluginId={logsPluginId}
           serverId={serverId}
           onClose={closeLogs}
         />

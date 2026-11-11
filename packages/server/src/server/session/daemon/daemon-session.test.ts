@@ -43,7 +43,7 @@ function makeSubsystem(overrides: {
   listProviderAvailability?: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   hubRelationships?: HubRelationshipManagement;
-  reloadConfig?: () => Promise<DaemonConfigReloadResult>;
+  reloadConfig?: () => DaemonConfigReloadResult;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const restartIntents: Parameters<DaemonSessionHost["emitLifecycleIntent"]>[0][] = [];
@@ -67,7 +67,7 @@ function makeSubsystem(overrides: {
     hubRelationships: overrides.hubRelationships,
     reloadConfig:
       overrides.reloadConfig ??
-      (async () => ({
+      (() => ({
         appliedPaths: [],
         restartRequiredPaths: [],
         overrideControlledPaths: [],
@@ -78,16 +78,16 @@ function makeSubsystem(overrides: {
 }
 
 describe("DaemonSession", () => {
-  test("config reload returns the daemon-owned classification", async () => {
+  test("config reload returns the daemon-owned classification", () => {
     const { subsystem, emitted } = makeSubsystem({
-      reloadConfig: async () => ({
+      reloadConfig: () => ({
         appliedPaths: ["daemon.browserTools.enabled"],
         restartRequiredPaths: ["daemon.listen"],
         overrideControlledPaths: ["app.baseUrl"],
       }),
     });
 
-    await subsystem.handleConfigReloadRequest({
+    subsystem.handleConfigReloadRequest({
       type: "daemon.config.reload.request",
       requestId: "reload-1",
     });
@@ -105,14 +105,14 @@ describe("DaemonSession", () => {
     ]);
   });
 
-  test("config reload failures return a correlated RPC error", async () => {
+  test("config reload failures return a correlated RPC error", () => {
     const { subsystem, emitted } = makeSubsystem({
-      reloadConfig: async () => {
+      reloadConfig: () => {
         throw new Error("Invalid config");
       },
     });
 
-    await subsystem.handleConfigReloadRequest({
+    subsystem.handleConfigReloadRequest({
       type: "daemon.config.reload.request",
       requestId: "reload-2",
     });
@@ -212,7 +212,6 @@ describe("DaemonSession", () => {
             { provider: "claude", available: true, error: null },
             { provider: "codex", available: false, error: "boom" },
           ],
-          terminalCleanupUnconfirmed: [],
         },
       },
     ]);
@@ -243,7 +242,6 @@ describe("DaemonSession", () => {
           listen: null,
           relay: null,
           providers: [],
-          terminalCleanupUnconfirmed: [],
         },
       },
     ]);

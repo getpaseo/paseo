@@ -99,17 +99,16 @@ afterEach(() => {
 });
 
 describe("mutable provider config owner", () => {
-  test("publishes provider changes after commit and emits nothing on rollback", async () => {
+  test("publishes provider changes after commit and emits nothing on rollback", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-provider-config-owner-"));
     tempDirs.push(paseoHome);
     const store = new DaemonConfigStore(paseoHome, mutableConfig({ version: 1 }));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
-      providerOverrides: CONTROLLED_PROVIDERS,
-      extraClients: { codex: controlledCodexClient(async () => catalog("initial")) },
+      providerOverrides: { codex: { enabled: true } },
     });
     const cwd = path.resolve("/tmp/provider-config-owner");
-    await manager.refreshSnapshotForCwd({ cwd });
+    manager.getSnapshot(cwd);
     const events: string[] = [];
     manager.on("change", ({ current }) => events.push(current.cwd));
     let agentManagerState = manager.getAgentManagerProviderState();
@@ -126,7 +125,7 @@ describe("mutable provider config owner", () => {
     });
 
     try {
-      await store.patch({ providers: { codex: { enabled: false } } });
+      store.patch({ providers: { codex: { enabled: false } } });
       expect(events).toEqual([cwd]);
       expect(agentManagerState.providerDefinitions.codex).toMatchObject({ enabled: false });
 
@@ -134,7 +133,7 @@ describe("mutable provider config owner", () => {
       const unsubscribeFailure = store.onApply(() => {
         throw new Error("later owner failed");
       });
-      await expect(store.patch({ providers: { codex: { enabled: true } } })).rejects.toThrow(
+      expect(() => store.patch({ providers: { codex: { enabled: true } } })).toThrow(
         "later owner failed",
       );
       unsubscribeFailure();
@@ -151,7 +150,7 @@ describe("mutable provider config owner", () => {
     }
   });
 
-  test("does no provider work for unrelated CORS, Git, and app URL reloads", async () => {
+  test("does no provider work for unrelated CORS, Git, and app URL reloads", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-provider-config-owner-"));
     tempDirs.push(paseoHome);
     const initial: PersistedConfig = {
@@ -175,10 +174,9 @@ describe("mutable provider config owner", () => {
     });
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
-      providerOverrides: CONTROLLED_PROVIDERS,
-      extraClients: { codex: controlledCodexClient(async () => catalog("initial")) },
+      providerOverrides: { codex: { enabled: true } },
     });
-    await manager.refreshSnapshotForCwd({ cwd: "/tmp/provider-config-owner" });
+    manager.getSnapshot("/tmp/provider-config-owner");
     const events: string[] = [];
     manager.on("change", ({ current }) => events.push(current.cwd));
     let registryUpdates = 0;
@@ -202,7 +200,7 @@ describe("mutable provider config owner", () => {
       };
       writeFileSync(configPath, `${JSON.stringify(reloaded, null, 2)}\n`, "utf-8");
 
-      expect((await store.reload()).appliedPaths).toEqual([
+      expect(store.reload().appliedPaths).toEqual([
         "app.baseUrl",
         "daemon.cors.allowedOrigins",
         "daemon.git.maxProcessConcurrency",
@@ -247,7 +245,7 @@ describe("mutable provider config owner", () => {
       await vi.waitFor(() => expect(catalogResolvers).toHaveLength(1));
       expect(events).toEqual([]);
 
-      await store.patch({ providers: { codex: { enabled: true, label: "Reloaded Codex" } } });
+      store.patch({ providers: { codex: { enabled: true, label: "Reloaded Codex" } } });
       expect(events).toEqual(["loading:none"]);
       await vi.waitFor(() => expect(catalogResolvers).toHaveLength(2));
 
@@ -313,9 +311,9 @@ describe("mutable provider config owner", () => {
       expect(events).toEqual([]);
 
       const before = manager.getSnapshot(cwd);
-      await expect(
+      expect(() =>
         store.patch({ providers: { codex: { enabled: true, label: "Rejected Codex" } } }),
-      ).rejects.toThrow("later owner failed");
+      ).toThrow("later owner failed");
       expect(events).toEqual([]);
       expect(observedDuringApply).toEqual([{ label: "Codex", snapshot: before }]);
       expect(observedDuringApply[0]!.snapshot).toBe(before);

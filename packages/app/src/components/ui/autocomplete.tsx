@@ -9,79 +9,32 @@ import {
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
 } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import {
-  Archive,
-  CircleAlert,
-  File,
-  Folder,
-  Puzzle,
-  RotateCw,
-  Sparkles,
-  SquarePen,
-  SquareSlash,
-} from "lucide-react-native";
-import type { MatchRange } from "@getpaseo/protocol/search/text-match";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { File, Folder } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
-import { Button } from "./button";
-import { HighlightedText } from "./highlighted-text";
-import { mutedIconColorMapping } from "./icon-color";
-import { LoadingSpinner } from "./loading-spinner";
 import { getScrollOffsetToRevealItem } from "./scroll-reveal";
-import { StatusBadge } from "./status-badge";
-
-export type AutocompleteOptionIcon =
-  | "command"
-  | "skill"
-  | "plugin"
-  | "archive"
-  | "new-draft"
-  | "file"
-  | "directory";
 
 export interface AutocompleteOption {
   id: string;
   label: string;
-  icon: AutocompleteOptionIcon;
-  /** Spans of `label` the query matched. */
-  labelMatches?: readonly MatchRange[];
-  argumentHint?: string;
+  detail?: string;
   description?: string;
-  /** Where the option comes from, when that is not the provider itself: `Skill`, `Paseo`, a plugin. */
-  tag?: string;
+  kind?: "command" | "file" | "directory";
 }
-
-/** What the list shows in place of options. */
-export type AutocompleteStatus =
-  | { kind: "loading"; message: string }
-  | { kind: "empty"; message: string }
-  | { kind: "error"; title: string; reason?: string; onRetry?: () => void };
 
 interface AutocompleteProps {
   options: readonly AutocompleteOption[];
   selectedIndex: number;
   onSelect: (option: AutocompleteOption) => void;
-  status?: AutocompleteStatus | null;
+  isLoading?: boolean;
+  errorMessage?: string;
+  loadingText?: string;
+  emptyText?: string;
   maxHeight?: number;
 }
 
-const ROW_ICONS = {
-  command: withUnistyles(SquareSlash, mutedIconColorMapping),
-  skill: withUnistyles(Sparkles, mutedIconColorMapping),
-  plugin: withUnistyles(Puzzle, mutedIconColorMapping),
-  archive: withUnistyles(Archive, mutedIconColorMapping),
-  "new-draft": withUnistyles(SquarePen, mutedIconColorMapping),
-  file: withUnistyles(File, mutedIconColorMapping),
-  directory: withUnistyles(Folder, mutedIconColorMapping),
-} satisfies Record<AutocompleteOptionIcon, unknown>;
-const ErrorIcon = withUnistyles(CircleAlert, mutedIconColorMapping);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, mutedIconColorMapping);
-
-const ROW_ICON_SIZE = 14;
-
-const BOLT_GLYPH_PATTERN = /⚡|️/gu;
+const BOLT_GLYPH_PATTERN = /\u26A1|\uFE0F/gu;
 
 function removeBoltGlyphs(value?: string): string | undefined {
   if (!value) {
@@ -95,7 +48,7 @@ interface AutocompleteRowProps {
   index: number;
   option: AutocompleteOption;
   isSelected: boolean;
-  showArgumentHint: boolean;
+  mutedColor: string;
   onSelect: (option: AutocompleteOption) => void;
   onRowLayout: (index: number, event: LayoutChangeEvent) => void;
 }
@@ -104,15 +57,13 @@ function AutocompleteRow({
   index,
   option,
   isSelected,
-  showArgumentHint,
+  mutedColor,
   onSelect,
   onRowLayout,
 }: AutocompleteRowProps) {
-  const label = removeBoltGlyphs(option.label) ?? option.label;
-  const description = removeBoltGlyphs(option.description);
-  const argumentHint = showArgumentHint ? removeBoltGlyphs(option.argumentHint) : undefined;
-  const Icon = ROW_ICONS[option.icon];
-  const labelMatches = label === option.label ? option.labelMatches : undefined;
+  const optionLabel = removeBoltGlyphs(option.label) ?? option.label;
+  const optionDescription = removeBoltGlyphs(option.description);
+  const isFileOrDir = option.kind === "directory" || option.kind === "file";
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => onRowLayout(index, event),
@@ -128,77 +79,41 @@ function AutocompleteRow({
   );
 
   return (
-    <Pressable
-      onLayout={handleLayout}
-      onPress={handlePress}
-      style={pressableStyle}
-      // Name and description only; the hint and tag repeat what the name implies.
-      accessibilityLabel={description ? `${label}, ${description}` : label}
-    >
-      <View style={styles.itemIcon}>
-        <Icon size={ROW_ICON_SIZE} />
-      </View>
-      <HighlightedText
-        text={label}
-        ranges={labelMatches}
-        style={styles.itemLabel}
-        numberOfLines={1}
-      />
-      {argumentHint ? (
-        <Text style={styles.itemArgumentHint} numberOfLines={1}>
-          {argumentHint}
-        </Text>
-      ) : null}
-      <Text style={styles.itemDescription} numberOfLines={1}>
-        {description ?? ""}
-      </Text>
-      {option.tag ? <StatusBadge label={option.tag} size="xs" /> : null}
-    </Pressable>
-  );
-}
-
-function AutocompleteStatusRow({ status }: { status: AutocompleteStatus }) {
-  const { t } = useTranslation();
-
-  if (status.kind === "error") {
-    return (
-      <View style={styles.statusRow} testID="composer-autocomplete-error">
-        <View style={styles.itemIcon}>
-          <ErrorIcon size={ROW_ICON_SIZE} />
-        </View>
-        <View style={styles.statusText}>
-          <Text style={styles.statusTitle} numberOfLines={2}>
-            {status.title}
-          </Text>
-          {status.reason ? (
-            <Text style={styles.statusReason} numberOfLines={2}>
-              {status.reason}
+    <Pressable onLayout={handleLayout} onPress={handlePress} style={pressableStyle}>
+      {isFileOrDir ? (
+        <>
+          <View style={styles.itemLeading}>
+            {option.kind === "directory" ? (
+              <Folder size={14} color={mutedColor} />
+            ) : (
+              <File size={14} color={mutedColor} />
+            )}
+          </View>
+          <View style={styles.itemMain}>
+            <View style={styles.itemHeader}>
+              <Text style={styles.itemLabel}>{optionLabel}</Text>
+              {removeBoltGlyphs(option.detail) ? (
+                <Text style={styles.itemDetail}>{removeBoltGlyphs(option.detail)}</Text>
+              ) : null}
+            </View>
+            {optionDescription ? (
+              <Text style={styles.itemDescription} numberOfLines={1}>
+                {optionDescription}
+              </Text>
+            ) : null}
+          </View>
+        </>
+      ) : (
+        <View style={styles.itemMainRow}>
+          <Text style={styles.itemLabel}>{optionLabel}</Text>
+          {optionDescription ? (
+            <Text style={styles.itemDescriptionInline} numberOfLines={1}>
+              {optionDescription}
             </Text>
           ) : null}
         </View>
-        {status.onRetry ? (
-          <Button variant="secondary" size="sm" leftIcon={RotateCw} onPress={status.onRetry}>
-            {t("common.actions.retry")}
-          </Button>
-        ) : null}
-      </View>
-    );
-  }
-
-  return (
-    <View
-      style={styles.statusRow}
-      testID={status.kind === "loading" ? "composer-autocomplete-loading" : undefined}
-    >
-      {status.kind === "loading" ? (
-        <View style={styles.itemIcon}>
-          <ThemedLoadingSpinner size={ROW_ICON_SIZE} />
-        </View>
-      ) : null}
-      <Text style={styles.statusMessage} numberOfLines={2}>
-        {status.message}
-      </Text>
-    </View>
+      )}
+    </Pressable>
   );
 }
 
@@ -206,11 +121,16 @@ export function Autocomplete({
   options,
   selectedIndex,
   onSelect,
-  status,
+  isLoading = false,
+  errorMessage,
+  loadingText,
+  emptyText,
   maxHeight = 220,
 }: AutocompleteProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
+  const { theme } = useUnistyles();
+  const resolvedLoadingText = loadingText ?? t("common.states.loading");
+  const resolvedEmptyText = emptyText ?? t("common.empty.noResults");
   const scrollRef = useRef<ScrollView>(null);
   const rowLayoutsRef = useRef<Map<number, { top: number; height: number }>>(new Map());
   const viewportHeightRef = useRef(0);
@@ -290,55 +210,115 @@ export function Autocomplete({
     [ensureActiveItemVisible],
   );
 
+  const selectedOption = options[selectedIndex];
   const containerStyle = useMemo(() => [styles.container, { maxHeight }], [maxHeight]);
 
-  const noResultsMessage = t("common.empty.noResults");
-  const shownStatus = useMemo<AutocompleteStatus | null>(
-    () => status ?? (options.length === 0 ? { kind: "empty", message: noResultsMessage } : null),
-    [noResultsMessage, options.length, status],
-  );
-
-  if (shownStatus) {
+  if (isLoading) {
     return (
       <View style={containerStyle}>
-        <AutocompleteStatusRow status={shownStatus} />
+        <View style={styles.emptyItem}>
+          <Text style={styles.emptyText}>{resolvedLoadingText}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <View style={containerStyle}>
+        <View style={styles.emptyItem}>
+          <Text style={styles.emptyText}>Error: {errorMessage}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (options.length === 0) {
+    return (
+      <View style={containerStyle}>
+        <View style={styles.emptyItem}>
+          <Text style={styles.emptyText}>{resolvedEmptyText}</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={containerStyle}>
-      <ScrollView
-        ref={scrollRef}
-        onLayout={handleScrollViewLayout}
-        onContentSizeChange={pinToBottom}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="always"
-      >
-        {options.map((option, index) => (
-          <AutocompleteRow
-            key={option.id}
-            index={index}
-            option={option}
-            isSelected={index === selectedIndex}
-            showArgumentHint={!isCompact}
-            onSelect={onSelect}
-            onRowLayout={handleRowLayout}
-          />
-        ))}
-      </ScrollView>
+    <View style={styles.outerWrapper}>
+      {selectedOption?.kind === "command" && selectedOption.description ? (
+        <View style={styles.detailCard}>
+          <Text style={styles.detailLabel}>
+            {removeBoltGlyphs(selectedOption.label) ?? selectedOption.label}
+          </Text>
+          <Text style={styles.detailDescription}>
+            {removeBoltGlyphs(selectedOption.description)}
+          </Text>
+          {selectedOption.detail ? (
+            <Text style={styles.detailHint}>{removeBoltGlyphs(selectedOption.detail)}</Text>
+          ) : null}
+        </View>
+      ) : null}
+      <View style={containerStyle}>
+        <ScrollView
+          ref={scrollRef}
+          onLayout={handleScrollViewLayout}
+          onContentSizeChange={pinToBottom}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="always"
+        >
+          {options.map((option, index) => (
+            <AutocompleteRow
+              key={option.id}
+              index={index}
+              option={option}
+              isSelected={index === selectedIndex}
+              mutedColor={theme.colors.foregroundMuted}
+              onSelect={onSelect}
+              onRowLayout={handleRowLayout}
+            />
+          ))}
+        </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme: Theme) => ({
+  outerWrapper: {
+    flexShrink: 1,
+    minHeight: 0,
+    gap: theme.spacing[1],
+  },
+  detailCard: {
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    ...theme.shadow.md,
+  },
+  detailLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+  },
+  detailDescription: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
+  },
+  detailHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
+  },
   container: {
     flexShrink: 1,
-    // Keep a complete selectable row (36), list padding (8), and borders (2).
-    minHeight: 46,
+    minHeight: 0,
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
@@ -356,63 +336,60 @@ const styles = StyleSheet.create((theme: Theme) => ({
   item: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
     minHeight: 36,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
+  itemLeading: {
+    width: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: theme.spacing[1],
+  },
   itemActive: {
     backgroundColor: theme.colors.surface2,
   },
-  itemIcon: {
-    width: 16,
+  itemMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  itemMainRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: theme.spacing[2],
+  },
+  itemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   itemLabel: {
-    flexShrink: 0,
-    maxWidth: "60%",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
-  itemArgumentHint: {
-    flexShrink: 0,
-    maxWidth: "30%",
+  itemDetail: {
     color: theme.colors.foregroundMuted,
-    fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.sm,
   },
   itemDescription: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: 2,
+  },
+  itemDescriptionInline: {
     flex: 1,
-    minWidth: 0,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    minHeight: 44,
+  emptyItem: {
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
   },
-  statusText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  statusTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  statusReason: {
+  emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  statusMessage: {
-    flex: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 })) as unknown as Record<string, object>;

@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setInterval } from "node:timers/promises";
 import type { FileChange } from "./file-observer/index.js";
 
 export const WATCHER_LIVENESS_CANARY_TIMEOUT_MS = 10_000;
-const CANARY_CONTENTS = "paseo watcher liveness canary\n";
 
 export interface WatcherLivenessCanary {
   readonly path: string;
@@ -34,11 +32,7 @@ export function createWatcherLivenessCanary(
       return filtered;
     },
     async verify(signal) {
-      await writeFile(canaryPath, CANARY_CONTENTS, { flag: "wx" });
-      // Native registration can return before macOS starts its FSEvents stream.
-      // Keep probing until an event round-trips instead of relying on the first write.
-      const pulses = new AbortController();
-      const pulsing = pulseCanary(canaryPath, pulses.signal);
+      await writeFile(canaryPath, "paseo watcher liveness canary\n", { flag: "wx" });
       let timeout: NodeJS.Timeout | null = null;
       let removeAbortListener = () => {};
       try {
@@ -61,24 +55,12 @@ export function createWatcherLivenessCanary(
           signal.addEventListener("abort", rejectForAbort, { once: true });
           removeAbortListener = () => signal.removeEventListener("abort", rejectForAbort);
         });
-        await Promise.race([reported, timeoutPromise, abortPromise, pulsing]);
+        await Promise.race([reported, timeoutPromise, abortPromise]);
       } finally {
         if (timeout) clearTimeout(timeout);
         removeAbortListener();
-        pulses.abort();
-        await Promise.allSettled([pulsing]);
         await rm(canaryPath, { force: true });
       }
     },
   };
-}
-
-async function pulseCanary(path: string, signal: AbortSignal): Promise<void> {
-  try {
-    for await (const _ of setInterval(100, undefined, { signal })) {
-      await writeFile(path, CANARY_CONTENTS);
-    }
-  } catch (error) {
-    if (!signal.aborted) throw error;
-  }
 }

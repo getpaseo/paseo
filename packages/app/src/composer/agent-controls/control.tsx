@@ -2,7 +2,6 @@ import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { toolbarContentSlot, toolbarSlot } from "@/components/ui/control-geometry";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import type { AgentControlIcon } from "@/agent-controls/icons";
@@ -42,13 +41,10 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
     },
     ref,
   ) {
-    const { glyphs } = useComposerControlLayout();
-    const glyphRole = showToolbarLabel ? "label" : "icon";
-    const glyph = glyphs[glyphRole];
+    const { glyphSize } = useComposerControlLayout();
     const isSheet = surface === "sheet";
-    const toolbarIconColor =
-      glyph.tone === "foreground" ? styles.iconColorForeground.color : styles.iconColor.color;
-    const resolvedIconColor = iconColor ?? (isSheet ? styles.iconColor.color : toolbarIconColor);
+    const resolvedGlyphSize = isSheet ? 16 : glyphSize;
+    const resolvedIconColor = iconColor ?? styles.iconColor.color;
     const showValue = isSheet || showToolbarLabel;
     const triggerStyle = useCallback(
       ({ pressed, hovered }: PressableStateCallbackType) => [
@@ -73,15 +69,14 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         chevron={showCaret ? undefined : null}
-        block={isSheet}
       >
         {isSheet ? (
           <View style={styles.sheetGlyph}>
-            <Icon size={16} color={resolvedIconColor} />
+            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
           </View>
         ) : (
-          <ComposerToolbarGlyph role={glyphRole}>
-            <Icon size={glyph.size} strokeWidth={glyph.strokeWidth} color={resolvedIconColor} />
+          <ComposerToolbarGlyph size={resolvedGlyphSize}>
+            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
           </ComposerToolbarGlyph>
         )}
         {isSheet ? (
@@ -101,17 +96,18 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
 
 const styles = StyleSheet.create((theme) => ({
   toolbarControl: {
+    height: 28,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(),
-    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius["2xl"],
     backgroundColor: "transparent",
   },
   toolbarIconOnly: {
-    ...toolbarSlot(),
+    width: 28,
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",
@@ -163,15 +159,12 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   pressed: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
   },
   disabled: {
     opacity: 0.5,
   },
   iconColor: {
     color: theme.colors.foregroundMuted,
-  },
-  iconColorForeground: {
-    color: theme.colors.foreground,
   },
 }));

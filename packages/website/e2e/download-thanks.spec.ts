@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test, type Page } from "playwright/test";
 
 const APPLE_SILICON_DMG = /\/getpaseo\/paseo\/releases\/download\/v[^/]+\/Paseo-[^/]+-arm64\.dmg$/;
 

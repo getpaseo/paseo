@@ -22,13 +22,7 @@ import {
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
 import { readPluginManifest, type PluginManifest } from "./manifest.js";
-import {
-  acquireNpm,
-  isNpmSource,
-  isSameNpmArtifact,
-  readNpmArtifact,
-  resolveNpm,
-} from "./managed-source/npm.js";
+import { acquireNpm, isNpmSource, readNpmArtifact, resolveNpm } from "./managed-source/npm.js";
 
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
@@ -352,7 +346,11 @@ export class ManagedPluginSources {
       throw new Error("Preparation changed the reviewed Git commit");
     if (target?.kind === "npm" && location.identity.kind === "npm") {
       const artifact = await readNpmArtifact(location.versionRoot, location.identity.packageName);
-      if (!isSameNpmArtifact({ installed: artifact, target }))
+      if (
+        artifact.version !== target.version ||
+        artifact.integrity !== target.integrity ||
+        artifact.resolved !== target.resolved
+      )
         throw new Error("Preparation changed the reviewed npm artifact");
     }
   }
@@ -502,11 +500,17 @@ async function clone(remote: string, checkoutRoot: string): Promise<void> {
           GIT_CONFIG_VALUE_0: cloneRemote,
         };
   try {
-    await runGitCommand(["clone", "--no-checkout", "--", cloneRemote, checkoutRoot], {
-      cwd: path.dirname(checkoutRoot),
-      envOverlay,
-      timeout: GIT_TIMEOUT_MS,
-    });
+    // A blobless clone keeps every commit and ref for revision lookups, and checkout fetches
+    // only the files of the chosen commit. A full clone of a plugin repository with large
+    // assets in its history can outlast GIT_TIMEOUT_MS on an ordinary connection.
+    await runGitCommand(
+      ["clone", "--no-checkout", "--filter=blob:none", "--", cloneRemote, checkoutRoot],
+      {
+        cwd: path.dirname(checkoutRoot),
+        envOverlay,
+        timeout: GIT_TIMEOUT_MS,
+      },
+    );
   } catch (error) {
     throw redactRemoteError(error, remote);
   }

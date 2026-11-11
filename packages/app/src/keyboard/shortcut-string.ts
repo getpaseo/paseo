@@ -237,9 +237,7 @@ export function chordStringToShortcutKeys(s: string): ShortcutKey[][] {
   return s.split(" ").map(comboStringToShortcutKeys);
 }
 
-export function heldModifiersFromEvent(
-  event: Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
-): string | null {
+export function heldModifiersFromEvent(event: KeyboardEvent): string | null {
   const parts: string[] = [];
   if (event.ctrlKey) parts.push("Ctrl");
   if (event.altKey) parts.push("Alt");
@@ -257,9 +255,7 @@ export function isModifierKeyCode(code: string): boolean {
   return MODIFIER_CODES.has(code);
 }
 
-export function keyboardEventToComboString(
-  event: Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
-): string | null {
+export function keyboardEventToComboString(event: KeyboardEvent): string | null {
   if (isModifierKeyCode(event.code)) {
     return null;
   }

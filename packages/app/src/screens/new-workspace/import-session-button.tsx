@@ -21,6 +21,7 @@ export function ImportSessionButton({
       <Button
         // Ghost for its muted text that turns foreground on hover; the pill adds the outline.
         variant="ghost"
+        size="sm"
         leftIcon={Import}
         onPress={onPress}
         style={compact ? null : styles.pill}
@@ -33,12 +34,11 @@ export function ImportSessionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The composer sits spacing[4] in from the dock; the pill's border lines up with the
-  // composer's border, spacing[4] below it.
+  // The composer sits spacing[4] in from the dock and leaves spacing[4] below itself; the pill's
+  // border lines up with the composer's border.
   wide: {
     alignItems: "flex-start",
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
   },
   pill: {
     borderRadius: theme.borderRadius.full,

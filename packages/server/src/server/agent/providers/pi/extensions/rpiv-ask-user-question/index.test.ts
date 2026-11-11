@@ -79,7 +79,7 @@ test("cancellation declines each remaining real RPC dialog", () => {
   }
 });
 
-test("captured result renders in live and history tool rows, while foreign shapes decline", async () => {
+test("captured result renders in live and history tool rows, while foreign shapes decline", () => {
   const call = {
     callId: end.toolCallId,
     toolName: end.toolName,
@@ -93,7 +93,7 @@ test("captured result renders in live and history tool rows, while foreign shape
     label: "Questions",
     text: "Which snack?: Cookie\nWhich colors?: Red, Blue\nWhat project name?: Nebula",
   });
-  const history = await new PiHistoryMapper("pi").mapMessages([
+  const history = new PiHistoryMapper("pi").mapMessages([
     {
       role: "assistant",
       content: [

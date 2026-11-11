@@ -208,10 +208,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       getAgent: () => null,
     }),
     agentStorage: createStub<SessionOptions["agentStorage"]>({
-      listAll: async () => [],
-      listActive: async () => [],
-      listByWorkspaces: async () => [],
-      lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
+      list: async () => [],
       get: async () => null,
     }),
     projectRegistry: createStub<SessionOptions["projectRegistry"]>({
@@ -236,9 +233,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       subscribeToMutations: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
-      listAll: async () => Array.from(workspaces.values()),
-      listActive: async () =>
-        Array.from(workspaces.values()).filter((record) => !record.archivedAt),
+      list: async () => Array.from(workspaces.values()),
       get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
       upsert: async (record: ReturnType<typeof createPersistedWorkspaceRecord>) => {
         workspaces.set(record.workspaceId, record);

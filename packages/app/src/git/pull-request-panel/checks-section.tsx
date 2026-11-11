@@ -215,7 +215,7 @@ function CheckRow({
         {attachEnabled && canAddPullRequestCheckLogsToChat(check) ? (
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             leftIcon={MessageSquarePlus}
             loading={isAddingLogsToChat}
             onPress={handleAddLogsToChat}

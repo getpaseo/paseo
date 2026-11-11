@@ -2064,7 +2064,7 @@ describe("createGiteaService", () => {
     ]);
   });
 
-  it("keeps a merged PR when its remote head advances beyond the checkout", async () => {
+  it("does not attach a stale Gitea-family PR after a same-name branch advances", async () => {
     const stale = currentPullRequestApi({
       number: 8,
       state: "closed",
@@ -2086,7 +2086,7 @@ describe("createGiteaService", () => {
         headRef: "dev",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toMatchObject({ number: 8, state: "merged" });
+    ).resolves.toBeNull();
   });
 
   it("returns null when no PR matches the current branch", async () => {

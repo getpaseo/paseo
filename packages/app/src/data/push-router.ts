@@ -1,14 +1,11 @@
-import { checkoutDiffSnapshot, type CheckoutDiffSnapshot } from "@/git/diff-snapshot";
-import type { DiffState } from "@getpaseo/client";
 import type { OwnedSubscription } from "@getpaseo/client";
-import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
 import type {
   ListTerminalsResponse,
   MutableDaemonConfig,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import { invalidateCommandsForProviderChange } from "@/agent-commands/cache";
+import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { shareCheckoutDiff } from "@/git/diff-sharing";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
@@ -25,9 +22,14 @@ type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
   { type: "providers_snapshot_update" }
 >;
+type SubscribeCheckoutDiffResponseMessage = Extract<
+  SessionOutboundMessage,
+  { type: "subscribe_checkout_diff_response" }
+>;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
-type CheckoutDiffCachePayload = CheckoutDiffSnapshot;
+type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
+type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
 interface CheckoutDiffCompare {
@@ -46,7 +48,7 @@ interface CheckoutDiffRoute {
 }
 
 interface CheckoutDiffRegistration extends CheckoutDiffRoute {
-  subscription: OwnedSubscription<DiffState>;
+  subscription: OwnedSubscription<CheckoutDiffResponsePayload>;
 }
 
 interface WorkspaceTerminalsRoute {
@@ -72,7 +74,7 @@ export type ProvidersSnapshotUpdate = ProvidersSnapshotUpdateMessage;
 interface ServerDataPushClient {
   getProvidersSnapshot: import("@getpaseo/client/internal/daemon-client").DaemonClient["getProvidersSnapshot"];
   observeEvents: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeEvents"];
-  observeDiff: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeDiff"];
+  observeCheckoutDiff: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeCheckoutDiff"];
   observeTerminals: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeTerminals"];
 }
 
@@ -184,10 +186,10 @@ export async function applyProvidersSnapshotUpdate(input: {
   const snapshot = { ...input.message.payload, requestId: "providers_snapshot_update" };
   const cwd = normalizeProvidersSnapshotCwd(snapshot.cwd);
   const queryKey = providersSnapshotQueryKey(input.serverId, cwd);
-  const previous = input.queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(queryKey);
+  const previous = input.queryClient.getQueryData<{ snapshotHash?: string }>(queryKey);
   let announcement: typeof snapshot | undefined = snapshot;
   void input.queryClient.cancelQueries({ queryKey, exact: true });
-  const current = await input.queryClient.fetchQuery({
+  await input.queryClient.fetchQuery({
     queryKey,
     staleTime: 0,
     structuralSharing: false,
@@ -203,13 +205,12 @@ export async function applyProvidersSnapshotUpdate(input: {
       });
     },
   });
-  void invalidateCommandsForProviderChange({
-    queryClient: input.queryClient,
-    serverId: input.serverId,
-    cwd,
-    previous: previous?.entries,
-    current: current.entries,
-  });
+  if (!snapshot.snapshotHash || previous?.snapshotHash !== snapshot.snapshotHash) {
+    void input.queryClient.invalidateQueries({
+      queryKey: agentCommandsQueryRoot(input.serverId),
+      exact: false,
+    });
+  }
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
@@ -336,34 +337,34 @@ function reconcileCheckoutDiffSubscriptions(input: {
   }
   for (const [key, desired] of input.desired) {
     if (input.active.has(key)) continue;
-    const { mode, baseRef, ignoreWhitespace } = desired.compare;
-    const revision = mode === "uncommitted" ? "HEAD" : baseRef;
-    if (!revision) continue;
-    const subscription = input.client.observeDiff({
-      cwd: desired.cwd,
-      base: { kind: "rev", rev: revision },
-      head: mode === "base" ? { kind: "rev", rev: "HEAD" } : { kind: "worktree" },
-      mergeBase: mode !== "uncommitted",
-      ignoreWhitespace,
-    });
+    const subscription = input.client.observeCheckoutDiff(desired.cwd, desired.compare);
     const registration = { ...desired, subscription };
     input.active.set(key, registration);
+    const apply = (
+      payload: Omit<CheckoutDiffResponsePayload, "requestId"> & { requestId?: string },
+    ) => {
+      if (input.active.get(key) !== registration) return;
+      const { subscriptionId, ...snapshot } = payload;
+      setCheckoutDiffPayload({
+        activeCheckoutDiffSubscriptions: input.active,
+        queryClient: input.queryClient,
+        serverId: input.serverId,
+        subscriptionId: key,
+        payload: {
+          ...snapshot,
+          files: orderCheckoutDiffFiles(payload.files),
+          requestId: payload.requestId ?? `subscription:${subscriptionId}`,
+        },
+      });
+    };
     subscription.subscribe({
-      snapshot: (state) => {
-        if (input.active.get(key) !== registration) return;
-        const snapshot = checkoutDiffSnapshot(desired.cwd, state);
-        setCheckoutDiffPayload({
-          activeCheckoutDiffSubscriptions: input.active,
-          queryClient: input.queryClient,
-          serverId: input.serverId,
-          subscriptionId: key,
-          payload: { ...snapshot, files: orderCheckoutDiffFiles(snapshot.files) },
-        });
+      snapshot: apply,
+      update: (message) => {
+        if (message.type === "checkout_diff_update") apply(message.payload);
       },
-      update: () => {},
       error: (error) => {
         if (input.active.get(key) === registration) input.active.delete(key);
-        console.error("[server-data] observeDiff failed", {
+        console.error("[server-data] observeCheckoutDiff failed", {
           serverId: input.serverId,
           cwd: desired.cwd,
           error,

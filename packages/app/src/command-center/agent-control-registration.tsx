@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { AgentMode, AgentProvider, AgentSelectOption } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentFeature,
+  AgentMode,
+  AgentProvider,
+  AgentSelectOption,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   getAgentFeatureIcon,
@@ -9,7 +14,6 @@ import {
   ThinkingIcon,
 } from "@/agent-controls/icons";
 import { useProviderIcons } from "@/components/provider-icons";
-import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import {
   buildAgentControlContributions,
@@ -40,15 +44,15 @@ export interface AgentControlCommandCenterSource {
     selectedId: string | null | undefined;
     select(modeId: string): void | Promise<void>;
   };
-  /** Absent when the surface cannot change options (the agent has no client). */
-  optionControls: ComposerOptionControls | null;
+  features: {
+    list: readonly AgentFeature[] | undefined;
+    set?: (featureId: string, value: unknown) => void | Promise<void>;
+  };
 }
 
-const NO_OPTION_CONTROLS: ComposerOptionControls = {
-  controls: [],
-  options: {},
-  onSetOption: () => undefined,
-};
+function ignoreAgentFeatureChange(): void {
+  return;
+}
 
 function resolveDefaultModeId(
   provider: string | null | undefined,
@@ -83,7 +87,7 @@ export function useAgentControlCommandCenterActions(input: {
 }): void {
   const { t } = useTranslation();
   const { controls } = input;
-  const { optionControls, models, modes, thinking } = controls;
+  const { features, models, modes, thinking } = controls;
   const getProviderIcon = useProviderIcons(controls.serverId);
   const actions = useMemo(
     () =>
@@ -100,7 +104,7 @@ export function useAgentControlCommandCenterActions(input: {
             getCommandCenterIcon(
               getAgentModeIcon(controls.provider ?? "", modeId, controls.providerDefinitions),
             ),
-          control: (control) => getCommandCenterIcon(getAgentFeatureIcon(control.icon)),
+          feature: (feature) => getCommandCenterIcon(getAgentFeatureIcon(feature.icon)),
         },
         models: {
           providers: models.providers,
@@ -119,7 +123,10 @@ export function useAgentControlCommandCenterActions(input: {
           modes?.select,
           resolveDefaultModeId(controls.provider, controls.providerDefinitions),
         ),
-        optionControls: optionControls ?? NO_OPTION_CONTROLS,
+        features: {
+          list: features.set ? (features.list ?? []) : [],
+          set: features.set ?? ignoreAgentFeatureChange,
+        },
       }),
     [
       getProviderIcon,
@@ -127,7 +134,8 @@ export function useAgentControlCommandCenterActions(input: {
       controls.provider,
       controls.providerDefinitions,
       controls.serverId,
-      optionControls,
+      features.list,
+      features.set,
       models.providers,
       models.select,
       models.selectedModelId,

@@ -124,6 +124,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
     () => (
       <Button
         variant="ghost"
+        size="sm"
         leftIcon={addIcon}
         onPress={handleAddOpen}
         disabled={!profiles}
@@ -180,7 +181,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
               <Text style={styles.emptyText} testID="agent-profiles-empty">
                 {t("settings.host.agentProfiles.emptyState")}
               </Text>
-              <Button leftIcon={addIcon} onPress={handleAddOpen} disabled={!profiles}>
+              <Button size="sm" leftIcon={addIcon} onPress={handleAddOpen} disabled={!profiles}>
                 {t("settings.host.agentProfiles.newProfile")}
               </Button>
             </View>

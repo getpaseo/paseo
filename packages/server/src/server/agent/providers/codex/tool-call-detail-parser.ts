@@ -18,7 +18,6 @@ import {
   toShellToolDetail,
   toWriteToolDetail,
   toolDetailBranchByNameWithCwd,
-  parseKnownToolDetail,
 } from "../tool-call-detail-primitives.js";
 
 export interface CodexToolDetailContext {
@@ -206,9 +205,9 @@ export function deriveCodexToolDetail(params: {
     };
   }
 
-  const detail = parseKnownToolDetail(CodexToolDetailPass2Schema, pass1.data);
-  if (detail) {
-    return detail;
+  const pass2 = CodexToolDetailPass2Schema.safeParse(pass1.data);
+  if (pass2.success && pass2.data) {
+    return pass2.data;
   }
 
   return {

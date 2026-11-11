@@ -1,17 +1,6 @@
 import type { PluginText } from "../text.js";
 import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
-export {
-  PluginClientStateProvider,
-  usePaseoSelector,
-  type PluginClientStateSource,
-  type PluginClientSnapshot,
-} from "./client-state.js";
-export {
-  PluginComposerProvider,
-  PluginComposersProvider,
-  type PluginComposersSource,
-} from "./composer.js";
-export { PluginNewWorkspaceProvider } from "./new-workspace.js";
+export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export {
   usePluginRuntimeContextBridge,
   type PluginRuntimeContextBridge,
@@ -19,7 +8,7 @@ export {
 import type { PluginAttachmentSourceContribution } from "../contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
-import { callPluginRpc, subscribePluginRpc, type PluginSubscriptionObserver } from "../rpc.js";
+import { callPluginRpc } from "../rpc.js";
 
 export async function searchPluginAttachments(
   source: PluginAttachmentSourceContribution<PluginText>,
@@ -30,9 +19,7 @@ export async function searchPluginAttachments(
   return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
-export { callPluginRpc, subscribePluginRpc, PaseoApiProvider, PluginRpcProvider };
-export type { PluginSubscriptionObserver };
-export type { PluginSubscribe } from "./rpc-context.js";
+export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
 
 export {
   PluginTranslationRuntime,
@@ -42,7 +29,3 @@ export {
   isPluginMessage,
 } from "./translations.js";
 export type { PluginLocaleSource } from "./translations.js";
-
-export { createEntityRefs } from "./refs.js";
-
-export { createPluginReferenceApi } from "./reference-api.js";

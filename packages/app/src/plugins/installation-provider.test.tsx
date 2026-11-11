@@ -1,8 +1,7 @@
 import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { defineRpc } from "@getpaseo/plugin";
-import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PaseoApi } from "@getpaseo/client";
 import { QueryClient } from "@tanstack/react-query";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -25,30 +24,18 @@ function installation(invoked: string[]): InstalledPlugin {
     lifetime: new AbortController(),
     locale: "en",
     i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
-    paseo: createPaseoApi(
-      new DaemonClient({
-        url: "ws://127.0.0.1:1",
-        clientId: "installation-provider",
-        reconnect: { enabled: false },
-      }),
-    ),
+    paseo: { dispose: async () => undefined } as PaseoApi,
     invoke: async (method) => {
       invoked.push(method);
       return { state: "green" };
-    },
-    subscribe: () => {
-      throw new Error("Subscriptions are not used here");
     },
     queryClient: new QueryClient(),
     cleanup: () => undefined,
     settingsScreens: [],
     surfaces: [],
-    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
-    composerItems: [],
-    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -85,6 +72,4 @@ it("gives every surface the installation's client and RPCs on its first frame", 
   expect(received.every((paseo) => paseo === plugin.paseo)).toBe(true);
   await expect(rpc!({})).resolves.toEqual({ state: "green" });
   expect(invoked).toEqual(["deploys.status"]);
-  plugin.lifetime.abort();
-  await plugin.paseo.dispose();
 });

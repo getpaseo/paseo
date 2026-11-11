@@ -14,7 +14,6 @@ function agent(input: {
   pendingPermissionCount?: number;
   archivedAt?: string | null;
   parentAgentId?: string | null;
-  background?: boolean;
 }): Agent {
   return {
     serverId: "host-a",
@@ -62,7 +61,6 @@ function agent(input: {
     attentionTimestamp: input.attentionTimestamp ? new Date(input.attentionTimestamp) : null,
     archivedAt: input.archivedAt ? new Date(input.archivedAt) : null,
     parentAgentId: input.parentAgentId ?? null,
-    background: input.background ?? false,
     labels: {},
   };
 }
@@ -93,8 +91,6 @@ describe("workspace agent activity index", () => {
             workspaceId: "workspace-error",
             status: "error",
             turn: { phase: "idle", cancellationRequestId: null },
-            requiresAttention: true,
-            attentionReason: "error",
             updatedAt: "2026-01-01T00:00:00.000Z",
           }),
         ],
@@ -160,33 +156,6 @@ describe("workspace agent activity index", () => {
         ],
       ]),
     );
-  });
-
-  it("does not let a running background agent change root workspace activity", () => {
-    const index = buildWorkspaceAgentActivityIndex(
-      new Map([
-        [
-          "root",
-          agent({ id: "root", workspaceId: "workspace-a", updatedAt: "2026-06-01T10:00:00.000Z" }),
-        ],
-        [
-          "classifier",
-          agent({
-            id: "classifier",
-            workspaceId: "workspace-a",
-            status: "running",
-            updatedAt: "2026-06-01T10:05:00.000Z",
-            background: true,
-          }),
-        ],
-      ]),
-    );
-
-    expect(index.get("workspace-a")).toEqual({
-      agentId: "root",
-      status: "done",
-      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
-    });
   });
 
   it("does not let archived or child agents change root workspace activity", () => {

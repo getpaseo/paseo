@@ -1,14 +1,14 @@
 import {
   AudioLines,
+  BookOpen,
   Brain,
   ChevronDown,
   CircleDot,
   Copy,
-  Eye,
+  FilePenLine,
   LoaderCircle,
   ListTodo,
   Mic,
-  Pencil,
   Plus,
   ShieldOff,
   Split,
@@ -18,7 +18,7 @@ import {
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "./atoms";
-import { CodexIcon, PaseoMark } from "./icons";
+import { CodexIcon } from "./icons";
 
 // Icons passed as props are hoisted so they are not rebuilt on every render.
 const MODEL_ICON = <CodexIcon size={13} />;
@@ -94,62 +94,70 @@ export function AgentTranscript() {
   );
 }
 
-/**
- * A collapsed tool call as the app's timeline shows it. Built-in tools carry a
- * fixed label; Paseo MCP tools name their action, such as "Create agent".
- */
-export type ToolCall =
-  | { kind: "read" | "write" | "shell"; detail: string }
-  | { kind: "paseo"; label: string; detail: string };
-
-const BUILT_IN_LABELS = { read: "Read", write: "Write", shell: "Shell" } as const;
-
-function toolCallLabel(call: ToolCall): string {
-  return call.kind === "paseo" ? call.label : BUILT_IN_LABELS[call.kind];
+interface PluginToolCall {
+  kind: "read" | "shell" | "write";
+  label: string;
+  detail: string;
 }
 
-const PLUGIN_TOOL_CALLS: ToolCall[] = [
-  { kind: "read", detail: "paseo-plugin/SKILL.md" },
-  { kind: "shell", detail: "paseo plugin init ~/dev/release-radar" },
-  { kind: "write", detail: "~/dev/release-radar/index.ts" },
-  { kind: "write", detail: "~/dev/release-radar/release-radar.client.tsx" },
-  { kind: "shell", detail: "npm install && npm run typecheck" },
-  { kind: "shell", detail: "paseo plugin install ~/dev/release-radar" },
+const PLUGIN_TOOL_CALLS: PluginToolCall[] = [
+  { kind: "read", label: "Read", detail: "paseo-plugin/SKILL.md" },
+  {
+    kind: "shell",
+    label: "Shell",
+    detail: "paseo plugin init ~/dev/release-radar",
+  },
+  {
+    kind: "write",
+    label: "Write",
+    detail: "~/dev/release-radar/index.ts",
+  },
+  {
+    kind: "write",
+    label: "Write",
+    detail: "~/dev/release-radar/release-radar.client.tsx",
+  },
+  {
+    kind: "shell",
+    label: "Shell",
+    detail: "npm install && npm run typecheck",
+  },
+  {
+    kind: "shell",
+    label: "Shell",
+    detail: "paseo plugin install ~/dev/release-radar",
+  },
 ];
 
 const PLUGIN_DISCOVERY_CALLS = PLUGIN_TOOL_CALLS.slice(0, 1);
 const PLUGIN_BUILD_CALLS = PLUGIN_TOOL_CALLS.slice(1, 4);
 const PLUGIN_INSTALL_CALLS = PLUGIN_TOOL_CALLS.slice(4);
 
-function ToolCallIcon({ kind }: { kind: ToolCall["kind"] }) {
-  if (kind === "read") return <Eye size={14} />;
-  if (kind === "write") return <Pencil size={14} />;
-  if (kind === "paseo") return <PaseoMark size={14} />;
+function PluginToolIcon({ kind }: { kind: PluginToolCall["kind"] }) {
+  if (kind === "read") return <BookOpen size={14} />;
+  if (kind === "write") return <FilePenLine size={14} />;
   return <SquareTerminal size={14} />;
 }
 
-/**
- * One tool call row, drawn like the app's collapsed timeline item
- * (`packages/app/src/components/message.tsx`): icon, label, then the summary,
- * all muted and in the UI font.
- */
-export function ToolCallRow({ call }: { call: ToolCall }) {
+function PluginToolRow({ call }: { call: PluginToolCall }) {
   return (
-    <div className="flex items-center gap-[8px] py-[5px] text-[12.5px] leading-[18px] text-mock-fg-muted">
-      <span className="shrink-0">
-        <ToolCallIcon kind={call.kind} />
+    <div className="flex items-center gap-[9px] py-[5px] text-[12.5px] leading-[18px]">
+      <span className="text-mock-fg-muted">
+        <PluginToolIcon kind={call.kind} />
       </span>
-      <span className="shrink-0">{toolCallLabel(call)}</span>
-      <span className="min-w-0 truncate">{call.detail}</span>
+      <span className="shrink-0 text-mock-fg">{call.label}</span>
+      <span className="min-w-0 truncate font-mono text-[11.5px] text-mock-fg-muted">
+        {call.detail}
+      </span>
     </div>
   );
 }
 
-function PluginToolGroup({ calls }: { calls: ToolCall[] }) {
+function PluginToolGroup({ calls }: { calls: PluginToolCall[] }) {
   return (
     <div>
       {calls.map((call) => (
-        <ToolCallRow key={`${call.kind}:${call.detail}`} call={call} />
+        <PluginToolRow key={`${call.label}:${call.detail}`} call={call} />
       ))}
     </div>
   );

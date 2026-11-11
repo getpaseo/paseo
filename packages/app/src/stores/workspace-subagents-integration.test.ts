@@ -63,6 +63,7 @@ const AGENT_DEFAULTS: Agent = {
   cwd: WORKSPACE_DIRECTORY,
   workspaceId: WORKSPACE_ID,
   model: null,
+  features: undefined,
   thinkingOptionId: undefined,
   requiresAttention: false,
   attentionReason: null,

@@ -47,6 +47,7 @@ export function HostConfirmationSheet() {
       <View style={styles.confirmActions}>
         <Button
           variant="secondary"
+          size="sm"
           style={FLEX_1_STYLE}
           onPress={cancel}
           testID="host-confirmation-cancel"
@@ -55,6 +56,7 @@ export function HostConfirmationSheet() {
         </Button>
         <Button
           variant="default"
+          size="sm"
           style={FLEX_1_STYLE}
           onPress={connect}
           testID="host-confirmation-connect"

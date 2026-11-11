@@ -3,9 +3,7 @@ import { z } from "zod";
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
-import { isClaudeInterruptPlaceholderText } from "../interrupt-placeholder.js";
 import { resolveObservedClaudeModelId } from "../models.js";
-import type { ClaudeRestoredSubagent } from "./live-source.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
 
@@ -132,7 +130,7 @@ function readUsage(entry: ClaudeReplayEntry): ClaudeSubagentUsage | null {
 export interface ClaudeReplaySubagentInput {
   agentId: string;
   meta: ClaudeSubagentMeta | null;
-  entries: Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>;
+  entries: Iterable<ClaudeReplayEntry>;
   /** Task declarations made by this subagent, used to attach its direct children. */
   parentFacts?: ClaudeReplayParentFacts;
 }
@@ -141,12 +139,9 @@ export interface ClaudeReplayParentFacts {
   /** Task `tool_use` id -> identity declared in the parent's tool input. */
   toolCalls: ReadonlyMap<string, { title?: string; description?: string }>;
   /** agentId -> tool call, recovered by scraping tool-result text. Legacy fallback only. */
-  linksByAgentId: ReadonlyMap<string, { toolCallId: string }>;
-  /**
-   * Task `tool_use` id -> outcome, whichever way the child was linked. A background launch has
-   * none: its immediate result only says the child started.
-   */
-  outcomesByToolCallId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
+  linksByAgentId: ReadonlyMap<string, { toolCallId: string; failed: boolean }>;
+  /** Task `tool_use` id -> outcome. Usable once meta.json supplies the link directly. */
+  outcomesByToolCallId: ReadonlyMap<string, { failed: boolean }>;
 }
 
 interface ParentLink {
@@ -182,14 +177,27 @@ function resolveParentLink(
   parent: ClaudeReplayParentFacts,
 ): ParentLink | null {
   const metaToolUseId = subagent.meta?.toolUseId?.trim();
-  const toolCallId =
-    metaToolUseId && parent.toolCalls.has(metaToolUseId)
-      ? metaToolUseId
-      : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
-  if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
+  if (metaToolUseId && parent.toolCalls.has(metaToolUseId)) {
+    const outcome = parent.outcomesByToolCallId.get(metaToolUseId);
+    let status: ProviderSubagentStatus | null = null;
+    if (outcome) status = outcome.failed ? "failed" : "completed";
+    return {
+      id: metaToolUseId,
+      toolCallId: metaToolUseId,
+      status,
+    };
+  }
 
-  const status = parent.outcomesByToolCallId.get(toolCallId)?.status ?? null;
-  return { id: toolCallId, toolCallId, status };
+  const scraped = parent.linksByAgentId.get(subagent.agentId);
+  if (scraped && parent.toolCalls.has(scraped.toolCallId)) {
+    return {
+      id: scraped.toolCallId,
+      toolCallId: scraped.toolCallId,
+      status: scraped.failed ? "failed" : "completed",
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -242,14 +250,13 @@ function observeSubtitle(
   };
 }
 
-async function observeSubagent(
+function observeSubagent(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
-  convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>,
+  convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[],
   toolOwners: Map<string, string>,
-  restored: ClaudeRestoredSubagent[],
   parentSubagentId?: string,
-): Promise<SubagentObservation[]> {
+): SubagentObservation[] {
   const link = resolveParentLink(subagent, parent);
   if (!link) return [];
   const toolCall = parent.toolCalls.get(link.toolCallId);
@@ -262,30 +269,31 @@ async function observeSubagent(
   let childTerminalStatus: ProviderSubagentStatus | null = null;
 
   // Consume each source once for presentation and timeline; keep no raw transcript records.
-  for await (const entry of subagent.entries) {
+  for (const entry of subagent.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
     if (!seenEntry) firstTimestamp = timestamp;
     seenEntry = true;
     lastTimestamp = timestamp;
     Object.assign(runtime, readRuntime(entry));
     usage = readUsage(entry) ?? usage;
-    childTerminalStatus = readChildTerminalStatus(entry, childTerminalStatus);
+    if (entry.type === "assistant") {
+      childTerminalStatus = entry.message?.stop_reason === "end_turn" ? "completed" : null;
+    }
     recordReplayToolOwners(toolOwners, entry, link.id);
-    for (const item of await convertEntry(entry)) {
+    for (const item of convertEntry(entry)) {
       timeline.push({ kind: "timeline", id: link.id, item, ...(timestamp ? { timestamp } : {}) });
     }
   }
   const observations = [
     declareSubagent(subagent, link, toolCall, parentSubagentId, firstTimestamp),
   ];
-  const title = toolCall?.title ?? subagent.meta?.agentType;
-  // The agentId is the task_id Claude resumes this child under, so live can find it again.
-  restored.push({
-    taskId: subagent.agentId,
-    id: link.id,
-    presentation: { ...(title ? { title } : {}), ...runtime, ...(usage ? { usage } : {}) },
-  });
-  const subtitle = observeSubtitle(link, title, runtime, usage, lastTimestamp);
+  const subtitle = observeSubtitle(
+    link,
+    toolCall?.title ?? subagent.meta?.agentType,
+    runtime,
+    usage,
+    lastTimestamp,
+  );
   if (subtitle) observations.push(subtitle);
   for (const observation of timeline) observations.push(observation);
   const terminalStatus = link.status ?? childTerminalStatus;
@@ -300,30 +308,6 @@ async function observeSubagent(
   return observations;
 }
 
-/** Advance the child's fallback outcome without retaining transcript entries. */
-function readChildTerminalStatus(
-  entry: ClaudeReplayEntry,
-  previous: ProviderSubagentStatus | null,
-): ProviderSubagentStatus | null {
-  if (entry.type === "assistant") {
-    return entry.message?.stop_reason === "end_turn" ? "completed" : null;
-  }
-  if (entry.type !== "user") return previous;
-  const texts = readUserTexts(entry);
-  if (texts.length === 0) return previous;
-  return texts.some(isClaudeInterruptPlaceholderText) ? "canceled" : null;
-}
-
-/** Tool results carry no user text and do not change the child's terminal status. */
-function readUserTexts(entry: ClaudeReplayEntry): string[] {
-  const content = entry.message?.content;
-  if (typeof content === "string") return [content];
-  if (!Array.isArray(content)) return [];
-  return content.flatMap((block: { type?: unknown; text?: unknown } | null) =>
-    block?.type === "text" && typeof block.text === "string" ? [block.text] : [],
-  );
-}
-
 function recordReplayToolOwners(
   owners: Map<string, string>,
   entry: ClaudeReplayEntry,
@@ -336,18 +320,13 @@ function recordReplayToolOwners(
   }
 }
 
-export async function observeReplaySubagents(input: {
+export function observeReplaySubagents(input: {
   subagents: readonly ClaudeReplaySubagentInput[];
   parent: ClaudeReplayParentFacts;
-  convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
-}): Promise<{
-  observations: SubagentObservation[];
-  toolOwners: ReadonlyMap<string, string>;
-  restored: readonly ClaudeRestoredSubagent[];
-}> {
+  convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+}): { observations: SubagentObservation[]; toolOwners: ReadonlyMap<string, string> } {
   const observations: SubagentObservation[] = [];
   const toolOwners = new Map<string, string>();
-  const restored: ClaudeRestoredSubagent[] = [];
   const unresolved = [...input.subagents].sort(
     (left, right) => (left.meta?.spawnDepth ?? 1) - (right.meta?.spawnDepth ?? 1),
   );
@@ -367,12 +346,11 @@ export async function observeReplaySubagents(input: {
       const { ownerId, parent, link } = resolved;
 
       // Only proven descendants may own notifications; ambient sidecars cannot claim them.
-      for (const observation of await observeSubagent(
+      for (const observation of observeSubagent(
         subagent,
         parent,
         input.convertEntry,
         toolOwners,
-        restored,
         ownerId,
       )) {
         observations.push(observation);
@@ -382,7 +360,7 @@ export async function observeReplaySubagents(input: {
       madeProgress = true;
     }
   }
-  return { observations, toolOwners, restored };
+  return { observations, toolOwners };
 }
 
 function resolveReplayOwner(

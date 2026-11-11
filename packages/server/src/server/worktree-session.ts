@@ -554,7 +554,7 @@ export async function runWorktreeSetupInBackground(
         emitSetupProgress("completed", null);
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
-        const setupCommands = await getWorktreeSetupCommands(workspaceCwd);
+        const setupCommands = getWorktreeSetupCommands(workspaceCwd);
         const runtimeEnv = await resolveWorktreeRuntimeEnv({
           worktreePath: worktree.worktreePath,
           branchName: worktree.branchName,

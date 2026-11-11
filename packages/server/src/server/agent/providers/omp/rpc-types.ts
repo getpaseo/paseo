@@ -152,8 +152,6 @@ export const OmpSessionStateSchema = z
     thinkingLevel: OmpThinkingLevelSchema.optional(),
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
-    hasPendingAsyncWork: z.boolean().optional(),
-    isSettled: z.boolean().optional(),
     autoCompactionEnabled: z.boolean().optional(),
     fastModeEnabled: z.boolean().optional(),
     fastModeActive: z.boolean().optional(),

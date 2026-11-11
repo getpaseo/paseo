@@ -375,18 +375,19 @@
       "otherHostComment": "# Target another host"
     },
     "plugins": {
-      "title": "Ask Paseo to change Paseo",
-      "description": "Agents in Paseo can change the whole UI without a restart, even on mobile.",
-      "request": "Add a sidebar panel with the PRs waiting on my review.",
-      "plan": "I'll build it as a local plugin and install it.",
-      "done": "Review queue is in your sidebar.",
-      "panelTitle": "Review queue",
-      "libraryTitle": "400+ community plugins",
-      "libraryDescription": "Built by developers on the same plugin API your agents use",
+      "title": "Extend it with plugins",
+      "description": "Add new panels and functionality that work in desktop, web and mobile",
+      "lead": "Plugins",
       "browse": "Browse plugins",
       "docs": "Plugin docs",
       "license": "Paseo is Apache 2.0.",
-      "fork": "Fork the repo"
+      "fork": "Fork the repo",
+      "uiTitle": "UI",
+      "uiDescription": "Screens, workspace panels, sidebar items, slash commands, and themes",
+      "lifecycleTitle": "Agent lifecycle",
+      "lifecycleDescription": "Change config and MCP servers, answer permissions, and follow up",
+      "providersTitle": "Providers",
+      "providersDescription": "Add a coding agent as a provider, used like the built-in ones"
     },
     "philosophy": {
       "title": "Philosophy",
@@ -446,10 +447,10 @@
     },
     "mockup": {
       "alt": "Paseo desktop app with coding agents, a conversation, and a code diff open side by side",
-      "build": "Parallel agents",
-      "review": "Code review",
-      "ship": "Pull requests",
-      "extend": "Plugins",
+      "build": "Build",
+      "review": "Review",
+      "ship": "Ship",
+      "extend": "Extend",
       "app": {
         "newWorkspace": "New workspace",
         "history": "History",
@@ -651,8 +652,6 @@
     "metaDescription": "Product updates, bug fixes, and improvements shipped in each Paseo release. Track new agent providers, mobile features, and daemon changes over time.",
     "title": "Changelog",
     "linkTo": "Link to Paseo {{version}}",
-    "showAllChanges": "Show all changes",
-    "hideAllChanges": "Hide all changes",
     "untranslatedRelease": "These release notes have not been translated yet, so they are shown in English."
   },
   "blog": {

@@ -1,4 +1,3 @@
-import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -10,8 +9,7 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentDraftControls,
-  type AgentOptionControl,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -68,13 +66,10 @@ import {
   resolveOmpLaunchMode,
   resolveOmpProviderOptions,
   OMP_MODES,
-  OmpProviderOptionsSchema,
   type OmpRuntimeOptions,
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
-import { applyProviderOptionsPatch } from "../../option-controls.js";
-import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
-import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
+import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
@@ -135,6 +130,7 @@ export interface OmpAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   runtime?: OmpRuntime;
+  subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
@@ -209,6 +205,7 @@ interface OmpAgentSessionOptions {
   initialState: OmpSessionState;
   currentModeId?: string | null;
   logger: Logger;
+  subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
@@ -320,9 +317,9 @@ function ompModelSupportsImageInput(model: OmpModel | null | undefined): boolean
   return model?.input?.includes("image") === true;
 }
 
-async function renderTextOnlyImageHint(image: { data: string; mimeType: string }): Promise<string> {
+function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
   try {
-    const materialized = await materializeProviderImage({
+    const materialized = materializeProviderImage({
       data: image.data,
       mimeType: image.mimeType,
     });
@@ -332,10 +329,10 @@ async function renderTextOnlyImageHint(image: { data: string; mimeType: string }
   }
 }
 
-async function convertPromptInput(
+function convertPromptInput(
   prompt: AgentPromptInput,
   options: { model: OmpModel | null | undefined },
-): Promise<OmpPromptPayload> {
+): OmpPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
@@ -358,7 +355,7 @@ async function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(await renderTextOnlyImageHint(block));
+        textParts.push(renderTextOnlyImageHint(block));
       }
       continue;
     }
@@ -755,10 +752,6 @@ export class OmpAgentSession implements AgentSession {
     this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
-    this.openOptionsPatch = this.fastModeDifference(options.config.providerOptions?.fast_mode);
-    // A replacement runtime starts from the Fast this one opened with, not the one it was asked for.
-    if (typeof this.openOptionsPatch.fast_mode === "boolean")
-      this.rememberFastMode(this.openOptionsPatch.fast_mode);
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
@@ -780,7 +773,9 @@ export class OmpAgentSession implements AgentSession {
         this.logger.debug({ err: error }, "OMP context usage poll failed");
       },
     });
-    this.subagentCardTracker = new OmpSubagentCardTracker();
+    this.subagentCardTracker = new OmpSubagentCardTracker({
+      scheduler: options.subagentCardScheduler,
+    });
     this.lastKnownThinkingOptionId =
       normalizeOmpThinkingOption(options.config.thinkingOptionId) ??
       this.state.thinkingLevel ??
@@ -813,14 +808,15 @@ export class OmpAgentSession implements AgentSession {
     return this.state.sessionId;
   }
 
-  get controls(): AgentOptionControl[] {
+  get features(): AgentFeature[] {
     if (!hasOmpFastMode(this.state)) return [];
     return [
       {
         type: "toggle",
-        key: "fast_mode",
+        id: "fast_mode",
         label: "Fast",
         icon: "zap",
+        value: this.state.fastModeEnabled === true,
         ...(this.state.fastModeEnabled && !this.state.fastModeActive
           ? { description: OMP_FAST_INACTIVE_MESSAGE, tooltip: OMP_FAST_INACTIVE_MESSAGE }
           : {}),
@@ -828,49 +824,18 @@ export class OmpAgentSession implements AgentSession {
     ];
   }
 
-  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
-    assertChangesAreLive({
-      provider: "omp",
-      patch: options,
-      current: this.config.providerOptions,
-      live: ["fast_mode"],
-    });
-    const next = validateProviderOptions(
-      "omp",
-      OmpProviderOptionsSchema,
-      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
-    );
-    if (options.fast_mode === undefined) return {};
-    const requested = next?.fast_mode ?? false;
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== "fast_mode") throw new Error(`Unknown OMP feature: ${featureId}`);
+    if (typeof value !== "boolean") throw new Error("OMP fast mode requires a boolean");
     if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
-    if (requested !== this.state.fastModeEnabled) {
-      const result = await this.runtimeSession.setFastMode(requested);
-      this.state = {
-        ...this.state,
-        fastModeEnabled: result.enabled,
-        fastModeActive: result.active,
-      };
-    }
-    if (typeof this.state.fastModeEnabled === "boolean") {
-      this.rememberFastMode(this.state.fastModeEnabled);
-    }
-    return this.fastModeDifference(requested);
+    const result = await this.runtimeSession.setFastMode(value);
+    this.state = {
+      ...this.state,
+      fastModeEnabled: result.enabled,
+      fastModeActive: result.active,
+    };
+    this.config.featureValues = { ...this.config.featureValues, fast_mode: result.enabled };
   }
-
-  /** A replacement runtime starts from the Fast the session has now, not the one it opened with. */
-  private rememberFastMode(enabled: boolean): void {
-    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: enabled };
-  }
-
-  /** The option patch when the runtime's fast mode is not what `given` stands for; unset is off. */
-  private fastModeDifference(given: unknown): Record<string, unknown> {
-    if (!hasOmpFastMode(this.state)) return {};
-    const enabled = this.state.fastModeEnabled === true;
-    return (given ?? false) === enabled ? {} : { fast_mode: enabled };
-  }
-
-  /** How the opened session differs from the options it was given. */
-  readonly openOptionsPatch: Record<string, unknown>;
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
@@ -903,9 +868,11 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("An OMP turn is already active");
     }
 
+    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
+    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -913,10 +880,6 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
-    const payload = await convertPromptInput(prompt, { model: this.state.model });
-    if (this.closed) throw new Error("OMP session is closed");
-    if (this.activeTurnId !== turnId) return { turnId };
-    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
     if (announceTurn) {
@@ -983,9 +946,7 @@ export class OmpAgentSession implements AgentSession {
   ): Promise<SteerResult> {
     if (this.closed || this.activeTurnId !== options.expectedTurnId)
       return { status: "unavailable" };
-    const payload = await convertPromptInput(prompt, { model: this.state.model });
-    if (this.closed || this.activeTurnId !== options.expectedTurnId)
-      return { status: "unavailable" };
+    const payload = convertPromptInput(prompt, { model: this.state.model });
     if (this.parseSlashCommandInput(payload.text)) return { status: "unavailable" };
     const submission = this.rememberClientMessage(options.clientMessageId ?? null, payload.text);
     try {
@@ -1111,7 +1072,7 @@ export class OmpAgentSession implements AgentSession {
         this.pendingPromptResults.clear();
         this.runtimeSession = next;
         this.hostTools = restarted.hostTools;
-        this.installState(state);
+        this.state = state;
         this.currentModeId = modeId;
         this.config.modeId = modeId;
         this.runtimeDead = false;
@@ -1209,27 +1170,6 @@ export class OmpAgentSession implements AgentSession {
     await this.runtimeSession.branch(target);
     await this.refreshState();
     this.activeToolCalls.clear();
-  }
-
-  async canStopRuntime(): Promise<boolean> {
-    if (
-      this.closed ||
-      this.activeTurnId ||
-      this.activeToolCalls.size ||
-      this.pendingExtensionUiRequests.size ||
-      this.pendingClientMessages.length ||
-      this.pendingNoTurnOutputs.length ||
-      this.pendingNoTurnCompletionAbort
-    )
-      return false;
-    const state = await this.runtimeSession.getState();
-    return (
-      state.isSettled === true &&
-      state.hasPendingAsyncWork === false &&
-      !state.isStreaming &&
-      !state.isCompacting &&
-      state.queuedMessageCount === 0
-    );
   }
 
   async close(): Promise<void> {
@@ -1341,10 +1281,10 @@ export class OmpAgentSession implements AgentSession {
     return null;
   }
 
-  async setModel(modelId: string | null): Promise<{ model: string | null }> {
+  async setModel(modelId: string | null): Promise<void> {
     const parsedReference = parseModelReference(modelId);
     if (!parsedReference) {
-      return { model: modelToId(this.state.model) };
+      return;
     }
     if (!parsedReference.provider) {
       throw new Error(`OMP model id must include a provider: ${modelId}`);
@@ -1353,7 +1293,6 @@ export class OmpAgentSession implements AgentSession {
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
     this.config.model = `${model.provider}/${model.id}`;
     await this.refreshState();
-    return { model: modelToId(this.state.model) };
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -2191,7 +2130,8 @@ export class OmpAgentSession implements AgentSession {
     return mapOmpToolDetail(toolCall, result, {
       toolCallId,
       bridgedTool: this.hostTools?.bridge?.tool(toolCall.toolName),
-      mapSubagentDetail: (detail) => this.subagentCardTracker.detailFor(toolCallId, detail),
+      mapSubagentDetail: (detail) =>
+        this.subagentCardTracker.detailFor(toolCallId, detail) ?? detail,
     });
   }
 
@@ -2250,7 +2190,7 @@ export class OmpAgentSession implements AgentSession {
       }
       try {
         const state = await this.runtimeSession.getState();
-        this.installState(state);
+        this.state = state;
         if (this.closed || !this.activeTurnStarted || this.currentTurnIdForEvent() !== turnId) {
           // An interrupt settled this turn while the state check was in flight.
           return;
@@ -2267,22 +2207,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    this.installState(await this.runtimeSession.getState());
-  }
-
-  // The runtime owns Fast: whatever it reports is what the session now runs with, so every state
-  // read from the runtime is installed here and a difference is published once.
-  private installState(state: OmpSessionState): void {
-    const before = this.state.fastModeEnabled;
-    this.state = state;
-    if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
-      this.rememberFastMode(this.state.fastModeEnabled);
-      this.emit({
-        type: "options_changed",
-        provider: this.provider,
-        patch: { fast_mode: this.state.fastModeEnabled },
-      });
-    }
+    this.state = await this.runtimeSession.getState();
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
@@ -2296,6 +2221,7 @@ export class OmpAgentClient implements AgentClient {
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
@@ -2314,6 +2240,7 @@ export class OmpAgentClient implements AgentClient {
     );
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
+    this.subagentCardScheduler = options.subagentCardScheduler;
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
@@ -2350,7 +2277,7 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     state: OmpSessionState,
   ): Promise<OmpSessionState> {
-    const value = config.providerOptions?.fast_mode;
+    const value = config.featureValues?.fast_mode;
     if (typeof value !== "boolean" || !hasOmpFastMode(state) || value === state.fastModeEnabled)
       return state;
     const result = await runtimeSession.setFastMode(value);
@@ -2397,6 +2324,7 @@ export class OmpAgentClient implements AgentClient {
         initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
+        subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
@@ -2468,6 +2396,7 @@ export class OmpAgentClient implements AgentClient {
         initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
+        subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
@@ -2585,8 +2514,8 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
-    return { controls: [], options: config.providerOptions ?? {} };
+  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return [];
   }
 
   async listImportableSessions(

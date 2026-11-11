@@ -40,7 +40,16 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
     cwd: "/repo",
     model: "agent-model",
     thinkingOptionId: "think-hard",
-    options: { "web-search": true, effort: "high" },
+    features: [
+      { type: "toggle", id: "web-search", label: "Web search", value: true },
+      {
+        type: "select",
+        id: "effort",
+        label: "Effort",
+        value: "high",
+        options: [{ id: "high", label: "High" }],
+      },
+    ],
     parentAgentId: null,
     labels: {},
     ...overrides,
@@ -105,7 +114,7 @@ describe("buildDraftAgentSetup", () => {
       modeId: "mode-current",
       model: "agent-model",
       thinkingOptionId: "think-hard",
-      providerOptions: {
+      featureValues: {
         "web-search": true,
         effort: "high",
       },

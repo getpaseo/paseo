@@ -69,7 +69,7 @@ describe("createWorkspaceAgentInBackground", () => {
           modeId: null,
           model: null,
           thinkingOptionId: null,
-          providerOptions: {},
+          featureValues: {},
         },
       });
     });
@@ -89,7 +89,7 @@ describe("createWorkspaceAgentInBackground", () => {
         modeId: null,
         model: null,
         thinkingOptionId: null,
-        providerOptions: {},
+        featureValues: {},
       },
     });
 

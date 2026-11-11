@@ -13,17 +13,6 @@ interface RuntimeEntryKey {
 }
 
 export class WorkspaceScriptRuntimeStore {
-  private readonly listeners = new Set<() => void>();
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-  private changed(): void {
-    for (const listener of this.listeners) listener();
-  }
-
   private readonly entries = new Map<string, ScriptRuntimeEntry>();
   private readonly scriptsByWorkspace = new Map<string, Set<string>>();
 
@@ -42,7 +31,6 @@ export class WorkspaceScriptRuntimeStore {
 
     this.entries.set(entryKey, { ...entry });
     this.addScriptToWorkspaceIndex(workspaceKey, entry.scriptName);
-    this.changed();
   }
 
   remove(key: RuntimeEntryKey): void {
@@ -54,7 +42,6 @@ export class WorkspaceScriptRuntimeStore {
 
     this.entries.delete(entryKey);
     this.removeScriptFromWorkspaceIndex(existing.workspaceId, existing.scriptName);
-    this.changed();
   }
 
   listForWorkspace(workspaceId: string): ScriptRuntimeEntry[] {
@@ -83,7 +70,6 @@ export class WorkspaceScriptRuntimeStore {
       this.entries.delete(this.toEntryKey(entry));
     }
     this.scriptsByWorkspace.delete(this.toWorkspaceKey(workspaceId));
-    this.changed();
   }
 
   isRunning(key: RuntimeEntryKey): boolean {

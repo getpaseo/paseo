@@ -4,10 +4,7 @@ import {
   scoreTextFields,
 } from "@getpaseo/protocol/search/text-match";
 
-type CommandAutocompleteSource = "provider" | "plugin" | "client";
-
 interface CommandAutocompleteEntry {
-  source: CommandAutocompleteSource;
   command: {
     name: string;
     aliases?: readonly string[];
@@ -15,14 +12,9 @@ interface CommandAutocompleteEntry {
   };
 }
 
-// The list renders reversed above the input with the first entry selected. Paseo's own actions
-// run at once (`/exit` archives), so an empty query never selects one: they sort farthest from
-// the input, and with nothing else to list the menu waits for a search.
-const EMPTY_QUERY_SOURCE_ORDER: Record<CommandAutocompleteSource, number> = {
-  provider: 0,
-  plugin: 1,
-  client: 2,
-};
+interface InlineSkillCommandEntry extends CommandAutocompleteEntry {
+  source: "provider" | "client";
+}
 
 export type SlashCommandPosition = "start" | "inline";
 
@@ -62,11 +54,7 @@ export function filterAndRankCommandAutocompleteEntries<TEntry extends CommandAu
 ): TEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) {
-    if (entries.every((entry) => entry.source === "client")) return [];
-    // Hermes has no `toSorted`.
-    return [...entries].sort(
-      (a, b) => EMPTY_QUERY_SOURCE_ORDER[a.source] - EMPTY_QUERY_SOURCE_ORDER[b.source],
-    );
+    return [...entries];
   }
 
   const scoredEntries: ScoredCommandAutocompleteEntry<TEntry>[] = [];
@@ -88,7 +76,7 @@ export function filterAndRankCommandAutocompleteEntries<TEntry extends CommandAu
   return scoredEntries.map((scored) => scored.entry);
 }
 
-export function filterInlineSkillCommandEntries<TEntry extends CommandAutocompleteEntry>(
+export function filterInlineSkillCommandEntries<TEntry extends InlineSkillCommandEntry>(
   entries: readonly TEntry[],
 ): TEntry[] {
   return entries.filter((entry) => entry.source === "provider" && entry.command.kind === "skill");

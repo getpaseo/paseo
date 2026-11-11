@@ -41,44 +41,14 @@ function HeadingAnchor({ version }: { version: string }) {
   );
 }
 
-/**
- * A release that has highlights shows only them; its sections, the full record, open on request.
- * A release without highlights shows its sections, since nothing stands in for them.
- */
-function ReleaseNotes({ release }: { release: ChangelogRelease }) {
-  const { t } = useTranslation();
-  if (!release.highlights) {
-    return <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>;
-  }
-  return (
-    <>
-      <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
-      {release.sections ? (
-        <details className="changelog-all-changes">
-          <summary className="changelog-all-changes-summary">
-            <span className="changelog-all-changes-show">{t("changelog.showAllChanges")}</span>
-            <span className="changelog-all-changes-hide">{t("changelog.hideAllChanges")}</span>
-          </summary>
-          <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
-        </details>
-      ) : null}
-    </>
-  );
-}
-
 function PatchRelease({ release }: { release: ChangelogRelease }) {
   const { t } = useTranslation();
   const locale = useLocale();
   return (
-    <section
-      className="changelog-patch"
-      aria-labelledby={`${releaseAnchor(release.version)}-title`}
-    >
+    <section className="changelog-patch">
       <div id={releaseAnchor(release.version)} className="changelog-patch-heading">
         <HeadingAnchor version={release.version} />
-        <h3 id={`${releaseAnchor(release.version)}-title`} className="changelog-patch-title">
-          {release.version}
-        </h3>
+        <h3 className="changelog-patch-title">{release.version}</h3>
         <time dateTime={release.date} className="changelog-release-date">
           {formatDate(release.date, locale, "long")}
         </time>
@@ -88,7 +58,7 @@ function PatchRelease({ release }: { release: ChangelogRelease }) {
           contentLocale={release.locale}
           message={t("changelog.untranslatedRelease")}
         />
-        <ReleaseNotes release={release} />
+        <ReactMarkdown components={patchMarkdownComponents}>{release.markdown}</ReactMarkdown>
       </div>
     </section>
   );

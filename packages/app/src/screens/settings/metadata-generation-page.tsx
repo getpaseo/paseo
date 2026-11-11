@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -89,7 +90,12 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     [snapshot],
   );
   const docsLink = useMemo(
-    () => ({ href: METADATA_GENERATION_DOCS_URL, label: t("settings.metadataGeneration.docs") }),
+    () => (
+      <ExternalLink
+        href={METADATA_GENERATION_DOCS_URL}
+        label={t("settings.metadataGeneration.docs")}
+      />
+    ),
     [t],
   );
 
@@ -105,7 +111,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     <SettingsSection
       title={t("settings.metadataGeneration.title")}
       info={t("settings.metadataGeneration.description")}
-      link={docsLink}
+      trailing={docsLink}
       testID="metadata-generation-settings"
     >
       <View style={settingsStyles.card}>
@@ -124,6 +130,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
             options={modeOptions}
             value={mode}
             onValueChange={handleModeChange}
+            size="sm"
             testID="metadata-generation-mode"
           />
         </View>

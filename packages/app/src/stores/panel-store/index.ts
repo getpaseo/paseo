@@ -5,7 +5,6 @@ import {
   clampTreeRailWidth,
   clampSidebarWidth,
   DEFAULT_TREE_RAIL_WIDTH,
-  dropOverlayAgentList,
   DEFAULT_SIDEBAR_WIDTH,
   MAX_TREE_RAIL_WIDTH,
   MAX_SIDEBAR_WIDTH,
@@ -16,11 +15,9 @@ import {
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
   setMobilePanelTarget,
-  reconcileMobilePanel,
   type DesktopSidebarState,
   type MobilePanelView,
   type MobilePanelSelection,
-  type PanelLayout,
   type PanelLayoutInput,
   type SortOption,
 } from "./state";
@@ -28,10 +25,8 @@ import { isWeb } from "@/constants/platform";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 export type {
   DesktopSidebarState,
-  LeftSidebarPresentation,
   MobilePanelView,
   MobilePanelSelection,
-  PanelLayout,
   PanelLayoutInput,
   SortOption,
 } from "./state";
@@ -85,7 +80,6 @@ export interface PanelState {
   openAgentListForLayout: (input: PanelLayoutInput) => void;
   closeAgentListForLayout: (input: PanelLayoutInput) => void;
   toggleAgentListForLayout: (input: PanelLayoutInput) => void;
-  applyPanelLayout: (layout: PanelLayout) => void;
 
   // File explorer settings actions
   setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
@@ -106,13 +100,6 @@ function setMobilePanelTargetPatch(
 ): PanelState | Pick<PanelState, "mobilePanel"> {
   const mobilePanel = setMobilePanelTarget(state.mobilePanel, target);
   return mobilePanel === state.mobilePanel ? state : { mobilePanel };
-}
-
-function dockAgentListPatch(state: PanelState): Pick<PanelState, "desktop" | "mobilePanel"> {
-  return {
-    desktop: { ...state.desktop, agentListOpen: true },
-    mobilePanel: dropOverlayAgentList(state.mobilePanel),
-  };
 }
 
 export const usePanelStore = create<PanelState>()(
@@ -164,7 +151,12 @@ export const usePanelStore = create<PanelState>()(
         ),
 
       openDesktopAgentList: () =>
-        set((state) => (state.desktop.agentListOpen ? state : dockAgentListPatch(state))),
+        set((state) => {
+          if (state.desktop.agentListOpen) {
+            return state;
+          }
+          return { desktop: { ...state.desktop, agentListOpen: true } };
+        }),
 
       closeDesktopAgentList: () =>
         set((state) => {
@@ -175,18 +167,18 @@ export const usePanelStore = create<PanelState>()(
         }),
 
       toggleDesktopAgentList: () =>
-        set((state) =>
-          state.desktop.agentListOpen
-            ? { desktop: { ...state.desktop, agentListOpen: false } }
-            : dockAgentListPatch(state),
-        ),
+        set((state) => ({
+          desktop: { ...state.desktop, agentListOpen: !state.desktop.agentListOpen },
+        })),
 
       openAgentListForLayout: ({ isCompact }) =>
         set((state) => {
           if (isCompact) {
             return setMobilePanelTargetPatch(state, "agent-list");
           }
-          return state.desktop.agentListOpen ? state : dockAgentListPatch(state);
+          return state.desktop.agentListOpen
+            ? state
+            : { desktop: { ...state.desktop, agentListOpen: true } };
         }),
 
       closeAgentListForLayout: ({ isCompact }) =>
@@ -207,15 +199,9 @@ export const usePanelStore = create<PanelState>()(
               state.mobilePanel.target === "agent-list" ? "agent" : "agent-list",
             );
           }
-          return state.desktop.agentListOpen
-            ? { desktop: { ...state.desktop, agentListOpen: false } }
-            : dockAgentListPatch(state);
-        }),
-
-      applyPanelLayout: (layout) =>
-        set((state) => {
-          const mobilePanel = reconcileMobilePanel(state.mobilePanel, layout);
-          return mobilePanel === state.mobilePanel ? state : { mobilePanel };
+          return {
+            desktop: { ...state.desktop, agentListOpen: !state.desktop.agentListOpen },
+          };
         }),
 
       setExpandedPathsForWorkspace: (workspaceKey, paths) =>

@@ -13,8 +13,12 @@ import path from "node:path";
 import pino from "pino";
 import { describe, expect, onTestFinished, test } from "vitest";
 
-import { LocalSpeechModelLibrary } from "./model-library.js";
-import { getLocalSpeechModelDir, listLocalSpeechModels } from "./models.js";
+import {
+  ensureLocalSpeechModels,
+  getLocalSpeechModelDir,
+  listLocalSpeechModels,
+  listMissingLocalSpeechModels,
+} from "./models.js";
 
 const logger = pino({ level: "silent" });
 const modelId = "parakeet-tdt-0.6b-v2-int8";
@@ -51,31 +55,16 @@ describe("local speech models", () => {
     const encoder = path.join(modelDir, spec.requiredFiles[0]);
     truncateSync(encoder, 1_000);
 
-    const library = new LocalSpeechModelLibrary(modelsDir, logger);
-    expect(await library.listMissing([modelId])).toEqual([modelId]);
+    expect(await listMissingLocalSpeechModels({ modelsDir, modelIds: [modelId] })).toEqual([
+      modelId,
+    ]);
 
-    await library.download(modelId);
+    await ensureLocalSpeechModels({ modelsDir, modelIds: [modelId], logger });
 
     expect(readFileSync(encoder, "utf8")).toBe(
       `complete ${spec.requiredFiles[0]}`.padEnd(64_000, "."),
     );
     expect(existsSync(archive)).toBe(false);
-    expect(await library.listMissing([modelId])).toEqual([]);
-  });
-
-  test("lists install state and deletes an installed model", async () => {
-    const { modelsDir } = setupModelsDirWithArchive();
-    const library = new LocalSpeechModelLibrary(modelsDir, logger);
-    const stateOf = async () =>
-      (await library.list()).find((entry) => entry.spec.id === modelId)?.state;
-
-    expect(await stateOf()).toEqual({ status: "not_installed" });
-    await library.download(modelId);
-    expect(await stateOf()).toEqual({ status: "installed" });
-
-    await library.delete(modelId);
-
-    expect(await stateOf()).toEqual({ status: "not_installed" });
-    expect(existsSync(getLocalSpeechModelDir(modelsDir, modelId))).toBe(false);
+    expect(await listMissingLocalSpeechModels({ modelsDir, modelIds: [modelId] })).toEqual([]);
   });
 });

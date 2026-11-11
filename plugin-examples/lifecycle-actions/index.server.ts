@@ -2,7 +2,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText, shellCommand } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
-  server.addHook("workspace.create.before", async ({ request }) => {
+  server.before("workspace.create", ({ request }) => {
     if (request.title === "Isolated lifecycle example" && request.source.kind === "directory") {
       return {
         ...request,
@@ -17,9 +17,8 @@ export default function contribute(server: PluginServerContext) {
     return request;
   });
 
-  server.addHook("agent.turn.after", async (event, context) => {
-    // A background agent reports to the agent that created it, which decides whether to retry.
-    if (event.outcome.kind === "canceled" || event.agent.background) {
+  server.on("agent.turn_ended", async (event, context) => {
+    if (event.outcome.kind === "canceled") {
       return;
     }
     const agent = context.paseo.agents.ref(event.agent.id);
@@ -31,7 +30,7 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.addHook("agent.permission.before", async (event, context) => {
+  server.on("agent.permission_requested", async (event, context) => {
     const command = shellCommand(event.request);
     if (command === null) {
       return;
@@ -57,7 +56,7 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.addHook("agent.create.before", async ({ request }) => {
+  server.before("agent.create", ({ request }) => {
     return {
       ...request,
       env: {
@@ -67,7 +66,7 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
-  server.addHook("agent.create.before", async ({ request }) => {
+  server.before("agent.create", ({ request }) => {
     if (request.config.provider === "codex") {
       return {
         ...request,
@@ -83,7 +82,7 @@ export default function contribute(server: PluginServerContext) {
     return request;
   });
 
-  server.addHook("agent.open.before", async ({ request }) => {
+  server.before("agent.session_open", ({ request }) => {
     return {
       ...request,
       env: {

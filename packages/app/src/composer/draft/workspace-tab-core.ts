@@ -1,5 +1,4 @@
 import { resolveSubmissionReadiness } from "@/provider-selection/provider-selection";
-import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export interface WorkspaceDraftAutoSubmitConfig {
   provider: string;
@@ -50,14 +49,4 @@ export function validateDraftSubmission(input: {
     isConnected,
   });
   return readiness.ok ? null : (readiness.reason ?? null);
-}
-
-export function resolveDraftWorkingDirectory(input: {
-  workspaceDirectory: string | null;
-  initialSetup: WorkspaceDraftTabSetup | null;
-}): string | null {
-  if (input.initialSetup) {
-    return input.initialSetup.cwd;
-  }
-  return input.workspaceDirectory;
 }

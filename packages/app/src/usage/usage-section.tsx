@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import type { UsageDisplay } from "./display";
-import { useUsageSetting } from "./setting";
 import { UsageControls } from "./controls";
 import { UsageList } from "./list";
 import type { UsageView } from "./types";
@@ -28,8 +27,8 @@ export function UsageSection({
   testID?: string;
 }) {
   const trailing = useMemo(
-    () => <UsageControls serverId={serverId} view={view} onRefresh={onRefresh} />,
-    [onRefresh, view, serverId],
+    () => <UsageControls view={view} onRefresh={onRefresh} />,
+    [onRefresh, view],
   );
 
   return (
@@ -52,15 +51,6 @@ export function UsageBody({
   onRefresh: () => void;
 }) {
   const { t } = useTranslation();
-  const setting = useUsageSetting(serverId);
-  if (view.kind === "off")
-    return (
-      <View>
-        <UsageMessage text={view.message} />
-        {setting.error ? <Alert variant="error" description={setting.error.message} /> : null}
-        <Button onPress={setting.turnOn}>{t("providerUsage.turnOn")}</Button>
-      </View>
-    );
   if (view.kind === "unavailable") {
     return <UsageMessage text={view.message} />;
   }
@@ -77,7 +67,7 @@ export function UsageBody({
         title={t("providerUsage.errorTitle")}
         description={view.message}
       >
-        <Button variant="outline" onPress={onRefresh}>
+        <Button variant="outline" size="sm" onPress={onRefresh}>
           {t("providerUsage.retry")}
         </Button>
       </Alert>

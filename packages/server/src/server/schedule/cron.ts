@@ -1,7 +1,4 @@
-import {
-  parseCronExpression,
-  validateCronExpression,
-} from "@getpaseo/protocol/schedule/cron-expression";
+import { parseCronExpression } from "@getpaseo/protocol/schedule/cron-expression";
 import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
 
 interface CronDateParts {
@@ -81,10 +78,7 @@ function createCronDatePartsReader(timeZone: string | undefined): (date: Date) =
 
 export function validateScheduleCadence(cadence: ScheduleCadence): void {
   if (cadence.type === "cron") {
-    const error = validateCronExpression(cadence.expression);
-    if (error) {
-      throw new Error(error);
-    }
+    parseCronExpression(cadence.expression);
     if (cadence.timezone !== undefined) {
       assertValidTimeZone(cadence.timezone);
     }
@@ -99,24 +93,19 @@ export function computeNextRunAt(cadence: ScheduleCadence, after: Date): Date {
   }
 
   const cron = parseCronExpression(cadence.expression);
-  const hasWildcardDay = cron.dayOfMonth.isWildcard || cron.dayOfWeek.isWildcard;
   const readDateParts = createCronDatePartsReader(cadence.timezone);
   const limit = 366 * 24 * 60;
   let cursor = startOfNextMinute(after);
 
   for (let index = 0; index < limit; index += 1) {
     const { minute, hour, dayOfMonth, month, dayOfWeek } = readDateParts(cursor);
-    const dayOfMonthMatches = cron.dayOfMonth.matches(dayOfMonth);
-    const dayOfWeekMatches = cron.dayOfWeek.matches(dayOfWeek);
-    const bothDaysMatch = dayOfMonthMatches && dayOfWeekMatches;
-    const eitherDayMatches = dayOfMonthMatches || dayOfWeekMatches;
-    const dayMatches = hasWildcardDay ? bothDaysMatch : eitherDayMatches;
 
     if (
       cron.minute.matches(minute) &&
       cron.hour.matches(hour) &&
+      cron.dayOfMonth.matches(dayOfMonth) &&
       cron.month.matches(month) &&
-      dayMatches
+      cron.dayOfWeek.matches(dayOfWeek)
     ) {
       return cursor;
     }

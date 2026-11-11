@@ -161,12 +161,7 @@ async function createWorkspaceJourney() {
   };
 }
 
-async function createUnobservedWorkspace(journeyOptions?: {
-  archiveBarrier?: Promise<void>;
-  changeBeforeArchiveRead?: boolean;
-}) {
-  const { archiveBarrier, changeBeforeArchiveRead: shouldChange = false } = journeyOptions ?? {};
-  let changeBeforeArchiveRead = shouldChange;
+async function createUnobservedWorkspace(archiveBarrier?: Promise<void>) {
   const { repoDir, paseoHome, worktree } = await createWorkspaceFiles();
   const cwd = worktree.worktreePath;
   run(repoDir, ["remote", "add", "origin", "https://github.com/acme/repo.git"]);
@@ -178,10 +173,8 @@ async function createUnobservedWorkspace(journeyOptions?: {
     runner: async () => ({ stdout: "", stderr: "" }),
   });
   let observation: PullRequestObservation | null = null;
-  let remoteHeadSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
   const reads: Array<string | undefined> = [];
   const archives: string[] = [];
-  let archiveDecisions = 0;
   let active = true;
   const service = new WorkspaceGitServiceImpl({
     logger,
@@ -193,7 +186,6 @@ async function createUnobservedWorkspace(journeyOptions?: {
         return {
           status: observation && {
             ...observation,
-            headSha: remoteHeadSha,
             title: observation.headRefName,
             baseRefName: "main",
             isMerged: observation.state === "merged",
@@ -210,29 +202,15 @@ async function createUnobservedWorkspace(journeyOptions?: {
     logger,
     paseoHome,
     daemonConfigStore: { get: () => ({ autoArchiveAfterMerge: true }) },
-    workspaceGitService: {
-      onSnapshotUpdated: service.onSnapshotUpdated.bind(service),
-      getSnapshot: async (
-        snapshotCwd: string,
-        readOptions: { force: true; afterInFlight?: boolean; reason: string },
-      ) => {
-        if (changeBeforeArchiveRead && readOptions.reason === "auto-archive-on-merge") {
-          changeBeforeArchiveRead = false;
-          writeFileSync(path.join(cwd, "README.md"), "changed before archive\n");
-          run(cwd, ["add", "README.md"]);
-          run(cwd, ["-c", "commit.gpgsign=false", "commit", "-m", "new commit"]);
-        }
-        return service.getSnapshot(snapshotCwd, readOptions);
-      },
-    },
+    workspaceGitService: service,
     getAutoArchivedChangeRequestUrl: async () => null,
     listActiveWorkspaces: async () =>
       active ? [{ workspaceId: "workspace-under-test", cwd, kind: "worktree" }] : [],
   } as unknown as AutoArchiveOnMergeOptions;
   setupAutoArchiveOnMerge(options, {
     resolvePath: path.resolve,
-    archiveIfSafe: async (input) => {
-      await archiveIfSafe({
+    archiveIfSafe: async (input) =>
+      archiveIfSafe({
         ...input,
         deps: {
           isPaseoOwnedWorktreeCwd,
@@ -249,19 +227,13 @@ async function createUnobservedWorkspace(journeyOptions?: {
             };
           },
         },
-      });
-      archiveDecisions++;
-    },
+      }),
   });
   return {
     archives,
-    archiveDecisions: () => archiveDecisions,
     reads,
     metrics: () => service.getMetrics(),
     isActive: () => active,
-    advanceRemoteHead: () => {
-      remoteHeadSha = "a".repeat(40);
-    },
     makeDirty: () => writeFileSync(path.join(cwd, "README.md"), "uncommitted work\n"),
     commitUnpushed: () => {
       writeFileSync(path.join(cwd, "README.md"), "unpushed work\n");
@@ -298,33 +270,12 @@ afterEach(async () => {
 });
 
 describe("workspace auto-archive behavior", () => {
-  test("rechecks checkout changes made after the merge notification", async () => {
-    const workspace = await createUnobservedWorkspace({ changeBeforeArchiveRead: true });
-    await workspace.observe("open");
-    await workspace.observe("merged");
-    await vi.waitFor(() => expect(workspace.archiveDecisions()).toBe(1));
-    expect(workspace.archives).toEqual([]);
-    expect(workspace.isActive()).toBe(true);
-  });
-
-  test("keeps a merged PR visible and the workspace active when its remote head advances", async () => {
-    const workspace = await createUnobservedWorkspace();
-    const open = await workspace.observe("open");
-    workspace.advanceRemoteHead();
-    const merged = await workspace.observe("merged");
-    await vi.waitFor(() => expect(workspace.archiveDecisions()).toBe(1));
-    expect(merged.forge.pullRequest?.url).toBe(open.forge.pullRequest?.url);
-    expect(merged.forge.pullRequest?.headSha).not.toBe(merged.git.headSha);
-    expect(workspace.isActive()).toBe(true);
-    expect(workspace.archives).toEqual([]);
-  });
-
   test("archives a clean owned workspace on an unobserved open-to-merged transition only once", async () => {
     let releaseArchive!: () => void;
     const archiveBarrier = new Promise<void>((resolve) => {
       releaseArchive = resolve;
     });
-    const workspace = await createUnobservedWorkspace({ archiveBarrier });
+    const workspace = await createUnobservedWorkspace(archiveBarrier);
     try {
       await workspace.observe("open");
       expect(workspace.archives).toEqual([]);
@@ -341,10 +292,10 @@ describe("workspace auto-archive behavior", () => {
 
       expect(workspace.metrics().workspaceListenerCount).toBe(0);
       expect(workspace.archives).toEqual(["workspace-under-test"]);
+      // Confirmation reads the completed snapshot cache; it does not shell out again.
       expect(workspace.reads).toEqual([
         "workspace-journey",
         "workspace-journey",
-        "auto-archive-on-merge",
         "workspace-journey",
       ]);
     } finally {

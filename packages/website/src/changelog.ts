@@ -5,11 +5,8 @@ import { DEFAULT_LOCALE, type Locale, localizePath } from "~/i18n";
 export interface ChangelogRelease {
   version: string;
   date: string;
-  /** Markdown before the first `###` section; empty when the release opens with a section. */
-  highlights: string;
-  /** Markdown from the first `###` section to the end of the release; the full record. */
-  sections: string;
-  /** The language of the notes; English when the release has no translation yet. */
+  markdown: string;
+  /** The language of `markdown`; English when the release has no translation yet. */
   locale: Locale;
 }
 
@@ -18,12 +15,7 @@ export interface ChangelogReleaseGroup {
   releases: ChangelogRelease[];
 }
 
-// The app's What's new sheet and the release scripts parse the same file with their own code.
-// `scripts/test-support/changelog-structure.json` holds the cases all three must split the same
-// way; a change to the structure rules starts there.
 const releaseHeadingPattern = /^## (.+?) - (\d{4}-\d{2}-\d{2})$/;
-const sectionHeadingPattern = /^ {0,3}###(?:[ \t]|$)/;
-const fencePattern = /^\s*(`{3,}|~{3,})/;
 
 export function releaseAnchor(version: string): string {
   return `release-${version}`;
@@ -33,31 +25,13 @@ function minorVersion(version: string): string {
   return version.split(".").slice(0, 2).join(".");
 }
 
-interface ReleaseDraft {
-  version: string;
-  date: string;
-  highlights: string[];
-  sections: string[];
-}
-
 export function parseChangelog(markdown: string, locale: Locale): ChangelogRelease[] {
-  const releases: ReleaseDraft[] = [];
+  const releases: ChangelogRelease[] = [];
   const versions = new Set<string>();
-  let currentRelease: ReleaseDraft | null = null;
-  // A `##` or `###` inside a fenced code block is an example, so it starts nothing.
-  let fence: string | null = null;
+  let currentRelease: ChangelogRelease | null = null;
 
-  for (const line of markdown.split(/\r?\n/)) {
-    const fenceEdge = line.match(fencePattern)?.[1];
-    if (fenceEdge) {
-      if (!fence) {
-        fence = fenceEdge;
-      } else if (fenceEdge[0] === fence[0] && fenceEdge.length >= fence.length) {
-        fence = null;
-      }
-    }
-
-    const heading = fence ? null : line.match(releaseHeadingPattern);
+  for (const line of markdown.split("\n")) {
+    const heading = line.match(releaseHeadingPattern);
     if (heading) {
       const version = heading[1];
       if (versions.has(version)) {
@@ -66,35 +40,20 @@ export function parseChangelog(markdown: string, locale: Locale): ChangelogRelea
       versions.add(version);
 
       if (currentRelease) releases.push(currentRelease);
-      currentRelease = { version, date: heading[2], highlights: [], sections: [] };
+      currentRelease = {
+        version,
+        date: heading[2],
+        markdown: "",
+        locale,
+      };
       continue;
     }
 
-    if (!currentRelease) continue;
-    const startsSection = !fence && sectionHeadingPattern.test(line);
-    if (currentRelease.sections.length > 0 || startsSection) {
-      currentRelease.sections.push(line);
-    } else {
-      currentRelease.highlights.push(line);
-    }
+    if (currentRelease) currentRelease.markdown += `${line}\n`;
   }
 
   if (currentRelease) releases.push(currentRelease);
-  return releases.map((release) => ({
-    version: release.version,
-    date: release.date,
-    highlights: joinWithoutBlankEdges(release.highlights),
-    sections: joinWithoutBlankEdges(release.sections),
-    locale,
-  }));
-}
-
-function joinWithoutBlankEdges(lines: string[]): string {
-  let start = 0;
-  let end = lines.length;
-  while (start < end && lines[start].trim() === "") start += 1;
-  while (end > start && lines[end - 1].trim() === "") end -= 1;
-  return lines.slice(start, end).join("\n");
+  return releases;
 }
 
 /**

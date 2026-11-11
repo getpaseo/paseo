@@ -103,6 +103,7 @@ export function AgentProfileRow({
       <View style={styles.rowActions}>
         <Button
           variant="ghost"
+          size="sm"
           leftIcon={moveUpIcon}
           onPress={handleMoveUp}
           disabled={isFirst}
@@ -111,6 +112,7 @@ export function AgentProfileRow({
         />
         <Button
           variant="ghost"
+          size="sm"
           leftIcon={moveDownIcon}
           onPress={handleMoveDown}
           disabled={isLast}
@@ -119,6 +121,7 @@ export function AgentProfileRow({
         />
         <Button
           variant="ghost"
+          size="sm"
           leftIcon={editIcon}
           onPress={handleEdit}
           accessibilityLabel={t("settings.host.agentProfiles.editProfile")}
@@ -126,6 +129,7 @@ export function AgentProfileRow({
         />
         <Button
           variant="ghost"
+          size="sm"
           leftIcon={removeIcon}
           onPress={handleRemove}
           accessibilityLabel={t("settings.host.agentProfiles.remove")}

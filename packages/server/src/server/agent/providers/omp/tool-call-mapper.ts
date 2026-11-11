@@ -179,6 +179,7 @@ const OPAQUE_TEXT_TOOLS = new Set([
 function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail {
   const argRecord = isRecord(args) ? args : {};
   const firstTask = Array.isArray(argRecord.tasks) ? argRecord.tasks.find(isRecord) : undefined;
+  const resultText = extractTextFromToolResult(result);
   const childSessionId = readChildSessionId(result);
   return {
     type: "sub_agent",
@@ -199,8 +200,7 @@ function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail 
       argRecord.assignment,
     ),
     ...(childSessionId ? { childSessionId } : {}),
-    // COMPAT(subagent-log): remove after 2027-04-30.
-    log: "",
+    log: resultText?.trim() ?? "",
   };
 }
 

@@ -57,8 +57,7 @@ export const tintinwebPiSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: title,
         description,
-        // COMPAT(subagent-log): remove after 2027-04-30.
-        log: "",
+        log: extractTextFromToolResult(call.result)?.trim() ?? "",
       };
       if (call.status === "running")
         return {
@@ -85,10 +84,6 @@ export const tintinwebPiSubagents: PiExtension = {
       const file = outputFileFromToolResult(call.result);
       const childSessions = file && !readSessions.has(file) ? [{ id: call.callId, file }] : [];
       if (file) readSessions.add(file);
-      const childStatus = status(details.data.status);
-      // A foreground child has no session file; its answer is the tool result.
-      const answer =
-        !file && childStatus !== "running" ? extractTextFromToolResult(call.result)?.trim() : "";
       return {
         detail,
         subagents: [
@@ -98,17 +93,8 @@ export const tintinwebPiSubagents: PiExtension = {
             title,
             description,
             toolCallId: call.callId,
-            status: childStatus,
+            status: status(details.data.status),
           },
-          ...(answer
-            ? [
-                {
-                  type: "timeline" as const,
-                  id: call.callId,
-                  item: { type: "assistant_message" as const, text: answer },
-                },
-              ]
-            : []),
         ],
         childSessions,
       };
@@ -124,8 +110,7 @@ export const tintinwebPiSubagents: PiExtension = {
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
-        // COMPAT(subagent-log): remove after 2027-04-30.
-        log: "",
+        log: extractTextFromToolResult(call.result)?.trim() ?? "",
       };
       if (call.status === "running" || !details.success) return { detail };
       return {

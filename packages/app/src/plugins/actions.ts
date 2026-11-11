@@ -1,5 +1,3 @@
-import { pluginComposersSource } from "./composer-items/source";
-import { getPluginClientApi } from "./client-state/api";
 import { callPluginRpc } from "@getpaseo/plugin/client/host";
 import type {
   PluginAgentCommandContext,
@@ -34,7 +32,7 @@ export function createPluginCapabilities(
     navigation.openSurface(plugin.id, screenId, params);
   }
   return {
-    paseo: getPluginClientApi(plugin).paseo,
+    paseo: plugin.paseo,
     rpc: (contract, input) => callPluginRpc(contract, plugin.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))
@@ -42,7 +40,6 @@ export function createPluginCapabilities(
       navigation.openSettings(plugin.id, screenId);
     },
     openScreen,
-    composers: (selector) => pluginComposersSource(plugin).resolve(selector),
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     openSurface: (screenId) => openScreen({ screenId }),
   };
