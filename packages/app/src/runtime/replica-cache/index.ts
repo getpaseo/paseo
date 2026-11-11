@@ -800,20 +800,27 @@ function pendingRowKey(key: ReplicaRowKey): string {
 }
 
 // Budget accounting runs over every stored row of a touched host on each persist. Rows are
-// immutable once stored, so their size is computed once. The count itself avoids the JS Buffer
-// polyfill, which materialises the whole byte array just to measure it.
+// immutable once stored, so their size is computed once. A streaming timeline is a new row on
+// every persist, and Hermes interprets a per-character JS loop at many times the cost of
+// serializing the row, so the count uses the engine's TextEncoder (a Hermes built-in; browsers
+// and Electron ship their own). Encoding a chunk at a time into one scratch buffer avoids a
+// payload-sized byte array per persist; the chunk slices are short-lived JS heap strings.
+// Payloads come from JSON.stringify, which escapes lone surrogates, so every count is exact.
+const UTF8_COUNT_CHUNK = 16_384;
+const utf8Encoder = new TextEncoder();
+// A UTF-16 code unit encodes to at most 3 bytes, so a chunk always fits.
+const utf8Scratch = new Uint8Array(UTF8_COUNT_CHUNK * 3);
 const rowBytesCache = new WeakMap<ReplicaRow, number>();
 
 function utf8ByteLength(text: string): number {
   let bytes = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    if (code < 0x80) bytes += 1;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) {
-      bytes += 4;
-      index += 1;
-    } else bytes += 3;
+  for (let start = 0; start < text.length; ) {
+    let end = Math.min(start + UTF8_COUNT_CHUNK, text.length);
+    // Keep a surrogate pair in one chunk; a split pair would encode as two replacement characters.
+    const last = text.charCodeAt(end - 1);
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    bytes += utf8Encoder.encodeInto(text.slice(start, end), utf8Scratch).written;
+    start = end;
   }
   return bytes;
 }
