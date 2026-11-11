@@ -624,7 +624,9 @@ function handleHttpRequest(
 }
 
 function toHeaderRecord(rawHeaders: string[]): Record<string, string | string[]> {
-  const record: Record<string, string | string[]> = {};
+  // Header names come from the page: on a plain object, "constructor" would merge with the
+  // inherited function and "__proto__" would replace the prototype instead of being forwarded.
+  const record: Record<string, string | string[]> = Object.create(null);
   for (let index = 0; index + 1 < rawHeaders.length; index += 2) {
     const name = rawHeaders[index];
     const value = rawHeaders[index + 1];

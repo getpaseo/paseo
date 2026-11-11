@@ -583,6 +583,28 @@ describe("local browser proxy: plain HTTP", () => {
     expect(seen[0].headers.host).toBe(`127.0.0.1:${listenPort(origin)}`);
   });
 
+  test("forwards headers named like Object properties exactly as sent", async () => {
+    const received: string[] = [];
+    const origin = await startOrigin((req, res) => {
+      received.push(...req.rawHeaders);
+      res.end("ok");
+    });
+    const proxy = await startProxy(tcpTunnel());
+
+    const response = await requestThroughProxy({
+      proxyPort: proxy.port,
+      url: `http://127.0.0.1:${listenPort(origin)}/`,
+      headers: { constructor: "c", toString: "t", ["__proto__"]: "p" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const names = new Set(["constructor", "toString", "__proto__"]);
+    const forwarded = received.flatMap((name, index) =>
+      index % 2 === 0 && names.has(name) ? [`${name}: ${received[index + 1]}`] : [],
+    );
+    expect(forwarded).toEqual(["constructor: c", "toString: t", "__proto__: p"]);
+  });
+
   test("requires the credential on every request", async () => {
     const targets: ProxyTarget[] = [];
     const proxy = await startProxy(tcpTunnel({ log: targets }));
