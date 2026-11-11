@@ -500,11 +500,17 @@ async function clone(remote: string, checkoutRoot: string): Promise<void> {
           GIT_CONFIG_VALUE_0: cloneRemote,
         };
   try {
-    await runGitCommand(["clone", "--no-checkout", "--", cloneRemote, checkoutRoot], {
-      cwd: path.dirname(checkoutRoot),
-      envOverlay,
-      timeout: GIT_TIMEOUT_MS,
-    });
+    // A blobless clone keeps every commit and ref for revision lookups, and checkout fetches
+    // only the files of the chosen commit. A full clone of a plugin repository with large
+    // assets in its history can outlast GIT_TIMEOUT_MS on an ordinary connection.
+    await runGitCommand(
+      ["clone", "--no-checkout", "--filter=blob:none", "--", cloneRemote, checkoutRoot],
+      {
+        cwd: path.dirname(checkoutRoot),
+        envOverlay,
+        timeout: GIT_TIMEOUT_MS,
+      },
+    );
   } catch (error) {
     throw redactRemoteError(error, remote);
   }

@@ -84,6 +84,40 @@ describe("managed Git plugin sources", () => {
     });
   }, 30_000);
 
+  it("downloads only the files of the installed commit, not every blob in history", async () => {
+    const repository = await createRepository();
+    // A file that exists only in history, like screenshots a plugin repository later dropped.
+    await writeFile(path.join(repository, "history-only.bin"), "x".repeat(256 * 1024));
+    await commitAll(repository, "add a large asset");
+    const { stdout: historyBlob } = await runGitCommand(["rev-parse", "HEAD:history-only.bin"], {
+      cwd: repository,
+    });
+    await rm(path.join(repository, "history-only.bin"));
+    await commitAll(repository, "drop the asset");
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: repository });
+    await runGitCommand(["config", "uploadpack.allowAnySHA1InWant", "true"], { cwd: repository });
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
+    roots.push(home);
+    const sources = new ManagedPluginSources(home);
+
+    let candidate = await sources.prepareInstall({
+      source: `git:${pathToFileURL(repository).href}`,
+    });
+    candidate = await sources.place("managed-example", candidate);
+
+    expect(await readFile(path.join(candidate.directory, "index.server.ts"), "utf8")).toContain(
+      "export default",
+    );
+    const { stdout: checkoutRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: candidate.directory,
+    });
+    const { stdout: missing } = await runGitCommand(
+      ["rev-list", "--objects", "--all", "--missing=print"],
+      { cwd: checkoutRoot.trim() },
+    );
+    expect(missing.split("\n")).toContain(`?${historyBlob.trim()}`);
+  }, 30_000);
+
   it("offers current default HEAD after installing a tag", async () => {
     const repository = await createRepository();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
