@@ -2251,7 +2251,9 @@ bar and Paseo's workspace actions. `@getpaseo/plugin/client` exports:
 `edge` is `"none"` on every other device, window size, and platform, and setting the behavior there
 does nothing. With the bar off, the status bar moves back to the top, the bar's side inset is
 removed so content takes the full width, and workspace actions return to the header. The choice
-applies to the whole app until it restarts. Restore `"automatic"` in your cleanup.
+is saved on the device and stays in effect across launches. Do not restore `"automatic"` from
+plugin cleanup. The host disposes the plugin when it reconnects, and that reset clears the saved
+choice.
 
 ```ts
 const button = client.addComposerToolbarButton({
