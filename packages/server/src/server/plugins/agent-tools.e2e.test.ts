@@ -683,6 +683,116 @@ test("a busy agent's MCP lists and calls a restarted plugin's tools without reop
   }
 }, 60_000);
 
+async function writePluginSource(h: Awaited<ReturnType<typeof setup>>, id: string, code: string) {
+  await writeFile(path.join(h.directory, id, "index.server.ts"), code);
+}
+
+async function listedToolNames(mcp: Client) {
+  return (await mcp.listTools()).tools.map((tool) => tool.name);
+}
+
+test("an agent MCP request while a plugin is stopped keeps its tools eligible for the restart", async () => {
+  const h = await setup();
+  try {
+    const a = await h.create({ x: "y" });
+    await h.client.disablePlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).not.toContain("plugin_echo");
+    await h.client.enablePlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("plugin_echo");
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+// Each open names its tool after its count. Once armed, a process's first open waits for the gate file.
+const gatedOpenSource = (arm: string, gate: string) => `
+import { existsSync } from "node:fs";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+let opens = 0;
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const open = ++opens;
+    if (open === 1 && existsSync(${JSON.stringify(arm)}))
+      while (!existsSync(${JSON.stringify(gate)})) await new Promise((r) => setTimeout(r, 20));
+    const tool = defineAgentTool({
+      name: "which_open", description: "open " + open,
+      input: z.object({}),
+      async execute() { return { text: "open " + open }; },
+    });
+    return { ...request, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a reopen during a tool replay keeps the reopen's tool definitions in the plugin", async () => {
+  const h = await setup();
+  const arm = path.join(h.directory, "replay-arm");
+  const gate = path.join(h.directory, "replay-gate");
+  try {
+    await h.install("gated", gatedOpenSource(arm, gate));
+    const a = await h.create();
+    await writeFile(arm, "");
+    await h.client.reloadPlugin("gated");
+    // The restarted process counts from zero, so its first open is the replay, held at the gate.
+    const replaying = h.mcp(a.id);
+    const reopening = sendAndFinish(h, a.id, "idle prompt");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await writeFile(gate, "");
+    const mcp = await replaying;
+    await reopening;
+    expect(h.launches).toHaveLength(2);
+    const mcpAfter = await h.mcp(a.id);
+    expect((await mcpAfter.listTools()).tools.find((t) => t.name === "which_open")).toMatchObject({
+      description: "open 2",
+    });
+    expect(await mcpAfter.callTool({ name: "which_open", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "open 2" }],
+    });
+    await mcp.close();
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const nameClashSource = (name: string) =>
+  pluginSource.replace(
+    "tools: [...request.tools, tool]",
+    `tools: [...request.tools, tool, defineAgentTool({ name: ${JSON.stringify(name)}, description: "clash", input: z.object({}), async execute() { return { text: "clash" }; } })]`,
+  );
+
+test.each([
+  ["another plugin's tool", "other_opens"],
+  ["a Paseo tool", "list_agents"],
+])(
+  "a restarted plugin whose tools clash with %s leaves the agent's other tools working",
+  async (_label, name) => {
+    const h = await setup();
+    try {
+      await h.install("other-hook", openCounterSource);
+      const a = await h.create({ x: "y" });
+      await writePluginSource(h, "tools-test", nameClashSource(name));
+      await h.client.reloadPlugin("tools-test");
+      const mcp = await h.mcp(a.id);
+      const names = await listedToolNames(mcp);
+      expect(names).toContain("other_opens");
+      expect(names).toContain("list_agents");
+      expect(names).not.toContain("plugin_echo");
+      expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+        content: [{ type: "text", text: "1" }],
+      });
+      expect(h.daemon.daemon.agentManager.getPluginTools(a.id).map((t) => t.pluginId)).toEqual([
+        "other-hook",
+      ]);
+    } finally {
+      await h.close();
+    }
+  },
+  60_000,
+);
+
 const reloadRpcSource = pluginSource
   .replace("import { z }", 'import { defineRpc } from "@getpaseo/plugin";\nimport { z }')
   .replace(

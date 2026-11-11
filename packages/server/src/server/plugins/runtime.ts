@@ -1,7 +1,11 @@
 import { validateWorktreePath } from "../../utils/worktree-path.js";
 import type { PluginHookPayload } from "@getpaseo/plugin/server";
 import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
-import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
+import type {
+  SessionOpenWireRequest,
+  AttachedAgentTool,
+  ReattachedAgentTools,
+} from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
   ProviderStatusSchema,
@@ -713,25 +717,42 @@ export class PluginRuntime {
   // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
   // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
   // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
+  // A plugin that is stopped or mid-restart is left out of the result, so the caller keeps it eligible for a retry.
   async reattachTools(
     request: SessionOpenWireRequest,
     pluginIds: readonly string[],
-  ): Promise<AttachedAgentTool[]> {
+  ): Promise<ReattachedAgentTools[]> {
     const input: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
-    const attached: AttachedAgentTool[] = [];
+    const replayed: ReattachedAgentTools[] = [];
     for (const pluginId of pluginIds) {
       const loaded = this.plugins.get(pluginId);
-      if (!loaded?.child || !loaded.hooks.includes("agent.open.before")) continue;
-      const output = await this.request(loaded, {
-        type: "hook",
-        requestId: randomUUID(),
-        name: "agent.open.before",
-        input,
-      });
-      const opened = await validateBeforeResult("agent.open.before", input, output);
-      this.collectAgentTools(attached, loaded, opened.tools);
+      if (!loaded) continue;
+      if (!loaded.child || !loaded.hooks.includes("agent.open.before")) {
+        replayed.push({ pluginId, tools: [] });
+        continue;
+      }
+      try {
+        const output = await this.request(loaded, {
+          type: "hook",
+          requestId: randomUUID(),
+          name: "agent.open.before",
+          input,
+        });
+        const opened = await validateBeforeResult("agent.open.before", input, output);
+        const tools: AttachedAgentTool[] = [];
+        this.collectAgentTools(tools, loaded, opened.tools);
+        replayed.push({ pluginId, tools });
+      } catch (error) {
+        // It exited during the replay: retry once it is back.
+        if (this.plugins.get(pluginId) !== loaded) continue;
+        this.logger.warn(
+          { err: error, pluginId, agentId: request.agentId },
+          "Plugin tool reattach failed",
+        );
+        replayed.push({ pluginId, tools: [] });
+      }
     }
-    return attached;
+    return replayed;
   }
 
   detachTools(agentId: string): void {

@@ -1,6 +1,7 @@
 import type {
   AttachedAgentTool,
   PluginAgentToolsRuntime,
+  ReattachedAgentTools,
   SessionOpenWireRequest,
 } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
@@ -1083,19 +1084,51 @@ export class AgentManager {
     request,
     stale,
   }: PluginToolReattach): Promise<void> {
-    let fresh: AttachedAgentTool[];
+    let replayed: ReattachedAgentTools[];
+    let taken: Set<string>;
     try {
-      fresh = await runtime.reattachTools(request, stale);
+      replayed = await runtime.reattachTools(request, stale);
+      taken = await this.takenAgentToolNames(agentId);
     } catch (err) {
       this.logger.warn({ err, agentId, plugins: stale }, "Plugin tool reattach failed");
       return;
     }
-    // A reopen meanwhile attached its own tools.
-    if (this.pluginOpenRequests.get(agentId) !== request) return;
+    if (this.pluginOpenRequests.get(agentId) !== request) {
+      // The session closed during the replay, after its detach went out. A reopen waits for this refresh, so
+      // dropping what the replay attached inside the plugins cannot touch a newer open's tools.
+      runtime.detachTools(agentId);
+      return;
+    }
+    const replayedIds = new Set(replayed.map((entry) => entry.pluginId));
     const kept = (this.attachedPluginTools.get(agentId) ?? []).filter(
-      (tool) => !stale.includes(tool.pluginId),
+      (tool) => !replayedIds.has(tool.pluginId),
     );
-    this.attachedPluginTools.set(agentId, [...kept, ...fresh]);
+    const accepted: AttachedAgentTool[] = [];
+    for (const { pluginId, tools } of replayed) {
+      const conflict = tools.find((tool) => taken.has(tool.name));
+      if (conflict) {
+        // An open with this catalog would fail. Leave the session's other tools working; the reopen reports it.
+        this.logger.warn(
+          { agentId, pluginId, tool: conflict.name },
+          "Reattached plugin tool collides with another agent tool",
+        );
+        continue;
+      }
+      for (const tool of tools) taken.add(tool.name);
+      accepted.push(...tools);
+    }
+    this.attachedPluginTools.set(agentId, [...kept, ...accepted]);
+  }
+
+  /** Names a refreshed plugin tool must not take: Paseo's own tools and the tools still attached from running plugins. */
+  private async takenAgentToolNames(agentId: string): Promise<Set<string>> {
+    const names = new Set(this.getPluginTools(agentId).map((tool) => tool.name));
+    if (this.paseoToolCatalogFactory) {
+      // No policy, so tools a provider disables are still reserved, as at open.
+      const catalog = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
+      for (const name of catalog.tools.keys()) names.add(name);
+    }
+    return names;
   }
 
   private detachPluginTools(agentId: string): void {
@@ -6171,6 +6204,8 @@ export class AgentManager {
       metadata?: AgentMetadata;
     },
   ): Promise<AgentLaunchContext> {
+    // A tool replay still in flight would otherwise attach its definitions inside the plugin after this open's.
+    await this.pluginToolRefreshes.get(agentId);
     // A plugin changing during this open must still make the resulting session stale.
     const generation = this.sessionOpenGeneration;
     this.detachPluginTools(agentId);
