@@ -3407,18 +3407,43 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   /**
-   * Track a provider-reported compaction (`_cognition.ai/compaction`): keep the
-   * turn open from `started` until `completed`/`failed`/`cancelled`, and surface
-   * it on the timeline so the composer shows a compaction marker instead of
-   * appearing idle.
+   * Track a provider-reported compaction (`_cognition.ai/compaction`) for a
+   * manual `/compact` turn: keep the turn open from `started` until
+   * `completed`/`failed`/`cancelled`, and surface it on the timeline so the
+   * composer shows a compaction marker instead of appearing idle.
+   *
+   * Only `/compact` turns are tracked. `devin acp` also emits a
+   * started/completed pair around every tool round (a periodic auto-compaction
+   * check), and the payload carries nothing that separates those from a real
+   * compaction; painting a marker per pair floods the transcript, and a pair
+   * whose terminal status is lost would hold the whole turn open until the
+   * backstop fires. An auto compaction happens inside a turn that is already
+   * open, so it does not need the turn held here.
    */
   private applyCompactionNotice(params: Record<string, unknown>): void {
+    if (!this.turnWaitsForCompaction) {
+      return;
+    }
     const status = typeof params.status === "string" ? params.status : undefined;
     const turnId = this.activeForegroundTurnId ?? undefined;
 
     if (status === "started") {
       if (!turnId && !this.pendingPromptResponse) {
         return;
+      }
+      // Repeated `started` notifications (one per round while the agent keeps
+      // working) share a single marker.
+      if (!this.compactionInFlight && turnId) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "compaction",
+            status: "loading",
+            trigger: "manual",
+          },
+        });
       }
       this.compactionInFlight = true;
       this.clearPendingPromptResponseTimer();
@@ -3427,18 +3452,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.compactionInFlight = false;
         this.finishPendingPromptResponse();
       }, ACP_COMPACTION_WAIT_TIMEOUT_MS);
-      if (turnId) {
-        this.pushEvent({
-          type: "timeline",
-          provider: this.provider,
-          turnId,
-          item: {
-            type: "compaction",
-            status: "loading",
-            trigger: this.turnWaitsForCompaction ? "manual" : "auto",
-          },
-        });
-      }
       return;
     }
 
@@ -3456,7 +3469,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         item: {
           type: "compaction",
           status: "completed",
-          trigger: this.turnWaitsForCompaction ? "manual" : "auto",
+          trigger: "manual",
         },
       });
     }

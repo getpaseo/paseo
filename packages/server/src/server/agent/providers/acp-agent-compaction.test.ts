@@ -79,6 +79,38 @@ describe("ACP background compaction", () => {
     expect(types(events)).toEqual(["turn_completed"]);
   });
 
+  test("compaction notifications around tool rounds are ignored on a plain turn", async () => {
+    const session = createSession();
+    const events = collect(session);
+    const state = beginTurn(session, "turn-tools");
+
+    // `devin acp` emits a started/completed pair around every tool round even
+    // when nothing is being compacted.
+    for (let round = 0; round < 3; round++) {
+      await session.extNotification(COMPACTION_METHOD, { status: "started" });
+      await session.extNotification(COMPACTION_METHOD, { status: "completed" });
+    }
+
+    state.handlePromptResponse({ stopReason: "end_turn" }, "turn-tools");
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(types(events)).toEqual(["turn_completed"]);
+    expect(state.compactionInFlight).toBe(false);
+  });
+
+  test("an unanswered started on a plain turn does not hold the turn", async () => {
+    const session = createSession();
+    const events = collect(session);
+    const state = beginTurn(session, "turn-half-pair");
+
+    await session.extNotification(COMPACTION_METHOD, { status: "started" });
+    state.handlePromptResponse({ stopReason: "end_turn" }, "turn-half-pair");
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(types(events)).toEqual(["turn_completed"]);
+    expect(state.compactionInFlight).toBe(false);
+  });
+
   test("a /compact end_turn waits for the terminal compaction status", async () => {
     const session = createSession();
     const events = collect(session);
@@ -142,10 +174,31 @@ describe("ACP background compaction", () => {
     expect(state.compactionInFlight).toBe(false);
   });
 
+  test("repeated started notifications share one loading marker", async () => {
+    const session = createSession();
+    const events = collect(session);
+    const state = beginTurn(session, "turn-repeat", true);
+
+    await session.extNotification(COMPACTION_METHOD, { status: "started" });
+    await session.extNotification(COMPACTION_METHOD, { status: "started" });
+    await session.extNotification(COMPACTION_METHOD, { status: "started" });
+
+    expect(types(events)).toEqual(["compaction:loading"]);
+
+    state.handlePromptResponse({ stopReason: "end_turn" }, "turn-repeat");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(types(events)).toEqual(["compaction:loading"]);
+
+    await session.extNotification(COMPACTION_METHOD, { status: "completed" });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(types(events)).toEqual(["compaction:loading", "compaction:completed", "turn_completed"]);
+  });
+
   test("a compaction notification without an active turn is ignored", async () => {
     const session = createSession();
     const events = collect(session);
     const state = internals(session);
+    state.turnWaitsForCompaction = true;
 
     await session.extNotification(COMPACTION_METHOD, { status: "started" });
 
