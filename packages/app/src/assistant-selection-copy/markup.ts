@@ -4,6 +4,7 @@ export const MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE = "data-paseo-markdown-list-mar
 export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
+export const MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE = "data-paseo-markdown-fence-source";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
 export const MARKDOWN_COPY_SRC_ATTRIBUTE = "data-paseo-markdown-src";
 export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";

@@ -1,4 +1,6 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
+import { mkdir as makeDirectory, writeFile as writeTextFile } from "node:fs/promises";
+import nodePath from "node:path";
 import { expect, test } from "../support/fixtures";
 import { waitForPermissionPrompt } from "../support/helpers/permissions";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -306,3 +308,187 @@ test("Markdown images show a zoom-in cursor", async ({ page }) => {
     await session.cleanup();
   }
 });
+
+const MERMAID_SOURCE = ["```mermaid", "flowchart LR", "  Start --> Done", "```"].join("\n");
+
+const QUOTE_COPY_MARKDOWN = [
+  "Intro paragraph stays outside the quote.",
+  "",
+  "> First paragraph with **bold** text and [a link](https://example.com/docs).",
+  ">",
+  "> Second paragraph with `inline code`.",
+  ">",
+  "> > Nested quote only.",
+  ">",
+  "> ```ts",
+  "> const quoted = 1;",
+  "> ```",
+  ">",
+  "> ```mermaid",
+  "> flowchart LR",
+  ">   Start --> Done",
+  "> ```",
+  ">",
+  "> Closing paragraph stays inside.",
+  "",
+  "Outro paragraph stays outside.",
+].join("\n");
+
+test("copies quote bodies with nested markdown and no surrounding chat text", async ({
+  page,
+  context,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const platform = process.env.E2E_DESKTOP_RUNTIME === "1" ? "desktop-runtime" : "browser";
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "quote-copy-journey-",
+    title: "Quote copy journey",
+    initialPrompt: "Show quoted markdown.",
+    featureValues: { mockAssistantResponse: QUOTE_COPY_MARKDOWN },
+  });
+  try {
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const message = page.getByTestId("assistant-message");
+    await expect(message).toContainText("Nested quote only.");
+
+    const quotes = message.locator("blockquote");
+    await expect(quotes).toHaveCount(2);
+    const outer = quotes.first();
+    const nested = quotes.nth(1);
+    const outerButton = outer
+      .locator(":scope > div[data-paseo-markdown-ignore='true']")
+      .first()
+      .getByRole("button");
+    const nestedButton = nested
+      .locator(":scope > div[data-paseo-markdown-ignore='true']")
+      .first()
+      .getByRole("button");
+    const codeBlock = outer
+      .locator("[data-paseo-markdown-tag='pre']")
+      .filter({ hasText: "const quoted = 1;" })
+      .first();
+    const codeButton = codeBlock.getByRole("button", { name: "Copy code" });
+    await expect(outerButton).toHaveAccessibleName("Copy quote");
+
+    // Wide web: hidden until hover, then focusable without hover.
+    await expect(outerButton).toHaveCSS("opacity", "0");
+    await outer.hover();
+    await expect(outerButton).toHaveCSS("opacity", "1");
+    await captureQuoteScreenshot(page, testInfo, `${platform}-quote-hover`);
+    await page.mouse.move(0, 0);
+    await expect(outerButton).toHaveCSS("opacity", "0");
+    await outerButton.focus();
+    await expect(outerButton).toBeFocused();
+    await expect(outerButton).toHaveCSS("opacity", "1");
+    await outerButton.blur();
+
+    // Compact layouts keep the control visible without hover.
+    await page.setViewportSize({ width: 480, height: 900 });
+    await expect(outerButton).toHaveCSS("opacity", "1");
+    await captureQuoteScreenshot(page, testInfo, `${platform}-quote-compact`);
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    // The diagram must be visibly rendered before copying the containing quote.
+    const diagram = outer.getByTestId("mermaid-viewport");
+    await expect(diagram).toBeVisible({ timeout: 30_000 });
+    const diagramSvg = diagram.locator("iframe").contentFrame().locator("#diagram svg");
+    await expect(diagramSvg).toBeVisible({ timeout: 30_000 });
+    await expect(diagramSvg).toContainText("Start");
+    await expect(diagramSvg).toContainText("Done");
+    await captureQuoteScreenshot(page, testInfo, `${platform}-quote-diagram`);
+
+    await outer.hover();
+    await outerButton.click();
+    await expect(outerButton).toHaveAccessibleName("Copied");
+    const outerClipboard = await readRichClipboard(page);
+    await captureQuoteScreenshot(page, testInfo, `${platform}-quote-copied`);
+    expect(outerClipboard.plainText).toContain(
+      "First paragraph with **bold** text and [a link](https://example.com/docs).",
+    );
+    expect(outerClipboard.plainText).toContain("Second paragraph with `inline code`.");
+    expect(outerClipboard.plainText).toContain("> Nested quote only.");
+    expect(outerClipboard.plainText).toContain("```ts\nconst quoted = 1;\n```");
+    expect(outerClipboard.plainText).toContain("Closing paragraph stays inside.");
+    expect(outerClipboard.plainText).not.toContain("Intro paragraph");
+    expect(outerClipboard.plainText).not.toContain("Outro paragraph");
+    for (const label of ["View source", "View diagram", "Fullscreen", "Copy quote", "Copy code"]) {
+      expect(outerClipboard.plainText).not.toContain(label);
+    }
+    expect(outerClipboard.html).toContain("<blockquote");
+    expect(outerClipboard.html).toContain("<strong");
+    expect(outerClipboard.html).toContain("<code");
+    expect(outerClipboard.html).not.toContain("Intro paragraph");
+    expect(outerClipboard.html).not.toContain("Outro paragraph");
+    expect(outerClipboard.html).not.toContain("View source");
+    expect(outerClipboard.html).not.toContain("Fullscreen");
+
+    await nested.hover();
+    await expect(nestedButton).toHaveCSS("opacity", "1");
+    await nestedButton.click();
+    await expect(nestedButton).toHaveAccessibleName("Copied");
+    const nestedClipboard = await readRichClipboard(page);
+    expect(nestedClipboard.plainText.trim()).toBe("Nested quote only.");
+    expect(nestedClipboard.plainText).not.toContain("First paragraph");
+
+    await codeBlock.hover();
+    await expect(codeButton).toHaveCSS("opacity", "1");
+    await codeButton.click();
+    await expect.poll(() => readPlainClipboard(page)).toBe("const quoted = 1;");
+
+    // The Mermaid fence keeps its original source before and after the source toggle.
+    expect(outerClipboard.plainText).toContain(MERMAID_SOURCE);
+    expect(outerClipboard.html).toContain("flowchart LR");
+    await diagram.hover();
+    await outer.getByRole("button", { name: "View source" }).last().click();
+    await expect(
+      outer.locator("[data-paseo-markdown-tag='pre']").filter({ hasText: "flowchart LR" }).first(),
+    ).toBeVisible();
+    await captureQuoteScreenshot(page, testInfo, `${platform}-quote-source`);
+    await outer.hover();
+    await outerButton.click();
+    await expect(outerButton).toHaveAccessibleName("Copied");
+    const sourceClipboard = await readRichClipboard(page);
+    expect(sourceClipboard.plainText).toBe(outerClipboard.plainText);
+    expect(sourceClipboard.html).toBe(outerClipboard.html);
+    expect(sourceClipboard.plainText).toContain(MERMAID_SOURCE);
+
+    await testInfo.attach("quote-copy-clipboard", {
+      body: JSON.stringify(
+        { outer: outerClipboard, nested: nestedClipboard, source: sourceClipboard },
+        null,
+        2,
+      ),
+      contentType: "application/json",
+    });
+  } finally {
+    await session.cleanup();
+  }
+});
+
+async function captureQuoteScreenshot(page: Page, testInfo: TestInfo, name: string) {
+  const screenshot = await page.screenshot();
+  await testInfo.attach(name, { body: screenshot, contentType: "image/png" });
+  const directory = process.env.QUOTE_COPY_QA_DIR;
+  if (directory) {
+    await makeDirectory(directory, { recursive: true });
+    await writeTextFile(nodePath.join(directory, `${name}.png`), screenshot);
+  }
+}
+
+async function readPlainClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
+async function readRichClipboard(page: Page): Promise<{ html: string; plainText: string }> {
+  return page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    const item = items[0];
+    if (!item) throw new Error("Expected clipboard content");
+    return {
+      html: await (await item.getType("text/html")).text(),
+      plainText: await (await item.getType("text/plain")).text(),
+    };
+  });
+}

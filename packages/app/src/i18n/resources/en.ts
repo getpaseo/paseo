@@ -332,6 +332,8 @@ export const en = {
       viewDiagram: "View diagram",
     },
     actions: {
+      copyQuote: "Copy quote",
+      copyFailed: "Copy failed",
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",

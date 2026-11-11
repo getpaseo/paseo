@@ -14,9 +14,9 @@ interface RecordingClipboard {
 }
 
 function createRecordingClipboard(
-  options: { supportsHtml?: boolean; richWriteFails?: boolean } = {},
+  options: { supportsHtml?: boolean; richWriteFails?: boolean; plainWriteResult?: unknown } = {},
 ): RecordingClipboard {
-  const { supportsHtml = true, richWriteFails = false } = options;
+  const { supportsHtml = true, richWriteFails = false, plainWriteResult } = options;
   const richWrites: Array<Record<"text/plain" | "text/html", Blob>> = [];
   const plainTexts: string[] = [];
 
@@ -34,6 +34,7 @@ function createRecordingClipboard(
     richWriter,
     writePlainText: async (text) => {
       plainTexts.push(text);
+      return plainWriteResult;
     },
   };
 
@@ -130,7 +131,7 @@ describe("writeMarkdownToRichClipboard", () => {
   it("writes plain text and html when a rich clipboard writer is available", async () => {
     const clipboard = createRecordingClipboard();
 
-    await writeMarkdownToRichClipboard("- item", clipboard.environment);
+    await expect(writeMarkdownToRichClipboard("- item", clipboard.environment)).resolves.toBe(true);
 
     const written = clipboard.richWrites[0];
     if (!written) {
@@ -144,9 +145,40 @@ describe("writeMarkdownToRichClipboard", () => {
   it("falls back to plain text when rich clipboard writing fails", async () => {
     const clipboard = createRecordingClipboard({ richWriteFails: true });
 
-    await writeMarkdownToRichClipboard("**bold**", clipboard.environment);
+    await expect(writeMarkdownToRichClipboard("**bold**", clipboard.environment)).resolves.toBe(
+      true,
+    );
 
     expect(clipboard.plainTexts).toEqual(["**bold**"]);
     expect(clipboard.richWrites).toEqual([]);
+  });
+
+  it("returns the plain-text result, treating undefined as success", async () => {
+    const clipboard = createRecordingClipboard({ supportsHtml: false });
+
+    await expect(writeMarkdownToRichClipboard("plain", clipboard.environment)).resolves.toBe(true);
+    expect(clipboard.plainTexts).toEqual(["plain"]);
+  });
+
+  it("returns false when the plain-text fallback reports failure", async () => {
+    const clipboard = createRecordingClipboard({
+      supportsHtml: false,
+      plainWriteResult: false,
+    });
+
+    await expect(writeMarkdownToRichClipboard("plain", clipboard.environment)).resolves.toBe(false);
+    expect(clipboard.plainTexts).toEqual(["plain"]);
+  });
+
+  it("propagates a plain-text rejection", async () => {
+    const environment: MarkdownClipboardEnvironment = {
+      writePlainText: async () => {
+        throw new Error("clipboard denied");
+      },
+    };
+
+    await expect(writeMarkdownToRichClipboard("plain", environment)).rejects.toThrow(
+      "clipboard denied",
+    );
   });
 });

@@ -340,6 +340,8 @@ export const ja: TranslationResources = {
       viewDiagram: "図を表示",
     },
     actions: {
+      copyQuote: "引用をコピー",
+      copyFailed: "コピーに失敗しました",
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",

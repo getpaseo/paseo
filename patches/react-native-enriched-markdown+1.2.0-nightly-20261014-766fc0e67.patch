@@ -958,10 +958,104 @@ index 1657128..85b0c54 100644
  @property (nonatomic, copy, nullable) void (^onImagePress)(NSString *url, NSString *altText);
  
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
-index 79c79cf..96c7a70 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
-@@ -229,10 +229,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+@@ -80,11 +80,11 @@
+   return round(config.blockquoteFontSize * 0.4);
+ }
+ 
+-// Vertical space reserved above the body for the header (0 for a plain quote).
+-static CGFloat ENRMAdmonitionHeaderReservedHeight(StyleConfig *config, BOOL isAdmonition)
++// Plain quotes reserve the code-copy header; admonitions retain their title band.
++static CGFloat ENRMBlockquoteHeaderReservedHeight(StyleConfig *config, BOOL isAdmonition)
+ {
+   if (!isAdmonition) {
+-    return 0;
++    return [ENRMCodeBlockContainerView copyHeaderHeightForConfig:config];
+   }
+   return ENRMAdmonitionHeaderContentHeight(config) + ENRMAdmonitionHeaderToBodyGap(config);
+ }
+@@ -93,7 +93,7 @@
+ {
+   CGFloat padding = config.blockquotePadding;
+   CGFloat left = ceil(config.blockquoteBorderWidth + config.blockquoteGapWidth + padding);
+-  CGFloat top = ceil(padding + ENRMAdmonitionHeaderReservedHeight(config, isAdmonition));
++  CGFloat top = ceil(padding + ENRMBlockquoteHeaderReservedHeight(config, isAdmonition));
+   CGFloat vertical = ceil(padding);
+   CGFloat right = ceil(padding);
+   return UIEdgeInsetsMake(top, left, vertical, right);
+@@ -112,6 +112,12 @@
+ @property (nonatomic, copy, nullable) NSString *admonitionType;
+ @property (nonatomic, copy) NSString *cachedMarkdown;
+ @property (nonatomic, copy) NSString *cachedPlainText;
++@property (nonatomic, copy) NSString *cachedBodyMarkdown;
++#if !TARGET_OS_OSX
++@property (nonatomic, strong) UIButton *quoteCopyButton;
++#else
++@property (nonatomic, strong) NSButton *quoteCopyButton;
++#endif
+ @end
+ 
+ #if !TARGET_OS_OSX
+@@ -138,7 +144,14 @@
+     self.contentMode = UIViewContentModeRedraw;
+     UIContextMenuInteraction *contextMenu = [[UIContextMenuInteraction alloc] initWithDelegate:self];
+     [self addInteraction:contextMenu];
+-#endif
++    self.quoteCopyButton = (UIButton *)[ENRMCodeBlockContainerView copyButtonForConfig:config target:self
++                                                                       action:@selector(copyQuoteBodyToPasteboard)];
++#else
++    self.quoteCopyButton = (NSButton *)[ENRMCodeBlockContainerView copyButtonForConfig:config target:self
++                                                                       action:@selector(copyQuoteBodyToPasteboard)];
++#endif
++    self.quoteCopyButton.accessibilityLabel = @"Copy quote";
++    [self addSubview:self.quoteCopyButton];
+     self.segmentViewRegistry = [self buildChildRegistry];
+   }
+   return self;
+@@ -148,16 +161,41 @@
+ {
+   self.admonitionType = ENRMAdmonitionTypeForNode(node);
+   self.contentInsets = ENRMBlockquoteContentInsetsForNode(self.config, self.admonitionType != nil);
++  self.cachedBodyMarkdown = markdownFromBlockquoteBody(node);
++  self.quoteCopyButton.hidden = self.admonitionType != nil;
++  self.quoteCopyButton.enabled = self.cachedBodyMarkdown.length > 0;
+   self.cachedMarkdown = markdownFromBlockquoteNode(node);
+   self.cachedPlainText = plainTextFromASTNode(node);
+   NSArray<ENRMRenderedSegment *> *rendered =
+       ENRMRenderBlockquoteChildren(node, self.config, self.allowFontScaling, self.lineBreakStrategy);
+   [self applySegments:rendered reset:NO];
+ #if !TARGET_OS_OSX
++  [self bringSubviewToFront:self.quoteCopyButton];
+   [self setNeedsDisplay];
+ #else
+   self.needsDisplay = YES;
+ #endif
++}
++
++#if !TARGET_OS_OSX
++- (void)layoutSubviews
++{
++  [super layoutSubviews];
++  [ENRMCodeBlockContainerView layoutCopyButton:self.quoteCopyButton width:self.bounds.size.width config:self.config];
++}
++#else
++- (void)layout
++{
++  [super layout];
++  [ENRMCodeBlockContainerView layoutCopyButton:self.quoteCopyButton width:self.bounds.size.width config:self.config];
++}
++#endif
++
++- (void)copyQuoteBodyToPasteboard
++{
++  if (self.cachedBodyMarkdown.length > 0) {
++    copyStringToPasteboard(self.cachedBodyMarkdown);
++  }
+ }
+ 
+ - (void)setAccessibilityLabels:(ENRMAccessibilityLabels *)accessibilityLabels
+@@ -229,10 +267,10 @@
                              if (strongSelf) {
                                view.dynamicProps = strongSelf.dynamicProps;
                                view.accessibilityLabels = strongSelf.accessibilityLabels;
@@ -974,7 +1068,7 @@ index 79c79cf..96c7a70 100644
                                };
                                view.onLinkLongPress = ^(NSString *url) {
                                  ENRMBlockquoteContainerView *s = weakSelf;
-@@ -299,10 +299,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+@@ -299,10 +337,10 @@
                                  if (s.onImagePress && url)
                                    s.onImagePress(url, altText);
                                };
@@ -987,7 +1081,7 @@ index 79c79cf..96c7a70 100644
                                };
                                view.onLinkLongPress = ^(NSString *url) {
                                  ENRMBlockquoteContainerView *s = weakSelf;
-@@ -374,10 +374,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+@@ -374,10 +412,10 @@
  {
    ENRMPlatformTextView *textView = (ENRMPlatformTextView *)recognizer.view;
    __weak ENRMBlockquoteContainerView *weakSelf = self;
@@ -1423,10 +1517,28 @@ index 250fa18..ea79a10 100644
 -{"version":3,"names":["parserPromise","initializeParser","then","module","default","wasmModule","cwrap","catch","error","isASTNode","value","type","parseMarkdown","markdown","underline","latexMath","superscript","subscript","highlight","hardSoftBreaks","preserveBlankLines","admonitions","parse","result","JSON","Error"],"sourceRoot":"../../../src","sources":["web/parseMarkdown.ts"],"mappings":";;AAeA;AACA;AACA,IAAIA,aAAsC,GAAG,IAAI;;AAEjD;AACA;AACA,SAASC,gBAAgBA,CAAA,EAAqB;EAC5C,IAAI,CAACD,aAAa,EAAE;IAClBA,aAAa,GAAG,MAAM,CAAC,aAAa,CAAC,CAClCE,IAAI,CAAEC,MAAM,IAAKA,MAAM,CAACC,OAAO,CAAC,CAAC,CAAC,CAClCF,IAAI,CAAEG,UAAU,IACfA,UAAU,CAACC,KAAK,CAAC,eAAe,EAAE,QAAQ,EAAE,CAC1C,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,CACT,CACH,CAAC,CACAC,KAAK,CAAEC,KAAK,IAAK;MAChBR,aAAa,GAAG,IAAI;MACpB,MAAMQ,KAAK;IACb,CAAC,CAAqB;EAC1B;EACA,OAAOR,aAAa;AACtB;AAEA,SAASS,SAASA,CAACC,KAAc,EAAoB;EACnD,OACE,OAAOA,KAAK,KAAK,QAAQ,IACzBA,KAAK,KAAK,IAAI,IACd,MAAM,IAAIA,KAAK,IACf,OAAQA,KAAK,CAAaC,IAAI,KAAK,QAAQ;AAE/C;AAEA,OAAO,eAAeC,aAAaA,CACjCC,QAAgB,EAChB;EACEC,SAAS,GAAG,KAAK;EACjBC,SAAS,GAAG,IAAI;EAChBC,WAAW,GAAG,KAAK;EACnBC,SAAS,GAAG,KAAK;EACjBC,SAAS,GAAG,KAAK;EACjBC,cAAc,GAAG,KAAK;EACtBC,kBAAkB,GAAG,KAAK;EAC1BC,WAAW,GAAG;AACL,CAAC,GAAG,CAAC,CAAC,EACC;EAClB,MAAMC,KAAK,GAAG,MAAMrB,gBAAgB,CAAC,CAAC;EAEtC,MAAMsB,MAAe,GAAGC,IAAI,CAACF,KAAK,CAChCA,KAAK,CACHT,QAAQ,EACRC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,WAAW,GAAG,CAAC,GAAG,CAAC,EACnBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,cAAc,GAAG,CAAC,GAAG,CAAC,EACtBC,kBAAkB,GAAG,CAAC,GAAG,CAAC,EAC1BC,WAAW,GAAG,CAAC,GAAG,CACpB,CACF,CAAC;EAED,IAAI,CAACZ,SAAS,CAACc,MAAM,CAAC,EAAE;IACtB,MAAM,IAAIE,KAAK,CAAC,kCAAkC,CAAC;EACrD;EAEA,OAAOF,MAAM;AACf","ignoreList":[]}
 +{"version":3,"names":["readyParser","parserPromise","initializeParser","then","module","default","wasmModule","cwrap","parse","catch","error","isASTNode","value","type","parseMarkdownSync","markdown","underline","latexMath","superscript","subscript","highlight","hardSoftBreaks","preserveBlankLines","admonitions","result","JSON","Error","parseMarkdown","flags"],"sourceRoot":"../../../src","sources":["web/parseMarkdown.ts"],"mappings":";;AAeA;AACA;AACA,IAAIA,WAA2B,GAAG,IAAI;AACtC,IAAIC,aAAsC,GAAG,IAAI;;AAEjD;AACA;AACA,SAASC,gBAAgBA,CAAA,EAAqB;EAC5C,IAAI,CAACD,aAAa,EAAE;IAClBA,aAAa,GAAG,MAAM,CAAC,aAAa,CAAC,CAClCE,IAAI,CAAEC,MAAM,IAAKA,MAAM,CAACC,OAAO,CAAC,CAAC,CAAC,CAClCF,IAAI,CAAEG,UAAU,IACfA,UAAU,CAACC,KAAK,CAAC,eAAe,EAAE,QAAQ,EAAE,CAC1C,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,CACT,CACH,CAAC,CACAJ,IAAI,CAAEK,KAAK,IAAK;MACfR,WAAW,GAAGQ,KAAgB;MAC9B,OAAOA,KAAK;IACd,CAAC,CAAC,CACDC,KAAK,CAAEC,KAAK,IAAK;MAChBT,aAAa,GAAG,IAAI;MACpB,MAAMS,KAAK;IACb,CAAC,CAAqB;EAC1B;EACA,OAAOT,aAAa;AACtB;AAEA,SAASU,SAASA,CAACC,KAAc,EAAoB;EACnD,OACE,OAAOA,KAAK,KAAK,QAAQ,IACzBA,KAAK,KAAK,IAAI,IACd,MAAM,IAAIA,KAAK,IACf,OAAQA,KAAK,CAAaC,IAAI,KAAK,QAAQ;AAE/C;AAEA,OAAO,SAASC,iBAAiBA,CAC/BC,QAAgB,EAChB;EACEC,SAAS,GAAG,KAAK;EACjBC,SAAS,GAAG,IAAI;EAChBC,WAAW,GAAG,KAAK;EACnBC,SAAS,GAAG,KAAK;EACjBC,SAAS,GAAG,KAAK;EACjBC,cAAc,GAAG,KAAK;EACtBC,kBAAkB,GAAG,KAAK;EAC1BC,WAAW,GAAG;AACL,CAAC,GAAG,CAAC,CAAC,EACD;EAChB,MAAMf,KAAK,GAAGR,WAAW;EACzB,IAAI,CAACQ,KAAK,EAAE,OAAO,IAAI;EAEvB,MAAMgB,MAAe,GAAGC,IAAI,CAACjB,KAAK,CAChCA,KAAK,CACHO,QAAQ,EACRC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,WAAW,GAAG,CAAC,GAAG,CAAC,EACnBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,cAAc,GAAG,CAAC,GAAG,CAAC,EACtBC,kBAAkB,GAAG,CAAC,GAAG,CAAC,EAC1BC,WAAW,GAAG,CAAC,GAAG,CACpB,CACF,CAAC;EAED,IAAI,CAACZ,SAAS,CAACa,MAAM,CAAC,EAAE;IACtB,MAAM,IAAIE,KAAK,CAAC,kCAAkC,CAAC;EACrD;EAEA,OAAOF,MAAM;AACf;AAEA,OAAO,eAAeG,aAAaA,CACjCZ,QAAgB,EAChBa,KAAgB,GAAG,CAAC,CAAC,EACH;EAClB,MAAM1B,gBAAgB,CAAC,CAAC;EACxB,OAAOY,iBAAiB,CAACC,QAAQ,EAAEa,KAAK,CAAC;AAC3C","ignoreList":[]}
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
-index dd70713..ca0385a 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
-@@ -101,12 +101,28 @@ function AdmonitionRenderer({
+@@ -46,8 +46,16 @@
+ function BlockquoteRenderer({
+   node,
+   styles,
+-  renderChildren
+-}) {
++  renderChildren,
++  capabilities
++}) {
++  const CustomBlockquote = capabilities.renderers?.blockquote;
++  if (CustomBlockquote) {
++    return /*#__PURE__*/_jsx(CustomBlockquote, {
++      blockquoteProps: { style: styles.blockquote },
++      children: renderChildren(node)
++    });
++  }
+   return /*#__PURE__*/_jsx("blockquote", {
+     style: styles.blockquote,
+     children: renderChildren(node)
+@@ -101,12 +109,28 @@
    });
  }
  function CodeBlockRenderer({
@@ -1455,7 +1567,7 @@ index dd70713..ca0385a 100644
    const label = language ? `Code block: ${language}` : 'Code block';
    if (callbacks.onCodeBlockPress == null) {
      return /*#__PURE__*/_jsx("pre", {
-@@ -214,7 +230,10 @@ function ImageRenderer({
+@@ -214,7 +238,10 @@
      src: url,
      alt: alt,
      title: title,
@@ -2569,7 +2681,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownRende
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/src/types/MarkdownRenderers.ts
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,27 @@
 +import type { ComponentType, ComponentProps, ReactNode } from 'react';
 +import type { LinkPressEvent } from './events';
 +
@@ -2586,8 +2698,14 @@ new file mode 100644
 +  children: ReactNode;
 +}
 +
++export interface BlockquoteRendererProps {
++  blockquoteProps: ComponentProps<'blockquote'>;
++  children: ReactNode;
++}
++
 +/** Custom web components. Overrides own their styling and interactions. */
 +export interface MarkdownRenderers {
++  blockquote?: ComponentType<BlockquoteRendererProps>;
 +  codeBlock?: ComponentType<CodeBlockRendererProps>;
 +  link?: ComponentType<LinkRendererProps>;
 +}
@@ -2595,7 +2713,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/type
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownRenderers.d.ts
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,26 @@
 +import type { ComponentType, ComponentProps, ReactNode } from 'react';
 +import type { LinkPressEvent } from './events';
 +export interface CodeBlockRendererProps {
@@ -2610,8 +2728,14 @@ new file mode 100644
 +  children: ReactNode;
 +}
 +
++export interface BlockquoteRendererProps {
++  blockquoteProps: ComponentProps<'blockquote'>;
++  children: ReactNode;
++}
++
 +/** Custom web components. Overrides own their styling and interactions. */
 +export interface MarkdownRenderers {
++  blockquote?: ComponentType<BlockquoteRendererProps>;
 +    codeBlock?: ComponentType<CodeBlockRendererProps>;
 +  link?: ComponentType<LinkRendererProps>;
 +}
@@ -2620,10 +2744,11 @@ new file mode 100644
 diff --git a/node_modules/react-native-enriched-markdown/src/index.tsx b/node_modules/react-native-enriched-markdown/src/index.tsx
 --- a/node_modules/react-native-enriched-markdown/src/index.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/index.tsx
-@@ -1,3 +1,8 @@
+@@ -1,3 +1,9 @@
 +export type {
 +  MarkdownRenderers,
 +  CodeBlockRendererProps,
++  BlockquoteRendererProps,
 +  LinkRendererProps,
 +} from './types/MarkdownRenderers';
  export type { LinkVariantStyle, LinkPillStyle } from './types/MarkdownStyle';
@@ -2633,7 +2758,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/inde
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/index.d.ts
 @@ -1,3 +1,4 @@
-+export type { MarkdownRenderers, CodeBlockRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
++export type { MarkdownRenderers, CodeBlockRendererProps, BlockquoteRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
  export type { LinkVariantStyle, LinkPillStyle } from './types/MarkdownStyle';
  export type { LinkPillContent } from './types/MarkdownTextProps';
  export type { LinkContextMenuItem, LinkRecognition, } from './types/MarkdownTextProps';
@@ -2657,10 +2782,11 @@ diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextP
 diff --git a/node_modules/react-native-enriched-markdown/src/index.web.tsx b/node_modules/react-native-enriched-markdown/src/index.web.tsx
 --- a/node_modules/react-native-enriched-markdown/src/index.web.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/index.web.tsx
-@@ -1,3 +1,8 @@
+@@ -1,3 +1,9 @@
 +export type {
 +  MarkdownRenderers,
 +  CodeBlockRendererProps,
++  BlockquoteRendererProps,
 +  LinkRendererProps,
 +} from './types/MarkdownRenderers';
  export { EnrichedMarkdownText, default } from './web/EnrichedMarkdownText';
@@ -2670,7 +2796,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/inde
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
 @@ -1,3 +1,4 @@
-+export type { MarkdownRenderers, CodeBlockRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
++export type { MarkdownRenderers, CodeBlockRendererProps, BlockquoteRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
  export { EnrichedMarkdownText, default } from './web/EnrichedMarkdownText';
  export type { EnrichedMarkdownTextProps } from './types/MarkdownTextProps.web';
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
@@ -2834,10 +2960,9 @@ index c8311d4..d1e698c 100644
  function LatexMathInlineRenderer({
    node,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
-index cba0825..21387f0 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
-@@ -21,7 +21,6 @@ import android.view.GestureDetector
+@@ -21,7 +21,6 @@
  import android.view.MotionEvent
  import android.view.View
  import android.widget.FrameLayout
@@ -2845,7 +2970,7 @@ index cba0825..21387f0 100644
  import android.widget.ImageView
  import androidx.appcompat.widget.AppCompatImageButton
  import androidx.appcompat.widget.AppCompatTextView
-@@ -33,6 +32,7 @@ import com.swmansion.enriched.markdown.utils.common.CodeBlockHighlighter
+@@ -33,6 +32,7 @@
  import com.swmansion.enriched.markdown.utils.common.CodeBlockNode
  import com.swmansion.enriched.markdown.utils.text.extensions.applyCodeBlockTextStyle
  import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
@@ -2853,7 +2978,7 @@ index cba0825..21387f0 100644
  import com.swmansion.enriched.markdown.views.ContextMenuPopup
  import com.swmansion.enriched.markdown.views.CopyGlyph
  import kotlin.math.ceil
-@@ -102,7 +102,7 @@ class CodeBlockContainerView(
+@@ -102,7 +102,7 @@
      }
  
    private val scrollView =
@@ -2862,6 +2987,41 @@ index cba0825..21387f0 100644
        isHorizontalScrollBarEnabled = true
        overScrollMode = View.OVER_SCROLL_NEVER
        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+@@ -305,7 +305,7 @@
+     clipboard.setPrimaryClip(ClipData.newPlainText("Code", text))
+   }
+ 
+-  private class CopyIconDrawable(
++  internal class CopyIconDrawable(
+     color: Int,
+     private val size: Int,
+   ) : Drawable() {
+@@ -347,21 +347,21 @@
+     // iOS sizes the SF Symbol by point size (kENRMHeaderIconScale = 0.72) but
+     // the symbol renders roughly half again as tall as its point size; this box
+     // is scaled up to land the drawn glyph at the same on-screen size.
+-    private const val HEADER_ICON_SCALE = 1.08f
++    internal const val HEADER_ICON_SCALE = 1.08f
+ 
+     private val headerTypeface: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+ 
+-    private fun secondaryColor(color: Int): Int = (color and 0x00FFFFFF) or (0x99 shl 24)
++    internal fun secondaryColor(color: Int): Int = (color and 0x00FFFFFF) or (0x99 shl 24)
+ 
+     private fun dividerColor(color: Int): Int = (color and 0x00FFFFFF) or (0x33 shl 24)
+ 
+-    private fun contentInset(style: CodeBlockStyle): Int = ceil(style.padding + style.borderWidth).toInt()
++    internal fun contentInset(style: CodeBlockStyle): Int = ceil(style.padding + style.borderWidth).toInt()
+ 
+     private fun borderPx(style: CodeBlockStyle): Int = ceil(style.borderWidth).toInt()
+ 
+     // Header is the top content inset plus one label line; the code text
+     // view's own top inset then forms the single gap below the label.
+-    private fun headerHeight(style: CodeBlockStyle): Int {
++    internal fun headerHeight(style: CodeBlockStyle): Int {
+       val paint =
+         TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+           textSize = style.fontSize * HEADER_LABEL_SCALE
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ClaimingHorizontalScrollView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ClaimingHorizontalScrollView.kt
 new file mode 100644
 index 0000000..d80ecbd
@@ -3338,10 +3498,13 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/c
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,215 @@
 +package com.swmansion.enriched.markdown
 +
 +import android.text.TextPaint
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
++import com.swmansion.enriched.markdown.utils.common.serialization.MarkdownASTSerializer
 +import com.facebook.react.bridge.JavaOnlyMap
 +import com.swmansion.enriched.markdown.renderer.BlockStyle
 +import com.swmansion.enriched.markdown.renderer.SpanStyleCache
@@ -3424,6 +3587,129 @@ new file mode 100644
 +      ).updateDrawState(paint)
 +      assertEquals(size, paint.textSize, 0f)
 +      assertEquals(font, paint.typeface)
++    }
++  }
++
++  private fun node(type: NodeType, vararg children: MarkdownASTNode, text: String = "", attributes: Map<String, String> = emptyMap()) =
++    MarkdownASTNode(type, text, attributes, children.toList())
++
++  @Test fun quoteBodyPreservesParagraphsFormattingAndNestedQuoteOnly() {
++    val quote = node(NodeType.Blockquote,
++      node(NodeType.Paragraph,
++        node(NodeType.Strong, node(NodeType.Text, text = "Hello")),
++        node(NodeType.Text, text = " "),
++        node(NodeType.Link, node(NodeType.Text, text = "link"), attributes = mapOf("url" to "https://example.com"))),
++      node(NodeType.Blockquote, node(NodeType.Paragraph, node(NodeType.Text, text = "Nested"))),
++      node(NodeType.Paragraph, node(NodeType.Text, text = "Last paragraph")))
++    assertEquals("**Hello** [link](https://example.com)\n\n> Nested\n\nLast paragraph",
++      MarkdownASTSerializer.serializeBlockquoteBody(quote))
++    assertTrue(MarkdownASTSerializer.serializeBlockquote(quote).startsWith("> **Hello**"))
++  }
++
++  @Test fun quoteBodyKeepsListsImagesAndLiteralFencedCode() {
++    val quote = node(NodeType.Blockquote,
++      node(NodeType.OrderedList,
++        node(NodeType.ListItem, node(NodeType.Paragraph, node(NodeType.Text, text = "Item"))),
++        attributes = mapOf("start" to "3")),
++      node(NodeType.Paragraph, node(NodeType.Image, attributes = mapOf("alt" to "Shot", "url" to "image.png"))),
++      node(NodeType.CodeBlock, node(NodeType.Text, text = "> literal **code**\n"), attributes = mapOf("language" to "md")))
++    assertEquals("3. Item\n\n![Shot](image.png)\n\n```md\n> literal **code**\n```",
++      MarkdownASTSerializer.serializeBlockquoteBody(quote))
++  }
++
++  @Test fun quoteBodiesRemainIndependentAndReadCurrentChildren() {
++    val first = node(NodeType.Blockquote, node(NodeType.Paragraph, node(NodeType.Text, text = "First")))
++    val second = node(NodeType.Blockquote, node(NodeType.Paragraph, node(NodeType.Text, text = "Second")))
++    assertEquals("First", MarkdownASTSerializer.serializeBlockquoteBody(first))
++    assertEquals("Second", MarkdownASTSerializer.serializeBlockquoteBody(second))
++    val updated = first.copy(children = second.children)
++    assertEquals("Second", MarkdownASTSerializer.serializeBlockquoteBody(updated))
++    assertEquals("", MarkdownASTSerializer.serializeBlockquoteBody(node(NodeType.Blockquote)))
++  }
++
++  @Test fun quoteBodyPreservesTightListInlineChildren() {
++    val quote = node(NodeType.Blockquote, node(NodeType.UnorderedList,
++      node(NodeType.ListItem,
++        node(NodeType.Text, text = "Direct "),
++        node(NodeType.Strong, node(NodeType.Text, text = "bold"))),
++      node(NodeType.ListItem, node(NodeType.Code, node(NodeType.Text, text = "code")))))
++    assertEquals("- Direct **bold**\n- `code`", MarkdownASTSerializer.serializeBlockquoteBody(quote))
++  }
++
++  @Test fun quoteBodyEscapesLiteralMarkdownOutsideCode() {
++    val quote = node(NodeType.Blockquote, node(NodeType.Paragraph,
++      node(NodeType.Text, text = "**literal** [label](url) > not nested &amp;")))
++    assertEquals("\\*\\*literal\\*\\* \\[label\\](url\\) \\> not nested \\&amp;",
++      MarkdownASTSerializer.serializeBlockquoteBody(quote))
++    val mixed = node(NodeType.Blockquote, node(NodeType.Paragraph,
++      node(NodeType.Strong, node(NodeType.Text, text = "literal * text")),
++      node(NodeType.Text, text = " "),
++      node(NodeType.Link, node(NodeType.Text, text = "[label]"), attributes = mapOf("url" to "https://example.com"))))
++    assertEquals("**literal \\* text** [\\[label\\]](https://example.com)",
++      MarkdownASTSerializer.serializeBlockquoteBody(mixed))
++    val leading = node(NodeType.Blockquote, node(NodeType.Paragraph,
++      node(NodeType.Text, text = "> not nested"), node(NodeType.SoftBreak),
++      node(NodeType.Text, text = "# heading"), node(NodeType.SoftBreak),
++      node(NodeType.Text, text = "1. ordered"), node(NodeType.SoftBreak),
++      node(NodeType.Text, text = "- item"), node(NodeType.SoftBreak),
++      node(NodeType.Text, text = "1) literal")))
++    assertEquals("\\> not nested\n\\# heading\n1\\. ordered\n\\- item\n1\\) literal",
++      MarkdownASTSerializer.serializeBlockquoteBody(leading))
++  }
++
++  @Test fun quoteInlineCodeUsesRawTextSafeFencesAndCommonMarkPadding() {
++    val cases = listOf(
++      "a`b" to "``a`b``",
++      "`edge`" to "`` `edge` ``",
++      " a " to "`  a  `",
++      " " to "` `",
++      " left" to "` left`",
++      "right " to "`right `",
++      "a\r\nb\nc\rd" to "`a b c d`",
++      "``a`b``" to "``` ``a`b`` ```",
++      "*[raw](text)*" to "`*[raw](text)*`",
++    )
++    for ((literal, expected) in cases) {
++      val quote = node(NodeType.Blockquote, node(NodeType.Paragraph,
++        node(NodeType.Code, node(NodeType.Text, text = literal))))
++      assertEquals(expected, MarkdownASTSerializer.serializeBlockquoteBody(quote))
++    }
++  }
++
++  @Test fun quoteBodyPreservesCheckedAndUncheckedTasks() {
++    val quote = node(NodeType.Blockquote, node(NodeType.UnorderedList,
++      node(NodeType.ListItem, node(NodeType.Text, text = "Done"),
++        attributes = mapOf("isTask" to "true", "taskChecked" to "true")),
++      node(NodeType.ListItem, node(NodeType.Text, text = "Pending"),
++        attributes = mapOf("isTask" to "true", "taskChecked" to "false"))))
++    assertEquals("- [x] Done\n- [ ] Pending", MarkdownASTSerializer.serializeBlockquoteBody(quote))
++  }
++
++  @Test fun quoteImagesReadAltTextFromParserChildren() {
++    val quote = node(NodeType.Blockquote, node(NodeType.Paragraph,
++      node(NodeType.Image, node(NodeType.Text, text = "bracket [alt]"), attributes = mapOf("url" to "image.png"))))
++    assertEquals("![bracket \\[alt\\]](image.png)", MarkdownASTSerializer.serializeBlockquoteBody(quote))
++  }
++
++  @Test fun quoteLinksAndImagesKeepSafeDestinationSyntax() {
++    val cases = listOf(
++      "https://example.com/plain" to "https://example.com/plain",
++      "https://example.com/a(b)c" to "https://example.com/a(b)c",
++      "https://example.com/a)b" to "<https://example.com/a)b>",
++      "https://example.com/a(b" to "<https://example.com/a(b>",
++      "https://example.com/a b" to "<https://example.com/a b>",
++      "https://example.com/a\\>b" to "<https://example.com/a\\>b>",
++      "https://example.com/a\\<b" to "<https://example.com/a\\<b>",
++      "https://example.com/a\\\\b" to "<https://example.com/a\\\\b>",
++      "https://example.com/a&amp;b" to "https://example.com/a&amp;b",
++    )
++    for ((url, destination) in cases) {
++      val link = node(NodeType.Link, node(NodeType.Text, text = "label"), attributes = mapOf("url" to url))
++      val image = node(NodeType.Image, node(NodeType.Text, text = "label"), attributes = mapOf("url" to url))
++      assertEquals("[label]($destination)", MarkdownASTSerializer.serializeBlockquoteBody(
++        node(NodeType.Blockquote, node(NodeType.Paragraph, link))))
++      assertEquals("![label]($destination)", MarkdownASTSerializer.serializeBlockquoteBody(
++        node(NodeType.Blockquote, node(NodeType.Paragraph, image))))
 +    }
 +  }
 +
@@ -3996,3 +4282,633 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/utils.js
 +}
  //# sourceMappingURL=utils.js.map
 \ No newline at end of file
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
+@@ -10,6 +10,8 @@
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.view.View
++import android.widget.ImageView
++import androidx.appcompat.widget.AppCompatImageButton
+ import androidx.core.graphics.withSave
+ import com.facebook.react.common.ReactConstants
+ import com.facebook.react.views.text.ReactTypefaceUtils.applyStyles
+@@ -47,6 +49,9 @@
+   private val parentConfig: SegmentViewConfig,
+ ) : ContainerNodeView(context),
+   BlockSegmentView {
++  private val copyHeaderHeight = CodeBlockContainerView.headerHeight(parentConfig.style.codeBlockStyle)
++  private val copyInset = CodeBlockContainerView.contentInset(parentConfig.style.codeBlockStyle)
++
+   private val blockquoteStyle: BlockquoteStyle = parentConfig.style.blockquoteStyle
+ 
+   private val borderWidthPx: Float = blockquoteStyle.borderWidth
+@@ -61,6 +66,7 @@
+ 
+   // Cached markdown source for the "Copy as Markdown" action.
+   private var cachedMarkdown: String = ""
++  private var cachedBodyMarkdown: String = ""
+ 
+   // Cached plain text for the "Copy" action.
+   private var cachedPlainText: String = ""
+@@ -85,7 +91,26 @@
+   private val iconPaint =
+     Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+ 
+-  private fun reservedHeaderHeight(): Int = if (admonitionType != null) ceil(admonitionHeaderReservedHeight(blockquoteStyle)).toInt() else 0
++  private fun reservedHeaderHeight(): Int =
++    if (admonitionType != null) ceil(admonitionHeaderReservedHeight(blockquoteStyle)).toInt() else copyHeaderHeight
++
++  private val copyButton =
++    AppCompatImageButton(context).apply {
++      contentDescription = "Copy quote"
++      background = null
++      scaleType = ImageView.ScaleType.CENTER
++      val codeStyle = parentConfig.style.codeBlockStyle
++      setImageDrawable(CodeBlockContainerView.CopyIconDrawable(
++        CodeBlockContainerView.secondaryColor(codeStyle.color),
++        ceil(codeStyle.fontSize * CodeBlockContainerView.HEADER_ICON_SCALE).toInt(),
++      ))
++      setOnClickListener {
++        if (cachedBodyMarkdown.isNotEmpty()) {
++          val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
++          clipboard.setPrimaryClip(ClipData.newPlainText("Quote", cachedBodyMarkdown))
++        }
++      }
++    }
+ 
+   // Only the outermost quote carries vertical margins; a quote nested directly
+   // inside another quote is separated by the parent's padding alone (matches the
+@@ -108,7 +133,8 @@
+ 
+   init {
+     setWillNotDraw(false)
+-    setPadding(leftInset, verticalInset, rightInset, verticalInset)
++    setPadding(leftInset, verticalInset + copyHeaderHeight, rightInset, verticalInset)
++    addView(copyButton)
+     segmentViewFactory = ChildFactory()
+     trailingMarginEnabled = false
+     isLongClickable = true
+@@ -125,6 +151,9 @@
+     // Reserve the header band above the body by enlarging the top padding.
+     setPadding(leftInset, verticalInset + reservedHeaderHeight(), rightInset, verticalInset)
+ 
++    copyButton.visibility = if (admonitionType == null) View.VISIBLE else View.GONE
++    cachedBodyMarkdown = MarkdownASTSerializer.serializeBlockquoteBody(node)
++    copyButton.isEnabled = cachedBodyMarkdown.isNotEmpty()
+     cachedMarkdown = MarkdownASTSerializer.serializeBlockquote(node)
+     cachedPlainText = MarkdownASTSerializer.plainText(node)
+ 
+@@ -140,6 +169,7 @@
+         onLatexError = parentConfig.onLatexError,
+       )
+     applySegments(rendered, reset = false)
++    copyButton.bringToFront()
+     requestLayout()
+   }
+ 
+@@ -167,6 +197,10 @@
+   ) {
+     val measuredWidth = MeasureSpec.getSize(widthSpec)
+     measureSegmentChildren(measuredWidth)
++    if (copyButton.visibility != View.GONE) {
++      val buttonSpec = MeasureSpec.makeMeasureSpec(copyHeaderHeight, MeasureSpec.EXACTLY)
++      copyButton.measure(buttonSpec, buttonSpec)
++    }
+     setMeasuredDimension(measuredWidth, computeSegmentsTotalHeight())
+   }
+ 
+@@ -178,6 +212,15 @@
+     b: Int,
+   ) {
+     layoutSegments()
++    if (copyButton.visibility != View.GONE) {
++      // Match code-copy hit box and glyph placement in a separate header band.
++      val iconWidth = copyButton.drawable?.intrinsicWidth ?: copyHeaderHeight
++      val iconSlack = ((copyHeaderHeight - iconWidth) / 2).coerceAtLeast(0)
++      val left = (width - copyInset - copyHeaderHeight + iconSlack).coerceAtLeast(0)
++      val headerCenterY = (copyHeaderHeight + copyInset / 2f) / 2f
++      val top = (headerCenterY - copyHeaderHeight / 2f).roundToInt().coerceAtLeast(0)
++      copyButton.layout(left, top, left + copyHeaderHeight, top + copyHeaderHeight)
++    }
+   }
+ 
+   override fun onDraw(canvas: Canvas) {
+@@ -368,7 +411,7 @@
+         if (node.type == MarkdownASTNode.NodeType.Admonition) {
+           ceil(admonitionHeaderReservedHeight(style))
+         } else {
+-          0f
++          CodeBlockContainerView.headerHeight(config.codeBlockStyle).toFloat()
+         }
+       val innerWidth = (width - leftInset - rightInset).coerceAtLeast(1f)
+ 
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/serialization/MarkdownASTSerializer.kt
+@@ -19,6 +19,9 @@
+     }
+     return buffer.toString()
+   }
++
++  /** Serializes the body as blocks, excluding only this quote's outer wrapper. */
++  fun serializeBlockquoteBody(node: MarkdownASTNode): String = serializeBlockChildren(node).trimEnd('\n')
+ 
+   /**
+    * Serializes a Blockquote or Admonition node back to markdown, including
+@@ -31,8 +34,8 @@
+       val type = node.getAttribute("admonitionType")?.takeIf { it.isNotEmpty() } ?: "note"
+       sb.append("> [!${type.uppercase(java.util.Locale.ROOT)}]\n")
+     }
+-    val body = serializeBlockChildren(node)
+-    for (line in body.trimEnd('\n').split("\n")) {
++    val body = serializeBlockquoteBody(node)
++    for (line in body.split("\n")) {
+       sb.append("> ")
+       sb.append(line)
+       sb.append("\n")
+@@ -163,7 +166,8 @@
+       }
+ 
+       else -> {
+-        appendChildren(node, buffer)
++        // Tight list items can contain inline nodes without paragraph wrappers.
++        appendNode(node, buffer)
+       }
+     }
+   }
+@@ -220,6 +224,9 @@
+       lines.forEachIndexed { lineIdx, line ->
+         if (lineIdx == 0) {
+           buffer.append(prefix)
++          if (item.getAttribute("isTask") == "true") {
++            buffer.append(if (item.getAttribute("taskChecked") == "true") "[x] " else "[ ] ")
++          }
+         } else {
+           buffer.append(" ".repeat(prefix.length))
+         }
+@@ -232,13 +239,90 @@
+ 
+   // -- Inline serialization -------------------------------------------------------
+ 
++  // Prose escapes must not enter inline or fenced code payloads.
++  private fun appendEscapedText(text: String, buffer: StringBuilder) {
++    for (character in text) {
++      if (character in "\\`*_[]<>#+-.!|~^=&)") buffer.append('\\')
++      buffer.append(character)
++    }
++  }
++
++  private fun appendLiteralText(node: MarkdownASTNode, buffer: StringBuilder) {
++    if (node.type == NodeType.SoftBreak || node.type == NodeType.LineBreak) {
++      buffer.append('\n')
++    } else {
++      buffer.append(node.content)
++    }
++    node.children.forEach { appendLiteralText(it, buffer) }
++  }
++
++  private fun inlineCodeMarkdown(node: MarkdownASTNode): String {
++    val raw = StringBuilder()
++    appendLiteralText(node, raw)
++    val code = raw.toString().replace("\r\n", " ").replace('\r', ' ').replace('\n', ' ')
++    if (code.isEmpty()) return ""
++    var longestRun = 0
++    var run = 0
++    for (character in code) {
++      run = if (character == '`') run + 1 else 0
++      longestRun = maxOf(longestRun, run)
++    }
++    val fence = "`".repeat(longestRun + 1)
++    // CommonMark removes one space at each edge except for all-space spans.
++    val needsPadding = code.startsWith('`') || code.endsWith('`') ||
++      (code.startsWith(' ') && code.endsWith(' ') && code.any { it != ' ' })
++    val padding = if (needsPadding) " " else ""
++    return "$fence$padding$code$padding$fence"
++  }
++
++  // URL attributes retain authored backslash/entity escapes, which must not
++  // be escaped a second time when moving the destination into angle brackets.
++  private fun markdownDestination(url: String): String {
++    var depth = 0
++    var unbalanced = false
++    var index = 0
++    while (index < url.length) {
++      val character = url[index]
++      if (character == '\\' && index + 1 < url.length) {
++        index += 2
++        continue
++      }
++      if (character == '(') depth++
++      if (character == ')' && --depth < 0) unbalanced = true
++      index++
++    }
++    val needsAngles = unbalanced || depth != 0 || url.any {
++      it.isWhitespace() || it == '<' || it == '>' || it == '\\'
++    }
++    if (!needsAngles) return url
++
++    val destination = StringBuilder("<")
++    index = 0
++    while (index < url.length) {
++      val character = url[index]
++      when (character) {
++        '\\' -> {
++          destination.append(character)
++          // A trailing literal slash must not escape the closing delimiter.
++          destination.append(if (index + 1 < url.length) url[++index] else '\\')
++        }
++        '<', '>' -> destination.append('\\').append(character)
++        '\n' -> destination.append("&#10;")
++        '\r' -> destination.append("&#13;")
++        else -> destination.append(character)
++      }
++      index++
++    }
++    return destination.append('>').toString()
++  }
++
+   private fun appendNode(
+     node: MarkdownASTNode,
+     buffer: StringBuilder,
+   ) {
+     when (node.type) {
+       NodeType.Text -> {
+-        buffer.append(node.content)
++        appendEscapedText(node.content, buffer)
+       }
+ 
+       NodeType.LineBreak -> {
+@@ -292,9 +376,7 @@
+       }
+ 
+       NodeType.Code -> {
+-        buffer.append("`")
+-        appendChildren(node, buffer)
+-        buffer.append("`")
++        buffer.append(inlineCodeMarkdown(node))
+       }
+ 
+       NodeType.Link -> {
+@@ -306,17 +388,17 @@
+         buffer.append("[")
+         appendChildren(node, buffer)
+         buffer.append("](")
+-        buffer.append(url)
++        buffer.append(markdownDestination(url))
+         buffer.append(")")
+       }
+ 
+       NodeType.Image -> {
+-        val alt = node.getAttribute("alt") ?: ""
++        val alt = node.getAttribute("alt") ?: buildString { appendLiteralText(node, this) }
+         val url = node.getAttribute("url") ?: ""
+         buffer.append("![")
+-        buffer.append(alt)
++        appendEscapedText(alt, buffer)
+         buffer.append("](")
+-        buffer.append(url)
++        buffer.append(markdownDestination(url))
+         buffer.append(")")
+       }
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.h b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.h
+--- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.h
++++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.h
+@@ -13,6 +13,11 @@
+ @interface ENRMCodeBlockContainerView : RCTUIView
+ 
+ - (instancetype)initWithConfig:(StyleConfig *)config;
++
++// Shared by quote controls so font scaling, hit boxes and glyphs match code copy.
+++ (CGFloat)copyHeaderHeightForConfig:(StyleConfig *)config;
+++ (RCTUIView *)copyButtonForConfig:(StyleConfig *)config target:(id)target action:(SEL)action;
+++ (void)layoutCopyButton:(RCTUIView *)button width:(CGFloat)width config:(StyleConfig *)config;
+ 
+ - (void)applyCodeBlockNode:(MarkdownASTNode *)node;
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
+--- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
++++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
+@@ -231,6 +231,50 @@
+ #endif
+ }
+ 
+++ (CGFloat)copyHeaderHeightForConfig:(StyleConfig *)config
++{
++  return ENRMCodeBlockContentInset(config) + ENRMCodeBlockHeaderLabelLineHeight(ENRMCodeBlockHeaderFont(config));
++}
++
+++ (RCTUIView *)copyButtonForConfig:(StyleConfig *)config target:(id)target action:(SEL)action
++{
++#if !TARGET_OS_OSX
++  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
++  UIImageSymbolConfiguration *symbolConfig =
++      [UIImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
++                                                     weight:UIImageSymbolWeightRegular];
++  [button setImage:[UIImage systemImageNamed:@"doc.on.doc" withConfiguration:symbolConfig]
++          forState:UIControlStateNormal];
++  button.tintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
++  [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
++#else
++  NSImageSymbolConfiguration *symbolConfig =
++      [NSImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
++                                                     weight:NSFontWeightRegular];
++  NSImage *copyImage = [[NSImage imageWithSystemSymbolName:@"doc.on.doc"
++                               accessibilityDescription:nil] imageWithSymbolConfiguration:symbolConfig];
++  NSButton *button = [NSButton buttonWithImage:copyImage target:target action:action];
++  button.bordered = NO;
++  button.contentTintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
++#endif
++  return button;
++}
++
+++ (void)layoutCopyButton:(RCTUIView *)button width:(CGFloat)width config:(StyleConfig *)config
++{
++  CGFloat headerH = [self copyHeaderHeightForConfig:config];
++  CGFloat inset = ENRMCodeBlockContentInset(config);
++  CGFloat iconWidth = button.intrinsicContentSize.width;
++  if (iconWidth <= 0 || iconWidth > headerH) {
++    iconWidth = headerH;
++  }
++  CGFloat iconSlack = (headerH - iconWidth) / 2;
++  CGFloat buttonLeft = MAX(width - inset - headerH + iconSlack, 0);
++  CGFloat headerCenterY = (headerH + inset / 2) / 2;
++  CGFloat buttonTop = MAX(headerCenterY - headerH / 2, 0);
++  button.frame = CGRectMake(buttonLeft, buttonTop, headerH, headerH);
++}
++
+ - (void)setPending:(BOOL)pending
+ {
+   if (_pending == pending) {
+@@ -273,28 +317,16 @@
+     UIContextMenuInteraction *contextMenu = [[UIContextMenuInteraction alloc] initWithDelegate:self];
+     [self addInteraction:contextMenu];
+ 
+-    _copyButton = [UIButton buttonWithType:UIButtonTypeSystem];
+-    UIImageSymbolConfiguration *symbolConfig =
+-        [UIImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
+-                                                        weight:UIImageSymbolWeightRegular];
+-    [_copyButton setImage:[UIImage systemImageNamed:@"doc.on.doc" withConfiguration:symbolConfig]
+-                 forState:UIControlStateNormal];
+-    _copyButton.tintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
+-    [_copyButton addTarget:self action:@selector(copyCodeToPasteboard) forControlEvents:UIControlEventTouchUpInside];
++    _copyButton = (UIButton *)[ENRMCodeBlockContainerView copyButtonForConfig:config target:self
++                                                                    action:@selector(copyCodeToPasteboard)];
+     [self addSubview:_copyButton];
+ 
+     _tapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleCodeBlockTap:)];
+     _tapRecognizer.delegate = self;
+     [self addGestureRecognizer:_tapRecognizer];
+ #else
+-    NSImageSymbolConfiguration *symbolConfig =
+-        [NSImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
+-                                                        weight:NSFontWeightRegular];
+-    NSImage *copyImage = [[NSImage imageWithSystemSymbolName:@"doc.on.doc"
+-                                    accessibilityDescription:nil] imageWithSymbolConfiguration:symbolConfig];
+-    _copyButton = [NSButton buttonWithImage:copyImage target:self action:@selector(copyCodeToPasteboard)];
+-    _copyButton.bordered = NO;
+-    _copyButton.contentTintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
++    _copyButton = (NSButton *)[ENRMCodeBlockContainerView copyButtonForConfig:config target:self
++                                                                    action:@selector(copyCodeToPasteboard)];
+     [self addSubview:_copyButton];
+ #endif
+   }
+@@ -363,15 +395,7 @@
+ 
+ - (void)layoutHeaderButton
+ {
+-  CGFloat headerH = [self headerHeight];
+-  CGFloat iconWidth = _copyButton.intrinsicContentSize.width;
+-  if (iconWidth <= 0 || iconWidth > headerH) {
+-    iconWidth = headerH;
+-  }
+-  CGFloat iconSlack = (headerH - iconWidth) / 2;
+-  CGFloat buttonLeft = MAX(self.bounds.size.width - [self contentInset] - headerH + iconSlack, 0);
+-  CGFloat buttonTop = MAX([self headerCenterY] - headerH / 2, 0);
+-  _copyButton.frame = CGRectMake(buttonLeft, buttonTop, headerH, headerH);
++  [ENRMCodeBlockContainerView layoutCopyButton:_copyButton width:self.bounds.size.width config:_config];
+ }
+ 
+ #if !TARGET_OS_OSX
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.h b/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.h
+--- a/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.h
++++ b/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.h
+@@ -17,6 +17,9 @@
+ /// Useful for extracting the markdown content of a container node (e.g. a table cell).
+ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node);
+ 
++/// Serializes block children as Markdown, excluding only this quote's outer wrapper.
++NSString *markdownFromBlockquoteBody(MarkdownASTNode *node);
++
+ /// Serializes a Blockquote or Admonition node to full markdown, including `> ` line
+ /// prefixes and `> [!TYPE]` header for admonitions.
+ NSString *markdownFromBlockquoteNode(MarkdownASTNode *node);
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.m b/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.m
+--- a/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.m
++++ b/node_modules/react-native-enriched-markdown/ios/utils/MarkdownASTSerializer.m
+@@ -14,6 +14,103 @@
+   }
+ }
+ 
++// Escape decoded prose before adding structural Markdown delimiters. Code paths
++// use raw text instead, so literal code never receives prose escapes.
++static NSString *escapedMarkdownText(NSString *text)
++{
++  static NSCharacterSet *syntax;
++  static dispatch_once_t onceToken;
++  dispatch_once(&onceToken, ^{ syntax = [NSCharacterSet characterSetWithCharactersInString:@"\\`*_[]<>#+-.!|~^=&)"]; });
++  NSMutableString *escaped = [NSMutableString string];
++  for (NSUInteger index = 0; index < text.length; index++) {
++    unichar character = [text characterAtIndex:index];
++    if ([syntax characterIsMember:character]) {
++      [escaped appendString:@"\\"];
++    }
++    [escaped appendFormat:@"%C", character];
++  }
++  return escaped;
++}
++
++static void appendLiteralText(MarkdownASTNode *node, NSMutableString *buffer)
++{
++  if (node.type == MarkdownNodeTypeSoftBreak || node.type == MarkdownNodeTypeLineBreak) {
++    [buffer appendString:@"\n"];
++  } else if (node.content.length > 0) {
++    [buffer appendString:node.content];
++  }
++  for (MarkdownASTNode *child in node.children) {
++    appendLiteralText(child, buffer);
++  }
++}
++
++static NSString *inlineCodeMarkdown(MarkdownASTNode *node)
++{
++  NSMutableString *raw = [NSMutableString string];
++  appendLiteralText(node, raw);
++  NSString *code = [[[raw stringByReplacingOccurrencesOfString:@"\r\n" withString:@" "]
++      stringByReplacingOccurrencesOfString:@"\r" withString:@" "] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
++  if (code.length == 0) {
++    return @"";
++  }
++  NSUInteger longestRun = 0;
++  NSUInteger run = 0;
++  for (NSUInteger index = 0; index < code.length; index++) {
++    run = [code characterAtIndex:index] == '`' ? run + 1 : 0;
++    longestRun = MAX(longestRun, run);
++  }
++  NSString *fence = [@"" stringByPaddingToLength:longestRun + 1 withString:@"`" startingAtIndex:0];
++  // CommonMark strips one space at each edge only when both edges have spaces
++  // and the span is not entirely spaces. Extra padding preserves authored edges.
++  BOOL hasNonSpace = [code stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" "]].length > 0;
++  BOOL needsPadding = [code hasPrefix:@"`"] || [code hasSuffix:@"`"] ||
++      ([code hasPrefix:@" "] && [code hasSuffix:@" "] && hasNonSpace);
++  NSString *padding = needsPadding ? @" " : @"";
++  return [NSString stringWithFormat:@"%@%@%@%@%@", fence, padding, code, padding, fence];
++}
++
++// Parser URL attributes retain authored backslash/entity escapes. Keep those
++// escapes intact; angle wrapping makes whitespace and unbalanced parentheses safe.
++static NSString *markdownDestination(NSString *url)
++{
++  NSInteger depth = 0;
++  BOOL unbalanced = NO;
++  for (NSUInteger index = 0; index < url.length; index++) {
++    unichar character = [url characterAtIndex:index];
++    if (character == '\\' && index + 1 < url.length) {
++      index++;
++      continue;
++    }
++    if (character == '(') depth++;
++    if (character == ')' && --depth < 0) unbalanced = YES;
++  }
++  BOOL needsAngles = unbalanced || depth != 0 ||
++      [url rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound ||
++      [url rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"<>\\"]].location != NSNotFound;
++  if (!needsAngles) return url;
++
++  NSMutableString *destination = [NSMutableString stringWithString:@"<"];
++  for (NSUInteger index = 0; index < url.length; index++) {
++    unichar character = [url characterAtIndex:index];
++    if (character == '\\') {
++      [destination appendFormat:@"%C", character];
++      // A trailing literal slash must not escape our closing angle delimiter.
++      unichar next = index + 1 < url.length ? [url characterAtIndex:++index] : '\\';
++      [destination appendFormat:@"%C", next];
++    } else if (character == '<' || character == '>') {
++      [destination appendFormat:@"\\%C", character];
++    } else if (character == '\n') {
++      [destination appendString:@"&#10;"];
++    } else if (character == '\r') {
++      [destination appendString:@"&#13;"];
++    } else {
++      [destination appendFormat:@"%C", character];
++    }
++  }
++  [destination appendString:@">"];
++  return destination;
++}
++
+ static void serializeNode(MarkdownASTNode *node, NSMutableString *buffer)
+ {
+   if (!node)
+@@ -21,7 +118,7 @@
+ 
+   switch (node.type) {
+     case MarkdownNodeTypeText:
+-      [buffer appendString:node.content ?: @""];
++      [buffer appendString:escapedMarkdownText(node.content ?: @"")];
+       break;
+ 
+     case MarkdownNodeTypeLineBreak:
+@@ -75,9 +172,7 @@
+       break;
+ 
+     case MarkdownNodeTypeCode:
+-      [buffer appendString:@"`"];
+-      serializeChildren(node, buffer);
+-      [buffer appendString:@"`"];
++      [buffer appendString:inlineCodeMarkdown(node)];
+       break;
+ 
+     case MarkdownNodeTypeLink: {
+@@ -88,14 +183,19 @@
+       NSString *url = node.attributes[@"url"] ?: @"";
+       [buffer appendString:@"["];
+       serializeChildren(node, buffer);
+-      [buffer appendFormat:@"](%@)", url];
++      [buffer appendFormat:@"](%@)", markdownDestination(url)];
+       break;
+     }
+ 
+     case MarkdownNodeTypeImage: {
+-      NSString *alt = node.attributes[@"alt"] ?: @"";
++      NSString *alt = node.attributes[@"alt"];
++      if (!alt) {
++        NSMutableString *description = [NSMutableString string];
++        appendLiteralText(node, description);
++        alt = description;
++      }
+       NSString *url = node.attributes[@"url"] ?: @"";
+-      [buffer appendFormat:@"![%@](%@)", alt, url];
++      [buffer appendFormat:@"![%@](%@)", escapedMarkdownText(alt), markdownDestination(url)];
+       break;
+     }
+ 
+@@ -194,6 +294,9 @@
+     NSString *indent = [@"" stringByPaddingToLength:prefix.length withString:@" " startingAtIndex:0];
+     for (NSUInteger l = 0; l < lines.count; l++) {
+       [buffer appendString:(l == 0) ? prefix : indent];
++      if (l == 0 && [item.attributes[@"isTask"] isEqualToString:@"true"]) {
++        [buffer appendString:[item.attributes[@"taskChecked"] isEqualToString:@"true"] ? @"[x] " : @"[ ] "];
++      }
+       [buffer appendString:lines[l]];
+       [buffer appendString:@"\n"];
+     }
+@@ -270,7 +373,8 @@
+       break;
+ 
+     default:
+-      serializeChildren(node, buffer);
++      // Tight list items can contain inline nodes without paragraph wrappers.
++      serializeNode(node, buffer);
+       break;
+   }
+ }
+@@ -325,6 +429,20 @@
+   NSMutableString *buffer = [NSMutableString string];
+   serializeChildren(node, buffer);
+   return [buffer copy];
++}
++
++NSString *markdownFromBlockquoteBody(MarkdownASTNode *node)
++{
++  if (!node)
++    return @"";
++  NSMutableString *body = [NSMutableString string];
++  serializeBlockChildren(node, body);
++  // Drop serializer separators without removing authored leading whitespace.
++  NSUInteger end = body.length;
++  while (end > 0 && [body characterAtIndex:end - 1] == '\n') {
++    end--;
++  }
++  return [body substringToIndex:end];
+ }
+ 
+ NSString *markdownFromBlockquoteNode(MarkdownASTNode *node)
+diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+--- a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
++++ b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+@@ -37,7 +37,11 @@
+   return <Tag style={styles[Tag]}>{renderChildren(node)}</Tag>;
+ }
+ 
+-function BlockquoteRenderer({ node, styles, renderChildren }: RendererProps) {
++function BlockquoteRenderer({ node, styles, renderChildren, capabilities }: RendererProps) {
++  const CustomBlockquote = capabilities.renderers?.blockquote;
++  if (CustomBlockquote) {
++    return <CustomBlockquote blockquoteProps={{ style: styles.blockquote }}>{renderChildren(node)}</CustomBlockquote>;
++  }
+   return (
+     <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
+   );
