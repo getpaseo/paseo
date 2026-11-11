@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { test, expect } from "../support/fixtures";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   withTimelinePlugin,
@@ -8,6 +8,7 @@ import {
   expectWholeCompletedCard,
   expectBothConsecutiveTools,
   trackPluginChatRecovery,
+  trackTimelineNativeRowSamples,
   reconnectPluginChat,
 } from "../support/helpers/plugin-timeline";
 
@@ -53,4 +54,36 @@ test("inline-thinking example renders a streamed thought through host UI", async
   page,
 }, info) => {
   await viewInlineThinkingExample(page, info);
+});
+
+test("holds cached source rows until a delayed plugin catalog arrives", async ({ page }, info) => {
+  const gate = await installDaemonWebSocketGate(page);
+  const nativeRows = await trackTimelineNativeRowSamples(page);
+  await withTimelinePlugin(page, info, "assistant", async (agent) => {
+    await requestPluginTimeline(agent);
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expectWholeCompletedCard(page);
+    gate.holdPluginCatalogResponses();
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect.poll(() => gate.hasHeldPluginCatalogResponse()).toBe(true);
+      await page.waitForTimeout(1000);
+      await info.attach("catalog-delayed", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+      await nativeRows.expectNoSourceRowsAppeared(info);
+    } finally {
+      gate.releaseHeldPluginCatalogResponses();
+    }
+    await expect(
+      page.getByRole("heading", { name: /^Assistant (streaming|complete)$/ }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Card clicks 0", exact: true })).toBeVisible();
+    await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+    await info.attach("catalog-released", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  });
 });

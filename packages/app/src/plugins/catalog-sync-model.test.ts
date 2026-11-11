@@ -503,3 +503,27 @@ it("ignores an in-flight catalog snapshot after disconnect", async () => {
   expect(h.client.settings.reads).toBe(1);
   expect(h.evaluations()).toBe(1);
 });
+
+it("coalesces the eager catalog fetch with a synchronous subscription snapshot and reports lifecycle callbacks", async () => {
+  const h = harness();
+  const events: string[] = [];
+  h.sync({
+    prepare: async () => {
+      events.push("prepare");
+    },
+    onCatalogInstalled: (installed) => {
+      events.push(`installed:${installed.length}`);
+    },
+    onCatalogFailed: () => {
+      events.push("failed");
+    },
+  });
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.client.fetches).toBe(1);
+  expect(events).toEqual(["prepare", "installed:1"]);
+
+  h.client.snapshot();
+  await expect.poll(() => h.client.fetches).toBe(2);
+  expect(events).toEqual(["prepare", "installed:1", "installed:1"]);
+});
