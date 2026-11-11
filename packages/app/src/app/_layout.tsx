@@ -66,6 +66,7 @@ import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
@@ -497,9 +498,13 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isCompact: isCompactLayout,
     workspaceKey: activeWorkspaceKey,
   });
+  const explorerSidebarWidth = useWorkspaceLayoutStore((state) =>
+    activeWorkspaceKey ? state.explorerSidebarWidthByWorkspace[activeWorkspaceKey] : undefined,
+  );
   const appContentMinimumWidth = resolveDesktopAppContentMinimum({
     explorerVisible: isWorkspaceRoute && explorerVisible,
     isSettingsRoute: pathname.includes("/settings"),
+    explorerSidebarWidth,
   });
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({
