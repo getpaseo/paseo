@@ -1954,6 +1954,82 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
       },
     });
   });
+
+  it("preserves the original default model across session resumes when model: null is configured", async () => {
+    const h1 = await harness();
+    await h1.open();
+
+    await h1.request({
+      type: "session.configure",
+      requestId: "set-model",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+
+    const persistence1 = h1.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence1?.persistence.data).toMatchObject({
+      conversationId: expect.any(String),
+      model: "gemini-3.8-flash-low",
+      defaultModelId: "gemini-4-argon-medium",
+    });
+    if (!persistence1) throw new Error("Expected session persistence event");
+    await h1.request({ type: "session.close", sessionId: "s", requestId: "close-1" });
+
+    const h2 = await harness();
+    await h2.open({ restored: persistence1.persistence });
+
+    await h2.request({
+      type: "session.configure",
+      requestId: "reset-model",
+      sessionId: "s",
+      changes: { model: null },
+    });
+
+    expect(h2.events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "gemini-4-argon-medium" },
+    });
+    await h2.request({ type: "session.close", sessionId: "s", requestId: "close-2" });
+  });
+
+  it("retires driver and resynchronizes model on next turn when model switch times out", async () => {
+    const h = await harness({
+      AGY_TEST_INIT_TIMEOUT_MS: "200",
+      AGY_TEST_SET_MODEL_DELAY_ONCE_MS: "600",
+    });
+    await h.open();
+
+    await h.request({
+      type: "session.configure",
+      requestId: "set-model-timeout",
+      sessionId: "s",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "request.failed",
+        requestId: "set-model-timeout",
+        error: expect.objectContaining({
+          message: expect.stringContaining(
+            "Timed out waiting for Antigravity ACP response to session/set_model",
+          ),
+        }),
+      }),
+    );
+
+    const turn = await h.prompt("Hello after timeout");
+    await h.completed(turn);
+
+    expect(h.events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "gemini-4-argon-medium" },
+    });
+
+    const acpProcesses = (await h.records()).filter((entry) => entry.args?.includes("acp"));
+    expect(acpProcesses.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 it.runIf(process.platform === "win32")(

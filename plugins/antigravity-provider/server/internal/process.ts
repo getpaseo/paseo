@@ -9,7 +9,7 @@ import { signalProcess } from "./signals.js";
 import { AntigravityError, classifyFailure, jsonRpcErrorObjectSchema } from "./wire.js";
 
 const PROBE_TIMEOUT_MS = 15_000;
-const INIT_TIMEOUT_MS = 60_000;
+const INIT_TIMEOUT_MS = Number(process.env.AGY_TEST_INIT_TIMEOUT_MS) || 60_000;
 const EXIT_WAIT_MS = 1_000;
 const MAX_STDERR_CHARS = 8_192;
 
@@ -40,6 +40,7 @@ export class DriverProcess {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly exitedPromise: Promise<void>;
   private readonly pending = new Map<string | number, PendingRpc>();
+  private readonly initTimeoutMs: number;
   private nextRpcId = 1;
   private stderr = "";
   private closing = false;
@@ -55,6 +56,10 @@ export class DriverProcess {
     },
     private readonly handlers: DriverProcessHandlers,
   ) {
+    this.initTimeoutMs =
+      Number(
+        options.launch.env?.AGY_TEST_INIT_TIMEOUT_MS || process.env.AGY_TEST_INIT_TIMEOUT_MS,
+      ) || INIT_TIMEOUT_MS;
     const dirs = new Set<string>([canonicalPath(options.cwd)]);
     const args = [...options.launch.args, "acp", "--stdio", "--add-dir", options.cwd];
     for (const directory of options.additionalDirectories ?? []) {
@@ -144,7 +149,7 @@ export class DriverProcess {
   }
 
   requestInit<T>(method: string, params: unknown, schema: z.ZodType<T>): Promise<T> {
-    return this.request(method, params, schema, INIT_TIMEOUT_MS);
+    return this.request(method, params, schema, this.initTimeoutMs);
   }
 
   notify(method: string, params: unknown): void {

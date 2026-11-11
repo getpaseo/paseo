@@ -139,6 +139,7 @@ export class Session {
         ? persisted.model
         : null;
     this.conversationId = persisted?.conversationId ?? null;
+    this.defaultModelId = persisted?.defaultModelId ?? null;
     this.requestedModel = options.config.model ?? persistedModel ?? null;
     this.effectiveModel = this.requestedModel;
     this.mode = (options.config.mode as AntigravityModeId | undefined) ?? DEFAULT_MODE;
@@ -200,6 +201,7 @@ export class Session {
       this.autoApproveEligiblePendingPermissions();
     }
     this.emitConfig();
+    this.emitPersistence();
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
@@ -430,15 +432,26 @@ export class Session {
     requestedModel: string | null,
     revision: number,
   ): Promise<void> {
-    const result = await driver.requestInit(
-      "session/set_model",
-      { sessionId: this.conversationId, modelId: targetModel },
-      acpSessionResultSchema,
-    );
-    this.effectiveModel = result.models?.currentModelId ?? targetModel;
-    if (this.modelRevision === revision) {
-      this.requestedModel = requestedModel;
-      this.modelDirty = false;
+    try {
+      const result = await driver.requestInit(
+        "session/set_model",
+        { sessionId: this.conversationId, modelId: targetModel },
+        acpSessionResultSchema,
+      );
+      this.effectiveModel = result.models?.currentModelId ?? targetModel;
+      if (this.modelRevision === revision) {
+        this.requestedModel = requestedModel;
+        this.modelDirty = false;
+      }
+    } catch (error) {
+      const isTimeout =
+        error instanceof Error &&
+        error.message.includes("Timed out waiting for Antigravity ACP response");
+      if (isTimeout || !driver.isAlive) {
+        await this.retireDriver();
+        this.modelDirty = true;
+      }
+      throw error;
     }
   }
 
@@ -569,6 +582,7 @@ export class Session {
     }
     await this.setLiveModel(driver, targetModel, requested, revision);
     this.emitConfig();
+    this.emitPersistence();
   }
 
   private async initializeAcpSession(
@@ -1120,6 +1134,7 @@ export class Session {
           ? { accumulatedCostUsd: Math.round(this.accumulatedCostUsd * 1_000_000) / 1_000_000 }
           : {}),
         ...(this.requestedModel ? { model: this.requestedModel } : {}),
+        ...(this.defaultModelId ? { defaultModelId: this.defaultModelId } : {}),
       },
     };
   }
@@ -1202,9 +1217,12 @@ function mergeUsageSnapshot(base: ProviderUsage, incoming: Partial<ProviderUsage
   return merged;
 }
 
-function parsePersistence(
-  persistence: ProviderPersistence | undefined,
-): { conversationId: string | null; model?: string; accumulatedCostUsd?: number } | null {
+function parsePersistence(persistence: ProviderPersistence | undefined): {
+  conversationId: string | null;
+  model?: string;
+  defaultModelId?: string;
+  accumulatedCostUsd?: number;
+} | null {
   if (!persistence) return null;
   const parsed = persistenceSchema.safeParse(persistence.data);
   if (!parsed.success) {
@@ -1216,6 +1234,7 @@ function parsePersistence(
   return {
     conversationId: parsed.data.conversationId ?? parsed.data.sessionId ?? null,
     ...(parsed.data.model ? { model: parsed.data.model } : {}),
+    ...(parsed.data.defaultModelId ? { defaultModelId: parsed.data.defaultModelId } : {}),
     ...(typeof parsed.data.accumulatedCostUsd === "number"
       ? { accumulatedCostUsd: parsed.data.accumulatedCostUsd }
       : {}),

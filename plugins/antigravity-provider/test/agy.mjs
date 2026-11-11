@@ -104,6 +104,7 @@ let multiTurnCount = 0;
 let activePromptId = null;
 let failSetModelOnce = process.env.AGY_TEST_FAIL_SET_MODEL_ONCE === "yes";
 let failSetModelTarget = process.env.AGY_TEST_FAIL_SET_MODEL_TARGET;
+let delaySetModelOnceMs = Number(process.env.AGY_TEST_SET_MODEL_DELAY_ONCE_MS) || 0;
 const pendingClientRequests = new Map();
 
 function send(msg) {
@@ -1020,6 +1021,11 @@ lines.on("line", async (line) => {
       await handleSessionLoad(id, params);
       return;
     case "session/set_model":
+      if (delaySetModelOnceMs > 0) {
+        const ms = delaySetModelOnceMs;
+        delaySetModelOnceMs = 0;
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      }
       if (Number(process.env.AGY_TEST_SET_MODEL_DELAY_MS) > 0) {
         await new Promise((resolve) =>
           setTimeout(resolve, Number(process.env.AGY_TEST_SET_MODEL_DELAY_MS)),

@@ -234,6 +234,7 @@ export const persistenceSchema = z
     conversationId: z.string().min(1).optional(),
     sessionId: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
+    defaultModelId: z.string().min(1).optional(),
     accumulatedCostUsd: z.number().nonnegative().optional(),
   })
   .refine((value) => Boolean(value.conversationId || value.sessionId), {
