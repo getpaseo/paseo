@@ -19,6 +19,10 @@ const fakeAgy = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
 const LIVE_SUBAGENT_C1 = "11111111-2222-4333-8444-555555555555";
 const LIVE_SUBAGENT_C2 = "22222222-3333-4444-8555-666666666666";
 const LIVE_SUBAGENT_C3 = "33333333-4444-4555-8666-777777777777";
+const KILLED_SUBAGENT_C4 = "44444444-4444-4444-8444-444444444444";
+const ORPHAN_SUBAGENT_C5 = "55555555-5555-4555-8555-555555555555";
+const IDLE_LIST_SUBAGENT_C6 = "66666666-6666-4666-8666-666666666666";
+const HANGING_SUBAGENT_C7 = "77777777-7777-4777-8777-777777777777";
 
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
@@ -172,6 +176,33 @@ async function setupHarness(env: Record<string, string> = {}) {
     }
   }
 
+  async function acpLaunchArgs(): Promise<string[][]> {
+    const entries = await records();
+    return entries
+      .filter((entry) => Array.isArray(entry.args) && entry.args.includes("acp"))
+      .map((entry) => entry.args as string[]);
+  }
+
+  async function appliedNativeModes(): Promise<string[]> {
+    const entries = await records();
+    const modes: string[] = [];
+    for (const entry of entries) {
+      const rpc = entry.rpc as { method?: string; params?: { modeId?: string } } | undefined;
+      if (rpc?.method === "session/set_mode" && typeof rpc.params?.modeId === "string") {
+        modes.push(rpc.params.modeId);
+      }
+    }
+    return modes;
+  }
+
+  async function wasSessionCanceled(): Promise<boolean> {
+    const entries = await records();
+    return entries.some((entry) => {
+      const rpc = entry.rpc as { method?: string } | undefined;
+      return rpc?.method === "session/cancel";
+    });
+  }
+
   return {
     connection,
     usage,
@@ -184,7 +215,9 @@ async function setupHarness(env: Record<string, string> = {}) {
     prompt,
     canStopRuntime,
     rootPersistence,
-    records,
+    acpLaunchArgs,
+    appliedNativeModes,
+    wasSessionCanceled,
   };
 }
 
@@ -204,6 +237,7 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       cachedInputTokens: 8000,
       outputTokens: 300,
       contextWindowUsedTokens: 23300,
+      contextWindowMaxTokens: 1_048_576,
     });
 
     const reg = h.usage.registration();
@@ -511,11 +545,9 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     const h = await setupHarness();
     await h.open(undefined, "s", "default");
 
-    const initialLaunches = (await h.records()).filter(
-      (r) => Array.isArray(r.args) && r.args.includes("acp"),
-    );
+    const initialLaunches = await h.acpLaunchArgs();
     expect(initialLaunches).toHaveLength(1);
-    expect(initialLaunches[0]!.args).not.toContain("--dangerously-skip-permissions");
+    expect(initialLaunches[0]).not.toContain("--dangerously-skip-permissions");
 
     // Switching default -> accept-edits calls session/set_mode without respawning
     await h.sendRequest({
@@ -524,19 +556,8 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       sessionId: "s",
       changes: { mode: "accept-edits" },
     });
-    const afterAcceptEdits = await h.records();
-    expect(
-      afterAcceptEdits.some(
-        (r) =>
-          typeof r.rpc === "object" &&
-          r.rpc !== null &&
-          (r.rpc as { method?: string }).method === "session/set_mode" &&
-          (r.rpc as { params?: { modeId?: string } }).params?.modeId === "accept-edits",
-      ),
-    ).toBe(true);
-    expect(
-      afterAcceptEdits.filter((r) => Array.isArray(r.args) && r.args.includes("acp")),
-    ).toHaveLength(1);
+    expect(await h.appliedNativeModes()).toContain("accept-edits");
+    expect(await h.acpLaunchArgs()).toHaveLength(1);
 
     // Switching to full-access recycles driver with --dangerously-skip-permissions so post-turn shell tools succeed
     await h.sendRequest({
@@ -548,6 +569,18 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
 
     await h.prompt("BG_WAKEUP_SHELL_TOOL");
     expect(await h.canStopRuntime()).toBe(false);
+
+    // Rejects downgrading out of full-access while live background work is still active
+    const downgradeWhileBusy = await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-downgrade-busy",
+      sessionId: "s",
+      changes: { mode: "default" },
+    });
+    expect(downgradeWhileBusy).toMatchObject({
+      type: "request.failed",
+      error: { code: "TURN_ACTIVE" },
+    });
 
     await h.wait(
       (e) =>
@@ -607,15 +640,45 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       ),
     ).toBe(true);
 
-    const allLaunches = (await h.records()).filter(
-      (r) => Array.isArray(r.args) && r.args.includes("acp"),
+    // Trigger another wakeup and immediately run slash command /compact (no user_message_chunk echo):
+    // stale wakeup catch-up is suppressed while the slash command reply is preserved immediately.
+    await h.prompt("BG_WAKEUP_SHELL_TOOL");
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-2" &&
+        e.state === "completed",
     );
+    const eventsBeforeSlash = h.events.length;
+    await h.prompt("/compact");
+    const slashEvents = h.events.slice(eventsBeforeSlash);
+    expect(
+      slashEvents.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("WAKEUP_SHELL_TOOL_OK"),
+      ),
+    ).toBe(false);
+    expect(
+      slashEvents.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text === "Compacted 12 steps into summary.",
+      ),
+    ).toBe(true);
+
+    const allLaunches = await h.acpLaunchArgs();
     expect(allLaunches).toHaveLength(2);
-    expect(allLaunches[1]!.args).toContain("--dangerously-skip-permissions");
+    expect(allLaunches[1]).toContain("--dangerously-skip-permissions");
   });
 
-  it("aborts stalled post-turn unpromptable tools in default mode via session/cancel and settles cleanly instead of hanging", async () => {
-    const h = await setupHarness({ AGY_AUTONOMOUS_TOOL_STALL_TIMEOUT_MS: "180" });
+  it("aborts stalled post-turn unpromptable tools in default mode while allowing slow approved tools in accept-edits mode", async () => {
+    const h = await setupHarness({ AGY_AUTONOMOUS_TOOL_STALL_TIMEOUT_MS: "150" });
     await h.open(undefined, "s", "default");
 
     await h.prompt("BG_WAKEUP_SHELL_TOOL");
@@ -639,15 +702,100 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
         e.state === "completed",
     );
     expect(await h.canStopRuntime()).toBe(true);
+    expect(await h.wasSessionCanceled()).toBe(true);
 
-    const logs = await h.records();
+    // Switch to accept-edits: a slow 300ms view_file (> 150ms stall timeout) must NOT be aborted!
+    await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-accept-edits-read",
+      sessionId: "s",
+      changes: { mode: "accept-edits" },
+    });
+    await h.prompt("BG_WAKEUP_APPROVED_READ");
+    await h.wait(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "APPROVED_READ_WAKEUP_OK",
+    );
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-2" &&
+        e.state === "completed",
+    );
+  });
+
+  it("settles killed, orphaned, list-idle, and manually interrupted subagents instead of leaving them stuck running", async () => {
+    const h = await setupHarness();
+    await h.open();
+
+    // 1. Live manage_subagents(Action="list") reconciles an idle child to completed
+    await h.prompt("SUBAGENT_LIST_RECONCILE");
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === IDLE_LIST_SUBAGENT_C6 &&
+        e.state === "completed",
+    );
+    expect(await h.canStopRuntime()).toBe(true);
+
+    // 2. Manual session.interrupt when parent turn is idle cancels any hanging subagents
+    await h.prompt("SUBAGENT_HANGING_CHILD");
+    expect(await h.canStopRuntime()).toBe(false);
+    await h.sendRequest({
+      type: "session.interrupt",
+      requestId: "interrupt-hanging-sub",
+      sessionId: "s",
+    });
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" && e.sessionId === HANGING_SUBAGENT_C7 && e.state === "canceled",
+    );
+    expect(await h.canStopRuntime()).toBe(true);
+
+    // 3. Replaying a session with killed & mid-flight orphaned subagents preserves their timelines and settles both as canceled
+    await h.prompt("SUBAGENT_KILL_ALL_AND_ORPHAN");
+    const savedPersistence = h.rootPersistence("s");
+    await h.sendRequest({
+      type: "session.close",
+      requestId: "close-before-replay",
+      sessionId: "s",
+    });
+
+    const replayStart = h.events.length;
+    await h.open(savedPersistence, "s-reloaded", undefined, "replay");
+    const replayed = h.events.slice(replayStart);
+
+    // Both children replayed their reasoning/tool calls AND ended in terminal "canceled" state (never stuck "running")
     expect(
-      logs.some(
-        (r) =>
-          typeof r.rpc === "object" &&
-          r.rpc !== null &&
-          (r.rpc as { method?: string }).method === "session/cancel",
+      replayed.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === KILLED_SUBAGENT_C4 &&
+          e.item.type === "reasoning",
       ),
     ).toBe(true);
+    expect(
+      replayed.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === ORPHAN_SUBAGENT_C5 &&
+          e.item.type === "reasoning",
+      ),
+    ).toBe(true);
+
+    const lastTurnState = (subId: string) => {
+      const turns = replayed.filter(
+        (e): e is Extract<ProviderEvent, { type: "session.turn" }> =>
+          e.type === "session.turn" && e.sessionId === subId,
+      );
+      return turns.at(-1)?.state;
+    };
+    expect(lastTurnState(KILLED_SUBAGENT_C4)).toBe("canceled");
+    expect(lastTurnState(ORPHAN_SUBAGENT_C5)).toBe("canceled");
+    expect(await h.canStopRuntime("s-reloaded")).toBe(true);
   });
 });

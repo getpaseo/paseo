@@ -72,10 +72,12 @@ function createConnection(
   usage?: Usage,
 ): ProviderConnection {
   const sessions = new Map<string, Session>();
+  const sessionQueues = new Map<string, Promise<void>>();
+  const inFlight = new Set<Promise<void>>();
   const listeners = new Set<(event: ProviderEvent) => void>();
   let discovered: ProviderCatalog | null = null;
+  let catalogPromise: Promise<ProviderCatalog> | null = null;
   let closed = false;
-  let pending = Promise.resolve();
 
   function emit(event: ProviderEvent): void {
     if (closed) return;
@@ -86,19 +88,64 @@ function createConnection(
       throw new AntigravityError("Antigravity catalog has not been discovered", "MISSING_CATALOG");
     return discovered;
   }
-  function session(id: string): Session {
-    const found = sessions.get(id);
-    if (!found) throw new AntigravityError(`Unknown Antigravity session: ${id}`, "UNKNOWN_SESSION");
-    return found;
+  async function ensureCatalog(cwd?: string, forceRefresh = false): Promise<ProviderCatalog> {
+    if (!forceRefresh && discovered !== null) return discovered;
+    if (!forceRefresh && catalogPromise) return catalogPromise;
+    const request = getCatalog(launch, cwd).then((next) => {
+      discovered = next;
+      return next;
+    });
+    catalogPromise = request;
+    try {
+      return await request;
+    } finally {
+      if (catalogPromise === request) catalogPromise = null;
+    }
+  }
+  async function resolveSession(id: string): Promise<Session> {
+    const immediate = sessions.get(id);
+    if (immediate) return immediate;
+    const pendingQueue = sessionQueues.get(id);
+    if (pendingQueue) await pendingQueue;
+    const afterQueue = sessions.get(id);
+    if (!afterQueue)
+      throw new AntigravityError(`Unknown Antigravity session: ${id}`, "UNKNOWN_SESSION");
+    return afterQueue;
+  }
+  async function openSession(
+    input: Extract<ProviderInput, { type: "session.open" }>,
+  ): Promise<void> {
+    if (sessions.has(input.sessionId))
+      throw new AntigravityError(`Session already exists: ${input.sessionId}`, "DUPLICATE_SESSION");
+    await ensureCatalog(input.config.cwd);
+    if (sessions.has(input.sessionId))
+      throw new AntigravityError(`Session already exists: ${input.sessionId}`, "DUPLICATE_SESSION");
+    const opened = new Session({
+      id: input.sessionId,
+      config: input.config,
+      persistence: input.persistence,
+      history: input.history,
+      catalog,
+      launch,
+      emit,
+      usage,
+    });
+    sessions.set(input.sessionId, opened);
+    try {
+      await opened.open(input.requestId, negotiated);
+    } catch (error) {
+      sessions.delete(input.sessionId);
+      await opened.close();
+      throw error;
+    }
   }
   async function dispatch(input: ProviderInput): Promise<void> {
     switch (input.type) {
       case "catalog":
-        discovered = await getCatalog(launch, input.cwd);
         emit({
           type: "catalog",
           requestId: input.requestId,
-          catalog: catalog(),
+          catalog: await ensureCatalog(input.cwd, true),
         });
         return;
       case "session.can_stop_runtime":
@@ -106,51 +153,32 @@ function createConnection(
           type: "session.can_stop_runtime",
           requestId: input.requestId,
           sessionId: input.sessionId,
-          canStop: session(input.sessionId).canStopRuntime(),
+          canStop: (await resolveSession(input.sessionId)).canStopRuntime(),
         });
         return;
-      case "session.open": {
-        if (sessions.has(input.sessionId))
-          throw new AntigravityError(
-            `Session already exists: ${input.sessionId}`,
-            "DUPLICATE_SESSION",
-          );
-        if (discovered === null) discovered = await getCatalog(launch, input.config.cwd);
-        const opened = new Session({
-          id: input.sessionId,
-          config: input.config,
-          persistence: input.persistence,
-          history: input.history,
-          catalog,
-          launch,
-          emit,
-          usage,
-        });
-        sessions.set(input.sessionId, opened);
-        try {
-          await opened.open(input.requestId, negotiated);
-        } catch (error) {
-          sessions.delete(input.sessionId);
-          await opened.close();
-          throw error;
-        }
+      case "session.open":
+        await openSession(input);
         return;
-      }
       case "session.prompt":
-        await session(input.sessionId).prompt(input.prompt);
+        await (await resolveSession(input.sessionId)).prompt(input.prompt);
         return;
       case "session.permission":
-        session(input.sessionId).respondToPermission(input.permissionId, input.response);
+        (await resolveSession(input.sessionId)).respondToPermission(
+          input.permissionId,
+          input.response,
+        );
         return;
       case "session.configure":
-        await session(input.sessionId).configure(input.changes);
+        await (await resolveSession(input.sessionId)).configure(input.changes);
         break;
       case "session.interrupt":
-        await session(input.sessionId).interrupt();
+        await (await resolveSession(input.sessionId)).interrupt();
         break;
       case "session.close": {
-        await session(input.sessionId).close();
+        const target = await resolveSession(input.sessionId);
         sessions.delete(input.sessionId);
+        sessionQueues.delete(input.sessionId);
+        await target.close();
         emit({ type: "session.closed", sessionId: input.sessionId });
         break;
       }
@@ -175,18 +203,51 @@ function createConnection(
     else if ("requestId" in input)
       emit({ type: "request.failed", requestId: input.requestId, error: { message, code } });
   }
+  function trackTask(task: Promise<void>): void {
+    inFlight.add(task);
+    void task.finally(() => {
+      inFlight.delete(task);
+    });
+  }
+  function scheduleInput(input: ProviderInput): void {
+    const serializedForSession =
+      input.type === "session.open" ||
+      input.type === "session.configure" ||
+      input.type === "session.prompt";
+    if (!serializedForSession) {
+      trackTask(
+        Promise.resolve()
+          .then(async () => {
+            if (!closed) await dispatch(input);
+            return undefined;
+          })
+          .catch((error) => failed(input, error)),
+      );
+      return;
+    }
+    const previous = sessionQueues.get(input.sessionId) ?? Promise.resolve();
+    const next = previous
+      .then(async () => {
+        if (!closed) await dispatch(input);
+        return undefined;
+      })
+      .catch((error) => failed(input, error));
+    sessionQueues.set(input.sessionId, next);
+    trackTask(
+      next.finally(() => {
+        if (sessionQueues.get(input.sessionId) === next) {
+          sessionQueues.delete(input.sessionId);
+        }
+      }),
+    );
+  }
   return {
     version: 1,
     capabilities: negotiated,
     async send(input) {
       if (closed) throw new AntigravityError("Antigravity connection is closed", "CLOSED");
       requireProviderCapabilities(negotiated, input);
-      pending = pending
-        .then(async () => {
-          if (!closed) await dispatch(input);
-          return undefined;
-        })
-        .catch((error) => failed(input, error));
+      scheduleInput(input);
     },
     onEvent(listener) {
       listeners.add(listener);
@@ -195,9 +256,10 @@ function createConnection(
     async close() {
       if (closed) return;
       closed = true;
-      await pending;
+      await Promise.allSettled(inFlight);
       await Promise.all([...sessions.values()].map((opened) => opened.close()));
       sessions.clear();
+      sessionQueues.clear();
       listeners.clear();
     },
   };

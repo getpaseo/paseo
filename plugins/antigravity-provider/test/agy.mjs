@@ -1,4 +1,4 @@
-import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
@@ -180,6 +180,11 @@ function appendTranscriptStep(convId, step) {
   if (!dataDir) return;
   const logDir = path.join(dataDir, "brain", convId, ".system_generated", "logs");
   mkdirSync(logDir, { recursive: true });
+  const transcriptPath = path.join(logDir, "transcript.jsonl");
+  if (!stepCounters.has(convId) && existsSync(transcriptPath)) {
+    const existingCount = readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean).length;
+    stepCounters.set(convId, existingCount);
+  }
   const nextIndex = step.step_index ?? stepCounters.get(convId) ?? 0;
   stepCounters.set(convId, nextIndex + 1);
   const fullStep = {
@@ -188,7 +193,7 @@ function appendTranscriptStep(convId, step) {
     status: "DONE",
     ...step,
   };
-  appendFileSync(path.join(logDir, "transcript.jsonl"), `${JSON.stringify(fullStep)}\n`);
+  appendFileSync(transcriptPath, `${JSON.stringify(fullStep)}\n`);
 }
 
 function send(msg) {
@@ -219,6 +224,7 @@ function requestClient(method, params) {
 }
 
 const PROMPT_ROUTES = [
+  ["SUBAGENT_HANGING_CHILD", (id) => handleSubagentHangingChild(id)],
   ["TOOL_HANG", (id, text) => handleHangPrompt(id, text)],
   ["HANG", (id, text) => handleHangPrompt(id, text)],
   ["Attached image: ", (id, text) => handleImagePrompt(id, text)],
@@ -228,7 +234,9 @@ const PROMPT_ROUTES = [
   ["PROMPT_CACHED_USAGE", (id) => handlePromptCachedUsage(id)],
   ["BG_RUN_COMMAND_WAKEUP", (id) => handleBgRunCommandWakeup(id)],
   ["BG_WAKEUP_SHELL_TOOL", (id) => handleBgWakeupShellTool(id)],
+  ["BG_WAKEUP_APPROVED_READ", (id) => handleBgWakeupApprovedRead(id)],
   ["FOLLOWUP_AFTER_WAKEUP", (id, text) => handleFollowupAfterWakeup(id, text)],
+  ["/compact", (id) => handleSlashCompactAfterWakeup(id)],
   ["BG_SCHEDULE_ONESHOT_WAKEUP", (id) => handleBgScheduleOneshotWakeup(id)],
   ["BG_SCHEDULE_DAEMON_WAKEUP", (id) => handleBgScheduleDaemonWakeup(id)],
   ["KILL_DAEMON_SCHEDULE", (id) => handleKillDaemonSchedule(id)],
@@ -236,6 +244,8 @@ const PROMPT_ROUTES = [
   ["ACP_UNSOLICITED_WAKEUP", (id) => handleAcpUnsolicitedWakeup(id)],
   ["SUBAGENT_LIVE_AND_WAKEUP", (id) => handleSubagentLiveAndWakeup(id)],
   ["SUBAGENT_SEND_MESSAGE", (id) => handleSubagentSendMessage(id)],
+  ["SUBAGENT_KILL_ALL_AND_ORPHAN", (id) => handleSubagentKillAllAndOrphan(id)],
+  ["SUBAGENT_LIST_RECONCILE", (id) => handleSubagentListReconcile(id)],
   ["SUBAGENT_KILL", (id) => handleSubagentKill(id)],
   ["SUBAGENT", (id) => handleSubagentPrompt(id)],
   ["MULTI", (id, text) => handleMultiPrompt(id, text)],
@@ -495,6 +505,10 @@ function handleSubagentPrompt(id) {
 const LIVE_SUBAGENT_C1 = "11111111-2222-4333-8444-555555555555";
 const LIVE_SUBAGENT_C2 = "22222222-3333-4444-8555-666666666666";
 const LIVE_SUBAGENT_C3 = "33333333-4444-4555-8666-777777777777";
+const KILLED_SUBAGENT_C4 = "44444444-4444-4444-8444-444444444444";
+const ORPHAN_SUBAGENT_C5 = "55555555-5555-4555-8555-555555555555";
+const IDLE_LIST_SUBAGENT_C6 = "66666666-6666-4666-8666-666666666666";
+const HANGING_SUBAGENT_C7 = "77777777-7777-4777-8777-777777777777";
 
 function handlePromptCachedUsage(id) {
   appendTranscriptStep(sessionId, {
@@ -684,6 +698,73 @@ function handleFollowupAfterWakeup(id, text) {
     content: { type: "text", text: "FRESH_FOLLOWUP_RESPONSE" },
   });
   respond(id, { stopReason: "end_turn" });
+}
+
+function handleSlashCompactAfterWakeup(id) {
+  // Slash commands in agy do NOT emit user_message_chunk, and may still precede their output
+  // with catch-up chunks from the prior post-turn wakeup.
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "stale-wakeup-slash",
+    content: { type: "text", text: "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "slash-compact-reply",
+    content: { type: "text", text: "Compacted 12 steps into summary." },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleBgWakeupApprovedRead(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nBG_WAKEUP_APPROVED_READ\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "sched-read-1",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 60, Prompt: "Read README in wakeup" },
+    rawOutput: { output: "Scheduled 60s timer" },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T17:05:00Z sender=scheduler priority=HIGH content=Read README in wakeup\n</SYSTEM_MESSAGE>",
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      tool_calls: [
+        {
+          id: "wakeup-read-1",
+          name: "view_file",
+          args: { AbsolutePath: "/workspace/README.md" },
+        },
+      ],
+    });
+    setTimeout(() => {
+      appendTranscriptStep(sessionId, {
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        content: "# Paseo README\n",
+      });
+      appendTranscriptStep(sessionId, {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        content: "APPROVED_READ_WAKEUP_OK",
+      });
+    }, 300);
+  }, 80);
 }
 
 function handleBgScheduleOneshotWakeup(id) {
@@ -1068,6 +1149,155 @@ function handleSubagentKill(id) {
   respond(id, { stopReason: "end_turn" });
 }
 
+function handleSubagentKillAllAndOrphan(id) {
+  for (const [subId, role, text] of [
+    [KILLED_SUBAGENT_C4, "Killed Researcher", "Inspect auth module"],
+    [ORPHAN_SUBAGENT_C5, "Orphaned Researcher", "Inspect billing module"],
+  ]) {
+    appendTranscriptStep(subId, {
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      content: `<USER_REQUEST>\n${text}\n</USER_REQUEST>`,
+    });
+    appendTranscriptStep(subId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: `Reading files for ${role}`,
+      tool_calls: [
+        {
+          id: `${subId}-read-1`,
+          name: "view_file",
+          args: { AbsolutePath: JSON.stringify("/workspace/src/index.ts") },
+        },
+      ],
+    });
+    appendTranscriptStep(subId, {
+      source: "SYSTEM",
+      type: "GENERIC",
+      status: "DONE",
+      content: "export const ok = true;\n",
+    });
+  }
+
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nSUBAGENT_KILL_ALL_AND_ORPHAN\n</USER_REQUEST>",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    tool_calls: [
+      {
+        id: "spawn-c4",
+        name: "invoke_subagent",
+        args: {
+          TypeName: JSON.stringify("research"),
+          Role: JSON.stringify("Killed Researcher"),
+          Prompt: JSON.stringify("Inspect auth module"),
+        },
+      },
+      {
+        id: "spawn-c5",
+        name: "invoke_subagent",
+        args: {
+          TypeName: JSON.stringify("research"),
+          Role: JSON.stringify("Orphaned Researcher"),
+          Prompt: JSON.stringify("Inspect billing module"),
+        },
+      },
+    ],
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    content: JSON.stringify({ conversationIds: [KILLED_SUBAGENT_C4] }),
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    content: JSON.stringify({ conversationIds: [ORPHAN_SUBAGENT_C5] }),
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    tool_calls: [
+      {
+        id: "kill-c4",
+        name: "manage_subagents",
+        args: {
+          Action: JSON.stringify("kill"),
+          ConversationIds: JSON.stringify([KILLED_SUBAGENT_C4]),
+        },
+      },
+    ],
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    content: "Subagent terminated.",
+  });
+
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleSubagentListReconcile(id) {
+  appendTranscriptStep(IDLE_LIST_SUBAGENT_C6, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nQuick check\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "spawn-c6",
+    title: "invoke_subagent",
+    kind: "other",
+    status: "completed",
+    rawInput: {
+      TypeName: "research",
+      Role: "Idle Checker",
+      Prompt: "Quick check",
+    },
+    rawOutput: { conversationIds: [IDLE_LIST_SUBAGENT_C6] },
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "list-c6",
+    title: "manage_subagents",
+    kind: "other",
+    status: "completed",
+    rawInput: { Action: "list" },
+    rawOutput: {
+      output: `You have 1 active subagent(s):\n${JSON.stringify([
+        { role: "Idle Checker", conversationId: IDLE_LIST_SUBAGENT_C6, state: "idle" },
+      ])}`,
+    },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleSubagentHangingChild(id) {
+  appendTranscriptStep(HANGING_SUBAGENT_C7, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nInfinite analysis\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "spawn-c7",
+    title: "invoke_subagent",
+    kind: "other",
+    status: "completed",
+    rawInput: {
+      TypeName: "research",
+      Role: "Hanging Worker",
+      Prompt: "Infinite analysis",
+    },
+    rawOutput: { conversationIds: [HANGING_SUBAGENT_C7] },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
 function handleMultiPrompt(id, text) {
   let tokens = 11604;
   if (text.includes("RESUME")) {
@@ -1122,6 +1352,43 @@ async function handleMcpQueryToolPrompt(id) {
     content: { type: "text", text: allowed ? "MCP_QUERY_ALLOWED\n" : "MCP_QUERY_DENIED\n" },
   });
   respond(id, { stopReason: "end_turn" });
+}
+
+async function handleSessionLoadRpc(id, params) {
+  const loadDelayMs = Number(process.env.AGY_TEST_SESSION_LOAD_DELAY_MS || "0");
+  if (loadDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, loadDelayMs));
+  }
+  sessionId = params.sessionId || DEFAULT_SESSION_ID;
+  const tierName = process.env.AGY_TEST_TIER || "Google AI Ultra";
+  notifyUpdate({
+    sessionUpdate: "user_message_chunk",
+    messageId: "replay-u1",
+    content: { type: "text", text: "REPLAYED_USER" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "replay-a1",
+    content: { type: "text", text: "REPLAYED_ASSISTANT" },
+  });
+  respond(id, {
+    sessionId,
+    models: {
+      currentModelId: currentModel,
+    },
+    _meta: {
+      antigravity: {
+        tier: { id: "g1-ultra-tier", name: tierName },
+      },
+    },
+  });
+  notifyUpdate({
+    sessionUpdate: "available_commands_update",
+    availableCommands: [
+      { name: "plan", description: "Plan a task before execution", input: { hint: "<task>" } },
+      { name: "compact", description: "Compact conversation context" },
+    ],
+  });
 }
 
 let failedSetModelOnce = false;
@@ -1186,36 +1453,7 @@ lines.on("line", async (line) => {
   }
 
   if (method === "session/load") {
-    sessionId = params.sessionId || DEFAULT_SESSION_ID;
-    const tierName = process.env.AGY_TEST_TIER || "Google AI Ultra";
-    notifyUpdate({
-      sessionUpdate: "user_message_chunk",
-      messageId: "replay-u1",
-      content: { type: "text", text: "REPLAYED_USER" },
-    });
-    notifyUpdate({
-      sessionUpdate: "agent_message_chunk",
-      messageId: "replay-a1",
-      content: { type: "text", text: "REPLAYED_ASSISTANT" },
-    });
-    respond(id, {
-      sessionId,
-      models: {
-        currentModelId: currentModel,
-      },
-      _meta: {
-        antigravity: {
-          tier: { id: "g1-ultra-tier", name: tierName },
-        },
-      },
-    });
-    notifyUpdate({
-      sessionUpdate: "available_commands_update",
-      availableCommands: [
-        { name: "plan", description: "Plan a task before execution", input: { hint: "<task>" } },
-        { name: "compact", description: "Compact conversation context" },
-      ],
-    });
+    await handleSessionLoadRpc(id, params);
     return;
   }
 

@@ -14,7 +14,12 @@ import type {
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
 import type { Usage } from "../usage.js";
-import { DEFAULT_MODE, validateSelection, type AntigravityModeId } from "./catalog.js";
+import {
+  DEFAULT_MODE,
+  inferModelContextWindowMaxTokens,
+  validateSelection,
+  type AntigravityModeId,
+} from "./catalog.js";
 import {
   accountLocatorKey,
   resolveAntigravityDataDir,
@@ -28,6 +33,7 @@ import {
   extractBackgroundTaskLaunch,
   extractSubagentControlAction,
   extractSubagentLaunchInfo,
+  extractSubagentListSnapshot,
   extractTargetPaths,
   inferToolName,
   isEditOrReadTool,
@@ -66,10 +72,8 @@ import {
 
 const INTERRUPT_GRACE_MS = 350;
 const ROOT_TRANSCRIPT_POLL_MS = 180;
-const AUTONOMOUS_ACP_SETTLE_MS = 320;
+const AUTONOMOUS_ACP_SETTLE_MS = 1_000;
 const AUTONOMOUS_TRANSCRIPT_SETTLE_MS = 120;
-const POST_TURN_CATCHUP_SLASH_FALLBACK_MS = 200;
-const POST_TURN_CATCHUP_FALLBACK_MS = 400;
 const AUTONOMOUS_TOOL_STALL_TIMEOUT_MS = 15_000;
 const AUTONOMOUS_PLANNER_TIMEOUT_MS = 90_000;
 
@@ -78,6 +82,11 @@ interface ActiveTurn {
   interrupted: boolean;
   settled: Promise<void>;
   resolveSettled: () => void;
+}
+
+interface PendingPromptStart {
+  canceled: boolean;
+  abort: () => void;
 }
 
 interface AutonomousTurn {
@@ -116,6 +125,9 @@ export class Session {
   private readonly activeBackgroundTasks = new Map<string, { persistent: boolean }>();
   private readonly seenRootSteps = new Set<number>();
   private readonly synthesizedWakeupToolIds = new Set<string>();
+  private readonly unstreamedWakeupThoughts: string[] = [];
+  private readonly unstreamedWakeupMessages: string[] = [];
+  private readonly catchupChunkBuffers = new Map<string, string>();
   private readonly foregroundTranscriptTools: AcpToolCallPayload[] = [];
   private readonly subagents: SubagentManager;
   private readonly dataDir: string;
@@ -123,11 +135,14 @@ export class Session {
   private readonly autonomousToolStallTimeoutMs: number;
 
   private driver: DriverProcess | null = null;
+  private driverInitPromise: Promise<DriverProcess> | null = null;
+  private startingPrompt: PendingPromptStart | null = null;
   private rootTranscriptReader: JsonlTranscriptReader | null = null;
   private rootMonitorTimer: NodeJS.Timeout | null = null;
   private rootTranscriptSyncPromise: Promise<void> | null = null;
   private rootTranscriptSyncRequested = false;
   private latestContextWindowUsedTokens: number | undefined;
+  private latestContextWindowMaxTokens: number | undefined;
   private conversationId: string | null;
   private model: string | null;
   private defaultModel: string | null = null;
@@ -138,9 +153,6 @@ export class Session {
   private autonomousTurn: AutonomousTurn | null = null;
   private shouldReplayOnLoad: boolean;
   private replayWindow: "replay" | "skip" | null = null;
-  private hasUnstreamedPostTurnSteps = false;
-  private awaitingPostTurnCatchupFence = false;
-  private catchupFenceTimer: NodeJS.Timeout | null = null;
   private turnSeq = 0;
   private wakeupSeq = 0;
   private chunkEpoch = 0;
@@ -193,6 +205,7 @@ export class Session {
 
   canStopRuntime(): boolean {
     if (this.closed) return true;
+    if (this.startingPrompt !== null) return false;
     if (this.turn !== null) return false;
     if (this.autonomousTurn !== null) return false;
     if (this.pendingPermissions.size > 0) return false;
@@ -227,6 +240,7 @@ export class Session {
       });
     }
     this.emitConfig();
+    this.emitRestoredContextUsage();
     if (this.availableCommands.length > 0) {
       this.options.emit({
         type: "session.commands",
@@ -262,28 +276,40 @@ export class Session {
       this.options.catalog(),
     );
     if (changes.mode !== undefined && changes.mode !== null) {
-      const previousMode = this.mode;
-      this.mode = changes.mode as AntigravityModeId;
-      this.autoApproveEligiblePendingPermissions();
-      if (this.driver?.isAlive) {
-        if (this.driver.skipPermissions !== (this.mode === "full-access")) {
-          if (this.canStopRuntime()) {
-            await this.retireDriver();
-          }
-        } else if (
-          previousMode !== this.mode &&
-          this.conversationId &&
-          !this.turn &&
-          !this.autonomousTurn
-        ) {
-          await this.syncNativeAcpMode(this.driver);
-        }
-      }
+      await this.applyModeChange(changes.mode as AntigravityModeId);
     }
     if (changes.model !== undefined) {
       await this.applyModelChange(changes.model);
     }
     this.emitConfig();
+  }
+
+  private async applyModeChange(nextMode: AntigravityModeId): Promise<void> {
+    const nextSkipPermissions = nextMode === "full-access";
+    if (
+      this.driver?.isAlive &&
+      this.driver.skipPermissions &&
+      !nextSkipPermissions &&
+      !this.canStopRuntime()
+    ) {
+      throw new AntigravityError(
+        "Cannot switch out of Full access mode while a turn or background task is active",
+        "TURN_ACTIVE",
+      );
+    }
+    const previousMode = this.mode;
+    this.mode = nextMode;
+    this.autoApproveEligiblePendingPermissions();
+    if (!this.driver?.isAlive) return;
+    if (this.driver.skipPermissions !== nextSkipPermissions) {
+      if (this.canStopRuntime()) {
+        await this.retireDriver();
+      }
+      return;
+    }
+    if (previousMode !== this.mode && this.conversationId && !this.turn && !this.autonomousTurn) {
+      await this.syncNativeAcpMode(this.driver);
+    }
   }
 
   private async applyModelChange(nextModel: string | null): Promise<void> {
@@ -316,6 +342,13 @@ export class Session {
     return this.defaultModel ?? this.options.catalog().models[0]?.id ?? null;
   }
 
+  private resolveContextWindowMaxTokens(): number | undefined {
+    return (
+      this.latestContextWindowMaxTokens ??
+      inferModelContextWindowMaxTokens(this.model ?? this.resolveDefaultModel())
+    );
+  }
+
   async prompt(prompt: ProviderPrompt): Promise<void> {
     if (prompt.clearPendingPermissions) {
       this.cancelAllPermissions();
@@ -323,20 +356,14 @@ export class Session {
     if (this.autonomousTurn) {
       await this.trySettleAutonomousTurn(this.autonomousTurn);
     }
-    if (this.turn || this.autonomousTurn) {
+    if (this.turn || this.autonomousTurn || this.startingPrompt) {
       throw new AntigravityError("Antigravity already has an active turn", "TURN_ACTIVE");
     }
-    const encoded = await this.files.encode(prompt);
-    const driver = await this.ensureDriver();
-    if (!this.conversationId) {
-      throw new AntigravityError(
-        "Antigravity ACP session has no active conversation ID",
-        "PROCESS_FAILED",
-      );
-    }
 
-    await this.syncRootTranscript();
+    const prepared = await this.preparePromptTurn(prompt);
+    if (!prepared) return;
 
+    const { driver, encoded } = prepared;
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => {
       resolveSettled = resolve;
@@ -350,16 +377,77 @@ export class Session {
     };
     this.turn = turn;
     this.resetTurnState();
-    this.armPostTurnCatchupFence(encoded.nativeText);
+    this.catchupChunkBuffers.clear();
     this.ensureRootMonitor();
 
+    this.emitPromptStarted(prompt, encoded.text, turnId);
+    void this.executeTurn(driver, turn, encoded.nativeText);
+  }
+
+  private async preparePromptTurn(
+    prompt: ProviderPrompt,
+  ): Promise<{ driver: DriverProcess; encoded: { text: string; nativeText: string } } | null> {
+    let abortStart!: () => void;
+    const canceledSignal = new Promise<"canceled">((resolve) => {
+      abortStart = () => resolve("canceled");
+    });
+    const token: PendingPromptStart = { canceled: false, abort: abortStart };
+    this.startingPrompt = token;
+
+    try {
+      const encoded = await this.files.encode(prompt);
+      if (token.canceled || this.closed) {
+        this.emitCanceledPreTurnPrompt(prompt, encoded.text);
+        return null;
+      }
+
+      const driverPromise = this.ensureDriver();
+      // Prevent unhandled rejection if canceledSignal wins while driver continues warming.
+      void driverPromise.catch(() => {});
+      const raceResult = await Promise.race([
+        driverPromise.then((driver) => ({ kind: "ready" as const, driver })),
+        canceledSignal.then(() => ({ kind: "canceled" as const })),
+      ]);
+      if (raceResult.kind === "canceled" || token.canceled || this.closed) {
+        this.emitCanceledPreTurnPrompt(prompt, encoded.text);
+        return null;
+      }
+      if (!this.conversationId) {
+        throw new AntigravityError(
+          "Antigravity ACP session has no active conversation ID",
+          "PROCESS_FAILED",
+        );
+      }
+
+      await this.syncRootTranscript();
+      if (token.canceled || this.closed) {
+        this.emitCanceledPreTurnPrompt(prompt, encoded.text);
+        return null;
+      }
+
+      if (this.autonomousTurn) {
+        await this.trySettleAutonomousTurn(this.autonomousTurn);
+      }
+      if (this.turn || this.autonomousTurn) {
+        throw new AntigravityError("Antigravity already has an active turn", "TURN_ACTIVE");
+      }
+
+      return { driver: raceResult.driver, encoded };
+    } finally {
+      if (this.startingPrompt === token) {
+        this.startingPrompt = null;
+      }
+    }
+  }
+
+  private emitPromptStarted(prompt: ProviderPrompt, text: string, turnId: string): void {
     this.options.emit({
       type: "timeline.item",
       sessionId: this.id,
       item: {
         type: "user_message",
         id: prompt.clientMessageId,
-        text: encoded.text,
+        text,
         clientMessageId: prompt.clientMessageId,
       },
     });
@@ -375,8 +463,18 @@ export class Session {
       turnId,
       state: "started",
     });
+  }
 
-    void this.executeTurn(driver, turn, encoded.nativeText);
+  private emitCanceledPreTurnPrompt(prompt: ProviderPrompt, text: string): void {
+    if (this.closed) return;
+    const turnId = `turn-${++this.turnSeq}`;
+    this.emitPromptStarted(prompt, text, turnId);
+    this.options.emit({
+      type: "session.turn",
+      sessionId: this.id,
+      turnId,
+      state: "canceled",
+    });
   }
 
   respondToPermission(permissionId: string, response: ProviderPermissionResponse): void {
@@ -418,9 +516,24 @@ export class Session {
   }
 
   async interrupt(): Promise<void> {
+    if (this.startingPrompt) {
+      this.startingPrompt.canceled = true;
+      this.startingPrompt.abort();
+      this.cancelAllPermissions();
+      return;
+    }
+
     const activeTurn = this.turn;
     const driver = this.driver;
-    if (!activeTurn && !this.autonomousTurn) return;
+    if (!activeTurn && !this.autonomousTurn) {
+      if (!this.subagents.hasRunning() && this.pendingPermissions.size === 0) return;
+      this.cancelAllPermissions();
+      if (driver && this.conversationId) {
+        driver.notify("session/cancel", { sessionId: this.conversationId });
+      }
+      this.subagents.settleAllRunning("canceled");
+      return;
+    }
 
     this.cancelAllPermissions();
 
@@ -428,11 +541,19 @@ export class Session {
       if (driver && this.conversationId) {
         driver.notify("session/cancel", { sessionId: this.conversationId });
       }
+      this.subagents.settleAllRunning("canceled");
       this.settleAutonomousTurn("canceled");
       return;
     }
 
     if (!activeTurn || !driver) return;
+    await this.interruptForegroundTurn(activeTurn, driver);
+  }
+
+  private async interruptForegroundTurn(
+    activeTurn: ActiveTurn,
+    driver: DriverProcess,
+  ): Promise<void> {
     activeTurn.interrupted = true;
 
     if (this.conversationId) {
@@ -462,6 +583,11 @@ export class Session {
     this.closed = true;
     this.stopRootMonitor();
     this.clearPostTurnCatchupState();
+    if (this.startingPrompt) {
+      this.startingPrompt.canceled = true;
+      this.startingPrompt.abort();
+      this.startingPrompt = null;
+    }
     if (this.turn) this.turn.interrupted = true;
     if (this.autonomousTurn) {
       this.clearAutonomousTimers(this.autonomousTurn);
@@ -564,8 +690,25 @@ export class Session {
     if (usage?.totalCostUsd !== undefined) payload.totalCostUsd = usage.totalCostUsd;
     if (this.latestContextWindowUsedTokens !== undefined) {
       payload.contextWindowUsedTokens = this.latestContextWindowUsedTokens;
+      const maxTokens = this.resolveContextWindowMaxTokens();
+      if (maxTokens !== undefined) {
+        payload.contextWindowMaxTokens = maxTokens;
+      }
     }
     return payload;
+  }
+
+  private emitRestoredContextUsage(): void {
+    if (this.latestContextWindowUsedTokens === undefined) return;
+    const maxTokens = this.resolveContextWindowMaxTokens();
+    this.options.emit({
+      type: "session.usage",
+      sessionId: this.id,
+      usage: {
+        contextWindowUsedTokens: this.latestContextWindowUsedTokens,
+        ...(maxTokens !== undefined ? { contextWindowMaxTokens: maxTokens } : {}),
+      },
+    });
   }
 
   private handleForegroundTurnFailure(turn: ActiveTurn, error: unknown): void {
@@ -591,11 +734,32 @@ export class Session {
     });
   }
 
+  private canRecycleDriver(): boolean {
+    if (this.closed) return true;
+    if (this.turn !== null || this.autonomousTurn !== null) return false;
+    if (this.pendingPermissions.size > 0) return false;
+    if (this.activeBackgroundTasks.size > 0) return false;
+    if (this.subagents.hasRunning()) return false;
+    return true;
+  }
+
   private async ensureDriver(): Promise<DriverProcess> {
+    if (this.driverInitPromise) {
+      const warmed = await this.driverInitPromise;
+      if (
+        warmed.isAlive &&
+        warmed.skipPermissions === (this.mode === "full-access") &&
+        !this.closed
+      ) {
+        await this.syncDirtyModel(warmed);
+        return warmed;
+      }
+    }
+
     if (
       this.driver?.isAlive &&
       this.driver.skipPermissions !== (this.mode === "full-access") &&
-      this.canStopRuntime()
+      this.canRecycleDriver()
     ) {
       await this.retireDriver();
     }
@@ -605,11 +769,27 @@ export class Session {
       return this.driver;
     }
 
+    const initTask = this.startFreshDriver();
+    this.driverInitPromise = initTask;
+    try {
+      return await initTask;
+    } finally {
+      if (this.driverInitPromise === initTask) {
+        this.driverInitPromise = null;
+      }
+    }
+  }
+
+  private async startFreshDriver(): Promise<DriverProcess> {
     const driver = this.spawnDriver();
     this.driver = driver;
 
     try {
       await this.initializeAcpSession(driver);
+      if (this.closed || this.driver !== driver) {
+        await driver.stop();
+        throw new AntigravityError("Session closed during driver startup", "CLOSED");
+      }
       this.bindRootTranscriptReader();
       this.ensureRootMonitor();
       return driver;
@@ -639,10 +819,21 @@ export class Session {
           if (this.driver !== driver) return;
           this.driver = null;
           this.stopRootMonitor();
+          const hadBackgroundWork =
+            this.activeBackgroundTasks.size > 0 || this.subagents.hasRunning();
           this.activeBackgroundTasks.clear();
-          if (!this.turn && this.autonomousTurn) {
+          this.subagents.settleAllRunning("failed");
+          if (!this.turn) {
             this.cancelAllPermissions();
-            this.settleAutonomousTurn("failed", toProviderError(failure));
+            if (this.autonomousTurn) {
+              this.settleAutonomousTurn("failed", toProviderError(failure));
+            } else if (hadBackgroundWork && !this.closed) {
+              this.options.emit({
+                type: "session.runtime_failed",
+                sessionId: this.id,
+                error: toProviderError(failure),
+              });
+            }
           }
         },
       },
@@ -878,17 +1069,30 @@ export class Session {
       return;
     }
 
-    if (step.type === "PLANNER_RESPONSE" && step.toolCalls.length > 0) {
-      step.toolCalls.forEach((call, index) => {
-        const payload: AcpToolCallPayload = {
-          toolCallId: call.id ?? `fg-tool-${step.stepIndex}-${index}`,
-          title: call.name,
-          status: "in_progress",
-          rawInput: call.args,
-        };
-        this.foregroundTranscriptTools.push(payload);
-        this.inspectToolSideEffects(payload);
-      });
+    if (step.type === "PLANNER_RESPONSE") {
+      if (this.turn) {
+        const usagePayload = this.buildTranscriptStepUsagePayload(step);
+        if (Object.keys(usagePayload).length > 0) {
+          this.options.emit({
+            type: "session.usage",
+            sessionId: this.id,
+            turnId: this.turn.id,
+            usage: usagePayload,
+          });
+        }
+      }
+      if (step.toolCalls.length > 0) {
+        step.toolCalls.forEach((call, index) => {
+          const payload: AcpToolCallPayload = {
+            toolCallId: call.id ?? `fg-tool-${step.stepIndex}-${index}`,
+            title: call.name,
+            status: "in_progress",
+            rawInput: call.args,
+          };
+          this.foregroundTranscriptTools.push(payload);
+          this.inspectToolSideEffects(payload);
+        });
+      }
       return;
     }
 
@@ -957,7 +1161,7 @@ export class Session {
 
   private emitAutonomousPlannerTextAndUsage(auto: AutonomousTurn, step: TranscriptStep): void {
     if (step.thinking?.trim()) {
-      this.hasUnstreamedPostTurnSteps = true;
+      this.unstreamedWakeupThoughts.push(step.thinking);
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,
@@ -970,7 +1174,7 @@ export class Session {
       });
     }
     if (step.content?.trim()) {
-      this.hasUnstreamedPostTurnSteps = true;
+      this.unstreamedWakeupMessages.push(step.content);
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,
@@ -1000,6 +1204,10 @@ export class Session {
     if (step.outputTokens !== undefined) payload.outputTokens = step.outputTokens;
     if (this.latestContextWindowUsedTokens !== undefined) {
       payload.contextWindowUsedTokens = this.latestContextWindowUsedTokens;
+      const maxTokens = this.resolveContextWindowMaxTokens();
+      if (maxTokens !== undefined) {
+        payload.contextWindowMaxTokens = maxTokens;
+      }
     }
     return payload;
   }
@@ -1016,7 +1224,6 @@ export class Session {
       };
       auto.pendingTranscriptTools.push(payload);
       if (!auto.receivedAcpUpdates) {
-        this.hasUnstreamedPostTurnSteps = true;
         this.synthesizedWakeupToolIds.add(payload.toolCallId);
         this.options.emit({
           type: "timeline.item",
@@ -1057,7 +1264,6 @@ export class Session {
       ...(output !== undefined ? { rawOutput: isFailed ? { error: output } : { output } } : {}),
     };
     if (!auto.receivedAcpUpdates) {
-      this.hasUnstreamedPostTurnSteps = true;
       this.synthesizedWakeupToolIds.add(updatedPayload.toolCallId);
       this.options.emit({
         type: "timeline.item",
@@ -1122,12 +1328,18 @@ export class Session {
     return auto;
   }
 
+  private hasUnapprovedAutonomousTool(auto: AutonomousTurn): boolean {
+    return auto.pendingTranscriptTools.some(
+      (tool) => !this.shouldAutoApproveTool(tool, mapAcpToolDetail(tool)),
+    );
+  }
+
   private syncAutonomousToolStallGuard(auto: AutonomousTurn): void {
     const shouldArm =
       this.autonomousTurn === auto &&
       !this.driver?.skipPermissions &&
       !auto.receivedAcpUpdates &&
-      auto.pendingTranscriptTools.length > 0 &&
+      this.hasUnapprovedAutonomousTool(auto) &&
       this.pendingPermissions.size === 0;
     if (!shouldArm) {
       this.clearAutonomousToolStallTimeout(auto);
@@ -1136,8 +1348,8 @@ export class Session {
     this.clearAutonomousToolStallTimeout(auto);
     auto.toolStallTimer = setTimeout(() => {
       if (this.autonomousTurn !== auto || this.closed) return;
-      if (auto.pendingTranscriptTools.length === 0 || this.pendingPermissions.size > 0) return;
-      this.abortStalledAutonomousTools(
+      if (!this.hasUnapprovedAutonomousTool(auto) || this.pendingPermissions.size > 0) return;
+      void this.abortStalledAutonomousTools(
         auto,
         "Background wakeup cannot prompt for interactive tool approval after a turn has ended. Switch session mode to Full access for unattended background tool execution.",
       );
@@ -1152,7 +1364,7 @@ export class Session {
     }
   }
 
-  private abortStalledAutonomousTools(auto: AutonomousTurn, reason: string): void {
+  private async abortStalledAutonomousTools(auto: AutonomousTurn, reason: string): Promise<void> {
     if (this.conversationId) {
       this.driver?.notify("session/cancel", { sessionId: this.conversationId });
     }
@@ -1171,20 +1383,17 @@ export class Session {
       }
     }
     auto.awaitingPlannerResponse = false;
-    this.settleAutonomousTurn("completed");
+    await this.retireDriver();
+    if (this.autonomousTurn === auto) {
+      this.settleAutonomousTurn("completed");
+    }
   }
 
   private armAutonomousPlannerTimeout(auto: AutonomousTurn): void {
     this.clearAutonomousPlannerTimeout(auto);
     auto.plannerTimeoutTimer = setTimeout(() => {
       if (this.autonomousTurn !== auto || this.closed) return;
-      if (auto.pendingTranscriptTools.length > 0 && this.pendingPermissions.size === 0) {
-        this.abortStalledAutonomousTools(
-          auto,
-          "Autonomous wakeup tool execution timed out before returning a result.",
-        );
-        return;
-      }
+      if (auto.pendingTranscriptTools.length > 0) return;
       auto.awaitingPlannerResponse = false;
       this.scheduleAutonomousSettleCheck(50);
     }, AUTONOMOUS_PLANNER_TIMEOUT_MS);
@@ -1264,6 +1473,10 @@ export class Session {
     if (control) {
       this.subagents.applyControlAction(control);
     }
+    const listSnapshot = extractSubagentListSnapshot(tool);
+    if (listSnapshot) {
+      void this.subagents.reconcileActiveList(listSnapshot);
+    }
     const bgLaunch = extractBackgroundTaskLaunch(tool);
     if (bgLaunch) {
       this.activeBackgroundTasks.set(bgLaunch.taskId, { persistent: bgLaunch.persistent });
@@ -1299,7 +1512,9 @@ export class Session {
     }
 
     if (this.replayWindow === "skip") return;
-    if (this.shouldSuppressPostTurnCatchup(update)) return;
+    const filteredUpdate = this.filterPostTurnCatchupUpdate(update);
+    if (!filteredUpdate) return;
+    update = filteredUpdate;
 
     const isPostTurnLive = this.turn === null && this.replayWindow === null;
 
@@ -1352,8 +1567,16 @@ export class Session {
   private emitUsageUpdate(
     update: Extract<AcpSessionUpdate, { sessionUpdate: "usage_update" }>,
   ): void {
+    if (update.used !== undefined) {
+      this.latestContextWindowUsedTokens = update.used;
+    }
+    if (update.size !== undefined && update.size > 0) {
+      this.latestContextWindowMaxTokens = update.size;
+    }
     const activeTurnId = this.turn?.id ?? this.autonomousTurn?.id;
     const cachedInputTokens = update.cachedInputTokens ?? update.cachedReadTokens;
+    const resolvedMaxTokens =
+      update.size ?? (update.used !== undefined ? this.resolveContextWindowMaxTokens() : undefined);
     this.options.emit({
       type: "session.usage",
       sessionId: this.id,
@@ -1363,7 +1586,7 @@ export class Session {
         ...(update.outputTokens !== undefined ? { outputTokens: update.outputTokens } : {}),
         ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
         ...(update.used !== undefined ? { contextWindowUsedTokens: update.used } : {}),
-        ...(update.size !== undefined ? { contextWindowMaxTokens: update.size } : {}),
+        ...(resolvedMaxTokens !== undefined ? { contextWindowMaxTokens: resolvedMaxTokens } : {}),
         ...(update.cost?.amount !== undefined ? { totalCostUsd: update.cost.amount } : {}),
       },
     });
@@ -1695,41 +1918,65 @@ export class Session {
     });
   }
 
-  private shouldSuppressPostTurnCatchup(update: AcpSessionUpdate): boolean {
-    if (this.replayWindow !== null) return false;
+  private filterPostTurnCatchupUpdate(update: AcpSessionUpdate): AcpSessionUpdate | null {
+    if (this.replayWindow !== null) return update;
     if (update.sessionUpdate === "user_message_chunk") {
       this.releasePostTurnCatchupFence();
-      return false;
+      return update;
     }
     if (
       (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
       this.synthesizedWakeupToolIds.has(update.toolCallId)
     ) {
-      return true;
+      return null;
     }
-    return this.turn !== null && this.awaitingPostTurnCatchupFence;
+    if (this.turn === null) return update;
+    if (
+      update.sessionUpdate !== "agent_message_chunk" &&
+      update.sessionUpdate !== "agent_thought_chunk"
+    ) {
+      return update;
+    }
+    return this.filterPreEchoWakeupChunk(update);
   }
 
-  private armPostTurnCatchupFence(nativeText: string): void {
-    this.clearCatchupFenceTimer();
-    if (!this.hasUnstreamedPostTurnSteps) {
-      this.awaitingPostTurnCatchupFence = false;
-      return;
+  private filterPreEchoWakeupChunk(
+    update: Extract<
+      AcpSessionUpdate,
+      { sessionUpdate: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk" }
+    >,
+  ): AcpSessionUpdate | null {
+    if (update.content.type !== "text" || !update.content.text) return update;
+    const candidates =
+      update.sessionUpdate === "agent_thought_chunk"
+        ? this.unstreamedWakeupThoughts
+        : this.unstreamedWakeupMessages;
+    if (candidates.length === 0) return update;
+
+    const bufferKey = `${update.sessionUpdate}:${update.messageId ?? "default"}`;
+    const combined = `${this.catchupChunkBuffers.get(bufferKey) ?? ""}${update.content.text}`;
+
+    if (matchesRecordedWakeupPrefix(candidates, combined)) {
+      if (consumeExactWakeupMatch(candidates, combined)) {
+        this.catchupChunkBuffers.delete(bufferKey);
+      } else {
+        this.catchupChunkBuffers.set(bufferKey, combined);
+      }
+      return null;
     }
-    this.awaitingPostTurnCatchupFence = true;
-    const timeoutMs = nativeText.trimStart().startsWith("/")
-      ? POST_TURN_CATCHUP_SLASH_FALLBACK_MS
-      : POST_TURN_CATCHUP_FALLBACK_MS;
-    this.catchupFenceTimer = setTimeout(() => {
-      this.releasePostTurnCatchupFence();
-    }, timeoutMs);
-    this.catchupFenceTimer.unref?.();
+
+    this.catchupChunkBuffers.delete(bufferKey);
+    this.releasePostTurnCatchupFence();
+    return {
+      ...update,
+      content: { ...update.content, text: combined },
+    };
   }
 
   private releasePostTurnCatchupFence(): void {
-    this.clearCatchupFenceTimer();
-    this.awaitingPostTurnCatchupFence = false;
-    this.hasUnstreamedPostTurnSteps = false;
+    this.unstreamedWakeupThoughts.length = 0;
+    this.unstreamedWakeupMessages.length = 0;
+    this.catchupChunkBuffers.clear();
   }
 
   private clearPostTurnCatchupState(): void {
@@ -1737,20 +1984,36 @@ export class Session {
     this.synthesizedWakeupToolIds.clear();
   }
 
-  private clearCatchupFenceTimer(): void {
-    if (this.catchupFenceTimer) {
-      clearTimeout(this.catchupFenceTimer);
-      this.catchupFenceTimer = null;
-    }
-  }
-
   private async retireDriver(): Promise<void> {
     this.stopRootMonitor();
     this.clearPostTurnCatchupState();
+    this.driverInitPromise = null;
+    this.activeBackgroundTasks.clear();
+    this.subagents.settleAllRunning("canceled");
     const driver = this.driver;
     this.driver = null;
     if (driver) await driver.stop();
   }
+}
+
+function matchesRecordedWakeupPrefix(candidates: readonly string[], accumulated: string): boolean {
+  const trimmed = accumulated.trimStart();
+  return candidates.some(
+    (candidate) =>
+      candidate.startsWith(accumulated) ||
+      (trimmed.length > 0 && candidate.trimStart().startsWith(trimmed)),
+  );
+}
+
+function consumeExactWakeupMatch(candidates: string[], accumulated: string): boolean {
+  const trimmed = accumulated.trim();
+  const index = candidates.findIndex(
+    (candidate) =>
+      candidate === accumulated || (trimmed.length > 0 && candidate.trim() === trimmed),
+  );
+  if (index < 0) return false;
+  candidates.splice(index, 1);
+  return true;
 }
 
 function parsePersistenceId(persistence: ProviderPersistence | undefined): string | null {

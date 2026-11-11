@@ -20,6 +20,11 @@ export type SubagentControlAction =
   | { kind: "kill"; conversationIds: string[] }
   | { kind: "kill_all" };
 
+export interface SubagentListEntry {
+  conversationId: string;
+  state: string;
+}
+
 export interface BackgroundTaskInfo {
   taskId: string;
   persistent: boolean;
@@ -48,6 +53,7 @@ const INPUT_FIELD_TOOL_NAMES: ReadonlyArray<[string, string]> = [
   ["Terminate", "send_command_input"],
   ["TypeName", "invoke_subagent"],
   ["ConversationIds", "invoke_subagent"],
+  ["questions", "ask_question"],
   ["ReplacementChunks", "multi_replace_file_content"],
   ["TargetContent", "replace_file_content"],
   ["ReplacementContent", "replace_file_content"],
@@ -531,6 +537,45 @@ export function extractSubagentControlAction(
     }
   }
   return undefined;
+}
+
+export function extractSubagentListSnapshot(
+  tool: AcpToolCallPayload,
+): SubagentListEntry[] | undefined {
+  if (tool.status !== "completed") return undefined;
+  const name = inferToolName(tool);
+  const rawInput = asRecord(tool.rawInput) ?? {};
+  const action = stringField(rawInput, "Action") ?? stringField(rawInput, "action");
+  const output = extractToolOutputText(tool);
+  if (!output) return undefined;
+
+  const isManageListCall = name === "manage_subagents" && (!action || action === "list");
+  const headerMatch = /You have\s+\d+\s+active subagent\(s\):\s*(\[[\s\S]*\])/i.exec(output);
+  if (!isManageListCall && !headerMatch) return undefined;
+
+  const jsonCandidate = headerMatch?.[1] ?? output.trim();
+  if (!jsonCandidate.startsWith("[")) return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(jsonCandidate);
+    if (!Array.isArray(parsed)) return undefined;
+    const entries: SubagentListEntry[] = [];
+    for (const item of parsed) {
+      const record = asRecord(item);
+      const conversationId =
+        stringField(record, "conversationId") ?? stringField(record, "sessionId");
+      if (!conversationId) continue;
+      entries.push({
+        conversationId,
+        state: (stringField(record, "state") ?? stringField(record, "status") ?? "running")
+          .trim()
+          .toLowerCase(),
+      });
+    }
+    return entries;
+  } catch {
+    return undefined;
+  }
 }
 
 export function extractBackgroundTaskLaunch(

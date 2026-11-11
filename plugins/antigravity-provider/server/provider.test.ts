@@ -744,7 +744,11 @@ describe("discovery", () => {
       type: "catalog",
       catalog: {
         models: expect.arrayContaining([
-          { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+          {
+            id: "gemini-3.8-flash-low",
+            label: "Gemini 3.8 Flash (Low)",
+            contextWindowMaxTokens: 1_048_576,
+          },
         ]),
         thinkingOptions: [],
         defaultMode: "default",
@@ -937,6 +941,55 @@ describe("image prompts", () => {
       result: { type: "failed", error: { message: expect.stringContaining("image MIME type") } },
     });
     expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
+  });
+
+  it("acknowledges session.interrupt immediately without waiting behind a slow agy driver startup (#9312)", async () => {
+    const h = await harness({ AGY_TEST_SESSION_LOAD_DELAY_MS: "900" });
+    await h.open();
+    // Switching to full-access while idle retires the initial driver so the next prompt must spawn & load agy
+    await h.request({
+      type: "session.configure",
+      requestId: "cfg-full",
+      sessionId: "s",
+      changes: { mode: "full-access" },
+    });
+
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId: "slow-start-msg",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "First prompt" }] },
+      },
+    });
+
+    const interruptStart = Date.now();
+    await h.request({
+      type: "session.interrupt",
+      requestId: "interrupt-during-start",
+      sessionId: "s",
+    });
+    const interruptElapsedMs = Date.now() - interruptStart;
+    expect(interruptElapsedMs).toBeLessThan(400);
+
+    await h.wait(
+      (event) =>
+        event.type === "session.turn" && event.sessionId === "s" && event.state === "canceled",
+    );
+
+    // Replacement prompt reuses the warming driver without spawning a duplicate process
+    const replacementMsg = await h.message([
+      { type: "text", text: "Second prompt after fast cancel" },
+    ]);
+    await h.completed(replacementMsg);
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        sessionId: "s",
+        item: expect.objectContaining({ type: "assistant_message", text: "PHASE0_HELLO\n" }),
+      }),
+    );
   });
 });
 

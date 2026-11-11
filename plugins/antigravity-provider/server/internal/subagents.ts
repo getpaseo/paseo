@@ -7,9 +7,11 @@ import {
   extractBackgroundTaskLaunch,
   extractSubagentControlAction,
   extractSubagentLaunchInfo,
+  extractSubagentListSnapshot,
   mapAcpToolCall,
   type SubagentControlAction,
   type SubagentLaunchInfo,
+  type SubagentListEntry,
 } from "./timeline.js";
 import {
   cleanUserInputText,
@@ -43,12 +45,15 @@ interface ChildSubagentState {
   seenSteps: Set<number>;
   pendingToolCalls: PendingChildToolCall[];
   activeTasks: Map<string, { persistent: boolean }>;
+  forcedTerminalState: "canceled" | "failed" | null;
+  settledByListSnapshot: boolean;
   sawAnyTranscriptStep: boolean;
-  polling: boolean;
+  pollPromise: Promise<void> | null;
 }
 
 export class SubagentManager {
   private readonly children = new Map<string, ChildSubagentState>();
+  private readonly pendingReconciles = new Set<Promise<void>>();
   private deferOpens = false;
   private pollTimer: NodeJS.Timeout | null = null;
   private closed = false;
@@ -103,11 +108,15 @@ export class SubagentManager {
         seenSteps: new Set(),
         pendingToolCalls: [],
         activeTasks: new Map(),
+        forcedTerminalState: null,
+        settledByListSnapshot: false,
         sawAnyTranscriptStep: false,
-        polling: false,
+        pollPromise: null,
       };
       this.children.set(info.childSessionId, child);
     } else {
+      child.forcedTerminalState = null;
+      child.settledByListSnapshot = false;
       if (!child.title && info.title) child.title = info.title;
       if (!child.description && info.description) child.description = info.description;
       if (!child.toolCallId && info.toolCallId) child.toolCallId = info.toolCallId;
@@ -125,6 +134,8 @@ export class SubagentManager {
     if (action.kind === "send_message") {
       const child = this.children.get(action.recipientId);
       if (!child) return;
+      child.forcedTerminalState = null;
+      child.settledByListSnapshot = false;
       if (!this.deferOpens) {
         this.ensureOpenedAndRunning(child);
         this.ensurePollLoop();
@@ -135,7 +146,7 @@ export class SubagentManager {
 
     if (action.kind === "kill_all") {
       for (const child of this.children.values()) {
-        this.settleChild(child, "canceled");
+        this.markSubtreeCanceled(child);
       }
       return;
     }
@@ -143,21 +154,69 @@ export class SubagentManager {
     if (action.kind === "kill") {
       for (const id of action.conversationIds) {
         const child = this.children.get(id);
-        if (child) this.settleChild(child, "canceled");
+        if (child) this.markSubtreeCanceled(child);
       }
     }
   }
 
-  async flushDeferredOpens(replayAtRest = false): Promise<void> {
-    this.deferOpens = false;
-    for (const child of this.children.values()) {
-      this.ensureOpened(child);
-      await this.pollChild(child, replayAtRest);
-      if (replayAtRest && child.status === "running" && !child.sawAnyTranscriptStep) {
-        if (!(await pathExists(child.brainDir))) {
-          this.settleChild(child, "completed");
+  reconcileActiveList(entries: readonly SubagentListEntry[]): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    const runningIds = new Set(
+      entries.filter((entry) => entry.state === "running").map((entry) => entry.conversationId),
+    );
+    if (this.deferOpens) {
+      for (const child of this.children.values()) {
+        if (!runningIds.has(child.id)) {
+          child.settledByListSnapshot = true;
         }
       }
+      return Promise.resolve();
+    }
+
+    const task = (async () => {
+      for (const child of this.children.values()) {
+        if (child.status !== "running" || runningIds.has(child.id)) continue;
+        child.settledByListSnapshot = true;
+        await this.pollChild(child, true);
+        if (child.status !== "running" && child.forcedTerminalState !== null) continue;
+        if (child.activeTurnId === null && child.status !== "running") continue;
+        const finalState = child.forcedTerminalState ?? "completed";
+        this.settlePendingChildTools(child, finalState === "completed" ? "completed" : "failed");
+        child.activeTasks.clear();
+        this.settleChild(child, finalState);
+      }
+    })();
+    this.pendingReconciles.add(task);
+    void task.finally(() => {
+      this.pendingReconciles.delete(task);
+    });
+    return task;
+  }
+
+  settleAllRunning(state: "canceled" | "failed"): void {
+    if (this.closed) return;
+    for (const child of this.children.values()) {
+      if (child.status !== "running") continue;
+      child.forcedTerminalState = state;
+      this.settlePendingChildTools(child, "failed");
+      child.activeTasks.clear();
+      this.settleChild(child, state);
+    }
+  }
+
+  async flushDeferredOpens(replayAtRest = false): Promise<void> {
+    try {
+      for (const child of this.children.values()) {
+        const parent = this.children.get(child.parentSessionId);
+        if (parent?.forcedTerminalState === "canceled") {
+          child.forcedTerminalState = "canceled";
+        }
+        this.ensureOpened(child);
+        await this.pollChild(child, replayAtRest);
+        this.finalizeReplayedChild(child, replayAtRest);
+      }
+    } finally {
+      this.deferOpens = false;
     }
     if (this.hasRunning()) {
       this.ensurePollLoop();
@@ -186,6 +245,9 @@ export class SubagentManager {
   }
 
   async settleSyntheticChildrenAfterForegroundTurn(): Promise<void> {
+    if (this.pendingReconciles.size > 0) {
+      await Promise.allSettled(this.pendingReconciles);
+    }
     for (const child of this.children.values()) {
       if (child.status !== "running") continue;
       await this.pollChild(child, false);
@@ -226,6 +288,61 @@ export class SubagentManager {
     this.children.clear();
   }
 
+  private markSubtreeCanceled(target: ChildSubagentState): void {
+    target.forcedTerminalState = "canceled";
+    if (!this.deferOpens) {
+      this.settlePendingChildTools(target, "failed");
+      target.activeTasks.clear();
+      this.settleChild(target, "canceled");
+    }
+    for (const descendant of this.children.values()) {
+      if (descendant.parentSessionId === target.id && descendant !== target) {
+        this.markSubtreeCanceled(descendant);
+      }
+    }
+  }
+
+  private finalizeReplayedChild(child: ChildSubagentState, replayAtRest: boolean): void {
+    if (child.forcedTerminalState !== null) {
+      this.settlePendingChildTools(child, "failed");
+      child.activeTasks.clear();
+      this.settleChild(child, child.forcedTerminalState);
+      return;
+    }
+    if (child.settledByListSnapshot && child.status === "running") {
+      this.settlePendingChildTools(child, "completed");
+      child.activeTasks.clear();
+      this.settleChild(child, "completed");
+      return;
+    }
+    if (replayAtRest && child.status === "running") {
+      // A fresh agy ACP process has no live in-memory subagents from prior runs.
+      const finalState = child.sawAnyTranscriptStep ? "canceled" : "completed";
+      this.settlePendingChildTools(child, finalState === "canceled" ? "failed" : "completed");
+      child.activeTasks.clear();
+      this.settleChild(child, finalState);
+    }
+  }
+
+  private settlePendingChildTools(
+    child: ChildSubagentState,
+    terminalStatus: "completed" | "failed",
+  ): void {
+    for (const pending of child.pendingToolCalls.splice(0)) {
+      const settledPayload: AcpToolCallPayload = {
+        ...pending.payload,
+        status: terminalStatus,
+      };
+      if (child.opened && !this.closed) {
+        this.emit({
+          type: "timeline.item",
+          sessionId: child.id,
+          item: mapAcpToolCall(settledPayload),
+        });
+      }
+    }
+  }
+
   private ensureOpened(child: ChildSubagentState): void {
     if (child.opened || this.closed) return;
     child.opened = true;
@@ -244,6 +361,9 @@ export class SubagentManager {
 
   private ensureOpenedAndRunning(child: ChildSubagentState): void {
     this.ensureOpened(child);
+    if (!this.deferOpens && child.forcedTerminalState !== null) {
+      return;
+    }
     if (child.activeTurnId === null && !this.closed) {
       const turnId = `subturn-${++child.turnSeq}`;
       child.activeTurnId = turnId;
@@ -285,9 +405,12 @@ export class SubagentManager {
     child: ChildSubagentState,
     allowTrailingWithoutNewline: boolean,
   ): Promise<void> {
-    if (this.closed || child.polling || !child.opened) return;
-    child.polling = true;
-    try {
+    if (this.closed || !child.opened) return;
+    if (child.pollPromise) {
+      await child.pollPromise;
+      if (!allowTrailingWithoutNewline || this.closed || !child.opened) return;
+    }
+    const run = (async () => {
       const steps = await child.reader.readNewSteps({ allowTrailingWithoutNewline });
       for (const step of steps) {
         if (child.seenSteps.has(step.stepIndex)) continue;
@@ -295,8 +418,14 @@ export class SubagentManager {
         child.sawAnyTranscriptStep = true;
         this.applyChildStep(child, step);
       }
+    })();
+    child.pollPromise = run;
+    try {
+      await run;
     } finally {
-      child.polling = false;
+      if (child.pollPromise === run) {
+        child.pollPromise = null;
+      }
     }
   }
 
@@ -493,6 +622,10 @@ export class SubagentManager {
     if (nestedLaunch) {
       this.registerLaunch(child.id, nestedLaunch);
     }
+    const listSnapshot = extractSubagentListSnapshot(updatedPayload);
+    if (listSnapshot) {
+      void this.reconcileActiveList(listSnapshot);
+    }
     const bgLaunch = extractBackgroundTaskLaunch(updatedPayload);
     if (bgLaunch) {
       child.activeTasks.set(bgLaunch.taskId, { persistent: bgLaunch.persistent });
@@ -529,6 +662,10 @@ export class SubagentManager {
         const launch = extractSubagentLaunchInfo(completed, this.defaultCwd);
         if (launch) {
           this.registerLaunch(parentSessionId, launch);
+        }
+        const listSnapshot = extractSubagentListSnapshot(completed);
+        if (listSnapshot) {
+          void this.reconcileActiveList(listSnapshot);
         }
       }
     }

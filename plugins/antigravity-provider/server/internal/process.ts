@@ -34,6 +34,7 @@ export class DriverProcess {
   private stderr = "";
   private closing = false;
   private hasExited = false;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(
     options: {
@@ -154,14 +155,19 @@ export class DriverProcess {
   async stop(): Promise<void> {
     this.closing = true;
     if (this.hasExited) return;
+    this.stopPromise ??= this.terminateProcess();
+    await this.stopPromise;
+  }
+
+  private async terminateProcess(): Promise<void> {
     if (process.platform === "win32") {
-      await this.signal("SIGKILL");
+      await this.signal("SIGKILL", true);
       await this.exitedPromise;
       return;
     }
-    await this.signal("SIGTERM");
+    await this.signal("SIGTERM", true);
     const timer = setTimeout(() => {
-      void this.signal("SIGKILL");
+      void this.signal("SIGKILL", true);
     }, EXIT_WAIT_MS);
     await this.exitedPromise;
     clearTimeout(timer);

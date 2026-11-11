@@ -31,7 +31,7 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
           !(
             fallbackError instanceof Error &&
             "code" in fallbackError &&
-            fallbackError.code === "ESRCH"
+            (fallbackError.code === "ESRCH" || fallbackError.code === "EPERM")
           )
         ) {
           throw fallbackError;
