@@ -47,6 +47,31 @@ export type TunnelStreamDataPayload = TunnelStreamRef & { data: Uint8Array };
 export type TunnelStreamCreditPayload = TunnelStreamRef & { credit: number };
 export type TunnelStreamClosePayload = TunnelStreamRef & { reason: number };
 
+interface ProviderClose {
+  serverId: string;
+  reason: TunnelProviderClosedReason;
+  /** False when the renderer itself asked, or is already gone. */
+  notifyRenderer?: boolean;
+}
+
+interface SenderProvidersClose {
+  senderId: number;
+  reason: TunnelProviderClosedReason;
+  notifyRenderer?: boolean;
+}
+
+interface MainStreamClose {
+  state: StreamState;
+  reason: number;
+  notifySink?: boolean;
+}
+
+interface StreamDetach {
+  state: StreamState;
+  error: TunnelStreamError;
+  notifySink?: boolean;
+}
+
 export interface TunnelStreamOpenRequest {
   serverId: string;
   target: ProxyTarget;
@@ -181,7 +206,11 @@ export class TunnelBridge {
   ): TunnelInvokeResult {
     const provider = this.resolveProvider(senderId, ref);
     if (!provider.ok) return provider;
-    this.closeProvider(provider.value.serverId, "unregistered", { notifyRenderer: false });
+    this.closeProvider({
+      serverId: provider.value.serverId,
+      reason: "unregistered",
+      notifyRenderer: false,
+    });
     return { ok: true };
   }
 
@@ -190,7 +219,11 @@ export class TunnelBridge {
     if (!stream.ok) return stream;
     const state = stream.value;
     if (state.phase !== "connecting") {
-      this.closeStreamFromMain(state, TunnelCloseReason.ProtocolError, { notifySink: true });
+      this.closeStreamFromMain({
+        state,
+        reason: TunnelCloseReason.ProtocolError,
+        notifySink: true,
+      });
       return failure("protocol_error", "Stream was already connected.");
     }
     state.phase = "open";
@@ -208,15 +241,19 @@ export class TunnelBridge {
     const { data } = payload;
     const limits = state.provider.limits;
     if (state.phase !== "open") {
-      this.closeStreamFromMain(state, TunnelCloseReason.ProtocolError, { notifySink: true });
+      this.closeStreamFromMain({
+        state,
+        reason: TunnelCloseReason.ProtocolError,
+        notifySink: true,
+      });
       return failure("protocol_error", "Data arrived before the stream connected.");
     }
     if (data.byteLength === 0 || data.byteLength > limits.maxDataBytes) {
-      this.closeProvider(state.provider.serverId, "protocol_error");
+      this.closeProvider({ serverId: state.provider.serverId, reason: "protocol_error" });
       return failure("protocol_error", "Data frame size is outside the negotiated limits.");
     }
     if (state.receiveOutstanding + data.byteLength > limits.initialWindowBytes) {
-      this.closeProvider(state.provider.serverId, "protocol_error");
+      this.closeProvider({ serverId: state.provider.serverId, reason: "protocol_error" });
       return failure("protocol_error", "Data exceeded the receive window.");
     }
     state.receiveOutstanding += data.byteLength;
@@ -237,11 +274,15 @@ export class TunnelBridge {
     const state = stream.value;
     const { credit } = payload;
     if (state.phase !== "open") {
-      this.closeStreamFromMain(state, TunnelCloseReason.ProtocolError, { notifySink: true });
+      this.closeStreamFromMain({
+        state,
+        reason: TunnelCloseReason.ProtocolError,
+        notifySink: true,
+      });
       return failure("protocol_error", "Credit arrived before the stream connected.");
     }
     if (state.sendCredit + credit > state.provider.limits.initialWindowBytes) {
-      this.closeProvider(state.provider.serverId, "protocol_error");
+      this.closeProvider({ serverId: state.provider.serverId, reason: "protocol_error" });
       return failure("protocol_error", "Credit exceeded the send window.");
     }
     state.sendCredit += credit;
@@ -253,7 +294,7 @@ export class TunnelBridge {
     const stream = this.resolveStream(senderId, payload);
     if (!stream.ok) return stream;
     const state = stream.value;
-    this.detachStream(state, new TunnelStreamError(payload.reason), { notifySink: true });
+    this.detachStream({ state, error: new TunnelStreamError(payload.reason), notifySink: true });
     return { ok: true };
   }
 
@@ -292,7 +333,7 @@ export class TunnelBridge {
     }
     state.connectTimer = this.scheduleTimeout(() => {
       if (state.phase === "connecting") {
-        this.closeStreamFromMain(state, TunnelCloseReason.Timeout, { notifySink: true });
+        this.closeStreamFromMain({ state, reason: TunnelCloseReason.Timeout, notifySink: true });
       }
     }, provider.limits.connectTimeoutMs + CONNECT_GRACE_MS);
 
@@ -311,26 +352,22 @@ export class TunnelBridge {
       },
       close: (reason = TunnelCloseReason.Ok) => {
         if (state.phase !== "closed") {
-          this.closeStreamFromMain(state, reason);
+          this.closeStreamFromMain({ state, reason });
         }
       },
     };
   }
 
-  public closeProvider(
-    serverId: string,
-    reason: TunnelProviderClosedReason,
-    options: { notifyRenderer?: boolean } = {},
-  ): void {
+  public closeProvider({ serverId, reason, notifyRenderer }: ProviderClose): void {
     const provider = this.providersByServerId.get(serverId);
     if (!provider) return;
     this.providersByServerId.delete(serverId);
     const streamReason = providerClosedStreamReason(reason);
     // Map iteration tolerates the deletions detachStream performs.
     for (const state of provider.streams.values()) {
-      this.detachStream(state, new TunnelStreamError(streamReason), { notifySink: true });
+      this.detachStream({ state, error: new TunnelStreamError(streamReason), notifySink: true });
     }
-    if (options.notifyRenderer !== false) {
+    if (notifyRenderer !== false) {
       this.emit(provider.senderId, {
         name: "network_tunnel_provider_closed",
         payload: { serverId, providerId: provider.providerId, reason },
@@ -340,16 +377,16 @@ export class TunnelBridge {
     this.onProviderChange({ kind: "released", serverId, senderId: provider.senderId, reason });
   }
 
-  public closeProvidersForSender(
-    senderId: number,
-    reason: TunnelProviderClosedReason,
-    options: { notifyRenderer?: boolean } = {},
-  ): string[] {
+  public closeProvidersForSender({
+    senderId,
+    reason,
+    notifyRenderer,
+  }: SenderProvidersClose): string[] {
     const closedServerIds: string[] = [];
     for (const provider of this.providersByServerId.values()) {
       if (provider.senderId === senderId) {
         closedServerIds.push(provider.serverId);
-        this.closeProvider(provider.serverId, reason, options);
+        this.closeProvider({ serverId: provider.serverId, reason, notifyRenderer });
       }
     }
     return closedServerIds;
@@ -357,7 +394,7 @@ export class TunnelBridge {
 
   public closeAll(reason: TunnelProviderClosedReason): void {
     for (const serverId of this.providersByServerId.keys()) {
-      this.closeProvider(serverId, reason);
+      this.closeProvider({ serverId, reason });
     }
   }
 
@@ -400,7 +437,11 @@ export class TunnelBridge {
     if (this.emit(provider.senderId, event)) {
       return true;
     }
-    this.closeProvider(provider.serverId, "disconnected", { notifyRenderer: false });
+    this.closeProvider({
+      serverId: provider.serverId,
+      reason: "disconnected",
+      notifyRenderer: false,
+    });
     return false;
   }
 
@@ -446,13 +487,9 @@ export class TunnelBridge {
    * `notifySink` is for closes main decided on its own (timeouts, sequence
    * violations); the proxy then releases Chromium's socket as well.
    */
-  private closeStreamFromMain(
-    state: StreamState,
-    reason: number,
-    options: { notifySink?: boolean } = {},
-  ): void {
+  private closeStreamFromMain({ state, reason, notifySink }: MainStreamClose): void {
     const provider = state.provider;
-    this.detachStream(state, new TunnelStreamError(reason), options);
+    this.detachStream({ state, error: new TunnelStreamError(reason), notifySink });
     if (this.providersByServerId.get(provider.serverId) === provider) {
       this.send(provider, {
         name: "network_tunnel_stream_close",
@@ -461,18 +498,14 @@ export class TunnelBridge {
     }
   }
 
-  private detachStream(
-    state: StreamState,
-    error: TunnelStreamError,
-    options: { notifySink?: boolean } = {},
-  ): void {
+  private detachStream({ state, error, notifySink }: StreamDetach): void {
     if (state.phase === "closed") return;
     state.phase = "closed";
     this.cancelTimeout(state.connectTimer);
     state.connectTimer = null;
     state.provider.streams.delete(state.streamId);
     // The sink must know whether to drain or abort before upload callbacks run.
-    if (options.notifySink) state.sink.onClose(error.reason);
+    if (notifySink) state.sink.onClose(error.reason);
     for (const pending of state.pendingWrites.splice(0)) {
       pending.callback(error);
     }

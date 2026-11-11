@@ -383,7 +383,7 @@ describe("TunnelBridge cleanup", () => {
       bridge.openStreamFor({ serverId: "server-a", target: { host: "h", port: 80 }, sink });
     bridge.streamConnected(7, { serverId: "server-a", providerId, streamId: "id-2" });
 
-    bridge.closeProvidersForSender(7, "disconnected");
+    bridge.closeProvidersForSender({ senderId: 7, reason: "disconnected" });
 
     expect(sinks.map((sink) => sink.closeReasons)).toEqual([
       [TunnelCloseReason.NetworkUnreachable],

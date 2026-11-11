@@ -329,7 +329,11 @@ export class BrowserRoutingManager {
   public handleRendererGone(senderId: number): void {
     this.trustedRendererIds.delete(senderId);
     // Releasing the providers announces the handoff to the remaining windows.
-    this.bridge.closeProvidersForSender(senderId, "disconnected", { notifyRenderer: false });
+    this.bridge.closeProvidersForSender({
+      senderId,
+      reason: "disconnected",
+      notifyRenderer: false,
+    });
   }
 
   /**
@@ -499,7 +503,7 @@ export class BrowserRoutingManager {
    * that is ours.
    */
   private parkRoute(serverId: string): void {
-    this.bridge.closeProvider(serverId, "disabled");
+    this.bridge.closeProvider({ serverId, reason: "disabled" });
     const route = this.routesByServerId.get(serverId);
     if (route) route.ready = false;
   }

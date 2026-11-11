@@ -40,16 +40,23 @@ interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
   findWebContents(webContentsId: number): RegisteredBrowserWebContents | null;
 }
 
-export function isPaseoBrowserWebviewAttach(
-  input: { src?: string; partition?: string },
-  options: { isRoutedPartitionReady?: (partition: string) => boolean } = {},
-): boolean {
-  if (!isAllowedBrowserWebviewUrl(input.src) || typeof input.partition !== "string") {
+export interface PaseoBrowserWebviewAttach {
+  src?: string;
+  partition?: string;
+  /** Without it, only the shared profile partition is accepted. */
+  isRoutedPartitionReady?: (partition: string) => boolean;
+}
+
+export function isPaseoBrowserWebviewAttach({
+  src,
+  partition,
+  isRoutedPartitionReady,
+}: PaseoBrowserWebviewAttach): boolean {
+  if (!isAllowedBrowserWebviewUrl(src) || typeof partition !== "string") {
     return false;
   }
   return (
-    input.partition === PASEO_BROWSER_PROFILE_PARTITION ||
-    options.isRoutedPartitionReady?.(input.partition) === true
+    partition === PASEO_BROWSER_PROFILE_PARTITION || isRoutedPartitionReady?.(partition) === true
   );
 }
 

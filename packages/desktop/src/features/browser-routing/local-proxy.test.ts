@@ -473,7 +473,9 @@ describe("local browser proxy: CONNECT", () => {
         connectTimeoutMs: 1000,
       }).ok,
     ).toBe(true);
-    cleanups.push(() => bridge.closeProvider("connect-upload-host", "unregistered"));
+    cleanups.push(() =>
+      bridge.closeProvider({ serverId: "connect-upload-host", reason: "unregistered" }),
+    );
     const proxy = await startProxy((target, sink) =>
       bridge.openStreamFor({ serverId: "connect-upload-host", target, sink }),
     );
@@ -981,7 +983,7 @@ describe("local browser proxy: inbound credit", () => {
       connectTimeoutMs: 1000,
     });
     expect(registration.ok).toBe(true);
-    cleanups.push(() => bridge.closeProvider("upload-host", "unregistered"));
+    cleanups.push(() => bridge.closeProvider({ serverId: "upload-host", reason: "unregistered" }));
     const proxy = await startProxy((target, sink) =>
       bridge.openStreamFor({ serverId: "upload-host", target, sink }),
     );

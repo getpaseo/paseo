@@ -877,7 +877,9 @@ async function createWindow(
   setupDragDropPrevention(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     if (
-      !isPaseoBrowserWebviewAttach(params, {
+      !isPaseoBrowserWebviewAttach({
+        src: params.src,
+        partition: params.partition,
         isRoutedPartitionReady: (partition) => browserRouting.isReadyRoutedPartition(partition),
       })
     ) {

@@ -70,29 +70,33 @@ describe("browser webview attachment", () => {
     const options = { isRoutedPartitionReady: (partition: string) => ready.has(partition) };
 
     expect(
-      isPaseoBrowserWebviewAttach(
-        { src: "https://example.com", partition: ROUTED_PARTITION },
-        options,
-      ),
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: ROUTED_PARTITION,
+        ...options,
+      }),
     ).toBe(false);
     ready.add(ROUTED_PARTITION);
     expect(
-      isPaseoBrowserWebviewAttach(
-        { src: "https://example.com", partition: ROUTED_PARTITION },
-        options,
-      ),
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: ROUTED_PARTITION,
+        ...options,
+      }),
     ).toBe(true);
     expect(
-      isPaseoBrowserWebviewAttach(
-        { src: "file:///etc/passwd", partition: ROUTED_PARTITION },
-        options,
-      ),
+      isPaseoBrowserWebviewAttach({
+        src: "file:///etc/passwd",
+        partition: ROUTED_PARTITION,
+        ...options,
+      }),
     ).toBe(false);
     expect(
-      isPaseoBrowserWebviewAttach(
-        { src: "https://example.com", partition: PASEO_BROWSER_PROFILE_PARTITION },
-        options,
-      ),
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: PASEO_BROWSER_PROFILE_PARTITION,
+        ...options,
+      }),
     ).toBe(true);
   });
 
