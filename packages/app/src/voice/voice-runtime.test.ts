@@ -19,6 +19,8 @@ function createAudioEngineMock(): AudioEngine {
     play: vi.fn().mockResolvedValue(0.1),
     stop: vi.fn(),
     clearQueue: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     isPlaying: vi.fn().mockReturnValue(false),
   };
 }
@@ -428,6 +430,45 @@ describe("voice runtime", () => {
     expect(engine.clearQueue).toHaveBeenCalled();
     expect(adapter.setAssistantAudioPlaying).toHaveBeenCalledWith(false);
     expect(runtime.getTelemetrySnapshot().isSpeaking).toBe(true);
+  });
+
+  it("pauses the reply on a hold and resumes it without dropping audio", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onAssistantAudioStarted("server-1");
+
+    runtime.onServerSpeechStateChanged("server-1", true, "hold");
+    expect(engine.pause).toHaveBeenCalledTimes(1);
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(engine.clearQueue).not.toHaveBeenCalled();
+
+    runtime.onServerSpeechStateChanged("server-1", false);
+    expect(engine.resume).not.toHaveBeenCalled();
+
+    runtime.onServerSpeechStateChanged("server-1", false, "resume");
+    expect(engine.resume).toHaveBeenCalledTimes(1);
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(engine.clearQueue).not.toHaveBeenCalled();
+  });
+
+  it("drops a held reply when the daemon says stop", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onAssistantAudioStarted("server-1");
+
+    runtime.onServerSpeechStateChanged("server-1", true, "hold");
+    runtime.onServerSpeechStateChanged("server-1", false, "stop");
+
+    expect(engine.stop).toHaveBeenCalled();
+    expect(engine.clearQueue).toHaveBeenCalled();
+    expect(engine.resume).not.toHaveBeenCalled();
+    expect(adapter.setAssistantAudioPlaying).toHaveBeenCalledWith(false);
   });
 
   it("drops queued voice chunks that arrive after server speech interrupts playback", async () => {

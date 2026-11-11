@@ -1,6 +1,6 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createPlayAudio } from "./play-audio";
-import { playPcm16, parsePcmSampleRate, resampleToPcm16 } from "./pcm";
+import { createPcmPauseGate, playPcm16, parsePcmSampleRate, resampleToPcm16 } from "./pcm";
 import { playFile, type FilePlaybackStatus, type FilePlayer } from "./file-playback";
 
 const source = { base64: "UklGRg==", mimeType: "audio/wav" };
@@ -199,4 +199,53 @@ test("voice playback shares PCM sample-rate parsing", () => {
   expect(parsePcmSampleRate("audio/PCM;RATE=48000")).toBe(48000);
   expect(parsePcmSampleRate("audio/pcm")).toBeNull();
   expect(parsePcmSampleRate("audio/pcm;rate=0")).toBeNull();
+});
+
+test("a paused clip keeps its remaining time and the next clip waits without resuming", async () => {
+  vi.useFakeTimers();
+  try {
+    const gate = createPcmPauseGate();
+    let resumes = 0;
+    const output = {
+      resumePlayback() {
+        resumes += 1;
+      },
+      playPCMData() {},
+      stopPlayback() {},
+    };
+    // One second of 16 kHz PCM.
+    let finished = false;
+    const first = playPcm16(
+      new Uint8Array(32000),
+      "audio/pcm;rate=16000;bits=16",
+      new AbortController().signal,
+      output,
+      gate,
+    ).then((duration) => {
+      finished = true;
+      return duration;
+    });
+    expect(resumes).toBe(1);
+    await vi.advanceTimersByTimeAsync(400);
+    gate.set(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(finished).toBe(false);
+
+    void playPcm16(
+      new Uint8Array(3200),
+      "audio/pcm;rate=16000;bits=16",
+      new AbortController().signal,
+      output,
+      gate,
+    );
+    expect(resumes).toBe(1);
+
+    gate.set(false);
+    await vi.advanceTimersByTimeAsync(599);
+    expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(first).resolves.toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

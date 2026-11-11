@@ -3787,6 +3787,10 @@ export const VoiceInputStateMessageSchema = z.object({
   type: z.literal("voice_input_state"),
   payload: z.object({
     isSpeaking: z.boolean(),
+    // Sent only to clients with the voice_playback_hold capability. "hold" pauses
+    // assistant speech when sound starts; "resume" follows an empty transcript (noise
+    // or the assistant's own echo); "stop" follows real words and drops the reply.
+    playback: z.enum(["hold", "resume", "stop"]).optional(),
   }),
 });
 

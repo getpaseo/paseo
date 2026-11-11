@@ -129,6 +129,8 @@ export interface VoiceSessionHost {
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
   hasActiveAgentRun(agentId: string | null): boolean;
+  /** Whether the client pauses speech on "hold" and waits for "resume" or "stop". */
+  supportsPlaybackHold(): boolean;
 }
 
 export interface VoiceSessionOptions {
@@ -176,6 +178,7 @@ export class VoiceSession {
 
   private isVoiceMode = false;
   private speechInProgress = false;
+  private playbackHeld = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
   private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
@@ -437,6 +440,7 @@ export class VoiceSession {
       );
       await this.disableVoiceModeForActiveAgent(true);
       this.isVoiceMode = false;
+      this.playbackHeld = false;
       this.sessionLogger.info({ elapsedMs: Date.now() - startedAt }, "Voice mode disabled");
       if (requestId) {
         this.emit({
@@ -590,13 +594,21 @@ export class VoiceSession {
           // Voice STT providers return final transcripts only. Use the detector's
           // confirmed speech event so interruption does not wait for transcription.
           this.sessionLogger.debug("Voice VAD speech_started");
+          // Sound during a reply may be noise or the reply's own echo. Capable clients
+          // pause instead of dropping the reply; the transcript decides what follows.
+          const hold = this.shouldHoldPlayback();
           this.emit({
             type: "voice_input_state",
             payload: {
               isSpeaking: true,
+              ...(hold ? { playback: "hold" as const } : {}),
             },
           });
-          await this.handleVoiceSpeechStart();
+          if (hold) {
+            this.holdPlaybackForSpeech();
+          } else {
+            await this.handleVoiceSpeechStart();
+          }
         },
         onPartialTranscript: async ({ segmentId, transcript }) => {
           this.sessionLogger.debug(
@@ -652,6 +664,7 @@ export class VoiceSession {
         },
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
+          this.releaseHeldPlayback("resume", "turn controller error");
         },
       },
     });
@@ -983,6 +996,15 @@ export class VoiceSession {
       },
     });
 
+    if (this.playbackHeld) {
+      if (!transcriptText) {
+        this.releaseHeldPlayback("resume", "empty transcription");
+      } else {
+        this.releaseHeldPlayback("stop", "speech transcribed");
+        await this.handleAbort();
+      }
+    }
+
     if (!transcriptText) {
       this.sessionLogger.debug("Empty transcription (false positive), not aborting");
       this.setPhase("idle");
@@ -1143,21 +1165,36 @@ export class VoiceSession {
     this.ttsManager.confirmAudioPlayed(id);
   }
 
+  private shouldHoldPlayback(): boolean {
+    if (this.speechInProgress || !this.host.supportsPlaybackHold()) {
+      return false;
+    }
+    return (
+      this.ttsManager.hasPendingPlayback() || this.host.hasActiveAgentRun(this.voiceModeAgentId)
+    );
+  }
+
   /**
-   * Mark speech detection start and abort any active playback/agent run.
+   * Start a user turn without touching the reply: the client has paused it, the agent
+   * keeps running, and the transcript decides between resume and stop.
    */
-  private async handleVoiceSpeechStart(): Promise<void> {
-    if (this.speechInProgress) {
+  private holdPlaybackForSpeech(): void {
+    this.speechInProgress = true;
+    this.playbackHeld = true;
+    this.sessionLogger.info("Voice speech detected during a reply – holding playback");
+    this.dropBufferedInput();
+  }
+
+  private releaseHeldPlayback(playback: "resume" | "stop", reason: string): void {
+    if (!this.playbackHeld) {
       return;
     }
+    this.playbackHeld = false;
+    this.sessionLogger.info({ playback, reason }, `Releasing held playback: ${playback}`);
+    this.emit({ type: "voice_input_state", payload: { isSpeaking: false, playback } });
+  }
 
-    const chunkReceivedAt = Date.now();
-    const phaseBeforeAbort = this.processingPhase;
-    const hadActiveStream = this.host.hasActiveAgentRun(this.voiceModeAgentId);
-
-    this.speechInProgress = true;
-    this.sessionLogger.debug("Voice speech detected – aborting playback and active agent run");
-
+  private dropBufferedInput(): void {
     if (this.pendingAudioSegments.length > 0) {
       this.sessionLogger.debug(
         { segmentCount: this.pendingAudioSegments.length },
@@ -1177,6 +1214,24 @@ export class VoiceSession {
     }
 
     this.clearBufferTimeout();
+  }
+
+  /**
+   * Mark speech detection start and abort any active playback/agent run.
+   */
+  private async handleVoiceSpeechStart(): Promise<void> {
+    if (this.speechInProgress) {
+      return;
+    }
+
+    const chunkReceivedAt = Date.now();
+    const phaseBeforeAbort = this.processingPhase;
+    const hadActiveStream = this.host.hasActiveAgentRun(this.voiceModeAgentId);
+
+    this.speechInProgress = true;
+    this.sessionLogger.debug("Voice speech detected – aborting playback and active agent run");
+
+    this.dropBufferedInput();
 
     this.abortController.abort();
     await this.handleAbort();

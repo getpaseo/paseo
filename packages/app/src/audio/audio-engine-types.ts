@@ -24,6 +24,9 @@ export interface AudioEngine {
   play(audio: AudioPlaybackSource, signal?: AbortSignal): Promise<number>;
   stop(): void;
   clearQueue(): void;
+  /** Pause speech in place, keeping queued audio; play() calls queue behind it. */
+  pause(): void;
+  resume(): void;
   isPlaying(): boolean;
 }
 

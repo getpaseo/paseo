@@ -79,6 +79,7 @@ function createFakeHost(): FakeVoiceHost {
     },
     interruptAgentIfRunning: async () => {},
     hasActiveAgentRun: () => false,
+    supportsPlaybackHold: () => false,
   };
 }
 
@@ -159,6 +160,89 @@ describe("VoiceSession streaming transcription", () => {
         payload: { isSpeaking: true },
       });
       expect(interrupted).toEqual([VOICE_AGENT_ID]);
+      await playback;
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("holds a reply for a capable client and resumes it after an empty transcript", async () => {
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+      },
+    };
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(tts);
+    const interrupted: string[] = [];
+    host.interruptAgentIfRunning = async (agentId) => {
+      interrupted.push(agentId);
+    };
+    host.supportsPlaybackHold = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "noise", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "noise", transcript: "", isFinal: true });
+      await settle();
+
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: true, playback: "hold" },
+      });
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "resume" },
+      });
+      expect(interrupted).toEqual([]);
+      expect(host.spokenInput).toEqual([]);
+
+      const audio = host.emitted.find(isAudioOutput);
+      if (audio?.type !== "audio_output") throw new Error("no audio output");
+      voiceSession.handleAudioPlayed(audio.payload.id);
+      await playback;
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("stops a held reply and interrupts the agent once the transcript has words", async () => {
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+      },
+    };
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(tts);
+    const interrupted: string[] = [];
+    host.interruptAgentIfRunning = async (agentId) => {
+      interrupted.push(agentId);
+    };
+    host.supportsPlaybackHold = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      expect(interrupted).toEqual([]);
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "words", transcript: "wait, stop", isFinal: true });
+      await settle();
+
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+      expect(interrupted).toEqual([VOICE_AGENT_ID]);
+      expect(host.spokenInput).toEqual([{ agentId: VOICE_AGENT_ID, text: "wait, stop" }]);
       await playback;
     } finally {
       await voiceSession.cleanup();

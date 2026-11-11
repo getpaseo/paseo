@@ -56,6 +56,11 @@ export const CLIENT_CAPS = {
   // update subscriptions, because older apps auto-open a tab for every replicated root agent.
   backgroundAgents: "background_agents",
   browserHost: "browser_host",
+  // COMPAT(voicePlaybackHold): added after v0.15.4. Capable clients pause assistant
+  // speech on a voice_input_state "hold" and wait for "resume" or "stop"; the daemon
+  // holds playback instead of aborting it only for them. Older clients stop and drop
+  // queued audio on speech start, so holding would leave their playback unconfirmed.
+  voicePlaybackHold: "voice_playback_hold",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];
