@@ -1517,6 +1517,35 @@ Text added only by your renderer is not independently indexed. Matches stay with
 block, and find skips buttons, icons, and anything with `aria-hidden="true"`. Find only runs on
 the web and desktop apps.
 
+### Keep rewind on a replaced prompt
+
+A renderer that replaces `user_message` items takes the host bubble's rewind menu with it. Pass the
+item's `messageId` through `data` and draw the host's `RewindMenu` beside the prompt. It offers only
+the modes the agent's provider supports (conversation, files, or both) and renders nothing when
+there are none or the prompt has no `messageId` yet. A rewind runs exactly as from the host bubble:
+the timeline is refetched, and a conversation rewind puts `text` back in an empty composer.
+`RewindMenu` is undefined on hosts that predate it, so check for it before rendering.
+
+```tsx
+import { RewindMenu } from "@getpaseo/plugin/client/ui";
+
+function Prompt({ agentId, host, item }: PluginTimelineItemProps<PromptData>) {
+  return (
+    <View>
+      <Text>{item.data.text}</Text>
+      {RewindMenu ? (
+        <RewindMenu
+          hostId={host.id}
+          agentId={agentId}
+          messageId={item.data.messageId}
+          text={item.data.text}
+        />
+      ) : null}
+    </View>
+  );
+}
+```
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:

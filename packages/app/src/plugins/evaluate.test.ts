@@ -706,6 +706,27 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
+  it("provides the host rewind menu through @getpaseo/plugin/client/ui", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { RewindMenu } = require("@getpaseo/plugin/client/ui");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof RewindMenu !== "function") throw new Error("RewindMenu is missing");
+          if (require("@getpaseo/plugin/client/react-native").RewindMenu !== RewindMenu) throw new Error("RewindMenu differs on the legacy UI entry");
+          if ("RewindMenu" in require("@getpaseo/plugin")) throw new Error("RewindMenu leaked into shared exports");
+          if ("RewindMenu" in require("@getpaseo/plugin/client")) throw new Error("RewindMenu leaked into client exports");
+          plugin.addSurface("main", function Surface() { return null; });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
   it("keeps the host reveal hook on the deprecated client/react-native entry", () => {
     const plugin = evaluatePluginClientBundle(
       "legacy-reveal",
