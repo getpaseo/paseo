@@ -5,7 +5,8 @@ import {
   normalizeWorkspaceDescriptor,
   type Agent,
 } from "@/stores/session-store";
-import type { StreamItem } from "@/types/stream";
+import { hydrateStreamState, type StreamItem } from "@/types/stream";
+import { deriveStreamTurnTiming } from "@/timeline/turn-time";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { ReplicaCache } from ".";
 import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
@@ -306,6 +307,103 @@ async function expectLegacyWorkspaceRefresh({
 }
 
 describe("ReplicaCache", () => {
+  it("preserves stopped tool lifecycle timing when reopening a cached timeline", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const tool = {
+      type: "tool_call",
+      callId: "read",
+      name: "Read",
+      status: "running",
+      error: null,
+      detail: { type: "read", filePath: "/tmp/read.txt" },
+    } as const;
+    const items = hydrateStreamState([
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "user_message", text: "Read", messageId: "user" },
+        },
+        timestamp: new Date(0),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "assistant_message", text: "Reading", messageId: "assistant" },
+        },
+        timestamp: new Date(1000),
+      },
+      { event: { type: "timeline", provider: "claude", item: tool }, timestamp: new Date(2000) },
+      {
+        event: { type: "timeline", provider: "claude", item: { ...tool, status: "canceled" } },
+        timestamp: new Date(62000),
+      },
+    ]);
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items,
+      range: null,
+      hasOlder: false,
+    });
+    await writer.flush();
+    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+    expect(restored?.items).toEqual(items);
+    expect(restored?.items.at(-1)).toMatchObject({
+      timestamp: new Date(2000),
+      latestTimestamp: new Date(62000),
+    });
+    if (!restored) throw new Error("Expected the cached stopped turn");
+    const timing = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: restored.items,
+      head: [],
+    });
+    expect(timing.byItemId.get("assistant")).toEqual({
+      completedAt: new Date(62000),
+      durationMs: 62000,
+    });
+  });
+
+  it("preserves a projected plugin lifecycle boundary when reopening a cached turn", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const items: StreamItem[] = [
+      { kind: "user_message", id: "user", text: "Read", timestamp: new Date(0) },
+      { kind: "assistant_message", id: "assistant", text: "Reading", timestamp: new Date(1000) },
+      {
+        kind: "plugin",
+        id: "plugin/read",
+        pluginId: "plugin",
+        pluginItemId: "read",
+        itemKind: "read",
+        version: 1,
+        data: {},
+        timestamp: new Date(2000),
+        latestTimestamp: new Date(62000),
+      },
+    ];
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items,
+      range: null,
+      hasOlder: false,
+    });
+    await writer.flush();
+    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+    expect(restored?.items).toEqual(items);
+    if (!restored) throw new Error("Expected the cached plugin turn");
+    expect(
+      deriveStreamTurnTiming({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail: restored.items,
+        head: [],
+      }).byItemId.get("assistant"),
+    ).toEqual({ completedAt: new Date(62000), durationMs: 62000 });
+  });
   it("persists the complete newest turn beyond the cache item target", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

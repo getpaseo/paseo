@@ -3264,12 +3264,24 @@ describe("processTimelineResponse", () => {
             type: "timeline",
             provider: "claude",
             turnId,
+            item: makeToolCallTimelineEntry(3, callId, "running", {
+              type: "read",
+              filePath: "/tmp/example.ts",
+            }).item,
+          } as AgentStreamEventPayload,
+          timestamp: new Date(2000),
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            turnId,
             item: makeToolCallTimelineEntry(3, callId, "completed", {
               type: "read",
               filePath: "/tmp/example.ts",
             }).item,
           } as AgentStreamEventPayload,
-          timestamp: new Date(3000),
+          timestamp: new Date(60000),
         },
       ],
       { source: "canonical" },
@@ -3307,6 +3319,10 @@ describe("processTimelineResponse", () => {
     });
 
     const toolCalls = getAgentToolCalls(result.tail);
+    expect(toolCalls[0]).toMatchObject({
+      timestamp: new Date(1001),
+      latestTimestamp: new Date(60000),
+    });
     expect(
       toolCalls.map((item) => ({
         id: item.id,
