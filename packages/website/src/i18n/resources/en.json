@@ -651,6 +651,8 @@
     "metaDescription": "Product updates, bug fixes, and improvements shipped in each Paseo release. Track new agent providers, mobile features, and daemon changes over time.",
     "title": "Changelog",
     "linkTo": "Link to Paseo {{version}}",
+    "showAllChanges": "Show all changes",
+    "hideAllChanges": "Hide all changes",
     "untranslatedRelease": "These release notes have not been translated yet, so they are shown in English."
   },
   "blog": {

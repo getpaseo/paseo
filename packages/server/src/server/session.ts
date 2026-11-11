@@ -219,6 +219,7 @@ import type { PushNotifications } from "./push/index.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
+  unarchiveWorkspaceAgents,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
@@ -1003,6 +1004,13 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: (request) =>
+        unarchiveWorkspaceAgents({
+          ...request,
+          agentStorage: this.agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
+          sessionLogger: this.sessionLogger,
+        }),
       withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
@@ -1406,6 +1414,65 @@ export class Session {
       .catch((err) => this.sessionLogger.error({ err }, "Failed to release source subscriptions"));
     this.clientSources.delete(source);
     this.refreshObservationProducers();
+  }
+
+  private compareTimelineCursors(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Record<string, "current" | "behind"> {
+    const timelines: Record<string, "current" | "behind"> = {};
+    for (const agentId of agentIds) {
+      const cursor = cursors[agentId];
+      if (!cursor) continue;
+      const head = this.agentManager.getLoadedTimelineHead(agentId);
+      timelines[agentId] =
+        head?.epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
+    }
+    return timelines;
+  }
+
+  private async answerTimelineFreshness(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Promise<{
+    timelines: Record<string, "current" | "behind">;
+    agents: Record<string, AgentSnapshotPayload>;
+  }> {
+    const snapshots = await Promise.all(
+      agentIds.flatMap((agentId) => {
+        const agent = cursors[agentId] ? this.agentManager.getAgent(agentId) : null;
+        return agent ? [this.buildAgentPayload(agent)] : [];
+      }),
+    );
+    // Compared after the await, so a row appended while reading the snapshots answers behind.
+    const timelines = this.compareTimelineCursors(agentIds, cursors);
+    const agents: Record<string, AgentSnapshotPayload> = {};
+    for (const snapshot of snapshots) {
+      if (timelines[snapshot.id] === "current") agents[snapshot.id] = snapshot;
+    }
+    return { timelines, agents };
+  }
+
+  private async handleAgentTimelineSubscription(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.set_subscription.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const agentIds = [...new Set(msg.agentIds)].sort();
+    // Attach before comparing: a row appended after the comparison reaches this owner live.
+    const owner = this.subscribeAgentTimelines(agentIds);
+    const freshness = msg.cursors ? await this.answerTimelineFreshness(agentIds, msg.cursors) : {};
+    this.emitForSource(
+      {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds,
+          requestId: msg.requestId,
+          subscriptionId: owner.responseId,
+          ...freshness,
+        },
+      },
+      source,
+    );
   }
 
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
@@ -3043,18 +3110,8 @@ export class Session {
           throw error;
         });
       }
-      case "agent.timeline.set_subscription.request": {
-        const agentIds = [...new Set(msg.agentIds)].sort();
-        const owner = this.subscribeAgentTimelines(agentIds);
-        this.emitForSource(
-          {
-            type: "agent.timeline.set_subscription.response",
-            payload: { agentIds, requestId: msg.requestId, subscriptionId: owner.responseId },
-          },
-          source,
-        );
-        return undefined;
-      }
+      case "agent.timeline.set_subscription.request":
+        return this.handleAgentTimelineSubscription(msg, source);
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
@@ -4025,6 +4082,7 @@ export class Session {
       const removedWorkspaceIds: string[] = [];
       try {
         for (const workspaceId of activeWorkspaceIds) {
+          const archivedAt = new Date().toISOString();
           await archiveWorkspaceContents(
             {
               agentManager: this.agentManager,
@@ -4034,8 +4092,9 @@ export class Session {
               sessionLogger: this.sessionLogger,
             },
             workspaceId,
+            archivedAt,
           );
-          await this.archiveWorkspaceRecord(workspaceId);
+          await this.archiveWorkspaceRecord(workspaceId, archivedAt);
           removedWorkspaceIds.push(workspaceId);
         }
 
@@ -5629,7 +5688,8 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+          this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -7970,7 +8030,8 @@ export class Session {
               findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
               getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+                this.archiveWorkspaceRecord(workspaceId, archivedAt),
               emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
                 this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
               markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -8081,19 +8142,8 @@ export class Session {
     }
     if (workspace.archivedAt) {
       await this.workspaceRecovery.restore(workspaceId);
-    }
-    const results = await Promise.allSettled(
-      input.agentIds.map((agentId) =>
-        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
-      ),
-    );
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected") {
-        this.sessionLogger.warn(
-          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
-          "Failed to unarchive agent while undoing workspace archive",
-        );
-      }
+    } else if (input.archivedAt) {
+      await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace, input.archivedAt);
     }
     await this.publishRecoveredWorkspace(workspaceId);
   }

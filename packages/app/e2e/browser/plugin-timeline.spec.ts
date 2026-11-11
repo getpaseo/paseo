@@ -24,11 +24,12 @@ for (const width of [1100, 390]) {
       await expectWholeCompletedCard(page);
       // Local state is checked during growth; the viewport remounts on the history handoff.
       const recovery = trackPluginChatRecovery(page);
-      gate.holdTimelineResponses(agent.agentId);
+      // A chat with a cached cursor answers current and never fetches, so hold the subscribe itself.
+      gate.holdNextClientRequest("agent.timeline.set_subscription.request");
       await page.reload({ waitUntil: "domcontentloaded" });
-      await gate.waitForHeldTimelineResponse();
+      await gate.waitForHeldClientRequest();
       await recovery.expectCatalogWithoutRetransmission();
-      gate.releaseHeldTimelineResponses();
+      gate.releaseHeldClientRequest();
       await expectWholeCompletedCard(page);
       await recovery.expectRecoveredWithoutRetransmission();
       recovery.reset();

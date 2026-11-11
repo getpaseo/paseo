@@ -61,6 +61,10 @@ export interface PluginAgentSnapshot {
   readonly workspaceId: string;
   readonly provider: string;
   readonly status: "initializing" | "idle" | "running" | "error" | "closed";
+  /** Shells and monitors the agent left running after its turn. 0 when none are live. */
+  readonly backgroundWork: { readonly count: number };
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastActivityAt: string;

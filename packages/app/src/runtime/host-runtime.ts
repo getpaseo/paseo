@@ -2880,7 +2880,20 @@ export class HostRuntimeStore {
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
       applyTurnLiveness: (agentId, transitions) =>
         directory.applyAgentTurnLiveness(agentId, transitions),
-      ports,
+      ports: {
+        ...ports,
+        observe: (agentIds, cursors) => {
+          const keepAgents = directory.captureSubscribedAgents(agentIds);
+          const observation = ports.observe(agentIds, cursors);
+          return {
+            ready: observation.ready.then((answer) => {
+              if (answer?.agents) keepAgents(answer.agents);
+              return answer;
+            }),
+            release: () => observation.release(),
+          };
+        },
+      },
     });
   }
 

@@ -19,6 +19,7 @@ import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
   createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
@@ -118,6 +119,7 @@ beforeEach(async () => {
   await workspaceRegistry.initialize();
   await projectRegistry.initialize();
   provisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -169,6 +171,7 @@ test("a workspace created during a base change records the new base", async () =
   });
   await locked;
   const creator = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: git,
@@ -285,6 +288,7 @@ test("background workspace creation preserves hooks, inheritance and durable vis
   const dir = path.join(tmpDir, "plain");
   const events: string[] = [];
   provisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -374,6 +378,7 @@ test("persists manual worktree ownership separately from its workspace kind", as
   const cwd = path.join(tmpDir, "manual-worktree");
   const mainRepoRoot = path.join(tmpDir, "main-repo");
   const manualWorktreeProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,
@@ -461,6 +466,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
   await workspaceRegistry.upsert(workspace);
   await projectRegistry.archive(project.projectId, ARCHIVED_AT);
   const archivedProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,
@@ -513,6 +519,7 @@ test("uses one workspace snapshot when reopening an archived workspace", async (
     remove: (workspaceId) => workspaceRegistry.remove(workspaceId),
   };
   const snapshotProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry: snapshotRegistry,
     projectRegistry,
     workspaceGitService: gitService(),
@@ -1016,6 +1023,7 @@ test("a failed import keeps an archived worktree's placement when its directory 
   });
   await workspaceRegistry.upsert(archived);
   const realCheckoutProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     logger,
@@ -1089,6 +1097,7 @@ test("a directory that goes away while the git read is in flight keeps its place
   const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
   expect(created).toMatchObject({ kind: "local_checkout", branch: "feature/vanishing" });
   const vanishingProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     workspaceRegistry,
     projectRegistry,
     isDirectory,
@@ -1116,4 +1125,46 @@ test("a directory that goes away while the git read is in flight keeps its place
     kind: "local_checkout",
     branch: "feature/vanishing",
   });
+});
+
+test("a failed workspace unarchive write keeps agents archived and permits retry", async () => {
+  const repo = path.join(tmpDir, "restore-write-failure");
+  mkdirSync(repo, { recursive: true });
+  const workspace = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+  const archived = (await workspaceRegistry.get(workspace.workspaceId))!;
+
+  class FailingWorkspaceRegistry extends FileBackedWorkspaceRegistry {
+    failWrites = true;
+    override async upsert(record: PersistedWorkspaceRecord): Promise<void> {
+      if (this.failWrites && !record.archivedAt) throw new Error("Workspace write failed");
+      await super.upsert(record);
+    }
+  }
+  const registry = new FailingWorkspaceRegistry(
+    path.join(tmpDir, "projects", "workspaces.json"),
+    logger,
+  );
+  await registry.initialize();
+  let agentArchived = true;
+  const recovery = createWorkspaceProvisioningService({
+    workspaceRegistry: registry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    unarchiveWorkspaceAgents: async () => {
+      agentArchived = false;
+    },
+  });
+  await expect(recovery.ensureWorkspaceRecordUnarchived(archived)).rejects.toThrow(
+    "Workspace write failed",
+  );
+  expect((await registry.get(workspace.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
+  expect(agentArchived).toBe(true);
+
+  registry.failWrites = false;
+  await recovery.ensureWorkspaceRecordUnarchived(archived);
+  expect((await registry.get(workspace.workspaceId))?.archivedAt).toBeNull();
+  expect(agentArchived).toBe(false);
 });

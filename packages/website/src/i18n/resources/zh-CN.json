@@ -651,6 +651,8 @@
     "metaDescription": "每个 Paseo 版本发布的产品更新、问题修复和改进。了解新的 Agent Provider、移动端功能和 daemon 变化。",
     "title": "更新日志",
     "linkTo": "链接到 Paseo {{version}}",
+    "showAllChanges": "显示全部变更",
+    "hideAllChanges": "收起全部变更",
     "untranslatedRelease": "此版本的发布说明尚未翻译，因此以英文显示。"
   },
   "blog": {
