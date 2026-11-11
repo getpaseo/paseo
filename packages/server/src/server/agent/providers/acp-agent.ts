@@ -3365,14 +3365,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    // Every other stop reason completes the turn, but a compaction that the
-    // provider is still running keeps the turn open until it reports a terminal
-    // status. The pending response is settled by `finishPendingPromptResponse`.
+    // A manual `/compact` answers with an immediate `end_turn` while the
+    // summarization runs in the background: hold that turn open until the
+    // provider reports a terminal compaction status (settled by
+    // `finishPendingPromptResponse`). Every other turn completes right away,
+    // exactly as before.
+    if (!this.turnWaitsForCompaction) {
+      this.finishTurn({
+        type: "turn_completed",
+        provider: this.provider,
+        usage: this.currentTurnUsage,
+        turnId,
+      });
+      return;
+    }
     this.pendingPromptResponse = { response, turnId };
     if (!this.compactionInFlight) {
       this.pendingPromptResponseTimer = setTimeout(
         () => this.finishPendingPromptResponse(),
-        this.turnWaitsForCompaction ? ACP_COMPACTION_START_GRACE_MS : 0,
+        ACP_COMPACTION_START_GRACE_MS,
       );
     }
   }
@@ -3433,23 +3444,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
       // Repeated `started` notifications (one per round while the agent keeps
       // working) share a single marker.
-      if (!this.compactionInFlight && turnId) {
-        this.pushEvent({
-          type: "timeline",
-          provider: this.provider,
-          turnId,
-          item: {
-            type: "compaction",
-            status: "loading",
-            trigger: "manual",
-          },
-        });
+      if (!this.compactionInFlight) {
+        this.pushCompactionMarker(turnId, "loading");
       }
       this.compactionInFlight = true;
       this.clearPendingPromptResponseTimer();
       this.pendingPromptResponseTimer = setTimeout(() => {
         this.pendingPromptResponseTimer = null;
         this.compactionInFlight = false;
+        // The terminal notification never arrived. Close the marker anyway so
+        // the transcript does not keep claiming that a compaction is running
+        // after the turn was released.
+        this.pushCompactionMarker(turnId, "completed");
         this.finishPendingPromptResponse();
       }, ACP_COMPACTION_WAIT_TIMEOUT_MS);
       return;
@@ -3461,19 +3467,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const wasInFlight = this.compactionInFlight;
     this.compactionInFlight = false;
     this.clearPendingPromptResponseTimer();
-    if (wasInFlight && turnId) {
-      this.pushEvent({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "compaction",
-          status: "completed",
-          trigger: "manual",
-        },
-      });
+    if (wasInFlight) {
+      this.pushCompactionMarker(turnId, "completed");
     }
     this.finishPendingPromptResponse();
+  }
+
+  private pushCompactionMarker(turnId: string | undefined, status: "loading" | "completed"): void {
+    if (!turnId) {
+      return;
+    }
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "compaction",
+        status,
+        trigger: "manual",
+      },
+    });
   }
 
   private wrapTimeline(item: AgentTimelineItem): AgentStreamEvent {
