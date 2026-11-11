@@ -5,6 +5,7 @@ import {
 } from "@gorhom/bottom-sheet";
 import React from "react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import type { ElementRef, ReactNode } from "react";
 import { systemBackPress } from "./back-press";
 import {
@@ -163,6 +164,7 @@ export function useIsolatedBottomSheetVisibility({
   useEffect(() => {
     tracker.syncDesired({ visible, isEnabled });
   }, [isEnabled, tracker, visible]);
+  useDismissibleOverlay(visible && isEnabled !== false, onClose);
 
   return {
     sheetRef: setSheetRef,

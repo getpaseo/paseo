@@ -353,13 +353,13 @@ Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、
 
 ### Provider {#providers}
 
-直接实现和 ACP 实现、会话生命周期、Composer 设置、时间线渲染器、测试和分发，见[构建 Provider 插件](/docs/plugins/providers)。
+直接实现和 ACP 实现、会话生命周期、选项控件、时间线渲染器、测试和分发，见[构建 Provider 插件](/docs/plugins/providers)。
 
 使用来自 `@getpaseo/plugin/server/provider` 的 `ProviderRegistration` 调用 `server.registerProvider()`。它的连接通过 `send()` 接收输入，并通过 `onEvent()` 发出完整的状态快照。`send()` 只报告是否接受；提示词的处理结果、轮次、配置、持久化、权限和失败都是事件。
 
 消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。
 
-Provider 设置是 Paseo 在 Composer 中渲染的开关/选择描述符。把 Provider 私有的选项保留在 `session.open` 的 `ProviderSessionConfig.providerOptions` 中。这个记录包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
+Provider 选项是一个记录，即 `session.open` 中的 `ProviderSessionConfig.providerOptions`。它包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。在 `session.config` 中为需要在 Composer 里显示开关或选择器的顶层键报告 `controls`，并在 `providerOptions` 下报告会话正在使用的值。运行中会话的修改会以 `session.configure` 的形式到达，内容在 `changes.providerOptions` 中。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
 
 Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前的配置和持久化值打开它。Provider 在 `session.open` 期间重新读取外部状态。
 
@@ -1331,6 +1331,8 @@ Agent 快照字段：
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO 时间戳                                                     |
 | `updatedAt`         | ISO 时间戳                                                     |
 | `lastActivityAt`    | ISO 时间戳                                                     |
@@ -1343,6 +1345,20 @@ Agent 快照字段：
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+
+`backgroundWork.count` 是 Agent 在回合结束后仍在运行的 shell 和监视器数量，没有时为 `0`。Agent 可能处于 `idle` 且 `attentionReason: "finished"`，同时这些工作仍在运行，因此请按插件的需要组合这些字段：
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // Agent 不可用。
+```
+
+要列出或停止这些工作本身，使用 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle)。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 的 `background` 为 `true`，它是不出现在标签页、列表和提醒中的辅助 Agent，在创建时确定。后台工作区中的 Agent 除非本身以后台 Agent 创建，否则 `background` 为 `false`；要判断工作区，读取工作区自己的 `background`。`backgroundWork` 和 `background` 需要 Paseo 0.16.0 或更高版本。
 
 标签页的焦点、拆分、关闭、持久化、查询状态、API/RPC Provider 以及渲染错误边界都由 Paseo 负责。如果恢复的标签页所对应的插件、面板、上下文、工作区或 Agent 不可用，该标签页会保持打开并显示“不可用”消息，而不会让工作区崩溃。
 
@@ -1604,6 +1620,201 @@ review.remove();
 贡献移入一个共享的溢出菜单。在手机和较窄的窗口中，标题栏没有空间放置插件按钮，因此每个按钮都会成为工作区
 菜单（`···`）中的一行，显示它的图标和标题；它的菜单和弹出框以该底部面板中的页面打开。位置和溢出由宿主决定。
 
+## Composer 项 {#composer-items}
+
+`client.addComposerItem({ id, Component })` 把一个组件放进 composer：Agent composer、为新 Agent 准备的草稿 composer，以及新建工作区界面上的 composer。`useComposer()` 读取并修改 composer 所配置的内容，`@getpaseo/plugin/client/ui` 中的 `Toggle`、`Select` 和 `Action` 负责绘制控件。
+
+```tsx
+import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
+    />
+  );
+}
+
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={() => composer.insertText("- [ ] Tests\n- [ ] Docs\n")}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
+}
+```
+
+`useComposer()` 返回该项所在的 composer：
+
+| 字段或命令                                          | 含义                                                                                                                                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
+| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `focus(options?)`                                   | 把光标放进这个 composer，准备输入，光标就位后完成。`selection: { start, end }` 放置光标或选中文本，为 `prompt` 中的偏移量，并限制在其长度内；省略时光标保持原位。参见[聚焦 composer](#focus-a-composer)。                                                    |
+| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
+| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
+| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
+| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                                                                                                                                                      |
+| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型。在 `context: "agent"` 下（运行中的 Agent 保持其 Provider）以及主机不提供该 Provider 时会被拒绝。`setModel` 和 `setThinking` 原样传递该值；对运行中的 Agent，Provider 拒绝时 Promise 会被拒绝。 |
+| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                                                                                                                                                       |
+
+同一个调用在每个 composer 中行为一致，插件不需要选择 composer 的实现。在运行中的 Agent 上调用 `setMetadata` 需要支持元数据的主机；主机过旧时，Promise 会以 “Update the host to use metadata.” 拒绝。
+
+`Toggle` 接收 `value` 和 `onValueChange({ value })`。`Select` 接收 `value`、`options`（`{ value, label, description? }`）和 `onValueChange({ value })`。`Action` 接收 `onPress(event)`。三者都接收 `title`、`icon`（[Lucide 名称、SVG 或组件](#icons)）和 `disabled`。回调可以返回 Promise：在它完成之前控件保持禁用，被拒绝时 Paseo 会像对待自身控件一样，以错误提示向用户显示。控件的位置由 Paseo 决定：composer 空间足够时显示在工具栏中，不够时（手机上始终如此）成为 composer 溢出面板中的一行。`Select` 会就地打开列表，而不是替换面板中的行。`Component` 如果渲染这些控件以外的内容，会在其所在位置绘制；在溢出面板中，该位置就是面板。
+
+每个命令都按运行时 composer 的当前状态执行，而不是按创建回调的那次渲染，所以 `await composer.setProvider("codex")` 之后再 `await composer.setModel("gpt")` 会同时生效。命令的 Promise 在更改生效后完成，`composer.agent` 在下一次渲染时反映它。
+
+新建工作区界面在创建工作区及其 Agent 期间会锁定 composer。你的控件显示为禁用，`setPrompt` 和 `insertText` 会抛出错误，Agent 命令会以 "The composer is locked while the agent is being created." 拒绝。`composer.agent.options` 和 `composer.agent.metadata` 是冻结的副本；请通过 `setOptions` 和 `setMetadata` 修改它们。
+
+在 Paseo 知道渲染结果之前，composer 项就已计入可容纳的数量。不渲染任何内容的项仍可能在窄 composer 上留下空的溢出面板，所以请始终渲染一个控件。
+
+[Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`，还有一个资源管理器面板和一个 Command Center 条目，它们按引用访问 composer。
+
+### 聚焦 composer {#focus-a-composer}
+
+`insertText` 和 `setPrompt` 不会移动光标。在它们之后调用 `focus()`，用户就可以继续输入：
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
+
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板、菜单、选择器和图片预览，例如手机上放置你的项的控件面板。手机会弹出键盘。
+
+composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点（例如手机上正在听写时）。多次调用重叠时，由最后一次决定光标位置，之前的调用随其一起完成。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
+
+草稿和新建工作区 composer 只能从其中的项访问，所以 `focus()` 不会导航到它们。composer 在屏幕上时可用，用户已离开时会以 “The composer is not on screen.” 拒绝。锁定的 composer 接受聚焦。
+
+### 按引用访问 composer {#reach-a-composer-by-reference}
+
+运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`、每个命令上下文中的 `composers(selector)`，以及客户端上下文中的 `client.composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent。在不接收上下文的回调中（例如[胶囊的 `onPress`](#composer-pills)）使用 `client.composers`：
+
+```tsx
+import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+
+function InsertChecklist() {
+  const [focused] = useComposers({ focused: true });
+  return (
+    <Pressable disabled={!focused} onPress={() => focused?.insertText("- [ ] Tests\n")}>
+      <Text>Insert checklist</Text>
+    </Pressable>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addWorkspacePanel({
+    id: "tools",
+    title: "Tools",
+    icon: "ListChecks",
+    locations: ["explorer"],
+    Component: InsertChecklist,
+  });
+  client.addCommandCenterItem({
+    id: "mark-for-review",
+    title: "Mark for review",
+    icon: "Flag",
+    context: "agent",
+    async onSelect({ agent, composers }) {
+      for (const composer of composers({ agentId: agent.id })) {
+        await composer.setMetadata({ "review.needsReview": true });
+      }
+    },
+  });
+  return () => {};
+}
+```
+
+| 选择器              | 结果                                                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | 此主机上该 Agent 的 composer。Agent 未知或已归档时为空。                                                                                                                                             |
+| `{ focused: true }` | Command Center 交给 Agent 项的那个 Agent 的 composer：屏幕上工作区中聚焦的 Agent 标签页。当前界面不是工作区（例如插件界面或新建工作区），或聚焦的标签页不是 Agent 时为空，并随用户切换标签页而变化。 |
+
+结果始终是数组，为空或只含一个 composer，所以同一段代码可以读取任一选择器。composer 变化时 `useComposers` 会重新渲染。`composers()` 返回的 composer 是调用时的状态，要获取下一个状态请再次调用 `composers()`。
+
+命令与 [`useComposer()`](#composer-items) 相同，从外部访问时有以下差异：
+
+- Agent 的 composer 在屏幕上时，`insertText` 在光标处插入。不在屏幕上时（例如用户在另一个工作区），它会追加到该 Agent 已保存的提示词，用户回来时文本就在输入框里。`setPrompt` 以同样的方式替换已保存的提示词。
+- 运行中 Agent 的 composer 从不锁定。
+- `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
+- `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `focus()` 会先让 composer 显示出来，如[上文所述](#focus-a-composer)。
+- 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
+
+## 新建工作区项 {#new-workspace-items}
+
+`client.addNewWorkspaceItem({ id, Component })` 在新建工作区界面上放置一个字段，位于项目、主机和分支选择器旁边。`useNewWorkspace()` 读取并修改界面将要创建的内容，`@getpaseo/plugin/client/ui` 中的 `Combobox`、`Select`、`Toggle` 和 `Action` 负责绘制字段。桌面端的项是设置行中的徽章；手机上是整行宽度的字段。
+
+```tsx
+import { useNewWorkspace, useRpc, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+import { searchIssuesRpc } from "../shared/issues";
+
+function IssueField() {
+  const newWorkspace = useNewWorkspace();
+  const searchIssues = useRpc(searchIssuesRpc);
+  const issueId = newWorkspace.metadata["issues.id"];
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={typeof issueId === "string" ? { id: issueId, label: issueId } : null}
+      search={async ({ query }) => (await searchIssues({ query })).issues}
+      onSelect={async ({ item }) => {
+        await newWorkspace.setBranch(item.branch);
+        await newWorkspace.setMetadata({ "issues.id": item.id });
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addNewWorkspaceItem({ id: "issue", Component: IssueField });
+  return () => {};
+}
+```
+
+`useNewWorkspace()` 返回该项所在的设置：
+
+| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                              |
+| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                                                                         |
+| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。未选择项目时会被拒绝。 |
+| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                          |
+| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                          |
+
+命令遵循 [Composer 项](#composer-items)的规则：每个命令都按界面运行时的状态执行，所以 `await newWorkspace.setBranch(name)` 之后再调用 `newWorkspace.setMetadata(patch)` 会同时生效，命令的 Promise 在更改生效后完成。命令从组件的第一个 effect 起即可使用，包括挂载时的 effect。载荷是 JSON 值。你的项针对某一台主机上的某一个项目挂载。用户更改其中任何一个时，Paseo 会重新挂载你的项并清除 `branch` 和 `metadata`，因此上一个项目的状态和 `Combobox` 结果不会保留；在挂载 effect 中做初始化的项会针对新项目再次初始化。在其项目或主机已被离开之后才调用的命令（例如用户切换项目时被放弃的查询最终返回）会以 "The New workspace screen moved to another project or host; this item belongs to the previous one." 拒绝，并且不做任何更改；为新项目挂载的项不受影响。`host`、`project`、`baseRef` 和 `metadata` 是冻结的。界面创建工作区期间会被锁定：你的字段显示为禁用，所有命令都会以 "The New workspace screen is locked while the workspace is being created." 拒绝。返回 Promise 的回调在完成之前会让控件保持禁用，被拒绝时会以错误提示向用户显示。
+
+`Combobox` 是带可搜索列表的字段，结果由你的代码提供：
+
+| 属性       | 含义                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `value`    | `{ id, label, description? } \| null`，字段显示的内容。它不必出现在搜索结果中，因此可以显示之前所做的选择。                                       |
+| `search`   | `({ query }) => Promise<Item[]>`。列表打开时以 `""` 调用，之后随用户输入防抖调用。每个 `Item` 是 `{ id, label, description? }` 加上你添加的字段。 |
+| `onSelect` | `({ item }) => void \| Promise<void>`。`item` 就是 `search` 返回的对象。                                                                          |
+
+搜索进行时 Paseo 显示 “Searching…”，搜索被拒绝时显示 “Search failed” 和错误信息，没有结果时显示空状态。新搜索进行期间会保留之前的结果，并忽略已被更新搜索取代的结果，所以 `search` 不需要自己处理取消。`Combobox` 接收与其他控件相同的 `title`、`icon` 和 `disabled`。
+
+[新建工作区 Issue 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/new-workspace-issues)通过守护进程处理器搜索一个固定的 Issue 列表，并根据所选项设置分支和元数据。
+
 ## Composer 胶囊 {#composer-pills}
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` 使用同样的[按钮描述符](#button-descriptor)，
@@ -1623,6 +1834,30 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+胶囊的 `onPress` 不接收参数。通过 [`client.composers`](#reach-a-composer-by-reference) 访问其 Agent 的 composer：
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },

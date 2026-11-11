@@ -1,0 +1,196 @@
+Captured command output. Only private absolute paths are replaced with <REPO_ROOT>/<USER_HOME>.
+RED runs are intentional regression failures, not final failures.
+
+=== Before fix: resume arguments rejected (expected RED, exit 1) ===
+$ cd packages/server && npx vitest run src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts --bail=1
+
+ RUN  v4.1.6 <REPO_ROOT>/packages/server
+
+stdout | src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: ⚙️  suppress all logs with { quiet: true }
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  suppress all logs with { quiet: true }
+
+ ❯ src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts (10 tests | 1 failed) 7ms
+     × registers a successful resume as a new async attempt without spawn arguments 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts > pi-subagents adapter > registers a successful resume as a new async attempt without spawn arguments
+AssertionError: expected undefined to deeply equal [ { type: 'upsert', …(5) } ]
+
+- Expected:
+[
+  {
+    "description": "Continue",
+    "id": "resume-b",
+    "status": "running",
+    "title": "Subagent",
+    "toolCallId": "resume-b",
+    "type": "upsert",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts:66:32
+     64|       },
+     65|     });
+     66|     expect(resumed?.subagents).toEqual([
+       |                                ^
+     67|       {
+     68|         type: "upsert",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (10)
+   Start at  21:05:21
+   Duration  474ms (transform 245ms, setup 31ms, import 328ms, tests 7ms, environment 0ms)
+
+
+=== Intermediate implementation: old file-only transcript deduplication (expected RED, exit 1) ===
+$ cd packages/server && npx vitest run src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts --bail=1
+
+ RUN  v4.1.6 <REPO_ROOT>/packages/server
+
+stdout | src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  override existing env vars with { override: true }
+
+ ❯ src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts (16 tests | 1 failed) 1329ms
+     × follows consecutive resumed attempts and keeps stale notices on their own rows 1320ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts > pi-subagents adapter > follows consecutive resumed attempts and keeps stale notices on their own rows
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts:155:78
+    153|         ]);
+    154|         replay.mapToolCall(call);
+    155|         await expect.poll(() => hasChildTimeline(received, `resume-${r…
+       |                                                                              ^
+    156|       }
+    157|       const oldNotice = {
+
+Caused by: Error: Matcher did not succeed in time.
+ ❯ src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts:155:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 passed (16)
+   Start at  21:09:04
+   Duration  1.85s (transform 247ms, setup 24ms, import 389ms, tests 1.33s, environment 0ms)
+
+
+=== Final baseline d46ee655: GREEN, exit 0 ===
+$ cd packages/server && npx vitest run src/server/agent/providers/pi/extensions/pi-subagents/index.test.ts --bail=1
+
+ RUN  v4.1.6 <REPO_ROOT>/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  13:07:04
+   Duration  1.97s (transform 256ms, setup 26ms, import 355ms, tests 1.45s, environment 0ms)
+
+
+=== Final typecheck, exit 0 ===
+$ npm run typecheck
+
+> paseo@0.15.4 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.15.4 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.15.4 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.15.4 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+up to date in 433ms
+
+> @getpaseo/protocol@0.15.4 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.15.4 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 250 session message validators
+
+> @getpaseo/protocol@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.15.4 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.15.4 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.15.4 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.15.4 typecheck
+> tsgo --noEmit
+
+
+=== Final lint, exit 0 ===
+$ npm run lint
+
+> paseo@0.15.4 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 2.3s on 5442 files with 177 rules using 12 threads.
+
+=== Final full formatter, exit 0; no unrelated changes ===
+$ npm run format
+
+> paseo@0.15.4 format
+> oxfmt .
+
+Finished in 2684ms on 5928 files using 12 threads.
+
+$ git diff --check
+(exit 0; no output)

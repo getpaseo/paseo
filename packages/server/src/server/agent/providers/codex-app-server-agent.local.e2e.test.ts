@@ -171,7 +171,11 @@ async function startMockResponsesServer(sequence: string[]): Promise<{
   };
 }
 
-function writeMockCodexConfig(codexHome: string, serverUrl: string): void {
+function writeMockCodexConfig(
+  codexHome: string,
+  serverUrl: string,
+  options: { streamMaxRetries?: number } = {},
+): void {
   writeFileSync(
     path.join(codexHome, "config.toml"),
     `
@@ -186,7 +190,7 @@ name = "Mock provider for test"
 base_url = "${serverUrl}/v1"
 wire_api = "responses"
 request_max_retries = 0
-stream_max_retries = 0
+stream_max_retries = ${options.streamMaxRetries ?? 0}
 `,
   );
 }
@@ -413,7 +417,7 @@ describe("Codex app-server provider (local e2e)", () => {
         );
 
         try {
-          await session.setFeature?.("plan_mode", true);
+          await session.applyOptions!({ plan_mode: true });
 
           const events: AgentStreamEvent[] = [];
           session.subscribe((event) => {
@@ -535,6 +539,80 @@ describe("Codex app-server provider (local e2e)", () => {
             throw new Error("Expected final assistant message");
           }
           expect(finalAssistantMessage.item.text.trim()).toBe("done");
+        } finally {
+          await session.close();
+        }
+      } finally {
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test.runIf(isCodexInstalled())(
+    "shows Codex reconnecting a dropped model stream until the reply arrives",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-reconnect-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-reconnect-home-"));
+      // A stream that ends before `response.completed` makes Codex reconnect.
+      const droppedStream = sse([responseCreated("resp-dropped")]);
+      const mockServer = await startMockResponsesServer([
+        droppedStream,
+        droppedStream,
+        assistantMessageSse("recovered"),
+      ]);
+
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url, { streamMaxRetries: 2 });
+        const client = new CodexAppServerAgentClient(createTestLogger());
+        const session = await client.createSession(
+          { provider: "codex", cwd, modeId: "auto", model: "mock-model" },
+          { env: { CODEX_HOME: codexHome } },
+        );
+
+        try {
+          const events: AgentStreamEvent[] = [];
+          session.subscribe((event) => {
+            events.push(event);
+          });
+          const turnFinished = waitForEvent({
+            session,
+            timeoutMs: 20_000,
+            label: "turn completion",
+            predicate: (
+              event,
+            ): event is Extract<
+              AgentStreamEvent,
+              { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+            > =>
+              event.type === "turn_completed" ||
+              event.type === "turn_failed" ||
+              event.type === "turn_canceled",
+          });
+
+          await session.startTurn("reply after reconnecting");
+          expect((await turnFinished).type).toBe("turn_completed");
+
+          const retryRows = events.flatMap((event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.name === "codex_retry"
+              ? [event.item]
+              : [],
+          );
+          expect(
+            retryRows.map(
+              (row) => `${row.status}: ${row.detail.type === "plain_text" ? row.detail.label : ""}`,
+            ),
+          ).toEqual([
+            "running: Reconnecting... 1/2",
+            "running: Reconnecting... 2/2",
+            "completed: Reconnected",
+          ]);
+          expect(new Set(retryRows.map((row) => row.callId)).size).toBe(1);
+          expect(mockServer.requestBodies).toHaveLength(3);
         } finally {
           await session.close();
         }

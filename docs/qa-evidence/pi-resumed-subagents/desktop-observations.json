@@ -1,0 +1,157 @@
+{
+  "capture": "Selected fields from actual Pi session entries and final status files; omitted unrelated metadata. Test UUIDs unchanged; all test-root absolute paths replaced with <QA_ROOT>.",
+  "calls": [
+    {
+      "timestamp": "2026-11-10T04:08:31.691Z",
+      "toolCallId": "call_dab88a12b4db419586ac9d0eab565ca8|fc_0e57afa06f701795016af298be50c487d0844c674c8a61fa94",
+      "arguments": {
+        "agent": "qa-marker",
+        "task": "Run sleep 18 then printf PASEO_DESKTOP_A; do not read or write any files",
+        "async": true
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:08:32.010Z",
+      "toolCallId": "call_dab88a12b4db419586ac9d0eab565ca8|fc_0e57afa06f701795016af298be50c487d0844c674c8a61fa94",
+      "isError": false,
+      "details": {
+        "mode": "single",
+        "runId": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+        "asyncId": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+        "asyncDir": "<QA_ROOT>/async/async-subagent-runs/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+        "results": []
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:10:22.901Z",
+      "toolCallId": "call_b636f1714b83481ba5b4ab0aee32b239|fc_0e57afa06f701795016af2992d215087d099231229062fa446",
+      "arguments": {
+        "action": "resume",
+        "id": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+        "message": "Run sleep 18 then printf PASEO_DESKTOP_B; do not read or write files"
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:10:23.219Z",
+      "toolCallId": "call_b636f1714b83481ba5b4ab0aee32b239|fc_0e57afa06f701795016af2992d215087d099231229062fa446",
+      "isError": false,
+      "details": {
+        "mode": "single",
+        "runId": "8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+        "asyncId": "8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+        "asyncDir": "<QA_ROOT>/async/async-subagent-runs/8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+        "results": []
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:13:36.923Z",
+      "toolCallId": "call_8e4ef481e0964e25bbdad4defe620e12|fc_0e57afa06f701795016af299ef47c887d0ac84e70bd50ffc5a",
+      "arguments": {
+        "action": "resume",
+        "id": "8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+        "message": "Run bash sleep 45 then printf PASEO_DESKTOP_C; do not read or write files"
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:13:37.597Z",
+      "toolCallId": "call_8e4ef481e0964e25bbdad4defe620e12|fc_0e57afa06f701795016af299ef47c887d0ac84e70bd50ffc5a",
+      "isError": false,
+      "details": {
+        "mode": "single",
+        "runId": "f41865ed-0e62-44b5-a825-27ac4f0aa596",
+        "asyncId": "f41865ed-0e62-44b5-a825-27ac4f0aa596",
+        "asyncDir": "<QA_ROOT>/async/async-subagent-runs/f41865ed-0e62-44b5-a825-27ac4f0aa596",
+        "results": []
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:16:53.099Z",
+      "toolCallId": "call_60e8fa68de0b436fad2aaf8cc391dae2|fc_0e57afa06f701795016af29ab2b1b487d09020677eaaf9086e",
+      "arguments": {
+        "action": "resume",
+        "id": "00000000-0000-0000-0000-000000000000",
+        "message": "Output PASEO_INVALID"
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:16:53.109Z",
+      "toolCallId": "call_60e8fa68de0b436fad2aaf8cc391dae2|fc_0e57afa06f701795016af29ab2b1b487d09020677eaaf9086e",
+      "isError": true,
+      "details": {},
+      "content": [
+        {
+          "type": "text",
+          "text": "Async run not found for '00000000-0000-0000-0000-000000000000'."
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-11-10T04:17:07.330Z",
+      "toolCallId": "call_e6eb985f16b24308be82922d6a1d7a57|fc_0e57afa06f701795016af29ac17d5c87d0b79c8763512f43da",
+      "arguments": {
+        "action": "resume",
+        "id": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+        "message": "Run bash sleep 45 then printf PASEO_DESKTOP_B_OBSERVE; do not read or write files"
+      }
+    },
+    {
+      "timestamp": "2026-11-10T04:17:07.668Z",
+      "toolCallId": "call_e6eb985f16b24308be82922d6a1d7a57|fc_0e57afa06f701795016af29ac17d5c87d0b79c8763512f43da",
+      "isError": false,
+      "details": {
+        "mode": "single",
+        "runId": "01ac3b2e-2ed6-472d-8438-4dfb91ea62f7",
+        "asyncId": "01ac3b2e-2ed6-472d-8438-4dfb91ea62f7",
+        "asyncDir": "<QA_ROOT>/async/async-subagent-runs/01ac3b2e-2ed6-472d-8438-4dfb91ea62f7",
+        "results": []
+      }
+    }
+  ],
+  "finalStatuses": [
+    {
+      "runId": "01ac3b2e-2ed6-472d-8438-4dfb91ea62f7",
+      "state": "complete",
+      "revivedFrom": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+      "sessionFile": "<QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl"
+    },
+    {
+      "runId": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+      "state": "complete",
+      "sessionFile": "<QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl"
+    },
+    {
+      "runId": "8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+      "state": "complete",
+      "revivedFrom": "832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122",
+      "sessionFile": "<QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl"
+    },
+    {
+      "runId": "f41865ed-0e62-44b5-a825-27ac4f0aa596",
+      "state": "complete",
+      "revivedFrom": "8ca757d4-7514-4e87-8eeb-af52e2228ccb",
+      "sessionFile": "<QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl"
+    }
+  ],
+  "completionNotices": [
+    {
+      "timestamp": "2026-11-10T04:09:07.245Z",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **qa-marker**\n\nqa-marker:\nPASEO_DESKTOP_A\n\nRetention-managed async directory: <QA_ROOT>/async/async-subagent-runs/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122\n\nSession file: <QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization."
+    },
+    {
+      "timestamp": "2026-11-10T04:10:53.423Z",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **qa-marker**\n\nqa-marker:\nPASEO_DESKTOP_B\n\nRetention-managed async directory: <QA_ROOT>/async/async-subagent-runs/8ca757d4-7514-4e87-8eeb-af52e2228ccb\n\nSession file: <QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization."
+    },
+    {
+      "timestamp": "2026-11-10T04:14:37.834Z",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **qa-marker**\n\nqa-marker:\nPASEO_DESKTOP_C\n\nRetention-managed async directory: <QA_ROOT>/async/async-subagent-runs/f41865ed-0e62-44b5-a825-27ac4f0aa596\n\nSession file: <QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization."
+    },
+    {
+      "timestamp": "2026-11-10T04:17:37.887Z",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **qa-marker**\n\nqa-marker:\nPASEO_DESKTOP_B_OBSERVE\n\nRetention-managed async directory: <QA_ROOT>/async/async-subagent-runs/01ac3b2e-2ed6-472d-8438-4dfb91ea62f7\n\nSession file: <QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization."
+    }
+  ]
+}

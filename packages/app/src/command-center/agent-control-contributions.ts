@@ -1,9 +1,10 @@
 import type {
-  AgentFeature,
   AgentMode,
+  AgentOptionControl,
   AgentProvider,
   AgentSelectOption,
 } from "@getpaseo/protocol/agent-types";
+import { readToggleOption, type ComposerOptionControls } from "@/agent-controls/option-controls";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -61,7 +62,7 @@ export interface AgentControlContributionIcons {
   thinking: CommandCenterIcon;
   planMode: CommandCenterIcon;
   mode(modeId: string): CommandCenterIcon;
-  feature(feature: AgentFeature): CommandCenterIcon;
+  control(control: AgentOptionControl): CommandCenterIcon;
 }
 
 interface CommandCenterChoice {
@@ -105,10 +106,7 @@ export interface AgentControlContributionSource {
     defaultModeId: string | null;
     select(modeId: string): void | Promise<void>;
   };
-  features: {
-    list: readonly AgentFeature[];
-    set(featureId: string, value: unknown): void | Promise<void>;
-  };
+  optionControls: ComposerOptionControls;
 }
 
 function buildContributions(
@@ -242,18 +240,19 @@ function toggleChoices(input: {
 }
 
 function buildPlanModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const planFeature = source.features.list.find(
-    (feature) => feature.id === PLAN_MODE_FEATURE_ID && feature.type === "toggle",
+  const { controls, options, onSetOption } = source.optionControls;
+  const planControl = controls.find(
+    (control) => control.key === PLAN_MODE_FEATURE_ID && control.type === "toggle",
   );
   let choices: CommandCenterChoice[] = [];
-  if (planFeature?.type === "toggle") {
+  if (planControl?.type === "toggle") {
     choices = toggleChoices({
       source,
       key: "plan",
-      icon: source.icons.feature(planFeature),
-      isOn: planFeature.value,
-      turnOn: () => source.features.set(PLAN_MODE_FEATURE_ID, true),
-      turnOff: () => source.features.set(PLAN_MODE_FEATURE_ID, false),
+      icon: source.icons.control(planControl),
+      isOn: readToggleOption(planControl, options),
+      turnOn: () => onSetOption(PLAN_MODE_FEATURE_ID, true),
+      turnOff: () => onSetOption(PLAN_MODE_FEATURE_ID, false),
     });
   } else if (source.modes) {
     const modes = source.modes;
@@ -280,18 +279,19 @@ function buildPlanModeGroup(source: AgentControlContributionSource): CommandCent
 }
 
 function buildFastModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const fastFeature = source.features.list.find(
-    (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
+  const { controls, options, onSetOption } = source.optionControls;
+  const fastControl = controls.find(
+    (control) => control.key === FAST_MODE_FEATURE_ID && control.type === "toggle",
   );
   const choices =
-    fastFeature?.type === "toggle"
+    fastControl?.type === "toggle"
       ? toggleChoices({
           source,
           key: "fast",
-          icon: source.icons.feature(fastFeature),
-          isOn: fastFeature.value,
-          turnOn: () => source.features.set(FAST_MODE_FEATURE_ID, true),
-          turnOff: () => source.features.set(FAST_MODE_FEATURE_ID, false),
+          icon: source.icons.control(fastControl),
+          isOn: readToggleOption(fastControl, options),
+          turnOn: () => onSetOption(FAST_MODE_FEATURE_ID, true),
+          turnOff: () => onSetOption(FAST_MODE_FEATURE_ID, false),
         })
       : [];
   return {

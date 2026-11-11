@@ -96,6 +96,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                                                                                                                                                                                                                                         |
 | `title`              | `string?`                                | User-visible title                                                                                                                                                                                                                                                                                                                                                                  |
 | `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). Paseo uses `paseo.parent-agent-id` for parentage and client-scoped `paseo.open-agent-tab.*` labels while managed subagent tabs are open — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                           |
+| `metadata`           | `Record<string, JsonValue>`              | Plugin-owned data (default `{}`). Paseo stores and forwards it and never reads a key. Set at creation or through `agent.metadata.update.request`; `null` in a patch removes a key                                                                                                                                                                                                   |
 | `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`. `closed` means the record is resumable but has no live provider runtime; archive remains represented separately by `archivedAt`.                                                                                                                                                                            |
 | `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                                                                                                                                                                                                                                 |
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
@@ -339,6 +340,14 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
+Commands wait in one of three lanes, drained in order: `high` (worktree creation and archive),
+`normal` (everything a caller waits for, including diffs and explicit refreshes), and `background`
+(workspace reconciliation, refreshes triggered by watchers, polls and fetches, and the fetches
+themselves). Daemon-initiated fan-out must run in the background lane: one rescan over ~90 worktrees
+queues over 1,000 commands, and in the normal lane every command a cold diff runs waited behind
+them. Set the lane on the runner with `createRunGitCommand(provenance, { priority })`, or around a
+whole operation with `runWithGitCommandPriority`.
+
 Environment variables override `config.json`:
 
 | Environment variable                 | Setting                  |
@@ -482,6 +491,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
 | `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
+| `metadata`                     | `Record<string, JsonValue>`                                  | Plugin-owned data (default `{}`). Paseo stores and forwards it and never reads a key. Set at creation or through `workspace.metadata.update.request`.                                         |
 | `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 

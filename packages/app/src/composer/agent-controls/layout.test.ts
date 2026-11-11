@@ -47,6 +47,7 @@ describe("composer control layout", () => {
       hasThinking: true,
       hasMode: true,
       features: [{ type: "toggle" as const }],
+      pluginItemsWidth: 0,
       fontScale: 1,
     };
 
@@ -115,6 +116,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }],
+          pluginItemsWidth: 0,
           fontScale: 1,
         },
       }),
@@ -127,6 +129,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }, { type: "select", label: "Tools" }],
+          pluginItemsWidth: 0,
           fontScale: 1,
         },
       }),
@@ -139,6 +142,7 @@ describe("composer control layout", () => {
           hasThinking: true,
           hasMode: true,
           features: [{ type: "toggle" }],
+          pluginItemsWidth: 0,
           fontScale: 1.25,
         },
       }),
@@ -154,6 +158,7 @@ describe("composer control layout", () => {
         hasModel: true,
         hasThinking: true,
         hasMode: true,
+        pluginItemsWidth: 0,
         fontScale: 1,
       },
     };
@@ -175,6 +180,63 @@ describe("composer control layout", () => {
     ).toBe("condensed");
   });
 
+  describe("plugin items", () => {
+    const base = {
+      availableWidth: 430,
+      currentDensity: "full" as const,
+      geometry: POINTER,
+    };
+    const controls = {
+      hasModel: true,
+      hasThinking: true,
+      hasMode: true,
+      features: [],
+      fontScale: 1,
+      pluginItemsWidth: 0,
+    };
+
+    it("budgets the width the items measured, so an icon toggle fits where a label would not", () => {
+      expect(
+        resolveComposerControlDensity({
+          ...base,
+          controls: { ...controls, pluginItemsWidth: 28 },
+        }),
+      ).toBe("full");
+      expect(
+        resolveComposerControlDensity({
+          ...base,
+          controls: { ...controls, pluginItemsWidth: 125 },
+        }),
+      ).toBe("condensed");
+    });
+
+    it("reserves no overflow button for items that render nothing", () => {
+      // 264 for the condensed row; an overflow button would take it to 296.
+      const tight = { ...base, availableWidth: 290, currentDensity: "tight" as const };
+      expect(resolveComposerControlDensity({ ...tight, controls })).toBe("condensed");
+      expect(
+        resolveComposerControlDensity({
+          ...tight,
+          controls: { ...controls, pluginItemsWidth: 28 },
+        }),
+      ).toBe("tight");
+    });
+
+    it("holds either density at the full floor while the items' width stays the same", () => {
+      // 412 is the full floor with a 28-wide item, and 12 the hysteresis.
+      const atFloor = { ...base, availableWidth: 412 - 12 };
+      const withItem = { ...controls, pluginItemsWidth: 28 };
+      expect(resolveComposerControlDensity({ ...atFloor, controls: withItem })).toBe("full");
+      expect(
+        resolveComposerControlDensity({
+          ...atFloor,
+          currentDensity: "condensed",
+          controls: withItem,
+        }),
+      ).toBe("condensed");
+    });
+  });
+
   it("gives every toolbar control one shell and one glyph per role and control sizing", () => {
     const pointerGlyph = { size: 16, strokeWidth: 1.5, tone: "muted" };
     expect(POINTER).toEqual({
@@ -186,13 +248,36 @@ describe("composer control layout", () => {
       caretSize: 14,
     });
     expect(TOUCH).toMatchObject({
-      controlSize: 20,
+      controlSize: 36,
       glyphs: {
         icon: { size: 20, strokeWidth: 1.5, tone: "foreground" },
         label: { size: 20, strokeWidth: 1.5, tone: "foreground" },
       },
-      controlGap: 20,
+      controlGap: 0,
+      labelPadding: 8,
     });
+  });
+
+  it("budgets an icon-only select as the icon it draws", () => {
+    // Codex's service tier: a select whose toolbar trigger is an icon. 476 with its icon, 543 with
+    // the label "Priority", against a 502-wide toolbar.
+    const controls = {
+      hasModel: true,
+      hasThinking: true,
+      hasMode: true,
+      features: [{ type: "select" as const, label: null }, { type: "toggle" as const }],
+      fontScale: 1,
+      pluginItemsWidth: 28,
+    };
+
+    expect(
+      resolveComposerControlDensity({
+        availableWidth: 502,
+        currentDensity: "condensed",
+        geometry: POINTER,
+        controls,
+      }),
+    ).toBe("full");
   });
 
   it("budgets touch-sized controls, so a touch toolbar condenses at a width a pointer one fits", () => {
@@ -205,6 +290,7 @@ describe("composer control layout", () => {
         hasMode: true,
         features: [{ type: "toggle" as const }],
         fontScale: 1,
+        pluginItemsWidth: 0,
       },
     };
 
@@ -213,14 +299,15 @@ describe("composer control layout", () => {
   });
 
   describe("touch toolbar on an iPad in portrait, sidebar docked", () => {
-    // Codex: model, thinking, mode and two toggle features. Touch controls lay out at what they
-    // paint, 20pt apart, so icon-only thinking, mode and features need 200.
+    // Codex: model, thinking, mode and two toggle features. Touch controls lay out at their
+    // 36pt highlight with no gap, so icon-only thinking, mode and features need 108.
     const controls = {
       hasModel: true,
       hasThinking: true,
       hasMode: true,
       features: [{ type: "toggle" as const }, { type: "toggle" as const }],
       fontScale: 1,
+      pluginItemsWidth: 0,
     };
 
     it("keeps the model family label with icon-only controls on an empty draft", () => {
@@ -279,6 +366,7 @@ describe("composer control layout", () => {
         hasMode: true,
         features: [],
         fontScale: 1,
+        pluginItemsWidth: 0,
       },
     };
 

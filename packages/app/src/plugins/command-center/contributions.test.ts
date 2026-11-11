@@ -51,6 +51,8 @@ const agent: PluginAgentSnapshot = {
   workspaceId: workspace.id,
   provider: "codex",
   status: "running",
+  backgroundWork: { count: 0 },
+  background: false,
   createdAt: "2026-08-16T10:00:00.000Z",
   updatedAt: "2026-08-16T10:00:00.000Z",
   lastActivityAt: "2026-08-16T10:00:00.000Z",
@@ -63,6 +65,7 @@ const agent: PluginAgentSnapshot = {
   attentionReason: null,
   parentAgentId: null,
   labels: {},
+  metadata: {},
 };
 
 const inspect = defineRpc({
@@ -103,6 +106,8 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [
       {
         id: "details",

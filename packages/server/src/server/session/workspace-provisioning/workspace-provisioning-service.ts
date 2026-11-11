@@ -1,3 +1,5 @@
+import type { WorkspaceArchiveRestoreRequest } from "../../workspace-archive-service.js";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
 import { basename, resolve } from "node:path";
@@ -51,6 +53,7 @@ export interface CreateWorktreeWorkspaceInput {
   branch: string | null;
   baseBranch: string | null;
   title: string | null;
+  metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
   untrustedSource?: UntrustedWorkspaceSource;
   background?: boolean;
@@ -71,6 +74,7 @@ export interface WorkspaceProvisioningService {
     context?: {
       expectsInitialAgent?: boolean;
       workspaceId?: string;
+      metadata?: Record<string, JsonValue>;
       background?: boolean;
       callerWorkspaceId?: string;
     },
@@ -81,6 +85,7 @@ export interface WorkspaceProvisioningService {
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
+    archivedAt?: string | null,
   ): Promise<PersistedWorkspaceRecord>;
 }
 
@@ -101,6 +106,7 @@ export class WorkspaceProvisioningError extends Error {
 }
 
 export function createWorkspaceProvisioningService(deps: {
+  unarchiveWorkspaceAgents: (request: WorkspaceArchiveRestoreRequest) => Promise<void>;
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
@@ -251,6 +257,7 @@ export function createWorkspaceProvisioningService(deps: {
     context?: {
       expectsInitialAgent?: boolean;
       workspaceId?: string;
+      metadata?: Record<string, JsonValue>;
       background?: boolean;
       callerWorkspaceId?: string;
     },
@@ -273,6 +280,7 @@ export function createWorkspaceProvisioningService(deps: {
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
         title: title?.trim() || null,
+        metadata: context?.metadata,
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),
@@ -313,6 +321,7 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      metadata: input.metadata,
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
@@ -427,6 +436,7 @@ export function createWorkspaceProvisioningService(deps: {
 
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
+    archivedAt = workspace.archivedAt,
   ): Promise<PersistedWorkspaceRecord> {
     const project = await projectRegistry.get(workspace.projectId);
     if (!project) throw new Error(`Unknown project: ${workspace.projectId}`);
@@ -474,9 +484,16 @@ export function createWorkspaceProvisioningService(deps: {
         });
       }
     }
-    if (!next) return workspace;
-    await workspaceRegistry.upsert(next);
-    return next;
+    if (next) await workspaceRegistry.upsert(next);
+    // A canceled archive supplies a modern stamp before the record itself is archived.
+    if (archivedAt) {
+      await deps.unarchiveWorkspaceAgents({
+        workspaceId: workspace.workspaceId,
+        archivedAt,
+        allowLegacyFallback: Boolean(workspace.archivedAt),
+      });
+    }
+    return next ?? workspace;
   }
 
   async function refreshWorkspaceRecord(
