@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -467,6 +467,58 @@ describe("script-status-projection", () => {
       expect(result.configPath).toBe(configPath);
       expect(result.error).toBeInstanceOf(SyntaxError);
     } finally {
+      workspace.cleanup();
+    }
+  });
+
+  it("keeps a workspace's last known scripts while its paseo.json cannot be re-read", async () => {
+    const workspace = createWorkspaceRepo({
+      paseoConfig: { scripts: { api: { type: "service", command: "npm run dev" } } },
+    });
+    try {
+      const known = await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
+      expect(known?.scripts).toHaveProperty("api");
+
+      // A config the daemon cannot admit stands in for a re-check that fails or times out.
+      rmSync(path.join(workspace.repoDir, "paseo.json"));
+      mkdirSync(path.join(workspace.repoDir, "paseo.json"));
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60_000);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        expect(await readPaseoConfigForProjection(workspace.repoDir, createTestLogger())).toBe(
+          known,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } finally {
+      vi.useRealTimers();
+      workspace.cleanup();
+    }
+  });
+
+  it("shows an external paseo.json edit on a later listing", async () => {
+    const workspace = createWorkspaceRepo({
+      paseoConfig: { scripts: { api: { type: "service", command: "npm run dev" } } },
+    });
+    try {
+      await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
+      writeFileSync(
+        path.join(workspace.repoDir, "paseo.json"),
+        JSON.stringify({ scripts: { web: { type: "service", command: "npm run web" } } }),
+      );
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60_000);
+      await vi.waitFor(
+        async () => {
+          const config = await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
+          expect(Object.keys(config?.scripts ?? {})).toEqual(["web"]);
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+    } finally {
+      vi.useRealTimers();
       workspace.cleanup();
     }
   });
