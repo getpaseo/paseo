@@ -1317,8 +1317,13 @@ function WorkspaceScreenContent({
     enabled: hasHydratedWorkspaceLayoutStore,
   });
   useEffect(() => {
-    startWorkspaceTabSync();
-  }, []);
+    // Closing a tab archives its agent, whatever closed it. `useArchiveAgent`
+    // owns the request: it updates the sidebar/history caches and restores
+    // them when the daemon rejects the archive.
+    startWorkspaceTabSync({
+      archiveAgent: (request) => archiveAgent(request),
+    });
+  }, [archiveAgent]);
   useWorkspaceTabMoveDnd(persistenceKey);
   const { movingTab, openMovePicker, closeMovePicker } = useWorkspaceTabMovePicker();
   useSyncWorkspaceActiveBrowser({

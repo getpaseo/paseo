@@ -22,6 +22,9 @@ import {
 
 const SERVER = "srv-a";
 
+/** Module-scope so `vi.spyOn(...).mockImplementation` does not add a nesting level. */
+const noop = () => undefined;
+
 function createMemoryStorage(): StateStorage {
   const values = new Map<string, string>();
   return {
@@ -121,6 +124,7 @@ function setAgentLabels(agentId: string, labels: Record<string, string>): void {
 
 describe("workspace tab sync", () => {
   const updateAgent = vi.fn();
+  const archiveAgent = vi.fn();
   let echoWrites = true;
 
   beforeEach(() => {
@@ -154,7 +158,9 @@ describe("workspace tab sync", () => {
     });
     useSessionStore.getState().initializeSession(SERVER, {} as DaemonClient);
     useSessionStore.getState().setAgents(SERVER, new Map([["agent-1", makeAgent("agent-1")]]));
-    startWorkspaceTabSync({ layoutStore });
+    archiveAgent.mockReset();
+    archiveAgent.mockResolvedValue(undefined);
+    startWorkspaceTabSync({ layoutStore, archiveAgent });
   });
 
   afterEach(() => {
@@ -666,5 +672,113 @@ describe("workspace tab sync", () => {
       [TAB_ORDER_LABEL]: "000001",
     });
     expect(agentTabIdsIn("ws-a")).toEqual(["agent-1", "agent-2"]);
+  });
+
+  describe("closing an agent tab archives the agent", () => {
+    async function flushPromises(): Promise<void> {
+      for (let i = 0; i < 6; i += 1) {
+        await Promise.resolve();
+      }
+    }
+
+    function openAgentOne(workspaceId = "ws-a"): string {
+      return layoutStore.getState().openTab({
+        workspaceKey: workspaceKey(workspaceId),
+        target: { kind: "agent", agentId: "agent-1" },
+        intent: "reveal",
+        pin: true,
+      })!;
+    }
+
+    it("requests the archive when the user closes the last tab", async () => {
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      expect(archiveAgent).toHaveBeenCalledWith({ serverId: SERVER, agentId: "agent-1" });
+    });
+
+    it("requests the archive when another client's tombstone closes the tab", async () => {
+      openAgentOne();
+      setAgentLabels("agent-1", {
+        [TAB_WORKSPACE_LABEL]: "ws-a",
+        [TAB_CLOSED_LABEL]: "1",
+      });
+      expect(agentTabIdsIn("ws-a")).toEqual([]);
+      expect(archiveAgent).toHaveBeenCalledWith({ serverId: SERVER, agentId: "agent-1" });
+    });
+
+    it("does not archive when the close is a move to another workspace", async () => {
+      openAgentOne();
+      moveAgentTabToWorkspace({
+        serverId: SERVER,
+        sourceWorkspaceKey: workspaceKey("ws-a"),
+        targetWorkspaceKey: workspaceKey("ws-b"),
+        targetWorkspaceId: "ws-b",
+        agentId: "agent-1",
+        tabId: tabsIn("ws-a")[0]!.tabId,
+      });
+      expect(agentTabIdsIn("ws-b")).toEqual(["agent-1"]);
+      expect(archiveAgent).not.toHaveBeenCalled();
+    });
+
+    it("leaves a subagent alone: its tab is layout-only", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), parentAgentId: "parent-agent" });
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      expect(archiveAgent).not.toHaveBeenCalled();
+    });
+
+    it("does not archive an agent that is already archived", async () => {
+      replaceAgent({ ...makeAgent("agent-1"), archivedAt: new Date("2026-04-02T00:00:00.000Z") });
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      expect(archiveAgent).not.toHaveBeenCalled();
+    });
+
+    it("retries a failed archive on the next converge pass, capped", async () => {
+      archiveAgent.mockRejectedValue(new Error("daemon refused"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(noop);
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(1);
+
+      // Every later agent_state converge pass keeps the tombstone and retries
+      // until the cap, so a persistent daemon failure cannot spin forever.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        setAgentLabels("agent-1", {
+          [TAB_WORKSPACE_LABEL]: "ws-a",
+          [TAB_CLOSED_LABEL]: "1",
+          [TAB_ORDER_LABEL]: String(attempt).padStart(6, "0"),
+        });
+        await flushPromises();
+      }
+      expect(archiveAgent).toHaveBeenCalledTimes(5);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("clears the retry budget once the archive succeeds", async () => {
+      archiveAgent.mockRejectedValueOnce(new Error("transient"));
+      const tabId = openAgentOne();
+      layoutStore.getState().closeTab(workspaceKey("ws-a"), tabId);
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(1);
+
+      setAgentLabels("agent-1", {
+        [TAB_WORKSPACE_LABEL]: "ws-a",
+        [TAB_CLOSED_LABEL]: "1",
+        [TAB_ORDER_LABEL]: "000001",
+      });
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(2);
+      archiveAgent.mockResolvedValue(undefined);
+      setAgentLabels("agent-1", {
+        [TAB_WORKSPACE_LABEL]: "ws-a",
+        [TAB_CLOSED_LABEL]: "1",
+        [TAB_ORDER_LABEL]: "000002",
+      });
+      await flushPromises();
+      expect(archiveAgent).toHaveBeenCalledTimes(3);
+    });
   });
 });

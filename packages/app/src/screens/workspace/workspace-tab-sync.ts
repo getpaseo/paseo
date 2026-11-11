@@ -39,6 +39,12 @@ import {
  *   subscription.
  * - A slow sweep (30s) remains only as a backstop for lazily mounted layouts,
  *   missed edges and hook retries.
+ * - Closing an agent's last tab archives the agent, whichever client closed it:
+ *   a local user close and a received tombstone both end in one archive
+ *   request, so a client that converged on a remote close does not leave a
+ *   closed tab pointing at a live agent. The request goes through the caller's
+ *   `archiveAgent` (the app wires `useArchiveAgent`), which owns cache updates
+ *   and rollback; the engine only decides *when*.
  *
  * Echo discipline keeps gestures from bouncing: every local label write is
  * remembered in `pendingLabels` and merged over the stored labels until that
@@ -55,6 +61,16 @@ import {
 const PENDING_LABEL_TTL_MS = 15_000;
 const SWEEP_INTERVAL_MS = 30_000;
 const LAYOUT_PUBLISH_DEBOUNCE_MS = 150;
+/** Retries an archive request that failed. The sweep and every `agent_state`
+ * converge pass call the same request, so the cap only bounds a persistent
+ * daemon failure instead of hammering it. */
+const CLOSE_ARCHIVE_MAX_ATTEMPTS = 5;
+
+/** Archive an agent whose last tab was closed. */
+export interface WorkspaceTabCloseArchiveRequest {
+  serverId: string;
+  agentId: string;
+}
 
 /** Each written field ages on its own clock: a fresh order publish must not
  * extend the suppression window of an earlier workspace/closed intent.
@@ -73,6 +89,12 @@ interface PendingTabLabelWrite {
 
 let internalSync = false;
 const pendingLabels = new Map<string, PendingTabLabelWrite>();
+
+/** Injected by `startWorkspaceTabSync`; `null` disables archiving (tests, and
+ * hosts that only want the display half). */
+let closeArchive: ((request: WorkspaceTabCloseArchiveRequest) => Promise<void>) | null = null;
+const closeArchiveAttempts = new Map<string, number>();
+const closeArchiveInFlight = new Set<string>();
 
 type WorkspaceLayoutStoreApi = typeof useWorkspaceLayoutStore;
 let activeWorkspaceLayoutStore: WorkspaceLayoutStoreApi = useWorkspaceLayoutStore;
@@ -260,6 +282,8 @@ export function setWorkspaceTabSyncClientResolver(
   // so one case cannot make the next case treat a move-pin as a fresh open.
   pendingLabels.clear();
   lastArchived.clear();
+  closeArchiveAttempts.clear();
+  closeArchiveInFlight.clear();
 }
 
 function writeAgentLabels(serverId: string, agentId: string, labels: Record<string, string>): void {
@@ -326,6 +350,57 @@ function findAgentTabCopies(
   return { workspaceKeysWithTab, tabIdByWorkspaceKey };
 }
 
+/**
+ * Archive the agent behind a tab that is really closed.
+ *
+ * Called after the layout settled, from the user-close hook and from the
+ * tombstone path of the enforcer, so "the last tab is gone" means the same
+ * thing whichever client closed it. Guards keep it from firing on the cases
+ * that close a tab but keep the agent: a moved tab still exists somewhere, a
+ * subagent tab is layout-only (the upstream close policy archives only root
+ * agents), and an already archived agent needs nothing.
+ */
+function requestArchiveAfterClose(serverId: string, agentId: string): void {
+  const archive = closeArchive;
+  if (!archive) {
+    return;
+  }
+  const key = pendingKey(serverId, agentId);
+  if (closeArchiveInFlight.has(key)) {
+    return;
+  }
+  if ((closeArchiveAttempts.get(key) ?? 0) >= CLOSE_ARCHIVE_MAX_ATTEMPTS) {
+    return;
+  }
+  const agent =
+    useSessionStore.getState().sessions[serverId]?.agents?.get(agentId) ??
+    useSessionStore.getState().sessions[serverId]?.agentDetails?.get(agentId);
+  if (!agent || agent.archivedAt || agent.parentAgentId) {
+    return;
+  }
+  if (findAgentTabCopies(serverId, agentId).workspaceKeysWithTab.length > 0) {
+    return;
+  }
+  closeArchiveInFlight.add(key);
+  closeArchiveAttempts.set(key, (closeArchiveAttempts.get(key) ?? 0) + 1);
+  void (async () => {
+    try {
+      await archive({ serverId, agentId });
+      closeArchiveAttempts.delete(key);
+    } catch (error) {
+      // The tombstone stays in place, so the tab does not reopen anywhere and
+      // the next converge pass retries instead of losing the intent.
+      console.warn("[workspace-tab-sync] failed to archive a closed agent", {
+        serverId,
+        agentId,
+        error,
+      });
+    } finally {
+      closeArchiveInFlight.delete(key);
+    }
+  })();
+}
+
 function pendingClosedValue(serverId: string, agentId: string): boolean | null {
   const pending = pendingLabels.get(pendingKey(serverId, agentId))?.closed;
   if (!pending || Date.now() - pending.at > PENDING_LABEL_TTL_MS) {
@@ -389,6 +464,9 @@ function enforceSyncedAgent(serverId: string, agentId: string, agent?: Agent): v
     closed,
   });
   if (plan.closeIn.length === 0 && !plan.ensureIn && closed) {
+    // Nothing left to close here, but a tombstoned agent with no tab must
+    // still be archived: this is the retry path for a failed request.
+    requestArchiveAfterClose(serverId, agentId);
     return;
   }
   const store = activeWorkspaceLayoutStore.getState();
@@ -417,6 +495,11 @@ function enforceSyncedAgent(serverId: string, agentId: string, agent?: Agent): v
     }
   } finally {
     internalSync = false;
+  }
+  if (closed) {
+    // The tab the user closed on another client just closed here: archive the
+    // agent too, or this client converges on the close but keeps the agent.
+    requestArchiveAfterClose(serverId, agentId);
   }
 }
 
@@ -778,25 +861,36 @@ function installStoreHooks(): void {
         return result;
       },
       closeTab(workspaceKey, tabId) {
+        // Resolve the agent before the tab is gone, then decide after the store
+        // applied the close: the archive request reads the settled layout.
+        const closedAgent = internalSync ? null : findAgentTab(workspaceKey, tabId);
         try {
-          if (!internalSync) {
-            const tab = findAgentTab(workspaceKey, tabId);
-            if (tab?.target.kind === "agent") {
-              const serverId = workspaceKey.slice(0, workspaceKey.indexOf(":"));
-              if (serverId) {
-                markPending(serverId, tab.target.agentId, { closed: true });
-                writeAgentLabels(
-                  serverId,
-                  tab.target.agentId,
-                  buildTabClosedLabels(agentLabelsFor(serverId, tab.target.agentId)),
-                );
-              }
+          if (closedAgent?.target.kind === "agent") {
+            const serverId = workspaceKey.slice(0, workspaceKey.indexOf(":"));
+            if (serverId) {
+              markPending(serverId, closedAgent.target.agentId, { closed: true });
+              writeAgentLabels(
+                serverId,
+                closedAgent.target.agentId,
+                buildTabClosedLabels(agentLabelsFor(serverId, closedAgent.target.agentId)),
+              );
             }
           }
         } catch {
           // Label sync is best-effort; never break the close.
         }
-        return originalCloseTab.call(this, workspaceKey, tabId);
+        const result = originalCloseTab.call(this, workspaceKey, tabId);
+        try {
+          if (closedAgent?.target.kind === "agent") {
+            const serverId = workspaceKey.slice(0, workspaceKey.indexOf(":"));
+            if (serverId) {
+              requestArchiveAfterClose(serverId, closedAgent.target.agentId);
+            }
+          }
+        } catch {
+          // Archiving is best-effort; never break the close.
+        }
+        return result;
       },
     });
     hooksInstalled = true;
@@ -907,8 +1001,15 @@ function installLayoutWatch(): void {
  * as the backstop for lazily mounted layouts and missed edges. Idempotent.
  */
 export function startWorkspaceTabSync(
-  options: { layoutStore?: WorkspaceLayoutStoreApi } = {},
+  options: {
+    layoutStore?: WorkspaceLayoutStoreApi;
+    /** Archive an agent whose last tab was closed. Omit to keep close-only. */
+    archiveAgent?: (request: WorkspaceTabCloseArchiveRequest) => Promise<void>;
+  } = {},
 ): void {
+  // Refreshed on every call (the caller's callback can be recreated) while the
+  // rest of the install stays idempotent.
+  closeArchive = options.archiveAgent ?? null;
   if (sweepStarted) {
     return;
   }
