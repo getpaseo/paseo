@@ -329,7 +329,11 @@ export class FleetCommitmentControlService {
       );
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message.includes("active run") || error.message.includes("not idle (running)"))
+        if (
+          error.message.includes("active run") ||
+          error.message.includes("not idle (running)") ||
+          error.message.includes("not idle (closing)")
+        )
           return this.finish(receipt, "rejected", "agent_busy");
         if (error.message.includes("not idle (error)"))
           return this.finish(receipt, "rejected", "portfolio_agent_error");
