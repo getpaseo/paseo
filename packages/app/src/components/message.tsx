@@ -92,6 +92,8 @@ export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
 interface UserMessageProps {
+  /** The timeline item's id, which keeps the message's expanded state. */
+  itemId: string;
   sender?: AgentMessage["sender"];
   serverId?: string;
   agentId?: string;
@@ -391,6 +393,7 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
 export const UserMessage = memo(function UserMessage({
+  itemId,
   sender,
   serverId,
   agentId,
@@ -480,7 +483,7 @@ export const UserMessage = memo(function UserMessage({
       >
         {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
         <View style={userMessageStylesheet.bubble}>
-          <MessagePreview>
+          <MessagePreview itemId={itemId}>
             {hasImages ? (
               <View style={imagePreviewContainerStyle}>
                 {images.map((image) => (
