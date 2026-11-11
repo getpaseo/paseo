@@ -14,9 +14,9 @@ Keyboard navigation needs the sidebar's filtered workspace model even when its v
 panel is hidden. Retain that model while keyboard navigation is active; gating it on
 panel visibility leaves number shortcuts with no targets after a compact startup.
 
-Composer send-key customization remains a separate capability. Native retains its
-existing Return submission path; advertising its web-only customization would expose
-settings the native composer does not implement.
+Composer send-key customization is available on desktop and Android. The selector appears
+only with a hardware keyboard; the active shortcut is passed to the Android key source so
+the combinations that are not sends still reach the text control.
 
 ## Native sources
 
@@ -24,6 +24,11 @@ Use the iOS window press stream for hardware keys. `UIKeyCommand` only takes key
 that must bypass the focused text control: composer Return and the top overlay's
 Enter and arrows. Keep the stream as the sole shortcut emitter: a command-owned
 press is still observed by the window.
+
+Android consumes the composer's Return combinations in the window callback and emits the
+submit event with modifier state. It runs only in a wide layout, so its compact layout
+keeps Return with the text control. Shift+Return, soft-keyboard Return, and non-send
+combinations stay with the text control.
 
 The source spike used an iPad Pro 11-inch (M4) simulator on iOS 18.6 with a
 `UITextView` first responder. Both `UIWindow.sendEvent` and the root controller's
