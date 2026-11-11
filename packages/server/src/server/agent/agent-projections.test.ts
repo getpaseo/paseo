@@ -11,12 +11,15 @@ import {
 } from "./agent-projections.js";
 import type { AgentSession } from "./agent-sdk-types.js";
 import type {
-  AgentFeature,
+  AgentOptionControl,
   ImportableProviderSession,
   AgentPermissionRequest,
   AgentPersistenceHandle,
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
+
+/** A provider with no defaults of its own: the effective options are the agent's own. */
+const ownOptionsOnly = (_provider: string, own: Record<string, unknown> | undefined) => own ?? {};
 
 type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPermissions"> & {
   config?: Partial<AgentSessionConfig>;
@@ -127,16 +130,6 @@ function createPermission(overrides: Partial<AgentPermissionRequest> = {}): Agen
     metadata: { requestedAt: new Date("2025-02-01T12:00:00.000Z") },
   };
   return { ...base, ...overrides };
-}
-
-function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
-  return {
-    type: "toggle",
-    id: "fast_mode",
-    label: "Fast mode",
-    value: true,
-    ...overrides,
-  };
 }
 
 describe("toStoredAgentRecord", () => {
@@ -278,6 +271,19 @@ describe("toAgentPayload", () => {
     expect(permissionA.title).toBe("Run command");
   });
 
+  it("changes the usage scope key when the harness session or its model changes", () => {
+    function usageScopeKey(usageSession: ReturnType<NonNullable<AgentSession["usageSession"]>>) {
+      const session = { usageSession: () => usageSession } as unknown as AgentSession;
+      return toAgentPayload(createManagedAgent({ session })).usageScopeKey;
+    }
+    const scope = { provider: "claude", model: "opus", env: {}, sessionKey: "session-a" };
+
+    expect(usageScopeKey(scope)).toBe(usageScopeKey({ ...scope }));
+    expect(usageScopeKey({ ...scope, sessionKey: "session-b" })).not.toBe(usageScopeKey(scope));
+    expect(usageScopeKey({ ...scope, model: "sonnet" })).not.toBe(usageScopeKey(scope));
+    expect(usageScopeKey(null)).toBeUndefined();
+  });
+
   it("omits usage when any numeric usage field is NaN", () => {
     const fields = [
       "inputTokens",
@@ -392,7 +398,7 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"]);
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
 
     expect(record.persistence?.metadata).toEqual({
       conversationId: "conversation-stored",
@@ -408,15 +414,81 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("projects a closed agent's stored controls and options", () => {
+    const controls: AgentOptionControl[] = [
+      {
+        type: "select",
+        key: "service_tier",
+        label: "Speed",
+        defaultValue: "default",
+        choices: [
+          { value: "default", label: "Normal" },
+          { value: "priority", label: "Fast" },
+        ],
+      },
+    ];
+    const record = toStoredAgentRecord(
+      createManagedAgent({
+        provider: "codex",
+        lifecycle: "closed",
+        controls,
+        config: {
+          provider: "codex",
+          providerOptions: { service_tier: "priority", sandbox_mode: "read-only" },
+        },
+      }),
+    );
+
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
+
+    expect(payload.status).toBe("closed");
+    expect(payload.controls).toEqual(controls);
+    expect(payload.options).toEqual({ service_tier: "priority", sandbox_mode: "read-only" });
+    expect(payload.features).toEqual([
+      {
+        type: "select",
+        id: "service_tier",
+        label: "Speed",
+        value: "priority",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+        ],
+      },
+    ]);
+  });
+
+  it("projects a closed agent's options with the provider defaults under its own, like a live one", () => {
+    const record = toStoredAgentRecord(
+      createManagedAgent({
+        provider: "claude",
+        lifecycle: "closed",
+        controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+        config: { provider: "claude", providerOptions: {} },
+      }),
+    );
+    const withConfigDefaults = (_provider: string, own: Record<string, unknown> | undefined) => ({
+      fast_mode: true,
+      ...own,
+    });
+
+    const payload = buildStoredAgentPayload(record, ["claude"], withConfigDefaults);
+
+    expect(payload.options).toEqual({ fast_mode: true });
+    expect(payload.features).toEqual([
+      { type: "toggle", id: "fast_mode", label: "Fast", value: true },
+    ]);
+  });
+
   it("carries a stored lastError onto the payload", () => {
     const record = toStoredAgentRecord(
       createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
     );
 
-    expect(buildStoredAgentPayload(record, ["codex"]).lastError).toBe("boom");
-    expect(buildStoredAgentPayload({ ...record, lastError: null }, ["codex"])).not.toHaveProperty(
-      "lastError",
-    );
+    expect(buildStoredAgentPayload(record, ["codex"], ownOptionsOnly).lastError).toBe("boom");
+    expect(
+      buildStoredAgentPayload({ ...record, lastError: null }, ["codex"], ownOptionsOnly),
+    ).not.toHaveProperty("lastError");
   });
 
   it("omits lastUsage when not available", () => {
@@ -475,13 +547,44 @@ describe("toAgentPayload", () => {
     });
   });
 
-  it("includes features in the snapshot payload", () => {
-    const features = [createFeature()];
-    const agent = createManagedAgent({ features });
+  it("projects controls, effective options, and legacy features from the same source", () => {
+    const controls: AgentOptionControl[] = [
+      { type: "toggle", key: "fast_mode", label: "Fast mode" },
+      {
+        type: "select",
+        key: "service_tier",
+        label: "Speed",
+        defaultValue: "default",
+        choices: [
+          { value: "default", label: "Normal" },
+          { value: "fast", label: "Fast" },
+        ],
+      },
+    ];
+    // `config.json` supplies fast_mode; the agent itself sets nothing for service_tier.
+    // Options without a control are part of the snapshot too.
+    const agent = createManagedAgent({
+      controls,
+      effectiveOptions: { fast_mode: true, sandbox_mode: "workspace-write" },
+    });
 
     const payload = toAgentPayload(agent);
 
-    expect(payload.features).toEqual(features);
+    expect(payload.controls).toEqual(controls);
+    expect(payload.options).toEqual({ fast_mode: true, sandbox_mode: "workspace-write" });
+    expect(payload.features).toEqual([
+      { type: "toggle", id: "fast_mode", label: "Fast mode", value: true },
+      {
+        type: "select",
+        id: "service_tier",
+        label: "Speed",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "fast", label: "Fast" },
+        ],
+      },
+    ]);
   });
 });
 

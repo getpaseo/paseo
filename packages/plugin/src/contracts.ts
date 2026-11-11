@@ -61,6 +61,10 @@ export interface PluginAgentSnapshot {
   readonly workspaceId: string;
   readonly provider: string;
   readonly status: "initializing" | "idle" | "running" | "error" | "closed";
+  /** Shells and monitors the agent left running after its turn. 0 when none are live. */
+  readonly backgroundWork: { readonly count: number };
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastActivityAt: string;
@@ -73,6 +77,8 @@ export interface PluginAgentSnapshot {
   readonly attentionReason: "finished" | "error" | "permission" | null;
   readonly parentAgentId: string | null;
   readonly labels: Readonly<Record<string, string>>;
+  /** Structured data plugins store on the agent. */
+  readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
 export interface PluginThemeColors {

@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  pluginCombobox: {
+    searching: "搜索中…",
+    empty: "无结果",
+    failed: "搜索失败：{{message}}",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -1164,6 +1169,8 @@ export const zhCN: TranslationResources = {
     title: "新功能",
     installed: "已安装",
     showMore: "显示更多",
+    showAllChanges: "显示全部变更",
+    hideAllChanges: "收起全部变更",
     openWebsite: "完整更新日志",
     error: {
       title: "无法加载更新日志",

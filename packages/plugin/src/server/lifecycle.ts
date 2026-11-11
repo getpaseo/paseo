@@ -4,6 +4,7 @@ import type {
   AgentPermissionResponse,
   AgentTimelineItem,
   AgentSessionConfig,
+  JsonValue,
 } from "@getpaseo/protocol/agent-types";
 import type { PaseoApi } from "@getpaseo/client";
 import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
@@ -19,6 +20,8 @@ export interface PluginHookWorkspace {
   cwd: string;
   name: string | null;
   archivedAt: string | null;
+  /** Data plugins stored on the workspace. Paseo never reads a key. */
+  metadata: Record<string, JsonValue>;
 }
 
 export interface PluginHookWorktree {
@@ -68,6 +71,10 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
+  /** Data plugins stored on the agent. Paseo never reads a key. */
+  metadata: Record<string, JsonValue>;
 }
 
 export interface PluginSessionOpenRequest {
@@ -78,7 +85,10 @@ export interface PluginSessionOpenRequest {
   reason: "create" | "resume" | "refresh" | "import";
   purpose: "interactive" | "history";
   readonly title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
@@ -116,15 +126,29 @@ export interface PluginHookEvents {
 
 export interface PluginHookRequests {
   "worktree.create.before": PluginWorktreeCreateRequest;
-  "agent.create.before": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create.before": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    /** Stored on the new agent. Always present in the payload; return it changed to change it. */
+    metadata?: Record<string, JsonValue>;
+  };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 
+/** What a hook may return. An omitted `metadata` stays as it was. */
+type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
+  // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
+  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
+    readonly background?: boolean;
+    metadata?: Readonly<Record<string, JsonValue>>;
+  };
+};
+
 export type PluginHooks = {
   [Name in keyof PluginHookRequests]: {
     request: PluginHookRequests[Name];
-    result: PluginHookRequests[Name];
+    result: PluginHookRequestResults[Name];
   };
 } & { [Name in keyof PluginHookEvents]: { payload: PluginHookEvents[Name] } } & {
   "worktree.create.after": { payload: { worktree: PluginHookWorktree } };
@@ -166,7 +190,7 @@ export interface PluginLifecycleRegistration {
     handler: (
       input: { request: PluginBeforeRequests[Name] },
       context: PluginHookContext,
-    ) => PluginBeforeRequests[Name] | void | Promise<PluginBeforeRequests[Name] | void>,
+    ) => PluginBeforeResults[Name] | void | Promise<PluginBeforeResults[Name] | void>,
   ): () => void;
 }
 
@@ -210,6 +234,9 @@ export type PluginLifecycleEvents = {
 };
 export type PluginBeforeRequests = {
   [Name in keyof typeof legacyRequests]: PluginHookRequests[(typeof legacyRequests)[Name]];
+};
+type PluginBeforeResults = {
+  [Name in keyof typeof legacyRequests]: PluginHookRequestResults[(typeof legacyRequests)[Name]];
 };
 
 /** @internal SDK adapter for the daemon's hook registry. */

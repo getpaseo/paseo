@@ -105,6 +105,8 @@ export interface OpenWorkspaceTabInput {
   /** Keeps an explicitly opened agent visible even when it is archived. */
   pin?: boolean;
   placement?: WorkspaceTabPlacement;
+  /** Opens a tab where a compact layout would otherwise use a sheet. */
+  asTab?: boolean;
   insertionPosition?: WorkspaceTabInsertionPosition;
   parentTabId?: string;
   state?: JsonValue;
@@ -1108,7 +1110,7 @@ export function createWorkspaceLayoutStore(
             input.parentTabId,
           );
           const sheetPlacement =
-            input.placement?.mode === "pane"
+            input.placement?.mode === "pane" || input.asTab
               ? null
               : resolveSheetPlacement(
                   get(),

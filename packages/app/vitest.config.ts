@@ -253,6 +253,14 @@ export default defineConfig({
         find: /^react-native\/Libraries\/Renderer\/shims\/ReactFabric$/,
         replacement: path.resolve(__dirname, "test-stubs/react-native-fabric-shim.ts"),
       },
+      // The CJS entry requires the real react-native, whose Flow sources do not parse.
+      {
+        find: /^@floating-ui\/react-native$/,
+        replacement: path.resolve(
+          rootNodeModules,
+          "@floating-ui/react-native/dist/floating-ui.react-native.esm.js",
+        ),
+      },
       // Point to react-native-web's ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
       // Vite alias resolution). The stub re-exports it and adds what web lacks.

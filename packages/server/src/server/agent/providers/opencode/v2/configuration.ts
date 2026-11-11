@@ -2,8 +2,8 @@ import type { SessionInfo, PermissionRuleset } from "@opencode/client";
 import type { V2Api } from "./api.js";
 
 import type {
-  AgentFeature,
   AgentLaunchContext,
+  AgentOptionControl,
   AgentSessionConfig,
 } from "../../../agent-sdk-types.js";
 
@@ -11,16 +11,9 @@ import { OpenCodeProviderOptionsSchema, buildOpenCodePermissionRules } from "../
 
 import { modelRef } from "./mapping.js";
 
-export function features(config: AgentSessionConfig): AgentFeature[] {
-  return [
-    {
-      type: "toggle",
-      id: "auto_accept",
-      label: "Auto-accept",
-      value: config.featureValues?.["auto_accept"] === true,
-    },
-  ];
-}
+export const controls: AgentOptionControl[] = [
+  { type: "toggle", key: "auto_accept", label: "Auto-accept" },
+];
 export function permissionRules(config: AgentSessionConfig): PermissionRuleset {
   const rules =
     buildOpenCodePermissionRules(

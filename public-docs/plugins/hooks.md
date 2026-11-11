@@ -49,22 +49,22 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                | Handler may change                             |
-| ------------------------- | ----- | -------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                          | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                        |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                        |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                          | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
-| `agent.create.after`      | no    | `{ agent }`                            |                                                |
-| `agent.open.before`       | yes   | `{ request }`                          | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                            |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                    |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }` |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                   |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`     |                                                |
+| Hook                      | Waits | Payload                                   | Handler may change                             |
+| ------------------------- | ----- | ----------------------------------------- | ---------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                          |
+| `workspace.create.after`  | no    | `{ workspace }`                           |                                                |
+| `workspace.archive.after` | no    | `{ workspace }`                           |                                                |
+| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination               |
+| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`   |
+| `agent.create.after`      | no    | `{ agent }`                               |                                                |
+| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `tools`, `mcpServers`       |
+| `agent.close.after`       | no    | `{ agent }`                               |                                                |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }`    |                                                |
+| `agent.permission.before` | no    | `{ agent, request }`                      |                                                |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                |
 
 ## Shared payloads
 
@@ -76,6 +76,8 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
+  metadata: Record<string, JsonValue>;
 }
 
 interface PluginHookWorkspace {
@@ -84,6 +86,7 @@ interface PluginHookWorkspace {
   cwd: string;
   name: string | null;
   archivedAt: string | null;
+  metadata: Record<string, JsonValue>;
 }
 
 type PluginTurnOutcome =
@@ -94,15 +97,36 @@ type PluginTurnOutcome =
 
 | Field        | Shape / meaning                                                                        |
 | ------------ | -------------------------------------------------------------------------------------- |
+| `background` | `true` for a [background agent](#background-agents)                                    |
 | `turnId`     | Provider-reported `string` or `null`; unique across resumed sessions                   |
 | `timeline`   | Deprecated, always `[]`; fetch history with the SDK.                                   |
 | `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other` |
 | `resolution` | SDK `AgentPermissionResponse`                                                          |
 | `archivedAt` | Timestamp string                                                                       |
 
+## Metadata
+
+Agents and workspaces carry a `metadata` record for plugin data. Keys are strings, values are any JSON value, and Paseo stores the record without reading a key. Prefix keys with your plugin id so plugins do not collide. Labels stay strings for filtering and tagging; use metadata for structured data.
+
+Set metadata when you create the agent or workspace, or change it later. `null` removes a key, and any other value replaces the key's whole value:
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  cwd: "/projects/shop",
+  metadata: { "linear.issue": { id: "ENG-123" } },
+});
+
+agent.metadata; // { "linear.issue": { id: "ENG-123" } }
+await agent.setMetadata({ "linear.issue": null });
+await paseo.workspaces.ref(workspaceId).setMetadata({ "linear.issue": { id: "ENG-123" } });
+```
+
+Metadata survives a daemon restart. Every hook payload carries it: `workspace.create.before` and `agent.create.before` receive the metadata the caller sent, and the `after` hooks and `agent.open.before` receive what is stored. Against a host that predates metadata, these calls throw "Update the host to use metadata."
+
 ## workspace.create.before
 
-Receives `{ request }` with `source`, optional `title`, and `firstAgentContext`. You may replace the entire explicit create request; a throw, invalid result, or timeout fails creation. Existing workspaces and directory lookup/import are unaffected.
+Receives `{ request }` with `source`, optional `title`, optional `metadata`, and `firstAgentContext`. You may replace the entire explicit create request; a throw, invalid result, or timeout fails creation. Existing workspaces and directory lookup/import are unaffected.
 
 ### Choose workspace isolation
 
@@ -202,18 +226,18 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 
 ## agent.create.before
 
-Receives `{ request: { config, env? } }`. Config changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
+Receives `{ request: { config, env?, metadata } }`. Config and `metadata` changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
-| Fields                                        | Constraint                                                                 |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
-| `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Opaque provider-specific options                                           |
-| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                                         | Cannot change                                                              |
+| Fields                       | Constraint                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `provider`, `model`          | Separate fields; changing provider may require changing model/mode/options |
+| `modeId`, `thinkingOptionId` | Provider-specific selections                                               |
+| `title`, `systemPrompt`      | Agent configuration                                                        |
+| `providerOptions`            | Provider options, including speed and auto-accept selections               |
+| `mcpServers`, `toolPolicy`   | MCP configuration and exact-tool preapprovals                              |
+| `cwd`                        | Cannot change                                                              |
 
 ### Change saved configuration
 
@@ -261,6 +285,17 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
+Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
+
+```ts
+server.addHook("agent.open.before", async ({ request }, { paseo }) => {
+  void paseo.agents
+    .ref(request.agentId)
+    .setMetadata({ "my.plugin": { openedBy: "hook" } })
+    .catch((error) => console.error(error));
+});
+```
+
 **`agent.open.before` request example:**
 
 ```json
@@ -270,7 +305,9 @@ Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for th
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
+  "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
   "mcpServers": {},
   "reason": "resume",
@@ -283,7 +320,9 @@ Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for th
 | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | String or `null`                                                                                                        |
 | `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
+| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                       |
 | `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
+| `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                      |
 | `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
 | `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                   |
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
@@ -315,7 +354,7 @@ the placeholder URL with your MCP endpoint:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -391,6 +430,7 @@ Select agents using any of the session-open request fields:
 | Provider         | `request.provider === "codex"`               |
 | Workspace        | `request.workspaceId === "workspace-456"`    |
 | Individual agent | `request.agentId === chosenAgentId`          |
+| Background agent | `request.background`                         |
 
 `request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
 callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
@@ -588,7 +628,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
+## Background agents
+
 Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
+
+A [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) is a helper hidden from tabs, lists and attention. Every hook's `agent.background` and the `agent.open.before` request's `background` are `true` for one, so you can skip it without a lookup:
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` is fixed when the agent is created and a hook cannot change it. An agent created in a background workspace without `background: true` reads `false`. Hosts older than 0.16.0 omit the field, so it reads as `undefined`.
 
 ## Ordering and returned values
 

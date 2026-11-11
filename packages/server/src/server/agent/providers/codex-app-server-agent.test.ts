@@ -603,6 +603,58 @@ async function startCompactionTurnTest(): Promise<{
   return { appServer, session, events, terminalEvent };
 }
 
+async function startStatusNoticeTurnTest(): Promise<{
+  appServer: FakeCodexAppServer;
+  session: AgentSession;
+  events: AgentStreamEvent[];
+  terminalEvent: Promise<TurnTerminalEvent>;
+}> {
+  const appServer = createFakeCodexAppServer();
+  const session = new CodexAppServerAgentSession(
+    createConfig({ cwd: "/workspace/project" }),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  const events: AgentStreamEvent[] = [];
+  const terminalEvent = new Promise<TurnTerminalEvent>((resolve) => {
+    session.subscribe((event) => {
+      const isStatusNotice =
+        event.type === "timeline" &&
+        (event.item.type === "notification" ||
+          (event.item.type === "tool_call" && event.item.name === "codex_retry"));
+      const isTerminal =
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled";
+      if (isStatusNotice || isTerminal) {
+        events.push(event);
+      }
+      if (isTerminal) {
+        resolve(event);
+      }
+    });
+  });
+
+  await session.startTurn("exercise status notices");
+  appServer.startsTurn({ threadId: "thread-1", turnId: "codex-turn-1" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  return { appServer, session, events, terminalEvent };
+}
+
+function describeStatusNotice(event: AgentStreamEvent): string {
+  if (event.type !== "timeline") {
+    return event.type;
+  }
+  if (event.item.type === "notification") {
+    return `${event.item.level}: ${event.item.message}`;
+  }
+  if (event.item.type === "tool_call" && event.item.detail.type === "plain_text") {
+    return `${event.item.status}: ${event.item.detail.label}`;
+  }
+  return event.item.type;
+}
+
 function archivedThreadHandle() {
   return {
     sessionId: "archived-thread-id",
@@ -6223,6 +6275,229 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("shows Codex stream reconnects as one status line until the reply resumes", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+
+    try {
+      for (const attempt of ["2/5", "3/5"]) {
+        appServer.reportsTurnError({
+          threadId: "thread-1",
+          turnId: "codex-turn-1",
+          message: `Reconnecting... ${attempt}`,
+          additionalDetails: "stream disconnected before completion: idle timeout waiting for SSE",
+          willRetry: true,
+        });
+      }
+      // A message steered into the turn while it waits is not the stream coming back.
+      emitCodexUserMessage(appServer, {
+        id: "steer",
+        text: "Still there?",
+        turnId: "codex-turn-1",
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 2/5",
+        "running: Reconnecting... 3/5",
+      ]);
+
+      appServer.says({ threadId: "thread-1", itemId: "reply", text: "Back online." });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      appServer.completeTurn();
+      await terminalEvent;
+
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 2/5",
+        "running: Reconnecting... 3/5",
+        "completed: Reconnected",
+        "turn_completed",
+      ]);
+      const retryRows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(retryRows.map((row) => row.callId)).size).toBe(1);
+      expect(retryRows[1]?.detail).toEqual({
+        type: "plain_text",
+        label: "Reconnecting... 3/5",
+        text: "stream disconnected before completion: idle timeout waiting for SSE",
+        icon: "sparkles",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps one root reconnect row while a child completes", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+    try {
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 1/2",
+        willRetry: true,
+      });
+      // Codex reports a child's completion on the root thread, independently
+      // of whether the root model stream has recovered.
+      appServer.beginsSubAgentActivity({
+        callId: "subagent-completed-child-turn",
+        threadId: "child-thread",
+        parentThreadId: "thread-1",
+        agentPath: "/root/child",
+        kind: "completed",
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events.map(describeStatusNotice)).toEqual(["running: Reconnecting... 1/2"]);
+
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 2/2",
+        willRetry: true,
+      });
+      appServer.says({ threadId: "thread-1", itemId: "reply", text: "Root recovered." });
+      appServer.completeTurn();
+      await terminalEvent;
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "running: Reconnecting... 2/2",
+        "completed: Reconnected",
+        "turn_completed",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fails queued reconnect notices before reporting process disconnection", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+    try {
+      for (const attempt of ["1/2", "2/2"]) {
+        appServer.reportsTurnError({
+          threadId: "thread-1",
+          turnId: "codex-turn-1",
+          message: `Reconnecting... ${attempt}`,
+          willRetry: true,
+        });
+      }
+      // Exit before the session's ordered notification queue has drained.
+      appServer.disconnect();
+      await terminalEvent;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "running: Reconnecting... 2/2",
+        "failed: Reconnecting... 2/2",
+        "turn_failed",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      expect(new Set(events.map((event) => event.turnId)).size).toBe(1);
+      expect(events[0]?.turnId).toBeTruthy();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("cancels the reconnect row before closing its session", async () => {
+    const { appServer, session, events } = await startStatusNoticeTurnTest();
+    try {
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 1/2",
+        willRetry: true,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await session.close();
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 1/2",
+        "canceled: Reconnecting... 1/2",
+      ]);
+      const rows = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(new Set(rows.map((row) => row.callId)).size).toBe(1);
+      // Closing again must not publish another terminal update.
+      await session.close();
+      expect(events).toHaveLength(2);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fails the reconnect status line with the turn when Codex stops retrying", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+
+    try {
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "Reconnecting... 5/5",
+        additionalDetails: "stream disconnected before completion: idle timeout waiting for SSE",
+        willRetry: true,
+      });
+      appServer.reportsTurnError({
+        threadId: "thread-1",
+        turnId: "codex-turn-1",
+        message: "stream disconnected before completion: idle timeout waiting for SSE",
+        willRetry: false,
+      });
+      appServer.completeTurn({
+        status: "failed",
+        error: { message: "stream disconnected before completion: idle timeout waiting for SSE" },
+      });
+      await terminalEvent;
+
+      expect(events.map(describeStatusNotice)).toEqual([
+        "running: Reconnecting... 5/5",
+        "failed: Reconnecting... 5/5",
+        "turn_failed",
+      ]);
+      expect(events[1]).toMatchObject({
+        item: { error: "stream disconnected before completion: idle timeout waiting for SSE" },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows each Codex warning once as a notice in the thread", async () => {
+    const { appServer, session, events, terminalEvent } = await startStatusNoticeTurnTest();
+    const missingMetadata =
+      "Model metadata for `mock-model` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.";
+
+    try {
+      appServer.warns({ threadId: "thread-1", message: missingMetadata });
+      appServer.warns({
+        threadId: null,
+        message: "Falling back from WebSockets to HTTPS transport.",
+      });
+      // Codex repeats the missing-metadata warning on every turn.
+      appServer.warns({ threadId: "thread-1", message: missingMetadata });
+      appServer.completeTurn();
+      await terminalEvent;
+
+      expect(events.map(describeStatusNotice)).toEqual([
+        `warning: ${missingMetadata}`,
+        "warning: Falling back from WebSockets to HTTPS transport.",
+        "turn_completed",
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not replace a persisted Codex thread when app-server resume fails", async () => {
     const session = createSession({ thinkingOptionId: "medium" });
     session.currentThreadId = "archived-thread-id";
@@ -6449,7 +6724,7 @@ describe("Codex app-server provider", () => {
 
   test("emits a synthetic plan approval permission after a successful Codex plan turn", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -6519,7 +6794,7 @@ describe("Codex app-server provider", () => {
 
   test("does not complete Codex plan timeline cards while plan approval is pending", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -6565,7 +6840,7 @@ describe("Codex app-server provider", () => {
 
   test("replaces a pending synthetic plan approval when a later plan completes", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true },
+      providerOptions: { plan_mode: true },
     });
 
     await asInternals(session).handleNotification("turn/started", {
@@ -6598,7 +6873,7 @@ describe("Codex app-server provider", () => {
 
   test("dismisses a pending synthetic plan approval after a new prompt is accepted", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true },
+      providerOptions: { plan_mode: true },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -6640,7 +6915,7 @@ describe("Codex app-server provider", () => {
 
   test("makes the old plan non-actionable while a new prompt is being prepared", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true },
+      providerOptions: { plan_mode: true },
     });
 
     await asInternals(session).handleNotification("turn/started", {
@@ -6694,7 +6969,7 @@ describe("Codex app-server provider", () => {
 
   test("does not dismiss a new plan approval emitted while a prompt is being accepted", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true },
+      providerOptions: { plan_mode: true },
     });
 
     await asInternals(session).handleNotification("turn/started", {
@@ -6744,7 +7019,7 @@ describe("Codex app-server provider", () => {
 
   test("keeps a synthetic plan dismissed when a new prompt is rejected", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true },
+      providerOptions: { plan_mode: true },
     });
 
     await asInternals(session).handleNotification("turn/started", {
@@ -7368,7 +7643,7 @@ describe("Codex app-server provider", () => {
 
   test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -7399,9 +7674,10 @@ describe("Codex app-server provider", () => {
 
     expect(asInternals(session).serviceTier).toBe("fast");
     expect(asInternals(session).planModeEnabled).toBe(false);
-    expect(asInternals(session).config.featureValues).toEqual({
-      plan_mode: false,
-      fast_mode: true,
+    expect(events).toContainEqual({
+      type: "options_changed",
+      provider: "codex",
+      patch: { plan_mode: false },
     });
     // The session returns the follow-up prompt instead of calling startTurn directly.
     // The caller (session/agent-manager) is responsible for sending it through streamAgent.
@@ -7422,7 +7698,7 @@ describe("Codex app-server provider", () => {
 
   test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: false },
+      providerOptions: { plan_mode: true, service_tier: "default" },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -7451,11 +7727,12 @@ describe("Codex app-server provider", () => {
       selectedActionId: "implement",
     });
 
-    expect(asInternals(session).serviceTier).toBeNull();
+    expect(asInternals(session).serviceTier).toBe("default");
     expect(asInternals(session).planModeEnabled).toBe(false);
-    expect(asInternals(session).config.featureValues).toEqual({
-      plan_mode: false,
-      fast_mode: false,
+    expect(events).toContainEqual({
+      type: "options_changed",
+      provider: "codex",
+      patch: { plan_mode: false },
     });
     expect(result?.followUpPrompt).toEqual(
       expect.stringContaining("The user approved the plan. Implement it now."),
@@ -7464,7 +7741,7 @@ describe("Codex app-server provider", () => {
 
   test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
     const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: true },
+      providerOptions: { plan_mode: true, service_tier: "fast" },
     });
     asInternals(session).collaborationModes = [
       {
