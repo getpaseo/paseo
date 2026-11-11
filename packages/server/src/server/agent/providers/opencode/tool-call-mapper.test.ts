@@ -55,6 +55,7 @@ describe("opencode tool-call mapper", () => {
     expect(item.detail).toEqual({
       type: "plain_text",
       label: "hzmcp.memory__write_note",
+      title: "hzmcp.memory__write_note",
       icon: "wrench",
       text: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
     });

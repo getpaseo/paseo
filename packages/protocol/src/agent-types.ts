@@ -319,6 +319,8 @@ export type ToolCallDetail =
   | {
       type: "plain_text";
       label?: string;
+      /** Replaces the row's tool-name title; `label` stays a subtitle for older apps. */
+      title?: string;
       text?: string;
       icon?: ToolCallIconName;
     }
