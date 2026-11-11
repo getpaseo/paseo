@@ -111,6 +111,7 @@ import {
   extractWsBearerToken,
   resolveDaemonBearerPrincipal,
   type DaemonAuthConfig,
+  type DaemonBearerPrincipal,
 } from "./auth.js";
 import { resolveSessionAdmission } from "./session-admission-auth.js";
 import { FleetCommitmentControlService } from "./fleet-commitment-control.js";
@@ -768,19 +769,7 @@ export class VoiceAssistantWebSocketServer {
       (snapshot) => this.validateCompletedCreation(snapshot),
       join(paseoHome, "agent-requests"),
     );
-    this.fleetCommitmentControl = fleetCommitmentControls
-      ? new FleetCommitmentControlService({
-          ledgerPath: fleetCommitmentControls.ledgerPath,
-          receipts: this.messageReceipts,
-          readPortfolioAgent: async () => {
-            const stored = await this.agentStorage.get(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
-            const live = this.agentManager.getAgent(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
-            return stored && live ? { id: live.id, archivedAt: stored.archivedAt } : null;
-          },
-          streamAgent: (agentId, prompt, options) =>
-            this.agentManager.streamAgent(agentId, prompt, options),
-        })
-      : null;
+    this.fleetCommitmentControl = this.createFleetCommitmentControl(fleetCommitmentControls);
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
@@ -915,6 +904,23 @@ export class VoiceAssistantWebSocketServer {
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
   }
 
+  private createFleetCommitmentControl(
+    controls: { ledgerPath: string } | undefined,
+  ): FleetCommitmentControlService | null {
+    if (!controls) return null;
+    return new FleetCommitmentControlService({
+      ledgerPath: controls.ledgerPath,
+      receipts: this.messageReceipts,
+      readPortfolioAgent: async () => {
+        const stored = await this.agentStorage.get(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
+        const live = this.agentManager.getAgent(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
+        return stored && live ? { id: live.id, archivedAt: stored.archivedAt } : null;
+      },
+      streamAgent: (agentId, prompt, options) =>
+        this.agentManager.streamAgent(agentId, prompt, options),
+    });
+  }
+
   private createWebSocketServer(
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
@@ -1043,11 +1049,7 @@ export class VoiceAssistantWebSocketServer {
         request,
         undefined,
         false,
-        principal === "service:firstmate-deck"
-          ? FIRSTMATE_DECK_SESSION_ADMISSION
-          : token !== null
-            ? OWNER_SESSION_ADMISSION
-            : null,
+        resolveHeaderAdmission(principal, token !== null),
       );
     } finally {
       ws.resume();
@@ -3311,6 +3313,14 @@ export function isWebSocketSameOrigin(
   }
 
   return isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname);
+}
+
+function resolveHeaderAdmission(
+  principal: DaemonBearerPrincipal | null,
+  hasHeaderCredential: boolean,
+): SessionAdmission | null {
+  if (principal === "service:firstmate-deck") return FIRSTMATE_DECK_SESSION_ADMISSION;
+  return hasHeaderCredential ? OWNER_SESSION_ADMISSION : null;
 }
 
 function selectWebSocketProtocol(

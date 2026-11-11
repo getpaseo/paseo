@@ -134,6 +134,8 @@
               "server/daemon-keypair.ts": ["existsSync", "readFileSync"],
               // Fatal exit diagnostics: synchronously flush the exit reason when the worker is about to terminate.
               "server/daemon-worker.ts": ["appendFileSync", "mkdirSync"],
+              // TODO: Fleet ledger admission runs during startup config resolution, which is synchronous; move ledger validation to an async startup step.
+              "server/fleet-commitment-control.ts": ["readFileSync", "realpathSync", "statSync"],
               // Startup host identity: memoized scutil lookup is warmed before listening; later callers use the cache.
               "server/host-name.ts": ["execFileSync"],
               // TODO: relationship persistence is atomic with enrollment/revocation state transitions; serialize those transitions before async writes.
