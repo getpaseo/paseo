@@ -187,6 +187,13 @@ export class Session {
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
+    const options = {
+      ...changes.settings,
+      ...changes.providerOptions,
+    };
+    if (Object.keys(options).length > 0) {
+      throw new AntigravityError("Antigravity has no configurable options or settings");
+    }
     validateSelection(
       {
         model: changes.model ?? undefined,
@@ -444,11 +451,6 @@ export class Session {
         this.modelDirty = false;
       }
     } catch (error) {
-      if (isTrajectoryNotFoundError(error) && this.conversationId) {
-        await this.recoverExpiredTrajectory(driver);
-        await this.setLiveModel(driver, targetModel, requestedModel, revision);
-        return;
-      }
       const isTimeout =
         error instanceof Error &&
         error.message.includes("Timed out waiting for Antigravity ACP response");
@@ -458,25 +460,6 @@ export class Session {
       }
       throw error;
     }
-  }
-
-  private async recoverExpiredTrajectory(driver: DriverProcess): Promise<string> {
-    const sessionResult = await driver.requestInit(
-      "session/new",
-      this.commonSessionParams(),
-      acpSessionResultSchema,
-    );
-    if (!sessionResult.sessionId) {
-      throw new AntigravityError(
-        "Antigravity ACP session/new did not return a sessionId",
-        "WIRE_PARSE_ERROR",
-      );
-    }
-    this.conversationId = sessionResult.sessionId;
-    const reportedModel = sessionResult.models?.currentModelId ?? null;
-    await this.syncInitialModel(driver, reportedModel);
-    this.emitPersistence();
-    return sessionResult.sessionId;
   }
 
   private commonSessionParams() {
@@ -498,25 +481,11 @@ export class Session {
     nativeText: string,
   ): Promise<void> {
     try {
-      let response;
-      try {
-        response = await driver.request(
-          "session/prompt",
-          { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
-          acpPromptResultSchema,
-        );
-      } catch (promptError) {
-        if (isTrajectoryNotFoundError(promptError) && this.conversationId && !turn.interrupted) {
-          await this.recoverExpiredTrajectory(driver);
-          response = await driver.request(
-            "session/prompt",
-            { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
-            acpPromptResultSchema,
-          );
-        } else {
-          throw promptError;
-        }
-      }
+      const response = await driver.request(
+        "session/prompt",
+        { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
+        acpPromptResultSchema,
+      );
       if (this.turn !== turn) return;
       this.turn = null;
       this.cancelAllPermissions();
@@ -701,23 +670,6 @@ export class Session {
           acpSessionResultSchema,
         );
         return { sessionResult, replayEvents: buffered };
-      } catch (loadError) {
-        if (isTrajectoryNotFoundError(loadError)) {
-          const sessionResult = await driver.requestInit(
-            "session/new",
-            commonParams,
-            acpSessionResultSchema,
-          );
-          if (!sessionResult.sessionId) {
-            throw new AntigravityError(
-              "Antigravity ACP session/new did not return a sessionId",
-              "WIRE_PARSE_ERROR",
-            );
-          }
-          this.conversationId = sessionResult.sessionId;
-          return { sessionResult, replayEvents: [] as ProviderEvent[] };
-        }
-        throw loadError;
       } finally {
         this.replayMode = "live";
         this.replayBuffer = null;
@@ -1367,9 +1319,4 @@ export function toProviderError(error: unknown): ProviderError {
     message: error instanceof Error ? error.message : String(error),
     code: "ANTIGRAVITY_ERROR",
   };
-}
-
-function isTrajectoryNotFoundError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /trajectory.*not found/i.test(message);
 }

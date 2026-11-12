@@ -369,9 +369,9 @@ export function buildElicitationResponse(
       rawValue = answers[question.question];
     }
     if (rawValue === undefined && question.allowEmpty) continue;
-    const values = normalizeAnswerValues(rawValue, question.multiSelect);
-    if (values.length === 0 && question.allowEmpty) continue;
     const knownLabels = new Set(question.options.map((option) => option.label));
+    const values = normalizeAnswerValues(rawValue, question.multiSelect, knownLabels);
+    if (values.length === 0 && question.allowEmpty) continue;
     if (question.multiSelect) {
       applyMultiSelectAnswer(content, question, values, knownLabels);
     } else {
@@ -384,6 +384,7 @@ export function buildElicitationResponse(
 function normalizeAnswerValues(
   rawValue: unknown,
   multiSelect: boolean,
+  knownLabels?: Set<string>,
 ): Array<string | number | boolean> {
   if (rawValue === undefined || rawValue === null) return [];
   if (Array.isArray(rawValue)) {
@@ -393,15 +394,101 @@ function normalizeAnswerValues(
   }
   if (typeof rawValue === "string") {
     if (multiSelect) {
-      return rawValue
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      return decodeMultiSelectString(rawValue, knownLabels);
     }
     const trimmed = rawValue.trim();
     return trimmed ? [trimmed] : [];
   }
   return [rawValue as number | boolean];
+}
+
+function decodeMultiSelectString(rawValue: string, knownLabels?: Set<string>): string[] {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return [];
+  if (!knownLabels || knownLabels.size === 0) {
+    return trimmed
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (knownLabels.has(trimmed)) {
+    return [trimmed];
+  }
+
+  const sortedLabels = [...knownLabels].sort((a, b) => b.length - a.length);
+  const results: string[] = [];
+  let remaining = trimmed;
+
+  while (remaining.length > 0) {
+    const matched = findStartingLabel(remaining, sortedLabels);
+    if (matched !== null) {
+      results.push(matched);
+      remaining = remaining.slice(matched.length).replace(/^,\s*/, "").trim();
+      continue;
+    }
+
+    const nextKnownIdx = findNextLabelIndex(remaining, sortedLabels);
+    if (nextKnownIdx !== -1) {
+      const prefixPart = remaining.slice(0, nextKnownIdx).trim();
+      if (prefixPart) {
+        for (const part of prefixPart
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)) {
+          results.push(part);
+        }
+      }
+      remaining = remaining.slice(nextKnownIdx).replace(/^,\s*/, "").trim();
+    } else {
+      for (const part of remaining
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)) {
+        results.push(part);
+      }
+      break;
+    }
+  }
+
+  return results;
+}
+
+function findStartingLabel(remaining: string, sortedLabels: string[]): string | null {
+  for (const label of sortedLabels) {
+    if (
+      remaining === label ||
+      remaining.startsWith(label + ",") ||
+      remaining.startsWith(label + ", ")
+    ) {
+      return label;
+    }
+  }
+  return null;
+}
+
+function findNextLabelIndex(remaining: string, sortedLabels: string[]): number {
+  let nextKnownIdx = -1;
+  for (const label of sortedLabels) {
+    const idxCommaSpace = remaining.indexOf(", " + label);
+    const idxComma = remaining.indexOf("," + label);
+    let candidateIdx = -1;
+    let sepLen = 1;
+    if (idxCommaSpace !== -1 && (idxComma === -1 || idxCommaSpace <= idxComma)) {
+      candidateIdx = idxCommaSpace;
+      sepLen = 2;
+    } else if (idxComma !== -1) {
+      candidateIdx = idxComma;
+      sepLen = 1;
+    }
+    if (candidateIdx !== -1 && (nextKnownIdx === -1 || candidateIdx < nextKnownIdx)) {
+      const after = remaining.slice(candidateIdx + sepLen + label.length);
+      if (after.length === 0 || after.startsWith(",") || after.startsWith(", ")) {
+        nextKnownIdx = candidateIdx;
+      }
+    }
+  }
+  return nextKnownIdx;
 }
 
 function applyMultiSelectAnswer(
@@ -479,6 +566,13 @@ function applySingleSelectAnswer(
 
 export function classifyFailure(stderr: string, detail?: string): AntigravityError {
   const combined = [detail, stderr].filter(Boolean).join("\n").trim();
+  if (/trajectory.*not found/i.test(combined)) {
+    return new AntigravityError(
+      "Antigravity session trajectory has expired upstream. Start a new conversation to continue.",
+      "PROCESS_FAILED",
+      combined || undefined,
+    );
+  }
   if (
     /not logged in|sign[\s._-]*in|log[\s._-]*in|authentication required|authentication failed|UNAUTHENTICATED|auth_required/i.test(
       combined,

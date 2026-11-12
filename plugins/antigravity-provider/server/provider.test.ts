@@ -2031,24 +2031,156 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     expect(acpProcesses.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("recovers from expired cloud trajectories by seamlessly allocating a new session", async () => {
+  it("fails clearly when a restored session trajectory has expired upstream", async () => {
     const h = await harness({ AGY_TEST_EXPIRED_TRAJECTORY_ID: "expired-session-id" });
     await h.open({
       restored: {
+        version: 1,
         data: { conversationId: "expired-session-id" },
       },
     });
 
-    const turn = await h.prompt("Hello on expired session");
+    const failed = h.events.find(
+      (event): event is Extract<ProviderEvent, { type: "request.failed" }> =>
+        event.type === "request.failed",
+    );
+    expect(failed?.error.message).toContain("trajectory has expired upstream");
+  });
+
+  it("rejects unsupported providerOptions and settings in session.configure", async () => {
+    const h = await harness();
+    await h.open();
+    await h.request({
+      type: "session.configure",
+      requestId: "cfg-opts",
+      sessionId: "s",
+      changes: { providerOptions: { temperature: 0.7 } },
+    });
+    expect(
+      h.events.find((event) => event.type === "request.failed" && event.requestId === "cfg-opts"),
+    ).toMatchObject({
+      type: "request.failed",
+      error: {
+        message: expect.stringContaining("Antigravity has no configurable options or settings"),
+      },
+    });
+
+    await h.request({
+      type: "session.configure",
+      requestId: "cfg-settings",
+      sessionId: "s",
+      changes: { settings: { foo: "bar" } },
+    });
+    expect(
+      h.events.find(
+        (event) => event.type === "request.failed" && event.requestId === "cfg-settings",
+      ),
+    ).toMatchObject({
+      type: "request.failed",
+      error: {
+        message: expect.stringContaining("Antigravity has no configurable options or settings"),
+      },
+    });
+  });
+
+  it("preserves comma-containing labels in multiselect elicitation answers", async () => {
+    const h = await harness();
+    await h.open();
+
+    const turn = await h.prompt("ASK_QUESTION_COMMAS");
+    const questionPerm = await h.wait(
+      (event) => event.type === "session.permission" && event.request.kind === "question",
+    );
+    if (questionPerm.type !== "session.permission") throw new Error("Expected question permission");
+
+    await h.connection.send({
+      type: "session.permission",
+      sessionId: "s",
+      permissionId: questionPerm.request.id,
+      response: {
+        behavior: "allow",
+        updatedInput: {
+          answers: {
+            Cities: "Paris, France, Tokyo, Japan",
+          },
+        },
+      },
+    });
     await h.completed(turn);
 
-    const persistence = h.events.findLast(
-      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
-        event.type === "session.persistence",
+    const assistant = h.events.findLast(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
     );
-    expect(persistence?.persistence.data).toMatchObject({
-      conversationId: "recovered-session-id",
+    expect(assistant).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "assistant_message",
+        text: 'COMMAS_RESULT:{"action":"accept","content":{"cities":["Paris, France","Tokyo, Japan"]}}\n',
+      },
     });
+  });
+
+  it("formats review attachments with code context and marks target lines", async () => {
+    const h = await harness();
+    await h.open();
+
+    const id = await h.message([
+      {
+        type: "review",
+        cwd: "/test/repo",
+        mode: "uncommitted",
+        comments: [
+          {
+            filePath: "src/sample.ts",
+            side: "right",
+            lineNumber: 42,
+            body: "Check this logic",
+            context: {
+              hunkHeader: "@@ -40,3 +40,4 @@",
+              targetLine: {
+                type: "add",
+                content: "  const value = true;",
+                oldLineNumber: null,
+                newLineNumber: 42,
+              },
+              lines: [
+                {
+                  type: "context",
+                  content: "function test() {",
+                  oldLineNumber: 40,
+                  newLineNumber: 40,
+                },
+                {
+                  type: "add",
+                  content: "  const value = true;",
+                  oldLineNumber: null,
+                  newLineNumber: 42,
+                },
+                {
+                  type: "context",
+                  content: "}",
+                  oldLineNumber: 41,
+                  newLineNumber: 43,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    await h.completed(id);
+
+    const record = (await h.records()).find((r) =>
+      r.input?.message?.content?.includes("Code review (uncommitted changes in /test/repo):"),
+    );
+    expect(record).toBeDefined();
+    const content = record!.input!.message!.content!;
+    expect(content).toContain("Comment 1: src/sample.ts:right:42");
+    expect(content).toContain("Check this logic");
+    expect(content).toContain("@@ -40,3 +40,4 @@");
+    expect(content).toContain("  40 40  function test() {");
+    expect(content).toContain(">  - 42 +  const value = true;");
+    expect(content).toContain("  41 43  }");
   });
 });
 

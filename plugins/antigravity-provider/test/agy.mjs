@@ -147,7 +147,8 @@ async function handlePrompt(id, params) {
 
   if (
     sessionId === "expired-session-id" ||
-    (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID && sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
+    (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID &&
+      sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
   ) {
     respondError(id, -32603, `not_found: trajectory not found: ${sessionId}: not found`);
     return;
@@ -739,6 +740,33 @@ async function handleAskQuestionPrompt(id, text = "") {
     respond(id, { stopReason: "end_turn" });
     return;
   }
+  if (text.includes("ASK_QUESTION_COMMAS")) {
+    const answer = await requestClient("elicitation/create", {
+      sessionId,
+      mode: "form",
+      message: "Select cities",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          cities: {
+            type: "array",
+            title: "Cities",
+            items: { type: "string", enum: ["Paris, France", "Tokyo, Japan", "London, UK"] },
+          },
+        },
+        required: ["cities"],
+      },
+    });
+    notifyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: `COMMAS_RESULT:${JSON.stringify(answer)}\n`,
+      },
+    });
+    respond(id, { stopReason: "end_turn" });
+    return;
+  }
   const answer = await requestClient("elicitation/create", {
     sessionId,
     mode: "form",
@@ -896,6 +924,14 @@ function handleSessionList(id, params) {
 
 async function handleSessionLoad(id, params) {
   sessionId = params.sessionId || DEFAULT_SESSION_ID;
+  if (
+    sessionId === "expired-session-id" ||
+    (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID &&
+      sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
+  ) {
+    respondError(id, -32603, `not_found: trajectory not found: ${sessionId}: not found`);
+    return;
+  }
   if (process.env.AGY_TEST_LOAD_MODEL) {
     currentModel = process.env.AGY_TEST_LOAD_MODEL;
   }
@@ -1003,11 +1039,7 @@ lines.on("line", async (line) => {
       handleSessionList(id, params);
       return;
     case "session/new":
-      sessionId =
-        sessionId === "expired-session-id" ||
-        (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID && sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
-          ? "recovered-session-id"
-          : DEFAULT_SESSION_ID;
+      sessionId = DEFAULT_SESSION_ID;
       respond(id, {
         sessionId,
         models: { currentModelId: currentModel },

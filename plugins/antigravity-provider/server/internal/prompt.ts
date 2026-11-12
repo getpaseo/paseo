@@ -124,15 +124,39 @@ function formatIssuePart(
   return { text: `[Issue #${part.number}: ${part.title}]`, nativeText: full };
 }
 
+const REVIEW_LINE_MARKERS = { add: "+", remove: "-", context: " " } as const;
+
+function padLineNumber(lineNumber: number | null): string {
+  return (lineNumber?.toString() ?? "-").padStart(2);
+}
+
 function formatReviewPart(part: Extract<ProviderContent, { type: "review" }>): EncodedPrompt {
   const scope =
     part.mode === "base" && part.baseRef ? `diff against ${part.baseRef}` : "uncommitted changes";
-  const comments = part.comments.map(
-    (c) => `- ${c.filePath}:${c.lineNumber} (${c.side}): ${c.body}\n  ${c.context.hunkHeader}`,
-  );
+  const lines = [`Code review (${scope} in ${part.cwd}):`];
+  part.comments.forEach((comment, index) => {
+    lines.push(
+      "",
+      `Comment ${index + 1}: ${comment.filePath}:${comment.side}:${comment.lineNumber}`,
+      comment.body,
+      comment.context.hunkHeader,
+    );
+    const target = comment.context.targetLine;
+    for (const line of comment.context.lines) {
+      const isTarget =
+        line.oldLineNumber === target.oldLineNumber &&
+        line.newLineNumber === target.newLineNumber &&
+        line.type === target.type &&
+        line.content === target.content;
+      const prefix = isTarget ? "> " : "  ";
+      const oldLn = padLineNumber(line.oldLineNumber);
+      const newLn = padLineNumber(line.newLineNumber);
+      lines.push(`${prefix}${oldLn} ${newLn} ${REVIEW_LINE_MARKERS[line.type]}${line.content}`);
+    }
+  });
   return {
     text: `[Review: ${part.comments.length} comment(s)]`,
-    nativeText: [`Code review (${scope} in ${part.cwd}):`, ...comments].join("\n"),
+    nativeText: lines.join("\n"),
   };
 }
 
