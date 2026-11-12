@@ -844,6 +844,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
+  private readonly replacementMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1407,6 +1408,13 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  hasAcceptedSubmittedMessage(agentId: string, clientMessageId: string): boolean {
+    this.requireAgent(agentId);
+    const row = this.timelineStore.getSubmittedUserMessage(agentId, clientMessageId);
+    // Rejected prompts are retained too, but only accepted prompts have a turn.
+    return Boolean(row?.turnId || row?.providerMessageId);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -2112,6 +2120,7 @@ export class AgentManager {
       agent.inFlightPermissionResponses.size === 0 &&
       (this.collectingRuntimes.has(agent.id) || !this.lifecycleMutationTails.has(agent.id)) &&
       !this.foregroundMutationTails.has(agent.id) &&
+      !this.replacementMutationTails.has(agent.id) &&
       !this.sessionEventTails.has(agent.id) &&
       !this.providerSubagents.list(agent.id).some((child) => child.status === "running")
     );
@@ -3414,31 +3423,55 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
-    const snapshot = this.requireAgent(agentId);
-    if (
-      snapshot.lifecycle !== "running" &&
-      !snapshot.activeForegroundTurnId &&
-      !this.runs.hasRun(agentId)
-    ) {
-      return this.streamAgent(agentId, prompt, options);
-    }
+    return this.runQueuedMutation(this.replacementMutationTails, agentId, () =>
+      this.replaceAgentRunNow(agentId, prompt, options),
+    );
+  }
 
-    const agent = this.requireSessionAgent(agentId);
-    agent.pendingReplacement = true;
-    agent.lifecycle = "running";
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
-
-    try {
-      await this.cancelAgentRunBefore(agentId, "replace");
-      return this.streamAgent(agentId, prompt, options);
-    } catch (error) {
-      const latest = this.agents.get(agentId);
-      if (latest) {
-        latest.pendingReplacement = false;
+  private async replaceAgentRunNow(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<AsyncGenerator<AgentStreamEvent>> {
+    const admission = await this.runForegroundMutation(agentId, async () => {
+      // Reserve the replacement in the same lane as cancellation. Otherwise a second
+      // interrupt can take the gap and leave both callers trying to start a run.
+      const pending = this.runs.getPendingRun(agentId);
+      if (pending?.start.status === "pending") {
+        return {
+          status: "waiting" as const,
+          ready: Promise.race([pending.turnStartedPromise, pending.settledPromise]),
+        };
       }
-      throw error;
+      const agent = this.requireSessionAgent(agentId);
+      if (!this.hasInFlightRun(agentId)) {
+        return {
+          status: "reserved" as const,
+          iterator: this.streamAgent(agentId, prompt, options),
+        };
+      }
+      agent.pendingReplacement = true;
+      agent.lifecycle = "running";
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      try {
+        const result = await this.cancelAgentRunNow(agentId);
+        if (result.status === "refused") throw new AgentRunCancellationError(agentId, "replace");
+        return {
+          status: "reserved" as const,
+          iterator: this.streamAgent(agentId, prompt, options),
+        };
+      } catch (error) {
+        agent.pendingReplacement = false;
+        throw error;
+      }
+    });
+    if (admission.status === "waiting") {
+      // Startup can be slow. Leave the mutation lane available for Stop while we wait.
+      await admission.ready;
+      return this.replaceAgentRunNow(agentId, prompt, options);
     }
+    return admission.iterator;
   }
 
   async steerAgentRun(
@@ -3562,18 +3595,26 @@ export class AgentManager {
   }
 
   private async runForegroundMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.foregroundMutationTails.get(agentId) ?? Promise.resolve();
+    return this.runQueuedMutation(this.foregroundMutationTails, agentId, operation);
+  }
+
+  private async runQueuedMutation<T>(
+    tails: Map<string, Promise<void>>,
+    agentId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = tails.get(agentId) ?? Promise.resolve();
     const run = previous.catch(() => undefined).then(operation);
     const tail = run.then(
       () => undefined,
       () => undefined,
     );
-    this.foregroundMutationTails.set(agentId, tail);
+    tails.set(agentId, tail);
     try {
       return await run;
     } finally {
-      if (this.foregroundMutationTails.get(agentId) === tail) {
-        this.foregroundMutationTails.delete(agentId);
+      if (tails.get(agentId) === tail) {
+        tails.delete(agentId);
       }
     }
   }
@@ -3584,22 +3625,21 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
-    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-    agent.pendingReplacement = true;
-    agent.lifecycle = "running";
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
-
-    try {
-      await this.cancelAgentRunBefore(agent.id, "replace");
-      return this.streamAgent(agent.id, prompt, options);
-    } catch (error) {
-      const latest = this.agents.get(agent.id);
-      if (latest) {
-        latest.pendingReplacement = false;
+    return this.runForegroundMutation(agent.id, async () => {
+      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+      agent.pendingReplacement = true;
+      agent.lifecycle = "running";
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      try {
+        const result = await this.cancelAgentRunNow(agent.id);
+        if (result.status === "refused") throw new AgentRunCancellationError(agent.id, "replace");
+        return this.streamAgent(agent.id, prompt, options);
+      } catch (error) {
+        agent.pendingReplacement = false;
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   private async recordAcceptedSteer(

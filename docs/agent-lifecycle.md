@@ -111,6 +111,10 @@ foreground turn can no longer run, including when the provider reports that it i
 rejects only when the provider may still own the turn. Provider adapters translate native errors
 into that contract; lifecycle callers do not interpret provider-specific errors.
 
+Interrupt-and-replace requests share the foreground mutation lane through cancellation and
+replacement reservation. Concurrent requests wait for the preceding prompt's acceptance before
+interrupting it; serializing only cancellation leaves a gap where replacement requests race.
+
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an
 older cancellation from settling a newer turn. If interruption is rejected or times out, the agent

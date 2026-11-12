@@ -113,8 +113,6 @@ describe("message submission transactions", () => {
   it("does not create duplicate transaction identity", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1" });
 
-    expect(() => beginMessageSubmission(sending, { clientMessageId: "client-1" })).toThrow(
-      "Message submission already exists",
-    );
+    expect(beginMessageSubmission(sending, { clientMessageId: "client-1" })).toBe(sending);
   });
 });

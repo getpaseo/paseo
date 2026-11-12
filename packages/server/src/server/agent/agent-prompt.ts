@@ -74,7 +74,7 @@ async function startOrReplaceRun(
   replaced: boolean;
 }> {
   const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const iterator = replaced
+  const iterator = options?.replaceRunning
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
     : agentManager.streamAgent(agentId, prompt, options?.runOptions);
   return { iterator, replaced };

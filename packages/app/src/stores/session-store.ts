@@ -6,6 +6,7 @@ import type { ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
+  isUnreconciledLocalUserMessage,
   handoffCreatedAgentUserMessageToStream,
   removeSubmittedUserMessage,
   type StreamItem,
@@ -1167,9 +1168,19 @@ export const useSessionStore = create<SessionStore>()(
             head: currentHead,
             message,
           });
-          const submissions = beginMessageSubmission(
-            session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId },
+          const existing = [...currentTail, ...currentHead].find(
+            (item) =>
+              item.kind === "user_message" && item.clientMessageId === message.clientMessageId,
+          );
+          const canonicalIds =
+            existing?.kind === "user_message" && !isUnreconciledLocalUserMessage(existing)
+              ? [message.clientMessageId]
+              : [];
+          const submissions = observeMessageSubmissionCanonical(
+            beginMessageSubmission(session.messageSubmissions.get(agentId) ?? [], {
+              clientMessageId: message.clientMessageId,
+            }),
+            canonicalIds,
           );
           const messageSubmissions = new Map(session.messageSubmissions);
           messageSubmissions.set(agentId, submissions);

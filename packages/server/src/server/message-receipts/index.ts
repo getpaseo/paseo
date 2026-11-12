@@ -15,6 +15,8 @@ interface SendMessageInput {
   request: unknown;
   send: () => Promise<void>;
   prepare?: () => Promise<void>;
+  /** Positive provider acceptance evidence, never just the presence of an optimistic row. */
+  isAccepted?: () => Promise<boolean>;
 }
 
 /** Owns message delivery receipts; creation is owned by CreationService. */
@@ -46,12 +48,18 @@ export class MessageReceipts {
       if (existing.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
       if (existing.state === "completed") return;
       // A provider may have accepted the message before its receipt was committed.
-      throw new Error("agent_request_outcome_unknown");
+      if (!(await input.isAccepted?.())) throw new Error("agent_request_outcome_unknown");
+      await writeJsonFileAtomic(file, { ...existing, state: "completed" });
+      return;
     }
     await input.prepare?.();
     const receipt = { fingerprint, agentId: input.agentId };
     await writeJsonFileAtomic(file, { ...receipt, state: "pending" });
-    await input.send();
+    try {
+      await input.send();
+    } catch (error) {
+      if (!(await input.isAccepted?.())) throw error;
+    }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
   }
 }

@@ -75,3 +75,47 @@ test("failed local message preparation does not leave an ambiguous receipt", asy
   await requests.send(input);
   expect(sends).toBe(1);
 });
+
+for (const restart of [false, true]) {
+  test(`accepted timeline evidence settles an ambiguous receipt (restart: ${restart})`, async () => {
+    const { requests, directory } = await fixture();
+    let accepted = false;
+    let sends = 0;
+    const input = {
+      agentId: "agent",
+      messageId: "arrival",
+      request: { text: "hello" },
+      isAccepted: async () => accepted,
+      send: async () => {
+        sends++;
+        throw new Error("acknowledgement lost");
+      },
+    };
+    await expect(requests.send(input)).rejects.toThrow("acknowledgement lost");
+    accepted = true;
+    const receipts = restart ? new MessageReceipts(directory) : requests;
+    await receipts.send(input);
+    await new MessageReceipts(directory).send(input);
+    expect(sends).toBe(1);
+  });
+}
+
+test("delivery failure reconciles accepted evidence immediately", async () => {
+  const { requests } = await fixture();
+  let accepted = false;
+  let sends = 0;
+  const input = {
+    agentId: "agent",
+    messageId: "arrival",
+    request: {},
+    isAccepted: async () => accepted,
+    send: async () => {
+      sends++;
+      accepted = true;
+      throw new Error("acknowledgement lost");
+    },
+  };
+  await requests.send(input);
+  await requests.send(input);
+  expect(sends).toBe(1);
+});
