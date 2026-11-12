@@ -1,10 +1,11 @@
 import { RefreshControl } from "react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
 } from "react-native-draggable-flatlist";
 import { useUnistyles } from "react-native-unistyles";
+import { DraggableGestureHostPresentedContext } from "./draggable-gesture-host";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
@@ -30,13 +31,13 @@ export function DraggableList<T>({
   onRefresh,
   extraData,
   simultaneousGestureRef,
-  gestureHostPresented,
   waitFor,
   onDragBegin: onDragBeginProp,
   nestable = false,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
+  const gestureHostPresented = useContext(DraggableGestureHostPresentedContext);
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.

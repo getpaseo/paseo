@@ -127,7 +127,6 @@ interface StatusWorkspaceListProps {
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty?: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostActive?: boolean;
 }
 
 export function SidebarStatusWorkspaceList({
@@ -144,7 +143,6 @@ export function SidebarStatusWorkspaceList({
   listHeaderComponent,
   sidebarFilterEmpty = false,
   parentGestureRef,
-  dragGestureHostActive,
 }: StatusWorkspaceListProps) {
   const { t } = useTranslation();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -241,7 +239,6 @@ export function SidebarStatusWorkspaceList({
                 useDragHandle
                 nestable={platformIsNative}
                 simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
               />
               {canTogglePinnedWorkspaces ? (
                 <SidebarGroupToggleRow

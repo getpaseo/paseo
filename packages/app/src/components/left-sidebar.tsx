@@ -22,7 +22,6 @@ import {
 } from "react-native";
 import { Gesture, ScrollView as GHScrollView } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -91,6 +90,7 @@ import { UsageSidebarItem, UsageSidebarRoot, useUsageSummary, useOpenSidebarUsag
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { DraggableGestureHostPresentedContext } from "./draggable-gesture-host";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -649,27 +649,28 @@ function MobileSidebar({
             {isInitialLoad && !hasActiveHostFilter ? (
               <SidebarAgentListSkeleton />
             ) : (
-              <SidebarWorkspaceList
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                groupMode={groupMode}
-                workspaceGroups={workspaceGroups}
-                projectIconTargets={projectIconTargets}
-                pinnedGroups={pinnedGroups}
-                projects={projects}
-                hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-                hasActiveProjectFilter={hasActiveProjectFilter}
-                workspaceEntriesByKey={workspaceEntriesByKey}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={handleWorkspacePress}
-                onAddProject={handleOpenProject}
-                onImportSession={handleImportSession}
-                parentGestureRef={closeGestureRef}
-                dragGestureHostActive={active}
-                listHeaderComponent={workspacesSectionHeaderElement}
-              />
+              <DraggableGestureHostPresentedContext value={active}>
+                <SidebarWorkspaceList
+                  collapsedProjectKeys={collapsedProjectKeys}
+                  onToggleProjectCollapsed={toggleProjectCollapsed}
+                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                  groupMode={groupMode}
+                  workspaceGroups={workspaceGroups}
+                  projectIconTargets={projectIconTargets}
+                  pinnedGroups={pinnedGroups}
+                  projects={projects}
+                  hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+                  hasActiveProjectFilter={hasActiveProjectFilter}
+                  workspaceEntriesByKey={workspaceEntriesByKey}
+                  isRefreshing={isManualRefresh && isRevalidating}
+                  onRefresh={handleRefresh}
+                  onWorkspacePress={handleWorkspacePress}
+                  onAddProject={handleOpenProject}
+                  onImportSession={handleImportSession}
+                  parentGestureRef={closeGestureRef}
+                  listHeaderComponent={workspacesSectionHeaderElement}
+                />
+              </DraggableGestureHostPresentedContext>
             )}
           </SidebarToastRegion>
         </SidebarViewSlot>
@@ -734,9 +735,7 @@ function DesktopSidebar({
 
   const startWidth = useSharedValue(visibleSidebarWidth);
   const resizeWidth = useSharedValue(visibleSidebarWidth);
-  const [resizePressed, setResizePressed] = useState(false);
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
+  const resizePressed = useSharedValue(false);
 
   useEffect(() => {
     resizeWidth.value = visibleSidebarWidth;
@@ -748,7 +747,7 @@ function DesktopSidebar({
         .enabled(divisionLayout === null)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
-          scheduleOnRN(showResizeGrip);
+          resizePressed.value = true;
         })
         // Horizontal intent only, so a finger dragging down the touch grip scrolls
         // the workspace list instead of resizing. Anchoring the start width to the
@@ -771,14 +770,13 @@ function DesktopSidebar({
           if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
         })
         .onFinalize(() => {
-          scheduleOnRN(hideResizeGrip);
+          resizePressed.value = false;
         }),
     [
       divisionLayout,
-      hideResizeGrip,
+      resizePressed,
       resizeWidth,
       setSidebarWidth,
-      showResizeGrip,
       startWidth,
       viewportWidth,
       visibleSidebarWidth,
@@ -851,27 +849,28 @@ function DesktopSidebar({
               {isInitialLoad && !hasActiveHostFilter ? (
                 <SidebarAgentListSkeleton />
               ) : (
-                <SidebarWorkspaceList
-                  collapsedProjectKeys={collapsedProjectKeys}
-                  onToggleProjectCollapsed={toggleProjectCollapsed}
-                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                  groupMode={groupMode}
-                  workspaceGroups={workspaceGroups}
-                  projectIconTargets={projectIconTargets}
-                  pinnedGroups={pinnedGroups}
-                  projects={projects}
-                  hasProjectsBeforeFilter={hasProjectsBeforeFilter}
-                  hasActiveProjectFilter={hasActiveProjectFilter}
-                  workspaceEntriesByKey={workspaceEntriesByKey}
-                  isRefreshing={isManualRefresh && isRevalidating}
-                  onRefresh={handleRefresh}
-                  onAddProject={handleOpenProject}
-                  onImportSession={handleImportSession}
-                  onWorkspacePress={closeSidebar}
-                  parentGestureRef={closeGestureRef}
-                  dragGestureHostActive={active}
-                  listHeaderComponent={workspacesSectionHeaderElement}
-                />
+                <DraggableGestureHostPresentedContext value={active}>
+                  <SidebarWorkspaceList
+                    collapsedProjectKeys={collapsedProjectKeys}
+                    onToggleProjectCollapsed={toggleProjectCollapsed}
+                    shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                    groupMode={groupMode}
+                    workspaceGroups={workspaceGroups}
+                    projectIconTargets={projectIconTargets}
+                    pinnedGroups={pinnedGroups}
+                    projects={projects}
+                    hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+                    hasActiveProjectFilter={hasActiveProjectFilter}
+                    workspaceEntriesByKey={workspaceEntriesByKey}
+                    isRefreshing={isManualRefresh && isRevalidating}
+                    onRefresh={handleRefresh}
+                    onAddProject={handleOpenProject}
+                    onImportSession={handleImportSession}
+                    onWorkspacePress={closeSidebar}
+                    parentGestureRef={closeGestureRef}
+                    listHeaderComponent={workspacesSectionHeaderElement}
+                  />
+                </DraggableGestureHostPresentedContext>
               )}
             </SidebarToastRegion>
           </SidebarViewSlot>

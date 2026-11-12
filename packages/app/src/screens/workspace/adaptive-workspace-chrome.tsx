@@ -1,6 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
-import { selectWorkspaceChrome } from "./workspace-tab-layout";
+import { shouldUseCompactWorkspaceHeader } from "./workspace-tab-layout";
 import { WorkspaceTabMeasurementScope } from "./workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "./workspace-tabs-types";
 
@@ -15,18 +15,14 @@ export function AdaptiveWorkspaceChrome({
   compactHeader: ReactNode | null;
   children: ReactNode;
 }) {
-  const [width, setWidth] = useState<number | null>(null);
+  const [compact, setCompact] = useState(false);
   const measure = useCallback((event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.width;
-    if (measured > 0) setWidth(measured);
+    if (measured > 0) setCompact(shouldUseCompactWorkspaceHeader(measured));
   }, []);
   return (
     <WorkspaceTabMeasurementScope>
-      <View onLayout={measure}>
-        {compactHeader === null
-          ? children
-          : selectWorkspaceChrome({ width, compact: compactHeader, full: children })}
-      </View>
+      <View onLayout={measure}>{compactHeader !== null && compact ? compactHeader : children}</View>
     </WorkspaceTabMeasurementScope>
   );
 }

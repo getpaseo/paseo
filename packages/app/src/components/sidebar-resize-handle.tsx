@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, StyleSheet as RNStyleSheet, View } from "react-native";
 import { GestureDetector, type GestureType } from "react-native-gesture-handler";
+import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import {
   resolveSidebarResizeHandleGeometry,
@@ -12,7 +13,7 @@ import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 interface SidebarResizeHandleProps {
   edge: SidebarResizeEdge;
   gesture: GestureType;
-  pressed: boolean;
+  pressed: SharedValue<boolean>;
   testID: string;
 }
 
@@ -98,11 +99,7 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
     styles.touchTarget,
     { width: geometry.width, height: geometry.height ?? undefined },
   ];
-  const gripStyle = [
-    styles.grip,
-    edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
-    pressed ? styles.visibleGrip : styles.hiddenGrip,
-  ];
+  const gripOpacity = useAnimatedStyle(() => ({ opacity: pressed.value ? 0.3 : 0 }));
 
   return (
     <View pointerEvents="box-none" style={layerStyle}>
@@ -114,7 +111,12 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
           collapsable={false}
           style={targetStyle}
         >
-          <View pointerEvents="none" testID={`${testID}-grip`} style={gripStyle} />
+          <Animated.View
+            pointerEvents="none"
+            style={[edge === "left" ? staticStyles.leftGrip : staticStyles.rightGrip, gripOpacity]}
+          >
+            <View testID={`${testID}-grip`} style={styles.grip} />
+          </Animated.View>
         </View>
       </GestureDetector>
     </View>
@@ -155,18 +157,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 2,
     backgroundColor: theme.colors.foreground,
   },
-  hiddenGrip: {
-    opacity: 0,
-  },
-  visibleGrip: {
-    opacity: 0.3,
-  },
-  leftEdgeGrip: {
-    alignSelf: "flex-start",
-    marginLeft: theme.spacing[0.5],
-  },
-  rightEdgeGrip: {
-    alignSelf: "flex-end",
-    marginRight: theme.spacing[0.5],
-  },
 }));
+
+const staticStyles = RNStyleSheet.create({
+  leftGrip: { alignSelf: "flex-start", marginLeft: 2 },
+  rightGrip: { alignSelf: "flex-end", marginRight: 2 },
+});
