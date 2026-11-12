@@ -625,11 +625,99 @@ function collectAntigravityToolResults({
   }
   if (
     results.length < expectedCount ||
-    results.some((result) => (result.content ?? "").includes('"status": "RUNNING"'))
+    results.some(
+      (result) =>
+        result.status !== undefined && result.status !== "DONE" && result.status !== "ERROR",
+    )
   ) {
     return null;
   }
   return results;
+}
+
+function advanceAntigravityHistoryCursor({
+  row,
+  deliveredHistoryText,
+  cursor,
+}: {
+  row: AntigravityTranscriptRow;
+  deliveredHistoryText: string;
+  cursor: number;
+}): number | null {
+  let nextCursor = cursor;
+  for (const text of [row.thinking, row.content]) {
+    if (!text) {
+      continue;
+    }
+    const foundIndex = deliveredHistoryText.indexOf(text, nextCursor);
+    if (foundIndex < 0) {
+      return null;
+    }
+    nextCursor = foundIndex + text.length;
+  }
+  return nextCursor;
+}
+
+function seedAntigravitySyncedStepIndex({
+  rows,
+  firstWakeupIndex,
+  fullRows,
+  deliveredHistoryText,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  firstWakeupIndex: number;
+  fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null;
+  deliveredHistoryText: string;
+}): number {
+  let syncedStepIndex = (rows[firstWakeupIndex]?.step_index ?? 0) - 1;
+  if (!deliveredHistoryText) {
+    return syncedStepIndex;
+  }
+  let cursor = 0;
+  for (let index = 0; index < firstWakeupIndex; index += 1) {
+    const candidate = rows[index]!;
+    if (candidate.type !== "PLANNER_RESPONSE") {
+      continue;
+    }
+    const row = resolveAntigravityFullRow({ row: candidate, fullRows });
+    cursor = advanceAntigravityHistoryCursor({ row, deliveredHistoryText, cursor }) ?? cursor;
+  }
+  for (let index = firstWakeupIndex; index < rows.length; index += 1) {
+    const candidate = rows[index]!;
+    const stepIndex = candidate.step_index ?? index;
+    if (
+      candidate.type === "SYSTEM_MESSAGE" ||
+      candidate.type === "GENERIC" ||
+      candidate.type === "USER_INPUT"
+    ) {
+      syncedStepIndex = Math.max(syncedStepIndex, stepIndex);
+      continue;
+    }
+    if (candidate.type !== "PLANNER_RESPONSE" || candidate.status !== "DONE") {
+      break;
+    }
+    const row = resolveAntigravityFullRow({ row: candidate, fullRows });
+    const nextCursor = advanceAntigravityHistoryCursor({
+      row,
+      deliveredHistoryText,
+      cursor,
+    });
+    if (nextCursor === null) {
+      break;
+    }
+    cursor = nextCursor;
+    const toolCalls = Array.isArray(candidate.tool_calls) ? candidate.tool_calls : [];
+    const genericResults = collectAntigravityToolResults({
+      rows,
+      startIndex: index + 1,
+      expectedCount: toolCalls.length,
+      fullRows,
+    });
+    const lastResultStepIndex =
+      genericResults?.[genericResults.length - 1]?.step_index ?? stepIndex;
+    syncedStepIndex = Math.max(stepIndex, lastResultStepIndex);
+  }
+  return syncedStepIndex;
 }
 
 function isParentPlannerStepDaemon({
@@ -2256,6 +2344,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private antigravityCatchupTimer: ReturnType<typeof setTimeout> | null = null;
   private antigravityBackgroundBusy = false;
   private antigravitySyncedStepIndex: number | undefined = undefined;
+  private antigravityDeliveredHistoryText = "";
   private readonly antigravityReplayQueue: AntigravityReplayItem[] = [];
   private readonly antigravitySkippedToolCallIds = new Set<string>();
 
@@ -2477,6 +2566,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.clearAntigravityPollTimer();
     this.pendingAntigravityResponse = null;
     this.antigravitySyncedStepIndex = undefined;
+    this.antigravityDeliveredHistoryText = "";
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
@@ -2565,6 +2655,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     const history = [...this.persistedHistory];
+    this.antigravityDeliveredHistoryText = history
+      .flatMap((item) =>
+        item.type === "assistant_message" || item.type === "reasoning" ? [item.text] : [],
+      )
+      .join("");
     this.persistedHistory.length = 0;
     this.historyPending = false;
     for (const item of history) {
@@ -4062,6 +4157,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.persistedHistory.length = 0;
         this.historyPending = false;
         this.antigravitySyncedStepIndex = undefined;
+        this.antigravityDeliveredHistoryText = "";
       }
       void this.pollAntigravityBackgroundTurn();
     }, this.antigravitySubscribeCatchupMs);
@@ -4277,17 +4373,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           this.replayingHistory);
 
       if (canEmitWakeupSteps) {
-        this.antigravitySyncedStepIndex ??= (rows[firstWakeupIndex]?.step_index ?? 0) - 1;
+        const wakeupFloorStepIndex = (rows[firstWakeupIndex]?.step_index ?? 0) - 1;
         const needsFullRows = hasTruncatedAntigravityStepsAfter({
           rows,
           scanStart: firstWakeupIndex,
-          syncedStepIndex: this.antigravitySyncedStepIndex,
+          syncedStepIndex: this.antigravitySyncedStepIndex ?? wakeupFloorStepIndex,
         });
         const fullRows = needsFullRows ? await readAntigravityFullRowsMap(logsDir) : null;
         if (this.closed) {
           this.antigravityBackgroundBusy = false;
           return;
         }
+        this.antigravitySyncedStepIndex ??= seedAntigravitySyncedStepIndex({
+          rows,
+          firstWakeupIndex,
+          fullRows,
+          deliveredHistoryText: this.antigravityDeliveredHistoryText,
+        });
         this.flushAntigravityWakeupSteps({
           rows,
           scanStart: firstWakeupIndex,

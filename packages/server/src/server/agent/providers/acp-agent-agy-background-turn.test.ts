@@ -174,6 +174,20 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
         step_index: 2,
         type: "PLANNER_RESPONSE",
         status: "DONE",
+        tool_calls: [
+          { id: "call-json", name: "run_command", args: '{"CommandLine":"cat state.json"}' },
+        ],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        content: '{"status": "RUNNING", "note": "literal text in finished command output"}',
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
         content: "Done right away.",
         tool_calls: [],
       },
@@ -619,6 +633,76 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
       "reasoning:All checks green.",
       "assistant:Shipped and verified.",
     ]);
+  });
+
+  test("resumed chat whose streamHistory already delivered wakeup steps does not repeat them", async () => {
+    const { session, writeTranscript } = createHarness({ subscribeOnInit: false });
+    const internals = asInternals<SessionInternals>(session);
+    internals.historyPending = true;
+    internals.persistedHistory.push(
+      {
+        type: "assistant_message",
+        text: "Starting background check.",
+        messageId: "hist-1",
+      },
+      {
+        type: "reasoning",
+        text: "All checks green.",
+      },
+      {
+        type: "assistant_message",
+        text: "Shipped and ",
+        messageId: "hist-2",
+      },
+      {
+        type: "assistant_message",
+        text: "verified.",
+        messageId: "hist-2",
+      },
+    );
+
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "ship it" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Starting background check.",
+        tool_calls: [],
+      },
+      {
+        step_index: 3,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-12T10:40:00.000Z",
+        content: "[Message] timestamp=2026-11-12T10:40:00Z sender=task-1 content=Done",
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        thinking: "All checks green.",
+        content: "Shipped and verified.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    // Drain streamHistory before the subscribe catch-up timer runs.
+    const streamed: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      streamed.push(event);
+    }
+    expect(streamed).toHaveLength(4);
+
+    const liveEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => liveEvents.push(event));
+
+    await vi.advanceTimersByTimeAsync(50);
+    await flushAsyncIo();
+
+    // Already-delivered wakeup step 4 must not be repeated.
+    expect(summarizeEvents(liveEvents)).toEqual([]);
   });
 
   test("interrupt during a held background turn cancels immediately", async () => {
