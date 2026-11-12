@@ -19,6 +19,23 @@ const SILERO_MIN_SPEECH_DURATION = 0.1;
 const DEFAULT_CONFIRM_MS = 800;
 const DEFAULT_SILENCE_MS = 1000;
 
+// Silero judges the shape of a sound, not its level: after a reset it reports speech on
+// the residue an echo canceller leaves behind (-64 dBFS and below on an iPhone speaker,
+// where a talker sits at -10 to -30 dBFS). Windows quieter than this reach it as silence.
+const DEFAULT_MIN_WINDOW_DBFS = -55;
+
+/** Root-mean-square level of float samples in dB relative to full scale. */
+export function windowLevelDbfs(samples: Float32Array): number {
+  if (samples.length === 0) {
+    return -Infinity;
+  }
+  let sumOfSquares = 0;
+  for (const sample of samples) {
+    sumOfSquares += sample * sample;
+  }
+  return 10 * Math.log10(sumOfSquares / samples.length);
+}
+
 interface SherpaVadHandle {
   acceptWaveform(samples: Float32Array): void;
   isDetected(): boolean;
@@ -53,6 +70,8 @@ export interface SherpaSileroVadSessionConfig {
   bufferSizeInSeconds?: number;
   confirmMs?: number;
   silenceMs?: number;
+  /** Windows below this level are fed to the detector as silence. */
+  minWindowDbfs?: number;
 }
 
 type VadPhase =
@@ -70,6 +89,8 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
   private readonly msPerWindow: number;
   private readonly confirmMs: number;
   private readonly silenceMs: number;
+  private readonly minWindowDbfs: number;
+  private readonly silentWindow: Float32Array;
   private connected = false;
   private phase: VadPhase = { state: "idle" };
   private windowTimestamp = 0;
@@ -87,6 +108,8 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
     this.msPerWindow = (this.windowSize / this.requiredSampleRate) * 1000;
     this.confirmMs = config.confirmMs ?? DEFAULT_CONFIRM_MS;
     this.silenceMs = config.silenceMs ?? DEFAULT_SILENCE_MS;
+    this.minWindowDbfs = config.minWindowDbfs ?? DEFAULT_MIN_WINDOW_DBFS;
+    this.silentWindow = new Float32Array(this.windowSize);
 
     const threshold = config.threshold ?? DEFAULT_SILERO_THRESHOLD;
 
@@ -146,7 +169,9 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
       while (this.inputBuffer.size() > this.windowSize) {
         const window = this.inputBuffer.get(this.inputBuffer.head(), this.windowSize, false);
         this.inputBuffer.pop(this.windowSize);
-        this.vad.acceptWaveform(window);
+        this.vad.acceptWaveform(
+          windowLevelDbfs(window) < this.minWindowDbfs ? this.silentWindow : window,
+        );
         this.windowTimestamp += this.msPerWindow;
         windowsProcessed++;
         this.stepStateMachine();
