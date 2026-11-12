@@ -370,6 +370,17 @@ describe("plugin agent tools SDK boundary", () => {
             ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
           } };
         });
+        server.addHook("agent.open.before", async ({ request }) => {
+          const background: boolean = request.background;
+          if (background) return;
+          // A hook written before background and metadata returns its own object without them.
+          return {
+            agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+            cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+            labels: request.labels, tools: request.tools, env: request.env,
+            mcpServers: request.mcpServers,
+          };
+        });
         return () => {};
       }
     `),
@@ -429,6 +440,12 @@ describe("lifecycle hook SDK types", () => {
         // @ts-expect-error A prepare handler must return the whole request or undefined.
         server.addHook("agent.create.before", async () => ({ invalid: true }));
         server.before("agent.session_open", ({ request }) => request);
+        server.before("agent.session_open", ({ request }) => ({
+          agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+          cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+          labels: request.labels, metadata: request.metadata, tools: request.tools, env: request.env,
+          mcpServers: request.mcpServers,
+        }));
         server.on("agent.turn_ended", () => {});
         return () => {};
       }

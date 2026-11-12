@@ -1572,6 +1572,8 @@ Agent snapshot fields:
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO timestamp                                                  |
 | `updatedAt`         | ISO timestamp                                                  |
 | `lastActivityAt`    | ISO timestamp                                                  |
@@ -1584,6 +1586,27 @@ Agent snapshot fields:
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+
+`backgroundWork.count` is the number of shells and monitors the agent left running after its turn,
+and `0` when none are live. An agent can be `idle` with `attentionReason: "finished"` while that
+work still runs, so combine the fields the way your plugin needs:
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // The agent is unavailable.
+```
+
+To list or stop the work itself, use
+[`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle).
+
+`background` is `true` for a [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent),
+a helper hidden from tabs, lists and attention. It is fixed when the agent is created. An agent in a
+background workspace reads `false` unless it was created as a background agent; read the
+workspace's own `background` for that. `backgroundWork` and `background` require Paseo 0.16.0 or
+later.
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 
