@@ -180,6 +180,8 @@ export class VoiceSession {
   private speechInProgress = false;
   private isDetectorSpeaking = false;
   private playbackHeld = false;
+  /** Replies sent to speech: playing (endedAt null) or ended within ECHO_TAIL_MS. */
+  private spokenReplies: Array<{ text: string; endedAt: number | null }> = [];
 
   private readonly dictationStreamManager: DictationStreamManager;
   private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
@@ -685,6 +687,7 @@ export class VoiceSession {
   private async stopVoiceTurnController(): Promise<void> {
     this.isDetectorSpeaking = false;
     this.playbackHeld = false;
+    this.spokenReplies = [];
     this.clearSpeechInProgress("voice turn controller stopped");
     if (!this.voiceTurnController) {
       return;
@@ -1022,8 +1025,10 @@ export class VoiceSession {
     result: VoiceTranscriptionResultPayload,
   ): Promise<void> {
     // A held reply resumes unless the user said a word: speech-to-text turns noise and
-    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm.").
-    const heldNoise = this.playbackHeld && !hasSpokenWord(result.text);
+    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm."). On a speakerphone the
+    // reply's own audio comes back as its words ("A bicycle began a day."), which is echo too.
+    const heldNoise =
+      this.playbackHeld && (!hasSpokenWord(result.text) || this.isEchoOfSpokenReply(result.text));
     const transcriptText = heldNoise ? "" : result.text.trim();
 
     this.emitTranscriptionResult(result, heldNoise ? "" : result.text);
@@ -1113,12 +1118,17 @@ export class VoiceSession {
       const abortSignal = signal
         ? AbortSignal.any([signal, this.abortController.signal])
         : this.abortController.signal;
-      await this.ttsManager.generateAndWaitForPlayback(
-        text,
-        (msg) => this.emit(msg),
-        abortSignal,
-        true,
-      );
+      const spokenReply = this.rememberSpokenReply(text);
+      try {
+        await this.ttsManager.generateAndWaitForPlayback(
+          text,
+          (msg) => this.emit(msg),
+          abortSignal,
+          true,
+        );
+      } finally {
+        spokenReply.endedAt = Date.now();
+      }
       this.sessionLogger.info(
         { agentId, textLength: text.length },
         "Voice speak tool call finished playback",
@@ -1191,6 +1201,37 @@ export class VoiceSession {
    */
   handleAudioPlayed(id: string): void {
     this.ttsManager.confirmAudioPlayed(id);
+  }
+
+  private rememberSpokenReply(text: string): { text: string; endedAt: number | null } {
+    const reply = { text, endedAt: null };
+    this.spokenReplies = [...this.recentSpokenReplies(), reply].slice(-MAX_SPOKEN_REPLIES);
+    return reply;
+  }
+
+  private recentSpokenReplies(): Array<{ text: string; endedAt: number | null }> {
+    const now = Date.now();
+    return this.spokenReplies.filter(
+      (reply) => reply.endedAt === null || now - reply.endedAt <= ECHO_TAIL_MS,
+    );
+  }
+
+  private isEchoOfSpokenReply(transcript: string): boolean {
+    const replies = this.recentSpokenReplies();
+    if (replies.length === 0) {
+      return false;
+    }
+    const echo = isEchoOfReplyText(
+      transcript,
+      replies.map((reply) => reply.text),
+    );
+    if (echo) {
+      this.sessionLogger.info(
+        { transcriptLength: transcript.length },
+        "Held transcript matches the reply being spoken; treating it as echo",
+      );
+    }
+    return echo;
   }
 
   private shouldHoldPlayback(): boolean {
@@ -1436,6 +1477,60 @@ export class VoiceSession {
       }
     }
   }
+}
+
+/** How long after a reply's playback ends its echo can still reach the microphone. */
+const ECHO_TAIL_MS = 3000;
+const MAX_SPOKEN_REPLIES = 4;
+/** Share of a held transcript's words that must come from the reply for it to count as echo. */
+const ECHO_WORD_SHARE = 0.7;
+/** Words a user says to cut a reply off. One the reply did not say marks the user's own speech. */
+const INTERRUPT_WORDS = new Set([
+  "stop",
+  "wait",
+  "pause",
+  "hold",
+  "cancel",
+  "enough",
+  "quiet",
+  "hey",
+  "no",
+  "nope",
+  "actually",
+  "sorry",
+]);
+
+function wordTokens(text: string): string[] {
+  return (text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).map((token) =>
+    token.replace(/'/g, ""),
+  );
+}
+
+/**
+ * True when a transcript is the reply's own audio picked up again: most of its words are
+ * words of the reply, it has no interrupt word the reply did not say, and a transcript of
+ * two or more words shares a word pair with the reply. Speech-to-text garbles echo
+ * ("A bicycle began a day." for "The bicycle began in 1817"), so this matches words, not text.
+ */
+export function isEchoOfReplyText(transcript: string, replyTexts: readonly string[]): boolean {
+  const words = wordTokens(transcript);
+  if (words.length === 0) {
+    return false;
+  }
+  const replyWords = replyTexts.flatMap(wordTokens);
+  const replyWordSet = new Set(replyWords);
+  if (words.some((word) => INTERRUPT_WORDS.has(word) && !replyWordSet.has(word))) {
+    return false;
+  }
+  const shared = words.filter((word) => replyWordSet.has(word)).length;
+  if (shared / words.length < ECHO_WORD_SHARE) {
+    return false;
+  }
+  if (words.length === 1) {
+    return true;
+  }
+  const replyPairs = new Set(replyWords.slice(1).map((word, i) => `${replyWords[i]} ${word}`));
+  return words.slice(1).some((word, i) => replyPairs.has(`${words[i]} ${word}`));
 }
 
 const FILLER_WORDS = new Set([

@@ -4,7 +4,12 @@ import { EventEmitter } from "node:events";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
-import { VoiceSession, hasSpokenWord, type VoiceSessionHost } from "./voice-session.js";
+import {
+  VoiceSession,
+  hasSpokenWord,
+  isEchoOfReplyText,
+  type VoiceSessionHost,
+} from "./voice-session.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
@@ -20,6 +25,10 @@ import type {
 } from "../../speech/turn-detection-provider.js";
 
 const VOICE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
+// The reply whose speakerphone echo came back as "A bicycle began a day." on an iPhone.
+const BICYCLE_REPLY =
+  "The bicycle began in 1817 with Karl Drais, a German inventor who built a two-wheeled, " +
+  "steerable machine called the running machine, or draisine, which riders pushed along with their feet.";
 
 class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
   public readonly requiredSampleRate = 16000;
@@ -208,6 +217,47 @@ describe("VoiceSession streaming transcription", () => {
         if (audio?.type !== "audio_output") throw new Error("no audio output");
         voiceSession.handleAudioPlayed(audio.payload.id);
         await playback;
+      } finally {
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test.each([
+    { transcript: "A bicycle began a day.", playback: "resume", sent: [] as string[] },
+    {
+      transcript: "Wait, when did the bicycle begin?",
+      playback: "stop",
+      sent: ["Wait, when did the bicycle begin?"],
+    },
+  ])(
+    "on a speakerphone, a held transcript of $transcript sends playback $playback",
+    async ({ transcript, playback: expectedPlayback, sent }) => {
+      const tts: TextToSpeechProvider = {
+        async synthesizeSpeech() {
+          return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+        },
+      };
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(tts);
+      host.supportsPlaybackHold = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: BICYCLE_REPLY });
+      try {
+        await waitForAudioOutput(host);
+        detector.emit("speech_started");
+        await settle();
+        detector.emit("speech_stopped");
+        await settle();
+        sttSession.emitCommitted({ segmentId: "echo", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "echo", transcript, isFinal: true });
+        await settle();
+
+        expect(host.emitted).toContainEqual({
+          type: "voice_input_state",
+          payload: { isSpeaking: false, playback: expectedPlayback },
+        });
+        expect(host.spokenInput.map((input) => input.text)).toEqual(sent);
       } finally {
         await voiceSession.cleanup();
         await playback.catch(() => {});
@@ -500,6 +550,32 @@ describe("VoiceSession streaming transcription", () => {
     );
 
     await voiceSession.cleanup();
+  });
+});
+
+describe("isEchoOfReplyText", () => {
+  test.each([
+    "A bicycle began a day.",
+    "The bicycle began in 1817 with Karl Drais.",
+    "a German inventor",
+    "Drais.",
+  ])("counts %j as the reply's echo", (text) => {
+    expect(isEchoOfReplyText(text, [BICYCLE_REPLY])).toBe(true);
+  });
+
+  test.each([
+    "Stop.",
+    "Wait, the bicycle began when?",
+    "Wait, when did the bicycle begin?",
+    "What year was that?",
+    "Tell me about cars instead.",
+    "",
+  ])("counts %j as the user's speech", (text) => {
+    expect(isEchoOfReplyText(text, [BICYCLE_REPLY])).toBe(false);
+  });
+
+  test("matches nothing without a reply", () => {
+    expect(isEchoOfReplyText("A bicycle began a day.", [])).toBe(false);
   });
 });
 
