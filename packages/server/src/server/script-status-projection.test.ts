@@ -471,33 +471,40 @@ describe("script-status-projection", () => {
     }
   });
 
-  it("keeps a workspace's last known scripts while its paseo.json cannot be re-read", async () => {
-    const workspace = createWorkspaceRepo({
-      paseoConfig: { scripts: { api: { type: "service", command: "npm run dev" } } },
+  it("keeps every workspace's scripts when a listing's paseo.json checks do not finish in time", async () => {
+    // More workspaces than the daemon kept snapshots for before, each with a config it has read.
+    const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "script-projection-many-")));
+    const workspaces = Array.from({ length: 300 }, (_, index) => {
+      const directory = path.join(tempDir, `workspace-${index}`);
+      mkdirSync(directory);
+      writeFileSync(
+        path.join(directory, "paseo.json"),
+        JSON.stringify({ scripts: { api: { type: "service", command: "npm run dev" } } }),
+      );
+      return directory;
     });
+    const logger = createTestLogger();
     try {
-      const known = await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
-      expect(known?.scripts).toHaveProperty("api");
+      await Promise.all(
+        workspaces.map((directory) => readPaseoConfigForProjection(directory, logger)),
+      );
 
-      // A config the daemon cannot admit stands in for a re-check that fails or times out.
-      rmSync(path.join(workspace.repoDir, "paseo.json"));
-      mkdirSync(path.join(workspace.repoDir, "paseo.json"));
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const listing = Promise.all(
+        workspaces.map((directory) => readPaseoConfigForProjection(directory, logger)),
+      );
+      // The filesystem has not answered any check when the 5 s budget runs out.
+      vi.advanceTimersByTime(5_000);
+      const configs = await listing;
 
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(Date.now() + 60_000);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        expect(await readPaseoConfigForProjection(workspace.repoDir, createTestLogger())).toBe(
-          known,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      expect(configs.filter((config) => config?.scripts?.api === undefined)).toEqual([]);
     } finally {
       vi.useRealTimers();
-      workspace.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("shows an external paseo.json edit on a later listing", async () => {
+  it("shows an external paseo.json edit on the next listing", async () => {
     const workspace = createWorkspaceRepo({
       paseoConfig: { scripts: { api: { type: "service", command: "npm run dev" } } },
     });
@@ -508,17 +515,10 @@ describe("script-status-projection", () => {
         JSON.stringify({ scripts: { web: { type: "service", command: "npm run web" } } }),
       );
 
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(Date.now() + 60_000);
-      await vi.waitFor(
-        async () => {
-          const config = await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
-          expect(Object.keys(config?.scripts ?? {})).toEqual(["web"]);
-        },
-        { timeout: 10_000, interval: 50 },
-      );
+      const config = await readPaseoConfigForProjection(workspace.repoDir, createTestLogger());
+
+      expect(Object.keys(config?.scripts ?? {})).toEqual(["web"]);
     } finally {
-      vi.useRealTimers();
       workspace.cleanup();
     }
   });

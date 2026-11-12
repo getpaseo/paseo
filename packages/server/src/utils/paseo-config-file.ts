@@ -112,13 +112,13 @@ interface Snapshot {
   fingerprint: string;
   edit: ReadPaseoConfigForEditResult;
   runtime: ReadPaseoConfigResult;
-  checkedAt: number;
 }
 
-// How long a listing may show a config before re-checking it. Daemon edits drop the snapshot at once.
-const SNAPSHOT_REVALIDATE_MS = 2_000;
+// How long a caller waits for the filesystem, including time queued behind other roots.
+const READ_BUDGET_MS = 5_000;
 // Above the roots a busy daemon lists: a listing that visits more roots than this evicts the next one it needs.
 const MAX_SNAPSHOTS = 1_024;
+const UNAVAILABLE = Symbol("project config unavailable");
 
 /** Owns config admission, snapshots and daemon read/modify/write ordering for every consumer. */
 class ProjectConfigOwner {
@@ -168,8 +168,7 @@ class ProjectConfigOwner {
     }
   }
 
-  private remember(root: string, checked: Omit<Snapshot, "checkedAt">): Snapshot {
-    const snapshot = { ...checked, checkedAt: Date.now() };
+  private remember(root: string, snapshot: Snapshot): Snapshot {
     this.snapshots.delete(root);
     this.snapshots.set(root, snapshot);
     // Worktrees come and go; retain only a bounded set of reusable snapshots.
@@ -179,29 +178,33 @@ class ProjectConfigOwner {
   }
 
   async read(repoRoot: string): Promise<Snapshot> {
-    const root = resolve(repoRoot);
-    return withTimeout(
-      this.serialized(root, "read", () => this.load(root)),
-      5_000,
-      "Project config unavailable",
-    );
+    const checked = await this.check(resolve(repoRoot));
+    if (checked === UNAVAILABLE) throw new Error("Project config unavailable");
+    return checked;
   }
 
-  /**
-   * Workspace listings and script status read every workspace's config on every listing and update.
-   * Answer them from the last snapshot and re-check it behind the caller: with many workspaces, a
-   * queued stat per workspace otherwise holds every listing for seconds, and times out under load.
-   */
-  async readSnapshot(repoRoot: string): Promise<Snapshot> {
+  /** A check the filesystem does not answer in time answers the last config read for that root. */
+  async readOrLastKnown(repoRoot: string): Promise<Snapshot> {
     const root = resolve(repoRoot);
-    const cached = this.snapshots.get(root);
-    if (!cached) return this.read(root);
-    const age = Date.now() - cached.checkedAt;
-    if (age < 0 || age >= SNAPSHOT_REVALIDATE_MS) {
-      // A failed re-check keeps the last snapshot; the next listing tries again.
-      void this.read(root).catch(() => undefined);
+    const checked = await this.check(root);
+    if (checked !== UNAVAILABLE) return checked;
+    const known = this.snapshots.get(root);
+    if (!known) throw new Error("Project config unavailable");
+    return known;
+  }
+
+  private async check(root: string): Promise<Snapshot | typeof UNAVAILABLE> {
+    let budget: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.serialized(root, "read", () => this.load(root)),
+        new Promise<typeof UNAVAILABLE>((settle) => {
+          budget = setTimeout(settle, READ_BUDGET_MS, UNAVAILABLE);
+        }),
+      ]);
+    } finally {
+      clearTimeout(budget);
     }
-    return cached;
   }
 
   private async load(root: string): Promise<Snapshot> {
@@ -314,10 +317,13 @@ export async function readPaseoConfig(repoRoot: string): Promise<ReadPaseoConfig
   }
 }
 
-/** The last known config, re-checked behind the caller. For listings and script status, not for edits. */
-export async function readPaseoConfigSnapshot(repoRoot: string): Promise<ReadPaseoConfigResult> {
+/**
+ * For callers that show a config, such as workspace listings and script status: a slow filesystem
+ * answers the last config read instead of none. Edits and execution use readPaseoConfig.
+ */
+export async function readPaseoConfigOrLastKnown(repoRoot: string): Promise<ReadPaseoConfigResult> {
   try {
-    return (await projectConfig.readSnapshot(repoRoot)).runtime;
+    return (await projectConfig.readOrLastKnown(repoRoot)).runtime;
   } catch (error) {
     return { ok: false, configPath: resolvePaseoConfigPath(repoRoot), error };
   }

@@ -5,7 +5,7 @@ import type {
   WorkspaceScriptPayload,
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { readPaseoConfigSnapshot } from "../utils/paseo-config-file.js";
+import { readPaseoConfigOrLastKnown } from "../utils/paseo-config-file.js";
 import { getScriptConfigs, isServiceScript } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
@@ -38,7 +38,7 @@ export async function readPaseoConfigForProjection(
   workspaceDirectory: string,
   logger: Logger,
 ): Promise<PaseoConfig | null> {
-  const result = await readPaseoConfigSnapshot(workspaceDirectory);
+  const result = await readPaseoConfigOrLastKnown(workspaceDirectory);
   if (result.ok) {
     return result.config;
   }
