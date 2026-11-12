@@ -1,4 +1,4 @@
-import { createHostClient, parseHostTarget } from "@getpaseo/client/node";
+import { parseHostTarget } from "@getpaseo/protocol/host-target";
 import {
   waitForDaemonReady,
   resolvePaseoHome,
@@ -12,7 +12,7 @@ import {
   normalizeHostPort,
   parseConnectionUri,
 } from "@getpaseo/protocol/daemon-endpoints";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
 
@@ -191,6 +191,7 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
         ).listen;
   const home = resolveClientPaseoHome(options.target);
   const credential = resolveDaemonCredential(host, home);
+  const { createHostClient } = await import("./daemon-client-runtime.js");
   const client = createHostClient(host, {
     clientId: await getOrCreateCliClientId(home),
     clientType: "cli",

@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import {
   readDaemonInstance,
   daemonLogPath,
@@ -68,6 +67,7 @@ async function probeDaemonStatus(
     note = failure.message;
   }
   if (!client) return { connectedDaemon, note };
+  const { DaemonConnectionError } = await import("../../utils/daemon-client-runtime.js");
   try {
     let requestError: unknown;
     const status = await client.getDaemonStatus({ timeout: 1_500 }).catch((error: unknown) => {

@@ -1,8 +1,5 @@
 import { Command } from "commander";
-import {
-  requireTerminalKeepCapability,
-  type DaemonClient,
-} from "@getpaseo/client/internal/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { stopDaemonInstance, type DaemonInstance } from "@getpaseo/server/daemon-control";
 import { connectToDaemon, type ConnectOptions } from "../../utils/client.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";
@@ -49,7 +46,11 @@ async function runStop(options: CommandOptions, deps: StopCommandDeps) {
     try {
       // Checked on the connection that carries the shutdown: a daemon without the capability
       // would close the terminals it was asked to keep.
-      if (keepTerminals) requireTerminalKeepCapability(client, describeDaemonTarget(target));
+      if (keepTerminals) {
+        const { requireTerminalKeepCapability } =
+          await import("../../utils/daemon-client-runtime.js");
+        requireTerminalKeepCapability(client, describeDaemonTarget(target));
+      }
       await client.shutdownServer({ timeout: remaining(), keepTerminals });
     } finally {
       await client.close();
