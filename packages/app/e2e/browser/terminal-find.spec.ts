@@ -503,10 +503,48 @@ test.describe("terminal history with a finger", () => {
     await expectMouseWheelScrollsHistory(page);
   });
 
+  test("finger scrolling leaves the keyboard closed and a tap focuses input", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await input(page).evaluate((element) => element.blur());
+    await expect(input(page)).not.toBeFocused();
+
+    await expectSingleFingerScroll(page, 24);
+    await expect(input(page)).not.toBeFocused();
+    await expectSingleFingerScroll(page, 1);
+    await expect(input(page)).not.toBeFocused();
+
+    const screen = page
+      .getByTestId("terminal-surface")
+      .filter({ visible: true })
+      .locator(".xterm-screen");
+    const box = await screen.boundingBox();
+    if (!box) throw new Error("Terminal screen is not visible");
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 3);
+    await expect(input(page)).toBeFocused();
+    // Android's Back button hides the IME without blurring this input.
+    await expectSingleFingerScroll(page, 24);
+    await expect(input(page)).not.toBeFocused();
+    await screen.click();
+    await expect(input(page)).toBeFocused();
+  });
+
   for (const mode of ["alternate", "mouse"] as const) {
     test(`preserves finger navigation in ${mode} input mode`, async ({ page }) => {
       await openPhoneInputCapture(page, mode);
       await expectFingerNavigationInput(page, mode);
+      // xterm's inertial gesture has translation but no new pointer coordinates.
+      await page
+        .locator(".xterm-screen")
+        .filter({ visible: true })
+        .evaluate((screen) => {
+          const event = new CustomEvent("-xterm-gesturechange", { cancelable: true });
+          Object.assign(event, { translationX: 0, translationY: 120 });
+          screen.dispatchEvent(event);
+        });
+      // A following byte is a PTY round-trip barrier for the gesture's reports.
+      await input(page).press("z");
+      await expect.poll(() => getTerminalBufferText(page)).toContain("TOUCH_BYTES:7a:END");
+      expect(await getTerminalBufferText(page)).not.toContain("INVALID_TOUCH_INPUT");
     });
   }
 });
@@ -531,6 +569,11 @@ async function openPhoneTerminalHistory(page: Page) {
   });
   await openPhoneTerminal(page);
   await expect.poll(() => getTerminalBufferText(page)).toContain("HISTORY_150");
+  await expect
+    .poll(() => page.evaluate(() => window.__paseoTerminal!.buffer.active.baseY))
+    .toBeGreaterThan(0);
+  await page.evaluate(() => window.__paseoTerminal!.scrollToBottom());
+  await expect.poll(() => viewport(page)).toBeGreaterThan(0);
 }
 
 async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
@@ -544,6 +587,9 @@ async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
       process.stdin.setRawMode(true);
       process.stdin.once("data", () => {
         process.stdin.on("data", chunk => {
+          if (chunk.includes(Buffer.from("NaN"))) {
+            process.stdout.write("\\r\\nINVALID_TOUCH_INPUT\\r\\n");
+          }
           process.stdout.write("\\r\\nTOUCH_BYTES:" + chunk.toString("hex") + ":END\\r\\n");
         });
         process.stdout.write(${JSON.stringify(escapes)} + "TOUCH_INPUT_READY\\r\\n");
@@ -570,6 +616,20 @@ async function openPhoneTerminal(page: Page) {
   await page.getByTestId(`sidebar-workspace-row-${getServerId()}:${harness.workspaceId}`).click();
   await expect(page.getByRole("textbox", { name: "Terminal input" })).toBeVisible();
   await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toBeVisible();
+  // The terminal stays mounted while the sidebar's closing backdrop still intercepts input.
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("terminal-surface")
+        .filter({ visible: true })
+        .evaluate((root) => {
+          const box = root.querySelector(".xterm-screen")!.getBoundingClientRect();
+          return root.contains(
+            document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 3),
+          );
+        }),
+    )
+    .toBe(true);
 }
 
 async function expectMouseWheelScrollsHistory(page: Page) {
