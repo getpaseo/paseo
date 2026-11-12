@@ -87,9 +87,9 @@ agent-device test packages/app/e2e/mobile/modal-sheet/model-tablet.android.ad \
 
 `model-tablet-profile.android.ad` taps the `+` of a model row in New workspace, asserts the seeded
 profile form opens, and asserts that closing the form leaves the remembered model selected. Run it
-on the same tablet setup, after `model-tablet.android.ad` or with `MODEL_LABEL` remembered. Set
-`PROFILE_MODEL_ID` to a different model on the provider's first page that has no profile, so its
-row still shows `+`:
+on the same tablet setup, after `model-tablet.android.ad` or with `MODEL_LABEL` remembered, against a
+host with no agent profiles: with a profile saved, the picker opens on its root view, which has no
+Back. Set `PROFILE_MODEL_ID` to a different model on the provider's first page:
 
 ```sh
 agent-device test packages/app/e2e/mobile/modal-sheet/model-tablet-profile.android.ad \

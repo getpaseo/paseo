@@ -1,4 +1,4 @@
-# Connected host with MODEL_LABEL selected, 1600x2560 at density 320. See README.md.
+# Connected host with MODEL_LABEL selected and no agent profiles, 1600x2560 at density 320. See README.md.
 # FORM_URL=paseo://new?serverId=<serverId>; PROFILE_MODEL_ID is another catalog model with no profile.
 context platform=android timeout=60000 retries=0
 env APP_ID=sh.paseo.debug
