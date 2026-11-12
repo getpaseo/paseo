@@ -12,6 +12,10 @@ const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 const tscPath = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 
+interface PackedArtifact {
+  files: { path: string }[];
+}
+
 async function typecheckPlugin(directory: string): Promise<void> {
   const configPath = path.join(directory, "tsconfig.json");
   try {
@@ -65,7 +69,9 @@ describe("plugin scaffold", () => {
     const { stdout } = await execAsync("npm pack --dry-run --ignore-scripts --json", {
       cwd: directory,
     });
-    const [artifact] = JSON.parse(stdout) as { files: { path: string }[] }[];
+    // npm 11 and earlier print an array of packed packages, npm 12 an object keyed by package name.
+    const packed = JSON.parse(stdout) as PackedArtifact[] | Record<string, PackedArtifact>;
+    const [artifact] = Array.isArray(packed) ? packed : Object.values(packed);
     expect(artifact.files.map((file) => file.path)).toEqual(
       expect.arrayContaining(["OVERVIEW.md", "OVERVIEW.zh-CN.md", "paseo-plugin.json"]),
     );
