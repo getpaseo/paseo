@@ -93,6 +93,8 @@ interface FinalizingVoiceTurn {
   transcriptMetaBySegmentId: Map<string, TranscriptSegmentMeta>;
   timeout: ReturnType<typeof setTimeout>;
   fired: boolean;
+  /** Its transcript is complete or timed out, but an earlier utterance is still waiting. */
+  ready: "complete" | "timeout" | null;
 }
 
 export function createVoiceTurnController(params: {
@@ -214,15 +216,22 @@ export function createVoiceTurnController(params: {
     };
   }
 
+  // Utterances are delivered in the order they were heard. A later one whose transcript
+  // returns first waits, so an older request cannot land after the user's correction.
   function fireFinalTranscript(turn: FinalizingVoiceTurn, reason: "complete" | "timeout"): void {
-    const turnIndex = finalizingTurns.indexOf(turn);
-    if (turn.fired || turnIndex === -1) {
+    if (turn.fired || turn.ready || !finalizingTurns.includes(turn)) {
       return;
     }
-
-    turn.fired = true;
+    turn.ready = reason;
     clearTimeout(turn.timeout);
-    finalizingTurns.splice(turnIndex, 1);
+    while (finalizingTurns[0]?.ready) {
+      const next = finalizingTurns.shift()!;
+      deliverFinalTranscript(next, next.ready!);
+    }
+  }
+
+  function deliverFinalTranscript(turn: FinalizingVoiceTurn, reason: "complete" | "timeout"): void {
+    turn.fired = true;
 
     const finalTranscript = assembleFinalTranscript(turn);
     if (reason === "timeout") {
@@ -244,7 +253,7 @@ export function createVoiceTurnController(params: {
   }
 
   function maybeFireFinalTranscript(turn: FinalizingVoiceTurn): void {
-    if (turn.fired || turn.committedSegmentIds.length === 0) {
+    if (turn.fired || turn.ready || turn.committedSegmentIds.length === 0) {
       return;
     }
 
@@ -289,7 +298,7 @@ export function createVoiceTurnController(params: {
 
   function handleFinalSttTranscript(event: StreamingTranscriptionEvent): void {
     const turn = getFinalizingTurnForSegment(event.segmentId);
-    if (!turn || turn.fired) {
+    if (!turn || turn.fired || turn.ready) {
       return;
     }
 
@@ -496,6 +505,7 @@ export function createVoiceTurnController(params: {
         fireFinalTranscript(finalizingTurn, "timeout");
       }, VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS),
       fired: false,
+      ready: null,
     };
     finalizingTurns.push(finalizingTurn);
 

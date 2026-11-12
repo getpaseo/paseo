@@ -436,6 +436,44 @@ describe("voice turn controller", () => {
     ]);
   });
 
+  it("delivers utterances in the order they were heard when the later transcript returns first", async () => {
+    const harness = createControllerHarness();
+
+    await harness.controller.start();
+    for (let i = 0; i < 2; i++) {
+      harness.detector.emit("speech_started");
+      await settleSerialQueue();
+      harness.detector.emit("speech_stopped");
+      await settleSerialQueue();
+    }
+    harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+    harness.sttSessions[0]?.emitCommitted({
+      segmentId: "segment-2",
+      previousSegmentId: "segment-1",
+    });
+
+    harness.sttSessions[0]?.emitTranscript({
+      segmentId: "segment-2",
+      transcript: "no, the second one",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+    expect(harness.onFinalTranscript).not.toHaveBeenCalled();
+
+    harness.sttSessions[0]?.emitTranscript({
+      segmentId: "segment-1",
+      transcript: "open the first file",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+    await settleSerialQueue();
+
+    expect(harness.onFinalTranscript.mock.calls.map(([final]) => final.transcript)).toEqual([
+      "open the first file",
+      "no, the second one",
+    ]);
+  });
+
   it("fires onFinalTranscript after speech stop, commit, and final transcript", async () => {
     const harness = createControllerHarness();
 

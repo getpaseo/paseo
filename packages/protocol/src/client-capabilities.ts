@@ -56,7 +56,8 @@ export const CLIENT_CAPS = {
   // update subscriptions, because older apps auto-open a tab for every replicated root agent.
   backgroundAgents: "background_agents",
   browserHost: "browser_host",
-  // COMPAT(voiceDeferredBargeIn): added after v0.15.4. Capable clients stop assistant
+  // COMPAT(voiceDeferredBargeIn): added in v0.16.0, remove the speech-start interrupt
+  // for older clients after 2027-05-12. Capable clients stop assistant
   // speech on a voice_input_state `playback: "stop"`, so the daemon can leave a reply
   // playing on detected sound and interrupt only once the transcript has the user's
   // words. Older clients stop only on `isSpeaking: true`, at speech start.

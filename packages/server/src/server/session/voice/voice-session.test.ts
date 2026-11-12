@@ -496,6 +496,117 @@ describe("VoiceSession streaming transcription", () => {
     },
   );
 
+  test.each([
+    { second: "S-", stops: false, sent: [] as string[] },
+    { second: "Skip to the last one.", stops: true, sent: ["Skip to the last one."] },
+  ])(
+    "judges a second pending clip ($second) by the same rules after the first was noise",
+    async ({ second, stops, sent }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "A spoken response." });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        // Two sounds stop before either transcript arrives.
+        for (let i = 0; i < 2; i++) {
+          detector.emit("speech_started");
+          await vi.advanceTimersByTimeAsync(0);
+          detector.emit("speech_stopped");
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        sttSession.emitCommitted({ segmentId: "first", previousSegmentId: null });
+        sttSession.emitCommitted({ segmentId: "second", previousSegmentId: "first" });
+        sttSession.emitTranscript({ segmentId: "first", transcript: "", isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitTranscript({ segmentId: "second", transcript: second, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(
+          host.emitted.some(
+            (message) =>
+              message.type === "voice_input_state" && message.payload.playback === "stop",
+          ),
+        ).toBe(stops);
+        expect(host.spokenInput.map((input) => input.text)).toEqual(sent);
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("in a language other than English, a one-word command stops the reply", async () => {
+    const detector = new FakeVoiceTurnDetectionSession();
+    const sttSession = new FakeVoiceSttSession();
+    const host = createFakeHost();
+    host.supportsDeferredBargeIn = () => true;
+    let speakHandler: VoiceSpeakHandler | undefined;
+    const voiceSession = new VoiceSession({
+      host,
+      logger: pino({ level: "silent" }),
+      sessionId: "voice-session-fr",
+      sttLanguage: "fr",
+      tts: FAKE_TTS,
+      stt: { id: "local", createSession: () => sttSession },
+      voice: { turnDetection: { id: "local", createSession: () => detector } },
+      voiceBridge: {
+        registerVoiceSpeakHandler: (_id, handler) => {
+          speakHandler = handler;
+        },
+      },
+    });
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speakHandler!({ text: "Voici l'histoire du téléphone en huit phrases." });
+    try {
+      await waitForAudioOutput(host);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(3500);
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(0);
+      detector.emit("speech_stopped");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "fr", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "fr", transcript: "Arrête.", isFinal: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      vi.useRealTimers();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("a lone 'Stop.' stops a reply that says the word itself, even as its audio starts", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "Press the red button to stop the timer." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "stop", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "stop", transcript: "Stop.", isFinal: true });
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
   test("still defers the next sound after a transcription error", async () => {
     const { voiceSession, detector, host } = createVoiceSession();
     host.supportsDeferredBargeIn = () => true;

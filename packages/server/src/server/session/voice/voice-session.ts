@@ -179,13 +179,17 @@ export class VoiceSession {
   private isVoiceMode = false;
   private speechInProgress = false;
   private isDetectorSpeaking = false;
-  /** Sound arrived while a reply was at stake; the transcript decides whether it stops. */
-  private bargeInPending = false;
+  /**
+   * One entry per utterance whose transcript has not arrived yet, oldest first. A deferred
+   * one was heard while a reply was at stake, so its transcript decides whether the reply
+   * stops; each keeps what was true when it was heard.
+   */
+  private pendingClips: PendingClip[] = [];
+  /** The utterance being captured now is deferred. */
+  private capturingDeferredClip = false;
   private bargeInClipTimer: ReturnType<typeof setTimeout> | null = null;
   /** Replies sent to speech: playing (endedAt null) or ended within ECHO_TAIL_MS. */
   private spokenReplies: SpokenReply[] = [];
-  /** The sound awaiting a verdict began while a reply's echo canceller was still adapting. */
-  private bargeInDuringEchoWarmup = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
   private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
@@ -611,6 +615,7 @@ export class VoiceSession {
             this.deferBargeIn();
             return;
           }
+          this.pendingClips.push({ deferred: false, duringEchoWarmup: false });
           this.emit({ type: "voice_input_state", payload: { isSpeaking: true } });
           await this.handleVoiceSpeechStart();
         },
@@ -623,7 +628,8 @@ export class VoiceSession {
         onSpeechStopped: async () => {
           this.isDetectorSpeaking = false;
           this.clearBargeInClipTimer();
-          if (this.bargeInPending) {
+          if (this.capturingDeferredClip) {
+            this.capturingDeferredClip = false;
             // The client was never told about this sound; it hears of it only if it has words.
             this.setPhase("transcribing");
             return;
@@ -1015,29 +1021,36 @@ export class VoiceSession {
    * Decide a deferred barge-in. Returns true when the sound was not the user's words, in
    * which case the reply continues and the client hears nothing about it.
    */
-  private async settlePendingBargeIn(result: VoiceTranscriptionResultPayload): Promise<boolean> {
+  private async settlePendingBargeIn(
+    result: VoiceTranscriptionResultPayload,
+    clip: PendingClip,
+  ): Promise<boolean> {
+    // The word lists below are English. In another language a transcript with words
+    // interrupts, and only the echo match guards the reply's first seconds.
+    const english = this.sttLanguage.toLowerCase().split("-")[0] === "en";
     // Speech-to-text turns noise and half-heard echo into fragments ("S-") and fillers
     // ("Mm-hmm."). On a speakerphone the reply's own audio comes back as its words
     // ("A bicycle began a day."), which is echo too.
     let noise: string | null = null;
     if (!hasSpokenWord(result.text, this.sttLanguage)) {
       noise = "no words";
-    } else if (this.isEchoOfSpokenReply(result.text)) {
+    } else if (this.isEchoOfSpokenReply(result.text, clip.duringEchoWarmup)) {
       noise = "echo of the reply";
-    } else if (this.bargeInDuringEchoWarmup && !hasInterruptWord(result.text)) {
+    } else if (english && clip.duringEchoWarmup && !hasInterruptWord(result.text)) {
       noise = "reply audio had just started";
-    } else if (isAcknowledgement(result.text)) {
+    } else if (english && isAcknowledgement(result.text)) {
       noise = "acknowledgement";
-    } else if (spokenWordCount(result.text) === 1 && !hasInterruptWord(result.text)) {
+    } else if (english && spokenWordCount(result.text) === 1 && !hasInterruptWord(result.text)) {
       // Speech-to-text answers a cough with one plausible word ("Hello"), and a lone
       // "Yeah." is the user following along, not taking the turn.
       noise = "single word that is not an interruption";
     }
     if (noise) {
       const hasAnotherSpeechSegment =
-        this.isDetectorSpeaking || this.pendingAudioSegments.length > 0;
+        this.isDetectorSpeaking ||
+        this.pendingClips.length > 0 ||
+        this.pendingAudioSegments.length > 0;
       if (!hasAnotherSpeechSegment) {
-        this.bargeInPending = false;
         this.clearSpeechInProgress("sound during a reply was not speech");
       }
       this.sessionLogger.info({ reason: noise }, "Barge-in verdict: reply continues");
@@ -1046,10 +1059,6 @@ export class VoiceSession {
       return true;
     }
 
-    // Sound that is still going belongs to the next clip, which gets its own verdict.
-    if (!this.isDetectorSpeaking) {
-      this.clearPendingBargeIn();
-    }
     this.sessionLogger.info({ reason: "speech transcribed" }, "Barge-in verdict: reply stops");
     this.emitTranscriptionResult(result, result.text);
     this.emit({ type: "voice_input_state", payload: { isSpeaking: false, playback: "stop" } });
@@ -1060,8 +1069,10 @@ export class VoiceSession {
   private async handleTranscriptionResultPayload(
     result: VoiceTranscriptionResultPayload,
   ): Promise<void> {
-    if (this.bargeInPending) {
-      if (await this.settlePendingBargeIn(result)) {
+    // Transcripts arrive in the order their utterances were heard.
+    const clip = this.pendingClips.shift();
+    if (clip?.deferred) {
+      if (await this.settlePendingBargeIn(result, clip)) {
         return;
       }
     } else {
@@ -1254,7 +1265,7 @@ export class VoiceSession {
     );
   }
 
-  private isEchoOfSpokenReply(transcript: string): boolean {
+  private isEchoOfSpokenReply(transcript: string, duringEchoWarmup: boolean): boolean {
     const replies = this.recentSpokenReplies();
     if (replies.length === 0) {
       return false;
@@ -1262,10 +1273,7 @@ export class VoiceSession {
     // Once the echo canceller has adapted, a few of the reply's words are the user quoting
     // it ("The English rounders?"). Echo that still gets through then is a client without
     // working cancellation, which sends the reply back in long stretches.
-    if (
-      !this.bargeInDuringEchoWarmup &&
-      wordTokens(transcript).length < MIN_ECHO_WORDS_AFTER_WARMUP
-    ) {
+    if (!duringEchoWarmup && wordTokens(transcript).length < MIN_ECHO_WORDS_AFTER_WARMUP) {
       return false;
     }
     const echo = isEchoOfReplyText(
@@ -1289,8 +1297,10 @@ export class VoiceSession {
     if (!this.host.supportsDeferredBargeIn()) {
       return false;
     }
+    // COMPAT(voiceDeferredBargeIn): added in v0.16.0, remove the speech-start interrupt
+    // for clients without the capability after 2027-05-12.
     return (
-      this.bargeInPending ||
+      this.pendingClips.some((clip) => clip.deferred) ||
       this.ttsManager.hasPendingPlayback() ||
       this.host.hasActiveAgentRun(this.voiceModeAgentId)
     );
@@ -1304,14 +1314,17 @@ export class VoiceSession {
    */
   private deferBargeIn(): void {
     this.speechInProgress = true;
-    this.bargeInPending = true;
+    this.capturingDeferredClip = true;
     const now = Date.now();
-    this.bargeInDuringEchoWarmup = this.spokenReplies.some(
-      (reply) =>
-        reply.endedAt === null &&
-        reply.audioStartedAt !== null &&
-        now - reply.audioStartedAt < ECHO_WARMUP_MS,
-    );
+    this.pendingClips.push({
+      deferred: true,
+      duringEchoWarmup: this.spokenReplies.some(
+        (reply) =>
+          reply.endedAt === null &&
+          reply.audioStartedAt !== null &&
+          now - reply.audioStartedAt < ECHO_WARMUP_MS,
+      ),
+    });
     this.sessionLogger.info("Voice sound during a reply – waiting for the transcript");
     this.dropBufferedInput();
     // A detector that stays on (steady echo, a hum) never ends the utterance, and the
@@ -1319,7 +1332,7 @@ export class VoiceSession {
     this.clearBargeInClipTimer();
     this.bargeInClipTimer = setTimeout(() => {
       this.bargeInClipTimer = null;
-      if (!this.bargeInPending || !this.isDetectorSpeaking) {
+      if (!this.capturingDeferredClip || !this.isDetectorSpeaking) {
         return;
       }
       this.sessionLogger.info(
@@ -1338,7 +1351,8 @@ export class VoiceSession {
   }
 
   private clearPendingBargeIn(): void {
-    this.bargeInPending = false;
+    this.pendingClips = [];
+    this.capturingDeferredClip = false;
     this.clearBargeInClipTimer();
   }
 
@@ -1599,6 +1613,12 @@ const INTERRUPT_WORDS = new Set([
   "longer",
 ]);
 
+interface PendingClip {
+  deferred: boolean;
+  /** Heard while a reply's echo canceller was still adapting. */
+  duringEchoWarmup: boolean;
+}
+
 interface SpokenReply {
   text: string;
   /** When the reply's first audio went to the client; null until then. */
@@ -1671,6 +1691,10 @@ export function isEchoOfReplyText(transcript: string, replyTexts: readonly strin
   // ("1876", "eighteen seventy-six"), so they say nothing about whose speech this is.
   const words = wordTokens(transcript).filter((word) => !isNumberWord(word));
   if (words.length === 0) {
+    return false;
+  }
+  // "Stop." on its own is a command, even when the reply says the word too.
+  if (words.length <= 2 && words.every((word) => INTERRUPT_WORDS.has(word))) {
     return false;
   }
   const replyWords = replyTexts.flatMap(wordTokens).filter((word) => !isNumberWord(word));
