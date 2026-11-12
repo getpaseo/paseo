@@ -182,6 +182,44 @@ async function harness(env: Record<string, string> = {}) {
     });
     return perm.request;
   }
+  async function canceledTurn(sessionId = "s") {
+    return wait(
+      (event) =>
+        event.type === "session.turn" &&
+        event.sessionId === sessionId &&
+        event.state === "canceled",
+    );
+  }
+  async function failedRequest(requestId: string) {
+    return wait((event) => event.type === "request.failed" && event.requestId === requestId);
+  }
+  async function failedPrompt(clientMessageId: string) {
+    return wait(
+      (event) =>
+        event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
+    );
+  }
+  function turnMaxTokenSnapshots(clientMessageId: string): Array<number | undefined> {
+    const admitted = events.find(
+      (event): event is Extract<ProviderEvent, { type: "session.prompt_result" }> =>
+        event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
+    );
+    if (!admitted || admitted.result.type !== "turn") {
+      throw new Error(`Expected admitted turn for ${clientMessageId}`);
+    }
+    return events
+      .filter(
+        (event): event is Extract<ProviderEvent, { type: "session.usage" }> =>
+          event.type === "session.usage" && event.turnId === admitted.result.turnId,
+      )
+      .map((event) => event.usage.contextWindowMaxTokens);
+  }
+  function latestMode(sessionId = "s"): string | undefined {
+    return events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.config" }> =>
+        event.type === "session.config" && event.sessionId === sessionId,
+    )?.config.mode;
+  }
   return {
     connection,
     events,
@@ -201,6 +239,11 @@ async function harness(env: Record<string, string> = {}) {
     selectedPermissionOptions,
     hasRpcMethod,
     allowPermission,
+    canceledTurn,
+    failedRequest,
+    failedPrompt,
+    turnMaxTokenSnapshots,
+    latestMode,
   };
 }
 
@@ -973,10 +1016,7 @@ describe("image prompts", () => {
     const interruptElapsedMs = Date.now() - interruptStart;
     expect(interruptElapsedMs).toBeLessThan(400);
 
-    await h.wait(
-      (event) =>
-        event.type === "session.turn" && event.sessionId === "s" && event.state === "canceled",
-    );
+    await h.canceledTurn("s");
 
     // Replacement prompt reuses the warming driver without spawning a duplicate process
     const replacementMsg = await h.message([
@@ -1028,27 +1068,16 @@ describe("image prompts", () => {
       sessionId: "s-deadlock",
     });
 
-    await h.wait((e) => e.type === "request.failed" && e.requestId === "open-fail-queue");
-    expect(
-      await h.wait((e) => e.type === "request.failed" && e.requestId === "cfg-after-failed-open"),
-    ).toMatchObject({
+    await h.failedRequest("open-fail-queue");
+    expect(await h.failedRequest("cfg-after-failed-open")).toMatchObject({
       type: "request.failed",
       error: { code: "UNKNOWN_SESSION" },
     });
-    expect(
-      await h.wait(
-        (e) =>
-          e.type === "session.prompt_result" && e.clientMessageId === "prompt-after-failed-open",
-      ),
-    ).toMatchObject({
+    expect(await h.failedPrompt("prompt-after-failed-open")).toMatchObject({
       type: "session.prompt_result",
       result: { type: "failed", error: { code: "UNKNOWN_SESSION" } },
     });
-    expect(
-      await h.wait(
-        (e) => e.type === "request.failed" && e.requestId === "can-stop-during-failed-open",
-      ),
-    ).toMatchObject({
+    expect(await h.failedRequest("can-stop-during-failed-open")).toMatchObject({
       type: "request.failed",
       error: { code: "UNKNOWN_SESSION" },
     });
@@ -1063,18 +1092,7 @@ describe("image prompts", () => {
 
     const firstPromptId = await h.prompt("USAGE_SIZE_OVERRIDE");
     await h.completed(firstPromptId);
-    const firstTurnResult = h.events.find(
-      (e): e is Extract<ProviderEvent, { type: "session.prompt_result" }> =>
-        e.type === "session.prompt_result" && e.clientMessageId === firstPromptId,
-    );
-    const firstTurnId =
-      firstTurnResult?.result.type === "turn" ? firstTurnResult.result.turnId : "";
-    expect(
-      h.events.find(
-        (e): e is Extract<ProviderEvent, { type: "session.usage" }> =>
-          e.type === "session.usage" && e.turnId === firstTurnId,
-      )?.usage.contextWindowMaxTokens,
-    ).toBe(900_000);
+    expect(h.turnMaxTokenSnapshots(firstPromptId)[0]).toBe(900_000);
 
     await h.request({
       type: "session.configure",
@@ -1089,20 +1107,35 @@ describe("image prompts", () => {
 
     const secondPromptId = await h.prompt("USAGE_USED_ONLY");
     await h.completed(secondPromptId);
-    const secondTurnResult = h.events.find(
-      (e): e is Extract<ProviderEvent, { type: "session.prompt_result" }> =>
-        e.type === "session.prompt_result" && e.clientMessageId === secondPromptId,
-    );
-    const secondTurnId =
-      secondTurnResult?.result.type === "turn" ? secondTurnResult.result.turnId : "";
-    const secondTurnUsages = h.events.filter(
-      (e): e is Extract<ProviderEvent, { type: "session.usage" }> =>
-        e.type === "session.usage" && e.turnId === secondTurnId,
-    );
-    expect(secondTurnUsages.length).toBeGreaterThan(0);
-    for (const usageEvt of secondTurnUsages) {
-      expect(usageEvt.usage.contextWindowMaxTokens).toBe(200_000);
-    }
+    expect(new Set(h.turnMaxTokenSnapshots(secondPromptId))).toEqual(new Set([200_000]));
+  });
+
+  it("ignores JSON-RPC method-not-found from session/set_mode while surfacing genuine mode-switch failures", async () => {
+    const legacy = await harness({ AGY_TEST_SET_MODE: "unsupported" });
+    await legacy.open(undefined, "s", "accept-edits");
+    expect(legacy.latestMode("s")).toBe("accept-edits");
+    await legacy.request({
+      type: "session.configure",
+      requestId: "legacy-default",
+      sessionId: "s",
+      changes: { mode: "default" },
+    });
+    expect(legacy.latestMode("s")).toBe("default");
+
+    const failing = await harness({ AGY_TEST_SET_MODE: "fail" });
+    await failing.open();
+    expect(failing.latestMode("s")).toBe("default");
+    await failing.request({
+      type: "session.configure",
+      requestId: "reject-accept-edits",
+      sessionId: "s",
+      changes: { mode: "accept-edits" },
+    });
+    expect(await failing.failedRequest("reject-accept-edits")).toMatchObject({
+      type: "request.failed",
+      error: { message: expect.stringContaining("Mode switch rejected by backend") },
+    });
+    expect(failing.latestMode("s")).toBe("default");
   });
 });
 

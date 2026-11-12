@@ -63,8 +63,12 @@ import {
   acpSessionResultSchema,
   AntigravityError,
   buildElicitationResponse,
+  buildToolPermissionQuestionResponse,
+  isMethodNotFoundError,
   parseElicitationQuestions,
+  parseToolPermissionQuestions,
   persistenceSchema,
+  selectPermissionOption,
   type AcpElicitationParams,
   type AcpPermissionOption,
   type AcpRequestPermissionParams,
@@ -116,7 +120,17 @@ type PendingPermission =
       id: string;
       rpcId: string | number;
       kind: "question";
+      transport: "elicitation";
       questions: ParsedElicitationQuestion[];
+    }
+  | {
+      id: string;
+      rpcId: string | number;
+      kind: "question";
+      transport: "permission";
+      questions: ParsedElicitationQuestion[];
+      rawInput?: Readonly<Record<string, JsonValue>>;
+      options: AcpPermissionOption[];
     };
 
 export class Session {
@@ -126,7 +140,10 @@ export class Session {
   private readonly chunkIds = new Map<string, string>();
   private readonly chunkTexts = new Map<string, string>();
   private readonly turnTools = new Map<string, AcpToolCallPayload>();
-  private readonly activeBackgroundTasks = new Map<string, { persistent: boolean }>();
+  private readonly activeBackgroundTasks = new Map<
+    string,
+    { persistent: boolean; prompt?: string }
+  >();
   private readonly seenRootSteps = new Set<number>();
   private readonly synthesizedWakeupToolIds = new Set<string>();
   private readonly unstreamedWakeupThoughts: string[] = [];
@@ -305,19 +322,22 @@ export class Session {
         "TURN_ACTIVE",
       );
     }
-    const previousMode = this.mode;
+    if (this.driver?.isAlive) {
+      if (this.driver.skipPermissions !== nextSkipPermissions) {
+        if (this.canStopRuntime()) {
+          await this.retireDriver();
+        }
+      } else if (
+        this.mode !== nextMode &&
+        this.conversationId &&
+        !this.turn &&
+        !this.autonomousTurn
+      ) {
+        await this.syncNativeAcpMode(this.driver, nextMode);
+      }
+    }
     this.mode = nextMode;
     this.autoApproveEligiblePendingPermissions();
-    if (!this.driver?.isAlive) return;
-    if (this.driver.skipPermissions !== nextSkipPermissions) {
-      if (this.canStopRuntime()) {
-        await this.retireDriver();
-      }
-      return;
-    }
-    if (previousMode !== this.mode && this.conversationId && !this.turn && !this.autonomousTurn) {
-      await this.syncNativeAcpMode(this.driver);
-    }
   }
 
   private async applyModelChange(nextModel: string | null): Promise<void> {
@@ -516,6 +536,14 @@ export class Session {
           ? { outcome: { outcome: "selected", optionId: option.optionId } }
           : { outcome: { outcome: "cancelled" } },
       );
+    } else if (pending.transport === "permission") {
+      const result = buildToolPermissionQuestionResponse(
+        pending.questions,
+        pending.rawInput,
+        pending.options,
+        response,
+      );
+      this.driver?.respond(pending.rpcId, result);
     } else {
       const result = buildElicitationResponse(pending.questions, response);
       this.driver?.respond(pending.rpcId, result);
@@ -940,17 +968,22 @@ export class Session {
     this.modelDirty = false;
   }
 
-  private async syncNativeAcpMode(driver: DriverProcess): Promise<void> {
+  private async syncNativeAcpMode(
+    driver: DriverProcess,
+    mode: AntigravityModeId = this.mode,
+  ): Promise<void> {
     if (!this.conversationId || driver.skipPermissions) return;
-    const nativeMode = this.mode === "accept-edits" ? "accept-edits" : "default";
+    const nativeMode = mode === "accept-edits" ? "accept-edits" : "default";
     try {
       await driver.requestInit(
         "session/set_mode",
         { sessionId: this.conversationId, modeId: nativeMode },
         acpSessionResultSchema,
       );
-    } catch {
+    } catch (error) {
       // Older agy builds may not implement session/set_mode; client-side permission rules remain active.
+      if (isMethodNotFoundError(error)) return;
+      throw error;
     }
   }
 
@@ -1018,6 +1051,7 @@ export class Session {
     if (!this.rootTranscriptReader) return;
     const existingSteps = await this.rootTranscriptReader.readNewSteps({
       allowTrailingWithoutNewline: true,
+      advancePastUnfinished: true,
     });
     for (const step of existingSteps) {
       this.seenRootSteps.add(step.stepIndex);
@@ -1357,18 +1391,28 @@ export class Session {
         return;
       }
     }
-    // Also clear any synthetic one-shot schedule:<toolCallId> if a schedule/timer wakeup arrived
+    // Also clear any synthetic one-shot schedule:<key> if a schedule/timer wakeup arrived
     if (
       wakeup.sender === "scheduler" ||
       wakeup.sender?.includes("schedule") ||
       (candidates.length === 0 && this.activeBackgroundTasks.size > 0)
     ) {
-      for (const [taskId, entry] of this.activeBackgroundTasks) {
-        if (taskId.startsWith("schedule:") && !entry.persistent) {
-          this.activeBackgroundTasks.delete(taskId);
-          break;
-        }
+      this.clearScheduleWakeupTask(wakeup.message);
+    }
+  }
+
+  private clearScheduleWakeupTask(wakeupMessage: string): void {
+    let fallbackTaskId: string | null = null;
+    for (const [taskId, entry] of this.activeBackgroundTasks) {
+      if (!taskId.startsWith("schedule:") || entry.persistent) continue;
+      if (entry.prompt && wakeupMessage.includes(entry.prompt)) {
+        this.activeBackgroundTasks.delete(taskId);
+        return;
       }
+      fallbackTaskId ??= taskId;
+    }
+    if (fallbackTaskId) {
+      this.activeBackgroundTasks.delete(fallbackTaskId);
     }
   }
 
@@ -1555,7 +1599,10 @@ export class Session {
     }
     const bgLaunch = extractBackgroundTaskLaunch(tool);
     if (bgLaunch) {
-      this.activeBackgroundTasks.set(bgLaunch.taskId, { persistent: bgLaunch.persistent });
+      this.activeBackgroundTasks.set(bgLaunch.taskId, {
+        persistent: bgLaunch.persistent,
+        ...(bgLaunch.prompt ? { prompt: bgLaunch.prompt } : {}),
+      });
     }
     const killedTask = extractBackgroundTaskKill(tool);
     if (killedTask) {
@@ -1784,6 +1831,19 @@ export class Session {
     }
     const name = inferToolName(mergedTool);
     const input = asJsonRecord(mergedTool.rawInput);
+    const questions = parseToolPermissionQuestions(mergedTool, name, request.options);
+    if (questions) {
+      this.handleToolQuestionPermissionRequest(
+        rpcId,
+        isRootSession,
+        mergedTool,
+        input,
+        request.options,
+        questions,
+      );
+      return;
+    }
+
     const detail = mapAcpToolDetail(mergedTool, name, input);
 
     if (this.shouldAutoApproveTool(mergedTool, detail)) {
@@ -1837,6 +1897,39 @@ export class Session {
     });
   }
 
+  private handleToolQuestionPermissionRequest(
+    rpcId: string | number,
+    isRootSession: boolean,
+    mergedTool: AcpToolCallPayload,
+    input: Record<string, JsonValue> | undefined,
+    options: AcpPermissionOption[],
+    questions: ParsedElicitationQuestion[],
+  ): void {
+    if (this.turn === null && this.replayWindow === null && isRootSession) {
+      this.ensureAutonomousTurn("acp");
+    }
+
+    const permissionId = `question-${++this.permissionSeq}`;
+    this.pendingPermissions.set(permissionId, {
+      id: permissionId,
+      rpcId,
+      kind: "question",
+      transport: "permission",
+      questions,
+      ...(input ? { rawInput: input } : {}),
+      options,
+    });
+    if (this.autonomousTurn) {
+      this.syncAutonomousToolStallGuard(this.autonomousTurn);
+    }
+
+    const customTitle =
+      mergedTool.title && !/ask[_-]?questions?/i.test(mergedTool.title.trim())
+        ? mergedTool.title
+        : undefined;
+    this.emitQuestionPermission(permissionId, questions, customTitle);
+  }
+
   private handleElicitationRequest(rpcId: string | number, params: AcpElicitationParams): void {
     const isRootSession =
       !this.conversationId || !params.sessionId || params.sessionId === this.conversationId;
@@ -1850,12 +1943,21 @@ export class Session {
       id: permissionId,
       rpcId,
       kind: "question",
+      transport: "elicitation",
       questions,
     });
     if (this.autonomousTurn) {
       this.syncAutonomousToolStallGuard(this.autonomousTurn);
     }
 
+    this.emitQuestionPermission(permissionId, questions, params.message);
+  }
+
+  private emitQuestionPermission(
+    permissionId: string,
+    questions: ParsedElicitationQuestion[],
+    title?: string,
+  ): void {
     this.options.emit({
       type: "session.permission",
       sessionId: this.id,
@@ -1863,7 +1965,7 @@ export class Session {
         id: permissionId,
         name: "ask_question",
         kind: "question",
-        ...(params.message ? { title: params.message } : {}),
+        ...(title ? { title } : {}),
         input: {
           questions: questions.map((question) => ({
             id: question.id,
@@ -1935,7 +2037,7 @@ export class Session {
   private cancelAllPermissions(): void {
     for (const [id, pending] of this.pendingPermissions) {
       this.pendingPermissions.delete(id);
-      if (pending.kind === "tool") {
+      if (pending.kind === "tool" || pending.transport === "permission") {
         this.driver?.respond(pending.rpcId, { outcome: { outcome: "cancelled" } });
       } else {
         this.driver?.respond(pending.rpcId, { action: "cancel" });
@@ -2160,28 +2262,6 @@ function parsePersistenceId(persistence: ProviderPersistence | undefined): strin
     );
   }
   return parsed.data.conversationId ?? parsed.data.sessionId ?? null;
-}
-
-function selectPermissionOption(
-  options: AcpPermissionOption[],
-  response: ProviderPermissionResponse,
-): AcpPermissionOption | undefined {
-  if (response.selectedActionId) {
-    const exact = options.find((option) => option.optionId === response.selectedActionId);
-    if (exact) return exact;
-  }
-  if (response.behavior === "allow") {
-    return (
-      options.find((option) => option.kind === "allow_once") ??
-      options.find((option) => option.kind.startsWith("allow")) ??
-      options.find((option) => /allow/i.test(option.optionId))
-    );
-  }
-  return (
-    options.find((option) => option.kind === "reject_once") ??
-    options.find((option) => option.kind.startsWith("reject")) ??
-    options.find((option) => /deny|reject/i.test(option.optionId))
-  );
 }
 
 function toAcpMcpServers(

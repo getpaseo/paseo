@@ -147,16 +147,16 @@ describe("antigravity usage source", () => {
     const [locator] = await reg.discover({ kind: "global" });
     const report = await reg.fetch(locator!.input);
 
-    expect(report.status).toBe("available");
-    if (report.status === "available") {
-      expect(report.windows.map((w) => w.shortLabel)).toEqual([
-        "Gemini 5h",
-        "Gemini wk",
-        "Claude/GPT 5h",
-        "Claude/GPT wk",
-      ]);
-      expect(report.balances).toBeUndefined();
-    }
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [
+        { shortLabel: "Gemini 5h" },
+        { shortLabel: "Gemini wk" },
+        { shortLabel: "Claude/GPT 5h" },
+        { shortLabel: "Claude/GPT wk" },
+      ],
+    });
+    expect(report).not.toHaveProperty("balances");
   });
 
   it("maps 401, 403, and empty quota responses to unavailable reports", async () => {

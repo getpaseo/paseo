@@ -54,7 +54,10 @@ export class JsonlTranscriptReader {
   }
 
   async seekToEnd(): Promise<number> {
-    const steps = await this.readNewSteps({ allowTrailingWithoutNewline: true });
+    const steps = await this.readNewSteps({
+      allowTrailingWithoutNewline: true,
+      advancePastUnfinished: true,
+    });
     let maxStep = -1;
     for (const step of steps) {
       if (step.stepIndex > maxStep) maxStep = step.stepIndex;
@@ -124,6 +127,7 @@ export class JsonlTranscriptReader {
 
   async readNewSteps(options?: {
     allowTrailingWithoutNewline?: boolean;
+    advancePastUnfinished?: boolean;
   }): Promise<TranscriptStep[]> {
     const resolved = await this.resolveReadTarget();
     if (!resolved) return [];
@@ -144,12 +148,14 @@ export class JsonlTranscriptReader {
     let slice = await this.readSliceWithBoundaryCheck(targetPath, fileSize);
     if (!slice || slice.byteLength === 0) return [];
 
-    const parsed = this.consumeSlice(slice, options?.allowTrailingWithoutNewline ?? false);
+    const allowTrailing = options?.allowTrailingWithoutNewline ?? false;
+    const advanceUnfinished = options?.advancePastUnfinished ?? false;
+    const parsed = this.consumeSlice(slice, allowTrailing, advanceUnfinished);
     if (parsed.corruptedAtOffset && this.byteOffset > 0) {
       this.byteOffset = 0;
       slice = await this.readSliceWithBoundaryCheck(targetPath, fileSize);
       if (!slice || slice.byteLength === 0) return [];
-      return this.consumeSlice(slice, options?.allowTrailingWithoutNewline ?? false).steps;
+      return this.consumeSlice(slice, allowTrailing, advanceUnfinished).steps;
     }
     return parsed.steps;
   }
@@ -184,50 +190,111 @@ export class JsonlTranscriptReader {
   private consumeSlice(
     slice: Buffer,
     allowTrailingWithoutNewline: boolean,
+    advancePastUnfinished: boolean,
   ): { steps: TranscriptStep[]; corruptedAtOffset: boolean } {
     const lastNewline = slice.lastIndexOf(0x0a);
     if (lastNewline === -1) {
-      if (!allowTrailingWithoutNewline) {
-        return { steps: [], corruptedAtOffset: false };
-      }
-      const parsedSingle = parseStepLine(slice.toString("utf8"), () => this.fallbackStepSeq++);
-      if (!parsedSingle) {
-        return { steps: [], corruptedAtOffset: slice.toString("utf8").trim().length > 0 };
-      }
-      this.byteOffset += slice.byteLength;
-      return { steps: [parsedSingle], corruptedAtOffset: false };
+      return this.consumeSingleTrailingLine(
+        slice,
+        allowTrailingWithoutNewline,
+        advancePastUnfinished,
+      );
     }
 
-    const throughNewline = slice.subarray(0, lastNewline + 1);
-    const remainder = slice.subarray(lastNewline + 1);
-    let consumedBytes = lastNewline + 1;
-
-    const lines = throughNewline.toString("utf8").split(/\r?\n/);
+    let cursor = 0;
+    let safeConsumedBytes = 0;
+    let sawUnfinishedStep = false;
+    let isFirstNonEmptyLine = true;
     const steps: TranscriptStep[] = [];
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i]!;
-      if (!line.trim()) continue;
-      const step = parseStepLine(line, () => this.fallbackStepSeq++);
-      if (!step) {
-        if (i === 0 && this.byteOffset > 0) {
-          return { steps: [], corruptedAtOffset: true };
-        }
+
+    while (cursor <= lastNewline) {
+      const nlIdx = slice.indexOf(0x0a, cursor);
+      if (nlIdx === -1 || nlIdx > lastNewline) break;
+      const lineText = slice.subarray(cursor, nlIdx + 1).toString("utf8");
+      cursor = nlIdx + 1;
+      if (!lineText.trim()) {
+        if (!sawUnfinishedStep) safeConsumedBytes = cursor;
         continue;
       }
-      steps.push(step);
-    }
-
-    if (remainder.byteLength > 0 && allowTrailingWithoutNewline) {
-      const trailingStep = parseStepLine(remainder.toString("utf8"), () => this.fallbackStepSeq++);
-      if (trailingStep) {
-        steps.push(trailingStep);
-        consumedBytes = slice.byteLength;
+      const step = parseStepLine(lineText, () => this.fallbackStepSeq++);
+      if (!step) {
+        if (isFirstNonEmptyLine && this.byteOffset > 0) {
+          return { steps: [], corruptedAtOffset: true };
+        }
+        isFirstNonEmptyLine = false;
+        if (!sawUnfinishedStep) safeConsumedBytes = cursor;
+        continue;
       }
+      isFirstNonEmptyLine = false;
+      steps.push(step);
+      sawUnfinishedStep ||= !advancePastUnfinished && isUnfinishedTranscriptStep(step);
+      if (!sawUnfinishedStep) safeConsumedBytes = cursor;
     }
 
-    this.byteOffset += consumedBytes;
+    safeConsumedBytes = this.consumeTrailingRemainder(
+      slice,
+      lastNewline,
+      allowTrailingWithoutNewline,
+      advancePastUnfinished,
+      sawUnfinishedStep,
+      safeConsumedBytes,
+      steps,
+    );
+
+    this.byteOffset += safeConsumedBytes;
     return { steps, corruptedAtOffset: false };
   }
+
+  private consumeSingleTrailingLine(
+    slice: Buffer,
+    allowTrailingWithoutNewline: boolean,
+    advancePastUnfinished: boolean,
+  ): { steps: TranscriptStep[]; corruptedAtOffset: boolean } {
+    if (!allowTrailingWithoutNewline) {
+      return { steps: [], corruptedAtOffset: false };
+    }
+    const parsedSingle = parseStepLine(slice.toString("utf8"), () => this.fallbackStepSeq++);
+    if (!parsedSingle) {
+      return { steps: [], corruptedAtOffset: slice.toString("utf8").trim().length > 0 };
+    }
+    if (advancePastUnfinished || !isUnfinishedTranscriptStep(parsedSingle)) {
+      this.byteOffset += slice.byteLength;
+    }
+    return { steps: [parsedSingle], corruptedAtOffset: false };
+  }
+
+  private consumeTrailingRemainder(
+    slice: Buffer,
+    lastNewline: number,
+    allowTrailingWithoutNewline: boolean,
+    advancePastUnfinished: boolean,
+    sawUnfinishedStep: boolean,
+    safeConsumedBytes: number,
+    steps: TranscriptStep[],
+  ): number {
+    const remainder = slice.subarray(lastNewline + 1);
+    if (remainder.byteLength === 0 || !allowTrailingWithoutNewline) {
+      return safeConsumedBytes;
+    }
+    const trailingStep = parseStepLine(remainder.toString("utf8"), () => this.fallbackStepSeq++);
+    if (!trailingStep) {
+      return safeConsumedBytes;
+    }
+    steps.push(trailingStep);
+    const unfinished =
+      sawUnfinishedStep || (!advancePastUnfinished && isUnfinishedTranscriptStep(trailingStep));
+    return unfinished ? safeConsumedBytes : slice.byteLength;
+  }
+}
+
+function isUnfinishedTranscriptStep(step: TranscriptStep): boolean {
+  if (step.type === "PLANNER_RESPONSE" && isNonTerminalStepStatus(step.status)) {
+    return true;
+  }
+  if (step.type === "GENERIC" && isWaitingStepStatus(step.status)) {
+    return true;
+  }
+  return false;
 }
 
 async function tryStatRegularFile(filePath: string): Promise<{ size: number; ino: number } | null> {

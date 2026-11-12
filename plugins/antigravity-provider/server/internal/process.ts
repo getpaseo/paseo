@@ -196,32 +196,7 @@ export class DriverProcess {
     const method = typeof message.method === "string" ? message.method : undefined;
 
     if (id !== undefined && method === undefined) {
-      const entry = this.pending.get(id);
-      if (!entry) return;
-      this.pending.delete(id);
-      if (entry.timer) clearTimeout(entry.timer);
-
-      if ("error" in message && message.error !== undefined) {
-        const rpcError = jsonRpcErrorObjectSchema.safeParse(message.error);
-        const detail = rpcError.success
-          ? rpcError.data.message
-          : "Antigravity ACP returned an error";
-        entry.reject(classifyFailure(this.stderr, detail));
-        return;
-      }
-
-      const validated = entry.schema.safeParse(message.result);
-      if (!validated.success) {
-        entry.reject(
-          new AntigravityError(
-            `Invalid Antigravity ACP response for ${entry.method}: ${validated.error.message}`,
-            "WIRE_PARSE_ERROR",
-            trimmed,
-          ),
-        );
-        return;
-      }
-      entry.resolve(validated.data);
+      this.handleResponseMessage(id, message, trimmed);
       return;
     }
 
@@ -233,6 +208,38 @@ export class DriverProcess {
     if (method !== undefined) {
       this.handlers.onNotification(method, message.params);
     }
+  }
+
+  private handleResponseMessage(
+    id: string | number,
+    message: Record<string, unknown>,
+    trimmed: string,
+  ): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    if (entry.timer) clearTimeout(entry.timer);
+
+    if ("error" in message && message.error !== undefined) {
+      const rpcError = jsonRpcErrorObjectSchema.safeParse(message.error);
+      const detail = rpcError.success ? rpcError.data.message : "Antigravity ACP returned an error";
+      const rpcCode = rpcError.success ? rpcError.data.code : undefined;
+      entry.reject(classifyFailure(this.stderr, detail, rpcCode));
+      return;
+    }
+
+    const validated = entry.schema.safeParse(message.result);
+    if (!validated.success) {
+      entry.reject(
+        new AntigravityError(
+          `Invalid Antigravity ACP response for ${entry.method}: ${validated.error.message}`,
+          "WIRE_PARSE_ERROR",
+          trimmed,
+        ),
+      );
+      return;
+    }
+    entry.resolve(validated.data);
   }
 
   private failAllPending(error: AntigravityError): void {

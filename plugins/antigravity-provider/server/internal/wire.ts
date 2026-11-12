@@ -11,9 +11,14 @@ export class AntigravityError extends Error {
     message: string,
     readonly code: string,
     readonly diagnostic?: string,
+    readonly rpcCode?: number,
   ) {
     super(message);
   }
+}
+
+export function isMethodNotFoundError(error: unknown): boolean {
+  return error instanceof AntigravityError && error.rpcCode === -32601;
 }
 
 export const acpPermissionOptionSchema = z.object({
@@ -245,12 +250,231 @@ export interface ParsedElicitationQuestion {
   id: string;
   header: string;
   question: string;
-  options: Array<{ label: string }>;
+  options: Array<{ label: string; description?: string }>;
   rawEnum: string[];
   multiSelect: boolean;
   allowOther: boolean;
   allowEmpty: boolean;
   otherFieldKey?: string;
+}
+
+const GENERIC_APPROVAL_OPTION_RE = /^(?:always\s+)?allow(?:\s+once)?$/i;
+const ASK_QUESTION_TOOL_NAME_RE = /^ask[_-]?(?:user[_-]?)?question$/i;
+
+export function parseToolPermissionQuestions(
+  toolCall: AcpToolCallPayload,
+  name: string,
+  options: AcpPermissionOption[],
+): ParsedElicitationQuestion[] | null {
+  const rawInput = asPlainRecord(toolCall.rawInput);
+  const rawQuestions = Array.isArray(rawInput?.questions) ? rawInput.questions : null;
+  if (rawQuestions && rawQuestions.length > 0) {
+    const parsed = parseRawQuestionEntries(rawQuestions);
+    if (parsed.length > 0) return parsed;
+  }
+  if (!ASK_QUESTION_TOOL_NAME_RE.test(name)) {
+    return null;
+  }
+  return [buildFallbackToolQuestion(toolCall, options)];
+}
+
+function parseRawQuestionEntries(rawQuestions: unknown[]): ParsedElicitationQuestion[] {
+  const records = rawQuestions
+    .map((entry) => asPlainRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null);
+  return records.map((entry, index) => parseSingleQuestionRecord(entry, index, records.length));
+}
+
+function parseSingleQuestionRecord(
+  entry: Record<string, unknown>,
+  index: number,
+  total: number,
+): ParsedElicitationQuestion {
+  const id = nonEmptyString(entry.id) ?? `q${index}`;
+  const header =
+    nonEmptyString(entry.header) ??
+    nonEmptyString(entry.title) ??
+    (total === 1 ? "Question" : `Question ${index + 1}`);
+  const question =
+    nonEmptyString(entry.question) ??
+    nonEmptyString(entry.description) ??
+    nonEmptyString(entry.title) ??
+    `Question ${index + 1}`;
+  const multiSelect = Boolean(entry.multiSelect ?? entry.is_multi_select);
+  const { options, rawEnum } = parseRawQuestionOptions(entry.options);
+  const allowOther = typeof entry.allowOther === "boolean" ? entry.allowOther : true;
+  const allowEmpty = typeof entry.allowEmpty === "boolean" ? entry.allowEmpty : false;
+  return {
+    id,
+    header,
+    question,
+    options,
+    rawEnum,
+    multiSelect,
+    allowOther,
+    allowEmpty,
+  };
+}
+
+function parseRawQuestionOptions(rawOptions: unknown): {
+  options: Array<{ label: string; description?: string }>;
+  rawEnum: string[];
+} {
+  if (!Array.isArray(rawOptions)) {
+    return { options: [], rawEnum: [] };
+  }
+  const options: Array<{ label: string; description?: string }> = [];
+  const rawEnum: string[] = [];
+  for (const item of rawOptions) {
+    if (typeof item === "string" && item.trim()) {
+      const label = item.trim();
+      rawEnum.push(label);
+      if (label !== "Other") options.push({ label });
+      continue;
+    }
+    const obj = asPlainRecord(item);
+    const label = obj ? nonEmptyString(obj.label) : undefined;
+    if (!label) continue;
+    rawEnum.push(label);
+    if (label === "Other") continue;
+    const description = obj ? nonEmptyString(obj.description) : undefined;
+    options.push(description ? { label, description } : { label });
+  }
+  return { options, rawEnum };
+}
+
+function buildFallbackToolQuestion(
+  toolCall: AcpToolCallPayload,
+  permissionOptions: AcpPermissionOption[],
+): ParsedElicitationQuestion {
+  const contentQuestion = extractToolCallContentText(toolCall);
+  const titleText =
+    toolCall.title && !ASK_QUESTION_TOOL_NAME_RE.test(toolCall.title.trim())
+      ? toolCall.title.trim()
+      : undefined;
+  const allowOptions = permissionOptions.filter((option) => option.kind.startsWith("allow"));
+  const hasChooserOptions =
+    allowOptions.length > 1 ||
+    allowOptions.some((option) => !GENERIC_APPROVAL_OPTION_RE.test(option.name.trim()));
+  const options = hasChooserOptions ? allowOptions.map((option) => ({ label: option.name })) : [];
+  return {
+    id: "q0",
+    header: "Question",
+    question: contentQuestion ?? titleText ?? "The agent has a question.",
+    options,
+    rawEnum: options.map((option) => option.label),
+    multiSelect: false,
+    allowOther: options.length === 0,
+    allowEmpty: false,
+  };
+}
+
+function extractToolCallContentText(toolCall: AcpToolCallPayload): string | undefined {
+  for (const block of toolCall.content ?? []) {
+    if (block.type === "content" && block.content.text?.trim()) {
+      return block.content.text.trim();
+    }
+  }
+  return undefined;
+}
+
+export function selectPermissionOption(
+  options: AcpPermissionOption[],
+  response: ProviderPermissionResponse,
+): AcpPermissionOption | undefined {
+  if (response.selectedActionId) {
+    const exact = options.find((option) => option.optionId === response.selectedActionId);
+    if (exact) return exact;
+  }
+  if (response.behavior === "allow") {
+    return (
+      options.find((option) => option.kind === "allow_once") ??
+      options.find((option) => option.kind.startsWith("allow")) ??
+      options.find((option) => /allow/i.test(option.optionId))
+    );
+  }
+  return (
+    options.find((option) => option.kind === "reject_once") ??
+    options.find((option) => option.kind.startsWith("reject")) ??
+    options.find((option) => /deny|reject/i.test(option.optionId))
+  );
+}
+
+export function buildToolPermissionQuestionResponse(
+  questions: ParsedElicitationQuestion[],
+  rawInput: Readonly<Record<string, JsonValue>> | undefined,
+  options: AcpPermissionOption[],
+  response: ProviderPermissionResponse,
+): Record<string, unknown> {
+  if (response.behavior === "deny") {
+    const rejectOption = response.selectedActionId
+      ? selectPermissionOption(options, response)
+      : undefined;
+    return rejectOption
+      ? { outcome: { outcome: "selected", optionId: rejectOption.optionId } }
+      : { outcome: { outcome: "cancelled" } };
+  }
+
+  const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
+  const supplied = parsed.success ? (parsed.data?.answers ?? {}) : {};
+  const answersByQuestion: Record<string, string | string[]> = {};
+
+  for (const question of questions) {
+    const rawValue =
+      supplied[question.header] ?? supplied[question.id] ?? supplied[question.question] ?? "";
+    const values = normalizeAnswerValues(rawValue, question.multiSelect);
+    answersByQuestion[question.question] = question.multiSelect ? values : (values[0] ?? "");
+  }
+
+  const firstAnswer =
+    questions.length === 1 && !questions[0]!.multiSelect
+      ? String(answersByQuestion[questions[0]!.question] ?? "")
+      : "";
+  const selectedOption =
+    matchChooserPermissionOption(options, firstAnswer) ?? selectPermissionOption(options, response);
+  if (!selectedOption) {
+    return { outcome: { outcome: "cancelled" } };
+  }
+
+  const updatedInput: Record<string, unknown> = {
+    ...rawInput,
+    answers: answersByQuestion,
+  };
+  const elicitation = buildElicitationResponse(questions, response);
+  return {
+    outcome: {
+      outcome: "selected",
+      optionId: selectedOption.optionId,
+      updatedInput,
+    },
+    updatedInput,
+    ...(elicitation.content
+      ? { _meta: { antigravity: { answers: answersByQuestion, content: elicitation.content } } }
+      : {}),
+  };
+}
+
+function matchChooserPermissionOption(
+  options: AcpPermissionOption[],
+  answer: string,
+): AcpPermissionOption | undefined {
+  const trimmed = answer.trim();
+  if (!trimmed) return undefined;
+  return options.find(
+    (option) =>
+      option.kind.startsWith("allow") &&
+      (option.optionId === trimmed || option.name.trim() === trimmed),
+  );
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 export function parseElicitationQuestions(
@@ -394,7 +618,11 @@ function applySingleSelectAnswer(
   content[question.id] = single;
 }
 
-export function classifyFailure(stderr: string, detail?: string): AntigravityError {
+export function classifyFailure(
+  stderr: string,
+  detail?: string,
+  rpcCode?: number,
+): AntigravityError {
   const combined = [detail, stderr].filter(Boolean).join("\n").trim();
   if (
     /not logged in|sign in|log in|authentication required|UNAUTHENTICATED|auth_required/i.test(
@@ -405,11 +633,13 @@ export function classifyFailure(stderr: string, detail?: string): AntigravityErr
       "Antigravity authentication failed. Run `agy` and sign in, then retry.",
       "AUTH_REQUIRED",
       combined || undefined,
+      rpcCode,
     );
   }
   return new AntigravityError(
     detail || stderr.trim() || "Antigravity command failed",
     "PROCESS_FAILED",
     combined || undefined,
+    rpcCode,
   );
 }

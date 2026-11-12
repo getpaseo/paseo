@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
@@ -227,6 +227,46 @@ function appendTranscriptStep(convId, step) {
   return nextIndex;
 }
 
+function replaceTranscriptStep(convId, step) {
+  const dataDir = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
+  if (!dataDir) return;
+  const logDir = path.join(dataDir, "brain", convId, ".system_generated", "logs");
+  const transcriptPath = path.join(logDir, "transcript.jsonl");
+  const fullTranscriptPath = path.join(logDir, "transcript_full.jsonl");
+  const targetIndex = step.step_index;
+  const fullStep = {
+    step_index: targetIndex,
+    created_at: new Date().toISOString(),
+    status: "DONE",
+    ...step,
+  };
+  const compactStep = { ...fullStep };
+  const truncatedFields = [];
+  if (typeof compactStep.content === "string") {
+    const c = compactTranscriptField(compactStep.content);
+    compactStep.content = c.value;
+    if (c.truncated) truncatedFields.push("content");
+  }
+  if (typeof compactStep.thinking === "string") {
+    const t = compactTranscriptField(compactStep.thinking);
+    compactStep.thinking = t.value;
+    if (t.truncated) truncatedFields.push("thinking");
+  }
+  if (truncatedFields.length > 0) {
+    compactStep.truncated_fields = truncatedFields;
+  }
+  const replaceInFile = (filePath, replacementObj) => {
+    const existing = readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+    const updated = existing.map((line) => {
+      const parsed = JSON.parse(line);
+      return parsed.step_index === targetIndex ? JSON.stringify(replacementObj) : line;
+    });
+    writeFileSync(filePath, `${updated.join("\n")}\n`);
+  };
+  replaceInFile(transcriptPath, compactStep);
+  replaceInFile(fullTranscriptPath, fullStep);
+}
+
 function upsertConversationStepDb(convId, idx, status, stepType = 132) {
   const dataDir = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
   if (!dataDir) return false;
@@ -279,6 +319,7 @@ function requestClient(method, params) {
 }
 
 const PROMPT_ROUTES = [
+  ["SUBAGENT_STREAMING_AND_QUESTION", (id) => handleSubagentStreamingAndQuestion(id)],
   ["SUBAGENT_HANGING_CHILD", (id) => handleSubagentHangingChild(id)],
   ["TOOL_HANG", (id, text) => handleHangPrompt(id, text)],
   ["HANG", (id, text) => handleHangPrompt(id, text)],
@@ -1668,6 +1709,92 @@ function handleSubagentListReconcile(id) {
   respond(id, { stopReason: "end_turn" });
 }
 
+function handleSubagentStreamingAndQuestion(id) {
+  const childId = "88888888-8888-4888-8888-888888888888";
+  appendTranscriptStep(childId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nVerify deployment target\n</USER_REQUEST>",
+  });
+  // Write a non-terminal PLANNER_RESPONSE before polling runs so SubagentManager must defer it
+  // instead of marking step_index 1 seen and settling the subagent prematurely.
+  const generatingIdx = appendTranscriptStep(childId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    status: "GENERATING",
+    thinking: "Drafting initial deployment check...",
+    content: "Drafting long partial subagent response while still generating...",
+  });
+
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nSUBAGENT_STREAMING_AND_QUESTION\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "spawn-c8",
+    title: "invoke_subagent",
+    kind: "other",
+    status: "completed",
+    rawInput: {
+      TypeName: "self",
+      Role: "Deploy Coordinator",
+      Prompt: "Verify deployment target",
+    },
+    rawOutput: { conversationIds: [childId] },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "Spawned Deploy Coordinator." },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(async () => {
+    const perm = await requestClient("session/request_permission", {
+      sessionId: childId,
+      toolCall: {
+        toolCallId: "c8-ask-1",
+        title: "ask_question",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which target environment?",
+              options: ["Staging", "Production"],
+              is_multi_select: false,
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "allow", name: "Allow", kind: "allow_once" },
+        { optionId: "deny", name: "Deny", kind: "reject_once" },
+      ],
+    });
+    const chosenEnv =
+      perm?.outcome?.updatedInput?.answers?.["Which target environment?"] ?? "MISSING_ANSWER";
+    replaceTranscriptStep(childId, {
+      step_index: generatingIdx,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      thinking: "Completed deployment check.",
+      content: `SUBAGENT_FINAL_ENV:${chosenEnv}`,
+    });
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content: `<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T08:00:05Z sender=${childId} priority=HIGH content=SUBAGENT_FINAL_ENV:${chosenEnv}\n</SYSTEM_MESSAGE>`,
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      content: `ROOT_CONFIRMED_ENV:${chosenEnv}`,
+    });
+  }, 280);
+}
+
 function handleSubagentHangingChild(id) {
   appendTranscriptStep(HANGING_SUBAGENT_C7, {
     source: "USER_EXPLICIT",
@@ -1869,6 +1996,22 @@ lines.on("line", async (line) => {
   }
 
   if (method === "session/set_mode") {
+    if (process.env.AGY_TEST_SET_MODE === "unsupported") {
+      send({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: "Method not found: session/set_mode" },
+      });
+      return;
+    }
+    if (process.env.AGY_TEST_SET_MODE === "fail") {
+      send({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32603, message: "Mode switch rejected by backend" },
+      });
+      return;
+    }
     respond(id, {});
     return;
   }

@@ -16,6 +16,8 @@ import {
 import {
   cleanUserInputText,
   extractTranscriptToolResultOutput,
+  isNonTerminalStepStatus,
+  isWaitingStepStatus,
   JsonlTranscriptReader,
   parseSystemWakeupMessage,
   type SystemWakeupInfo,
@@ -44,7 +46,7 @@ interface ChildSubagentState {
   turnSeq: number;
   seenSteps: Set<number>;
   pendingToolCalls: PendingChildToolCall[];
-  activeTasks: Map<string, { persistent: boolean }>;
+  activeTasks: Map<string, { persistent: boolean; prompt?: string }>;
   forcedTerminalState: "canceled" | "failed" | null;
   settledByListSnapshot: boolean;
   sawAnyTranscriptStep: boolean;
@@ -225,7 +227,10 @@ export class SubagentManager {
 
   async replayFromRootTranscript(rootTranscriptPath: string): Promise<void> {
     const reader = new JsonlTranscriptReader(rootTranscriptPath);
-    const steps = await reader.readNewSteps({ allowTrailingWithoutNewline: true });
+    const steps = await reader.readNewSteps({
+      allowTrailingWithoutNewline: true,
+      advancePastUnfinished: true,
+    });
     this.discoverSubagentsInSteps(this.rootSessionId, steps);
     await this.flushDeferredOpens(true);
   }
@@ -414,8 +419,9 @@ export class SubagentManager {
       const steps = await child.reader.readNewSteps({ allowTrailingWithoutNewline });
       for (const step of steps) {
         if (child.seenSteps.has(step.stepIndex)) continue;
-        child.seenSteps.add(step.stepIndex);
         child.sawAnyTranscriptStep = true;
+        if (shouldDeferChildTranscriptStep(step)) continue;
+        child.seenSteps.add(step.stepIndex);
         this.applyChildStep(child, step);
       }
     })();
@@ -472,15 +478,38 @@ export class SubagentManager {
     if (wakeup.finishedTaskId || wakeup.failedTaskId) {
       const taskId = wakeup.finishedTaskId ?? wakeup.failedTaskId!;
       const task = child.activeTasks.get(taskId);
-      if (task && !task.persistent) child.activeTasks.delete(taskId);
+      if (task && (!task.persistent || Boolean(wakeup.failedTaskId))) {
+        child.activeTasks.delete(taskId);
+      }
     } else if (wakeup.sender) {
       this.applyChildWakeupSender(child, step, wakeup.sender, wakeup.message);
     }
+    this.clearChildScheduleWakeupTask(child, wakeup);
     if (wakeup.sender && this.children.has(wakeup.sender)) {
       const nested = this.children.get(wakeup.sender)!;
       void this.settleNestedAfterWakeup(nested);
     }
     this.ensureOpenedAndRunning(child);
+  }
+
+  private clearChildScheduleWakeupTask(child: ChildSubagentState, wakeup: SystemWakeupInfo): void {
+    const isScheduleWakeup =
+      wakeup.sender === "scheduler" ||
+      Boolean(wakeup.sender?.includes("schedule")) ||
+      (!wakeup.finishedTaskId && !wakeup.failedTaskId && !wakeup.sender);
+    if (!isScheduleWakeup) return;
+    let fallbackTaskId: string | null = null;
+    for (const [taskId, entry] of child.activeTasks) {
+      if (!taskId.startsWith("schedule:") || entry.persistent) continue;
+      if (entry.prompt && wakeup.message.includes(entry.prompt)) {
+        child.activeTasks.delete(taskId);
+        return;
+      }
+      fallbackTaskId ??= taskId;
+    }
+    if (fallbackTaskId) {
+      child.activeTasks.delete(fallbackTaskId);
+    }
   }
 
   private applyChildWakeupSender(
@@ -544,7 +573,11 @@ export class SubagentManager {
       return;
     }
 
-    if (step.status === "CANCELED" || step.status === "CANCELLED") {
+    if (
+      step.status === "CANCELED" ||
+      step.status === "CANCELLED" ||
+      step.status === "INTERRUPTED"
+    ) {
       this.settleChild(child, "canceled");
       return;
     }
@@ -628,7 +661,10 @@ export class SubagentManager {
     }
     const bgLaunch = extractBackgroundTaskLaunch(updatedPayload);
     if (bgLaunch) {
-      child.activeTasks.set(bgLaunch.taskId, { persistent: bgLaunch.persistent });
+      child.activeTasks.set(bgLaunch.taskId, {
+        persistent: bgLaunch.persistent,
+        ...(bgLaunch.prompt ? { prompt: bgLaunch.prompt } : {}),
+      });
     }
     const killedTask = extractBackgroundTaskKill(updatedPayload);
     if (killedTask) {
@@ -639,6 +675,7 @@ export class SubagentManager {
   private discoverSubagentsInSteps(parentSessionId: string, steps: TranscriptStep[]): void {
     const pending: AcpToolCallPayload[] = [];
     for (const step of steps) {
+      if (shouldDeferChildTranscriptStep(step)) continue;
       if (step.type === "PLANNER_RESPONSE" && step.toolCalls.length > 0) {
         step.toolCalls.forEach((call, index) => {
           const payload: AcpToolCallPayload = {
@@ -685,6 +722,16 @@ export class SubagentManager {
       this.pollTimer = null;
     }
   }
+}
+
+function shouldDeferChildTranscriptStep(step: TranscriptStep): boolean {
+  if (step.type === "PLANNER_RESPONSE" && isNonTerminalStepStatus(step.status)) {
+    return true;
+  }
+  if (step.type === "GENERIC" && isWaitingStepStatus(step.status)) {
+    return true;
+  }
+  return false;
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {

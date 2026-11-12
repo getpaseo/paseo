@@ -28,6 +28,7 @@ export interface SubagentListEntry {
 export interface BackgroundTaskInfo {
   taskId: string;
   persistent: boolean;
+  prompt?: string;
 }
 
 export function mergeAcpToolCall(
@@ -610,12 +611,31 @@ export function extractBackgroundTaskLaunch(
     const scheduleTaskMatch = output
       ? /\b([^\s"'<>]*task-\d+|schedule-[^\s"'<>]+)\b/i.exec(output)
       : null;
+    const prompt = stringField(rawInput, "Prompt");
     return {
-      taskId: scheduleTaskMatch?.[1] ?? `schedule:${tool.toolCallId}`,
+      taskId: scheduleTaskMatch?.[1] ?? canonicalScheduleTaskId(rawInput, tool.toolCallId),
       persistent,
+      ...(prompt ? { prompt } : {}),
     };
   }
   return undefined;
+}
+
+function canonicalScheduleTaskId(
+  rawInput: Record<string, unknown>,
+  fallbackToolCallId: string,
+): string {
+  const prompt = stringField(rawInput, "Prompt") ?? "";
+  const cron = stringField(rawInput, "CronExpression") ?? "";
+  const duration =
+    rawInput.DurationSeconds !== undefined && rawInput.DurationSeconds !== null
+      ? String(rawInput.DurationSeconds).trim()
+      : "";
+  const condition = stringField(rawInput, "TimerCondition") ?? "";
+  if (!prompt && !cron && !duration && !condition) {
+    return `schedule:${fallbackToolCallId}`;
+  }
+  return `schedule:${JSON.stringify([prompt, cron, duration, condition])}`;
 }
 
 export function extractBackgroundTaskKill(tool: AcpToolCallPayload): string | undefined {

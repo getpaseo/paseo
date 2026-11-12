@@ -23,6 +23,7 @@ const KILLED_SUBAGENT_C4 = "44444444-4444-4444-8444-444444444444";
 const ORPHAN_SUBAGENT_C5 = "55555555-5555-4555-8555-555555555555";
 const IDLE_LIST_SUBAGENT_C6 = "66666666-6666-4666-8666-666666666666";
 const HANGING_SUBAGENT_C7 = "77777777-7777-4777-8777-777777777777";
+const STREAMING_QUESTION_SUBAGENT_C8 = "88888888-8888-4888-8888-888888888888";
 
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
@@ -203,6 +204,109 @@ async function setupHarness(env: Record<string, string> = {}) {
     });
   }
 
+  async function assistantMessageContaining(substring: string, sessionId = "s"): Promise<string> {
+    const found = await wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === sessionId &&
+        e.item.type === "assistant_message" &&
+        e.item.text.includes(substring),
+    );
+    if (found.item.type !== "assistant_message") {
+      throw new Error("Expected assistant_message timeline item");
+    }
+    return found.item.text;
+  }
+
+  async function turnCompleted(turnId: string, sessionId = "s"): Promise<void> {
+    await wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === sessionId &&
+        e.turnId === turnId &&
+        e.state === "completed",
+    );
+  }
+
+  async function failedToolCall(toolId: string, sessionId = "s") {
+    return wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === sessionId &&
+        e.item.type === "tool_call" &&
+        e.item.id === toolId &&
+        e.item.status === "failed",
+    );
+  }
+
+  async function pendingQuestion(sessionId = "s") {
+    const found = await wait<Extract<ProviderEvent, { type: "session.permission" }>>(
+      (e) =>
+        e.type === "session.permission" &&
+        e.sessionId === sessionId &&
+        e.request.kind === "question",
+    );
+    return found.request;
+  }
+
+  async function answerQuestion(
+    permissionId: string,
+    answers: Record<string, string>,
+    sessionId = "s",
+  ): Promise<void> {
+    await connection.send({
+      type: "session.permission",
+      sessionId,
+      permissionId,
+      response: {
+        behavior: "allow",
+        updatedInput: { answers },
+      },
+    });
+    await wait((e) => e.type === "session.permission_resolved" && e.permissionId === permissionId);
+  }
+
+  async function promptSlice(text: string, sessionId = "s") {
+    const start = events.length;
+    await prompt(text, sessionId);
+    const slice = events.slice(start);
+    const timelineItems = slice
+      .filter(
+        (e): e is Extract<ProviderEvent, { type: "timeline.item" }> =>
+          e.type === "timeline.item" && e.sessionId === sessionId,
+      )
+      .map((e) => e.item);
+    return {
+      assistantTexts: timelineItems
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => item.text),
+      toolIds: timelineItems.filter((item) => item.type === "tool_call").map((item) => item.id),
+      reasoningTexts: timelineItems
+        .filter((item) => item.type === "reasoning")
+        .map((item) => item.text),
+    };
+  }
+
+  function sessionAssistantTexts(sessionId: string): string[] {
+    return events
+      .filter(
+        (e): e is Extract<ProviderEvent, { type: "timeline.item" }> =>
+          e.type === "timeline.item" && e.sessionId === sessionId,
+      )
+      .map((e) => e.item)
+      .filter((item) => item.type === "assistant_message")
+      .map((item) => item.text);
+  }
+
+  function sessionTurnStates(sessionId: string): string[] {
+    return events
+      .filter(
+        (e): e is Extract<ProviderEvent, { type: "session.turn" }> =>
+          e.type === "session.turn" && e.sessionId === sessionId,
+      )
+      .map((e) => e.state);
+  }
+
   return {
     connection,
     usage,
@@ -218,6 +322,14 @@ async function setupHarness(env: Record<string, string> = {}) {
     acpLaunchArgs,
     appliedNativeModes,
     wasSessionCanceled,
+    assistantMessageContaining,
+    turnCompleted,
+    failedToolCall,
+    pendingQuestion,
+    answerQuestion,
+    promptSlice,
+    sessionAssistantTexts,
+    sessionTurnStates,
   };
 }
 
@@ -709,20 +821,10 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     await h.prompt("BG_WAKEUP_SLOW_TOOLS_DEFAULT");
     expect(await h.canStopRuntime()).toBe(false);
 
-    await h.wait(
-      (e) =>
-        e.type === "timeline.item" &&
-        e.sessionId === "s" &&
-        e.item.type === "assistant_message" &&
-        e.item.text === "SLOW_DEFAULT_TOOLS_WAKEUP_OK",
+    expect(await h.assistantMessageContaining("SLOW_DEFAULT_TOOLS_WAKEUP_OK")).toBe(
+      "SLOW_DEFAULT_TOOLS_WAKEUP_OK",
     );
-    await h.wait(
-      (e) =>
-        e.type === "session.turn" &&
-        e.sessionId === "s" &&
-        e.turnId === "wakeup-1" &&
-        e.state === "completed",
-    );
+    await h.turnCompleted("wakeup-1");
     expect(await h.wasSessionCanceled()).toBe(false);
 
     // 2. Unpromptable post-turn shell tool genuinely stuck in CORTEX_STEP_STATUS_WAITING (9)
@@ -730,23 +832,10 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     await h.prompt("BG_WAKEUP_SHELL_TOOL");
     expect(await h.canStopRuntime()).toBe(false);
 
-    const failedTool = await h.wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
-      (e) =>
-        e.type === "timeline.item" &&
-        e.sessionId === "s" &&
-        e.item.type === "tool_call" &&
-        e.item.id === "wakeup-shell-1" &&
-        e.item.status === "failed",
-    );
+    const failedTool = await h.failedToolCall("wakeup-shell-1");
     expect(JSON.stringify(failedTool)).toContain("Full access");
 
-    await h.wait(
-      (e) =>
-        e.type === "session.turn" &&
-        e.sessionId === "s" &&
-        e.turnId === "wakeup-2" &&
-        e.state === "completed",
-    );
+    await h.turnCompleted("wakeup-2");
     expect(await h.canStopRuntime()).toBe(true);
     expect(await h.wasSessionCanceled()).toBe(true);
 
@@ -758,20 +847,10 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       changes: { mode: "accept-edits" },
     });
     await h.prompt("BG_WAKEUP_APPROVED_READ");
-    await h.wait(
-      (e) =>
-        e.type === "timeline.item" &&
-        e.sessionId === "s" &&
-        e.item.type === "assistant_message" &&
-        e.item.text === "APPROVED_READ_WAKEUP_OK",
+    expect(await h.assistantMessageContaining("APPROVED_READ_WAKEUP_OK")).toBe(
+      "APPROVED_READ_WAKEUP_OK",
     );
-    await h.wait(
-      (e) =>
-        e.type === "session.turn" &&
-        e.sessionId === "s" &&
-        e.turnId === "wakeup-3" &&
-        e.state === "completed",
-    );
+    await h.turnCompleted("wakeup-3");
   });
 
   it("settles killed, orphaned, list-idle, and manually interrupted subagents instead of leaving them stuck running", async () => {
@@ -852,111 +931,72 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     // 1. Trigger a post-turn wakeup whose reply (> 5000 chars) is truncated in transcript.jsonl
     //    and whose tool_calls omit `id` (matching real agy).
     await h.prompt("BG_WAKEUP_LONG_TRUNCATED");
-    const liveWakeupMsg = await h.wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
-      (e) =>
-        e.type === "timeline.item" &&
-        e.sessionId === "s" &&
-        e.item.type === "assistant_message" &&
-        e.item.text.includes("【LONG_WAKEUP_TAIL_ANCHOR】"),
-    );
-    // Live wakeup bubble must contain the untruncated middle sentinel from transcript_full.jsonl!
-    expect(liveWakeupMsg.item.type === "assistant_message" && liveWakeupMsg.item.text).toContain(
-      "MIDDLE_UNTRUNCATED_SENTINEL_998877",
-    );
-    expect(
-      liveWakeupMsg.item.type === "assistant_message" &&
-        liveWakeupMsg.item.text.includes("<truncated"),
-    ).toBe(false);
+    const liveWakeupText = await h.assistantMessageContaining("【LONG_WAKEUP_TAIL_ANCHOR】");
+    expect(liveWakeupText).toContain("MIDDLE_UNTRUNCATED_SENTINEL_998877");
+    expect(liveWakeupText).not.toContain("<truncated");
 
-    await h.wait(
-      (e) =>
-        e.type === "session.turn" &&
-        e.sessionId === "s" &&
-        e.turnId === "wakeup-1" &&
-        e.state === "completed",
-    );
+    await h.turnCompleted("wakeup-1");
+    expect(await h.canStopRuntime()).toBe(true);
 
     // 2. Follow-up starting with a filesystem path (/workspace/foo.ts ...) must NOT be misclassified
-    //    as a slash command and must drop ALL pre-echo catch-up items (mismatched call_... IDs,
-    //    trailing "\n\n\n" thought chunks, and the 5000-char wakeup message).
-    const beforeFollowup = h.events.length;
-    await h.prompt("/workspace/foo.ts FOLLOWUP_AFTER_LONG_WAKEUP");
-    const followupSlice = h.events.slice(beforeFollowup);
-
-    expect(
-      followupSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "assistant_message" &&
-          e.item.text.includes("LONG_WAKEUP_TAIL_ANCHOR"),
-      ),
-    ).toBe(false);
-    expect(
-      followupSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "tool_call" &&
-          (e.item.id === "call_fg_schedule_777" || e.item.id === "call_real_acp_wakeup_cmd_888"),
-      ),
-    ).toBe(false);
-    expect(
-      followupSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "reasoning" &&
-          e.item.text.includes("Synthesizing detailed storage comparison"),
-      ),
-    ).toBe(false);
-    expect(
-      followupSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "assistant_message" &&
-          e.item.text === "CLEAN_TURN2_AFTER_LONG_WAKEUP",
-      ),
-    ).toBe(true);
+    //    as a slash command and must drop ALL pre-echo catch-up items.
+    const followup = await h.promptSlice("/workspace/foo.ts FOLLOWUP_AFTER_LONG_WAKEUP");
+    expect(followup.assistantTexts).toEqual(["CLEAN_TURN2_AFTER_LONG_WAKEUP"]);
+    expect(followup.toolIds).toEqual([]);
+    expect(followup.reasoningTexts).toEqual(["Answering user follow-up cleanly.\n\n\n"]);
 
     // 3. Slash command (/compact-after-long, which emits NO user_message_chunk) after a long wakeup
     //    also suppresses mismatched tool calls, trailing "\n\n\n" thought chunks, and full wakeup text.
     await h.prompt("BG_WAKEUP_LONG_TRUNCATED");
-    await h.wait(
-      (e) =>
-        e.type === "session.turn" &&
-        e.sessionId === "s" &&
-        e.turnId === "wakeup-2" &&
-        e.state === "completed",
+    await h.turnCompleted("wakeup-2");
+    expect(await h.canStopRuntime()).toBe(true);
+
+    const slash = await h.promptSlice("/compact-after-long");
+    expect(slash.assistantTexts).toEqual(["Compacted long wakeup history cleanly."]);
+    expect(slash.toolIds).toEqual([]);
+  });
+
+  it("defers non-terminal subagent steps and bridges subagent ask_question tool permissions even in full-access mode", async () => {
+    const h = await setupHarness();
+    await h.open(undefined, "s", "full-access");
+
+    await h.prompt("SUBAGENT_STREAMING_AND_QUESTION");
+    const question = await h.pendingQuestion("s");
+    expect(question).toMatchObject({
+      name: "ask_question",
+      kind: "question",
+      input: {
+        questions: [
+          {
+            id: "q0",
+            header: "Question",
+            question: "Which target environment?",
+            options: [{ label: "Staging" }, { label: "Production" }],
+            multiSelect: false,
+            allowOther: true,
+            allowEmpty: false,
+          },
+        ],
+      },
+    });
+
+    expect(h.sessionAssistantTexts(STREAMING_QUESTION_SUBAGENT_C8)).toEqual([]);
+    expect(h.sessionTurnStates(STREAMING_QUESTION_SUBAGENT_C8)).toEqual(["started"]);
+    expect(await h.canStopRuntime()).toBe(false);
+
+    await h.answerQuestion(question.id, { Question: "Production" });
+
+    expect(
+      await h.assistantMessageContaining(
+        "SUBAGENT_FINAL_ENV:Production",
+        STREAMING_QUESTION_SUBAGENT_C8,
+      ),
+    ).toBe("SUBAGENT_FINAL_ENV:Production");
+    expect(await h.assistantMessageContaining("ROOT_CONFIRMED_ENV:Production", "s")).toBe(
+      "ROOT_CONFIRMED_ENV:Production",
     );
-
-    const beforeSlash = h.events.length;
-    await h.prompt("/compact-after-long");
-    const slashSlice = h.events.slice(beforeSlash);
-
-    expect(
-      slashSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "assistant_message" &&
-          e.item.text.includes("LONG_WAKEUP_TAIL_ANCHOR"),
-      ),
-    ).toBe(false);
-    expect(
-      slashSlice.some(
-        (e) => e.type === "timeline.item" && e.sessionId === "s" && e.item.type === "tool_call",
-      ),
-    ).toBe(false);
-    expect(
-      slashSlice.some(
-        (e) =>
-          e.type === "timeline.item" &&
-          e.sessionId === "s" &&
-          e.item.type === "assistant_message" &&
-          e.item.text === "Compacted long wakeup history cleanly.",
-      ),
-    ).toBe(true);
+    await h.turnCompleted("wakeup-1", "s");
+    expect(h.sessionTurnStates(STREAMING_QUESTION_SUBAGENT_C8)).toEqual(["started", "completed"]);
+    expect(await h.canStopRuntime()).toBe(true);
   });
 });
