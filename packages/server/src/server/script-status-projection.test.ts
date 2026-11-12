@@ -13,6 +13,7 @@ import { WorkspaceScriptPayloadSchema } from "@getpaseo/protocol/messages";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { readPaseoConfig } from "../utils/worktree.js";
+import { readPaseoConfigForEdit, writePaseoConfigForEdit } from "../utils/paseo-config-file.js";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { createTestLogger } from "../test-utils/test-logger.js";
 
@@ -501,6 +502,32 @@ describe("script-status-projection", () => {
     } finally {
       vi.useRealTimers();
       rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the saved scripts when the first check after an in-app save is late", async () => {
+    const workspace = createWorkspaceRepo({
+      paseoConfig: { scripts: { api: { type: "service", command: "npm run dev" } } },
+    });
+    const logger = createTestLogger();
+    try {
+      const current = await readPaseoConfigForEdit(workspace.repoDir);
+      if (!current.ok) throw new Error("expected a readable paseo.json");
+      const saved = await writePaseoConfigForEdit({
+        repoRoot: workspace.repoDir,
+        config: { scripts: { web: { type: "service", command: "npm run web" } } },
+        expectedRevision: current.revision,
+      });
+      expect(saved.ok).toBe(true);
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const listing = readPaseoConfigForProjection(workspace.repoDir, logger);
+      vi.advanceTimersByTime(5_000);
+
+      expect(Object.keys((await listing)?.scripts ?? {})).toEqual(["web"]);
+    } finally {
+      vi.useRealTimers();
+      workspace.cleanup();
     }
   });
 

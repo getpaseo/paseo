@@ -289,7 +289,8 @@ class ProjectConfigOwner {
         // Serialized against daemon edits. External writers still have the existing
         // optimistic stat/rename race; revision tokens remain mtime + size.
         await rename(tempPath, resolvePaseoConfigPath(root));
-        this.snapshots.delete(root);
+        // Remember what was saved, so a late check right after the save still has a config to show.
+        await this.load(root).catch(() => this.snapshots.delete(root));
         return { ok: true, config: parsed.data, revision: savedRevision };
       } catch {
         return { ok: false, error: { code: "write_failed" } };
