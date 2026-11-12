@@ -16,6 +16,7 @@ import {
   pinWorkspaceFromSidebar,
   scrollWorkspaceList,
   sweepPointerAcrossWorkspaceRows,
+  watchWorkspaceHoverCard,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -554,9 +555,12 @@ test.describe("Sidebar workspace rows on a touch screen", () => {
       await gotoAppShell(page);
       await waitForSidebarProject(page, path.basename(workspace.repoPath));
       const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      const hoverCard = await watchWorkspaceHoverCard(page);
       await row.tap();
       await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
       await expectWorkspaceHoverCardClosed(page);
+      // A card that opens during the tap is what makes iPad Safari drop the tap.
+      expect(await hoverCard.hasOpened()).toBe(false);
     } finally {
       await workspace.cleanup();
     }

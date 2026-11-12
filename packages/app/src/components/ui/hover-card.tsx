@@ -12,7 +12,14 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
+import {
+  Dimensions,
+  View,
+  type PointerEvent as ViewPointerEvent,
+  type Role,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { Portal } from "@gorhom/portal";
@@ -280,15 +287,6 @@ function WebHoverCard({
   );
 }
 
-interface PointerLikeEvent {
-  nativeEvent?: { pointerType?: string };
-  pointerType?: string;
-}
-
-function isTouch(event: PointerLikeEvent): boolean {
-  return (event.nativeEvent?.pointerType ?? event.pointerType) === "touch";
-}
-
 export function HoverCardTrigger({
   children,
   focusable = false,
@@ -307,8 +305,8 @@ export function HoverCardTrigger({
   const ctx = useContext(HoverCardContext);
   const openNow = ctx?.openNow;
   const pointerEntered = useCallback(
-    (event: PointerLikeEvent) => {
-      if (!(ignoreTouch && isTouch(event))) openNow?.();
+    (event: ViewPointerEvent) => {
+      if (!(ignoreTouch && event.nativeEvent.pointerType === "touch")) openNow?.();
     },
     [ignoreTouch, openNow],
   );
