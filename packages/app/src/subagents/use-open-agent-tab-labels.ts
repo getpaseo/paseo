@@ -1,7 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
-import { useEffect, useRef, useState } from "react";
-import { useSessionStore } from "@/stores/session-store";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/shallow";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
@@ -16,9 +17,19 @@ export function useOpenAgentTabLabels(input: {
   tabs: WorkspaceTab[];
   enabled: boolean;
 }): void {
-  const agents = useSessionStore((state) => state.sessions[input.serverId]?.agents ?? null);
-  const agentDetails = useSessionStore(
-    (state) => state.sessions[input.serverId]?.agentDetails ?? null,
+  const openAgentIds = useMemo(
+    () => input.tabs.flatMap((tab) => (tab.target.kind === "agent" ? [tab.target.agentId] : [])),
+    [input.tabs],
+  );
+  // Only the agents with open tabs can need a label. Subscribing to the whole agent map would
+  // re-render the workspace screen on every update to any agent on the host.
+  const openAgents = useSessionStore(
+    useShallow((state): (Agent | null)[] => {
+      const session = state.sessions[input.serverId];
+      return openAgentIds.map(
+        (agentId) => session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null,
+      );
+    }),
   );
   const pendingAgentIdsRef = useRef(new Set<string>());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,15 +50,13 @@ export function useOpenAgentTabLabels(input: {
       return;
     }
 
-    const openAgentIds = new Set(
-      input.tabs.flatMap((tab) => (tab.target.kind === "agent" ? [tab.target.agentId] : [])),
-    );
+    const agentsById = new Map(openAgentIds.map((agentId, index) => [agentId, openAgents[index]]));
     for (const agentId of pendingAgentIdsRef.current) {
-      if (!openAgentIds.has(agentId)) {
+      if (!agentsById.has(agentId)) {
         pendingAgentIdsRef.current.delete(agentId);
       }
     }
-    if (openAgentIds.size === 0) {
+    if (agentsById.size === 0) {
       return;
     }
 
@@ -57,7 +66,7 @@ export function useOpenAgentTabLabels(input: {
         const label = getOpenAgentTabLabel(clientId);
         const agentIds = getAgentTabsNeedingOpenLabel({
           tabs: input.tabs,
-          getAgent: (agentId) => agents?.get(agentId) ?? agentDetails?.get(agentId),
+          getAgent: (agentId) => agentsById.get(agentId),
           label,
           pendingAgentIds: pendingAgentIdsRef.current,
         });
@@ -82,5 +91,5 @@ export function useOpenAgentTabLabels(input: {
         console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
       }
     })();
-  }, [agentDetails, agents, input.client, input.enabled, input.tabs, retryVersion]);
+  }, [input.client, input.enabled, input.tabs, openAgentIds, openAgents, retryVersion]);
 }
