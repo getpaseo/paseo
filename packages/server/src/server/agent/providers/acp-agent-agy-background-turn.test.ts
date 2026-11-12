@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -32,7 +32,6 @@ interface SessionHarness {
   cancel: ReturnType<typeof vi.fn>;
   answer(response: PromptResult): Promise<void>;
   writeTranscript(rows: unknown[], fullRows?: unknown[]): void;
-  writeStepOutput(stepIndex: number, content: string, mtimeMs?: number): void;
 }
 
 async function flushAsyncIo(): Promise<void> {
@@ -108,7 +107,6 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
         },
         antigravityBrainDir: brainDir,
         antigravityPollIntervalMs: 100,
-        antigravityTaskOutputIdleMs: 1_000,
         antigravitySubscribeCatchupMs: 50,
       },
     );
@@ -165,26 +163,10 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
           );
         }
       },
-      writeStepOutput: (stepIndex, content, mtimeMs) => {
-        const stepDir = path.join(
-          brainDir,
-          sessionId,
-          ".system_generated",
-          "steps",
-          String(stepIndex),
-        );
-        mkdirSync(stepDir, { recursive: true });
-        const outFile = path.join(stepDir, "output.txt");
-        writeFileSync(outFile, content, "utf8");
-        if (mtimeMs !== undefined) {
-          const timestampSec = mtimeMs / 1_000;
-          utimesSync(outFile, timestampSec, timestampSec);
-        }
-      },
     };
   }
 
-  test("plain end_turn without background work completes immediately", async () => {
+  test("plain end_turn without background work completes immediately and does not repeat foreground replies", async () => {
     const { session, events, answer, writeTranscript } = createHarness();
     writeTranscript([
       { step_index: 1, type: "USER_INPUT", status: "DONE", content: "hello" },
@@ -198,6 +180,10 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     ]);
 
     await session.startTurn("hello");
+    // Subscriber joins while session/prompt is still in flight.
+    session.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(50);
+    await flushAsyncIo();
     await answer({ stopReason: "end_turn" });
 
     expect(summarizeEvents(events)).toEqual(["turn_completed"]);
@@ -406,7 +392,18 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
         messageId: "replayed-msg",
         content: {
           type: "text",
-          text: "Deployment and live health verification passed.",
+          text: "Deployment and ",
+        },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-agy-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "replayed-msg",
+        content: {
+          type: "text",
+          text: "live health verification passed.",
         },
       } as SessionUpdate,
     });
@@ -423,8 +420,14 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(summarizeEvents(events)).toEqual(["assistant:Ready for the next step."]);
   });
 
-  test("background subagent holds end_turn until its SYSTEM_MESSAGE arrives", async () => {
+  test("background subagent holds end_turn across >80 intermediate steps until its SYSTEM_MESSAGE arrives", async () => {
     const { session, events, answer, writeTranscript } = createHarness();
+    const intermediateSteps = Array.from({ length: 85 }, (_, offset) => ({
+      step_index: 4 + offset,
+      type: "GENERIC",
+      status: "DONE",
+      content: `intermediate tool result ${offset + 1}`,
+    }));
     const baseRows = [
       { step_index: 1, type: "USER_INPUT", status: "DONE", content: "audit with subagent" },
       {
@@ -440,8 +443,9 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
         content:
           'Created the following subagent:\n{"conversationId": "subagent-uuid-42", "role": "Auditor"}',
       },
+      ...intermediateSteps,
       {
-        step_index: 4,
+        step_index: 89,
         type: "PLANNER_RESPONSE",
         status: "DONE",
         content: "Waiting for the auditor subagent.",
@@ -459,7 +463,7 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     writeTranscript([
       ...baseRows,
       {
-        step_index: 5,
+        step_index: 90,
         type: "SYSTEM_MESSAGE",
         status: "DONE",
         created_at: "2026-11-12T11:00:05.100Z",
@@ -467,7 +471,7 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
           "[Message] timestamp=2026-11-12T11:00:05Z sender=subagent-uuid-42 content=Audit complete: 0 issues.",
       },
       {
-        step_index: 6,
+        step_index: 91,
         type: "PLANNER_RESPONSE",
         status: "DONE",
         content: "Auditor subagent finished with 0 issues.",
@@ -485,21 +489,21 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(await session.canStopRuntime()).toBe(true);
   });
 
-  test("stale background task output older than antigravityTaskOutputIdleMs releases the turn", async () => {
-    const { session, events, answer, writeTranscript, writeStepOutput } = createHarness();
-    writeTranscript([
+  test("cancelled background task releases the held turn when manage_task reports killed", async () => {
+    const { session, events, answer, writeTranscript } = createHarness();
+    const baseRows = [
       { step_index: 1, type: "USER_INPUT", status: "DONE", content: "run check" },
       {
         step_index: 2,
         type: "PLANNER_RESPONSE",
         status: "DONE",
-        tool_calls: [{ id: "call-stale", name: "run_command", args: '{"CommandLine":"sleep 5"}' }],
+        tool_calls: [{ id: "call-quiet", name: "run_command", args: '{"CommandLine":"sleep 60"}' }],
       },
       {
         step_index: 3,
         type: "GENERIC",
         status: "DONE",
-        content: "Tool is running as a background task with task id: session-agy-1/task-stale",
+        content: "Tool is running as a background task with task id: session-agy-1/task-quiet",
       },
       {
         step_index: 4,
@@ -508,17 +512,43 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
         content: "Waiting.",
         tool_calls: [],
       },
-    ]);
-    writeStepOutput(3, "finished silently", Date.now() - 5_000);
+    ];
+    writeTranscript(baseRows);
 
     await session.startTurn("run check");
     await answer({ stopReason: "end_turn" });
+
+    // Quiet task stays held until completion or cancellation evidence appears in transcript.
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    writeTranscript([
+      ...baseRows,
+      null,
+      { step_index: 5, type: "GENERIC", status: "DONE", content: 12345 },
+      {
+        step_index: 6,
+        type: "GENERIC",
+        status: "DONE",
+        content: "Task session-agy-1/task-quiet was killed.",
+      },
+      {
+        step_index: 7,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Task cancelled.",
+        tool_calls: [],
+      },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
 
     expect(summarizeEvents(events)).toEqual(["turn_completed"]);
     expect(await session.canStopRuntime()).toBe(true);
   });
 
-  test("subscribe catch-up flushes wakeup steps when historyPending was left un-drained", async () => {
+  test("subscribe catch-up keeps polling reopened busy chats and streams wakeup when it finishes", async () => {
     const { session, writeTranscript } = createHarness({ subscribeOnInit: false });
     const internals = asInternals<SessionInternals>(session);
     internals.historyPending = true;
@@ -528,31 +558,29 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
       messageId: "stale-1",
     });
 
-    writeTranscript([
+    const runningRows = [
       { step_index: 1, type: "USER_INPUT", status: "DONE", content: "ship it" },
       {
         step_index: 2,
         type: "PLANNER_RESPONSE",
         status: "DONE",
-        content: "Starting background check.",
-        tool_calls: [],
+        tool_calls: [{ id: "call-ship", name: "run_command", args: '{"CommandLine":"pnpm ship"}' }],
       },
       {
         step_index: 3,
-        type: "SYSTEM_MESSAGE",
+        type: "GENERIC",
         status: "DONE",
-        created_at: "2026-11-12T10:40:00.000Z",
-        content: "[Message] timestamp=2026-11-12T10:40:00Z sender=task-1 content=Done",
+        content: "Tool is running as a background task with task id: session-agy-1/task-ship",
       },
       {
         step_index: 4,
         type: "PLANNER_RESPONSE",
         status: "DONE",
-        thinking: "All checks green.",
-        content: "Shipped and verified.",
+        content: "Starting background check.",
         tool_calls: [],
       },
-    ]);
+    ];
+    writeTranscript(runningRows);
 
     const lateSubscriberEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => lateSubscriberEvents.push(event));
@@ -561,6 +589,32 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     await flushAsyncIo();
 
     expect(internals.historyPending).toBe(false);
+    expect(summarizeEvents(lateSubscriberEvents)).toEqual([]);
+
+    // Wakeup finishes on the next poll while no foreground prompt is active.
+    writeTranscript([
+      ...runningRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-12T10:40:00.000Z",
+        content:
+          "[Message] timestamp=2026-11-12T10:40:00Z sender=session-agy-1/task-ship content=Done",
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        thinking: "All checks green.",
+        content: "Shipped and verified.",
+        tool_calls: [],
+      },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
     expect(summarizeEvents(lateSubscriberEvents)).toEqual([
       "reasoning:All checks green.",
       "assistant:Shipped and verified.",

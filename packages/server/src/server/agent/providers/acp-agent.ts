@@ -1,4 +1,5 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { z } from "zod";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
@@ -352,27 +353,37 @@ const COMMAND_INVENTORY_QUIET_MS = 600;
 const COMMAND_INVENTORY_POLL_MS = 25;
 
 const ANTIGRAVITY_BACKGROUND_POLL_MS = 1_500;
-const ANTIGRAVITY_TASK_OUTPUT_IDLE_MS = 15_000;
 const ANTIGRAVITY_SUBSCRIBE_CATCHUP_MS = 200;
-const ANTIGRAVITY_RECENT_STEP_WINDOW = 80;
 const ANTIGRAVITY_WAKEUP_TIMESTAMP_SKEW_MS = 1_500;
 
-interface AntigravityTranscriptToolCall {
-  id?: string;
-  name?: string;
-  args?: string | Record<string, unknown>;
-}
+const AntigravityTranscriptToolCallSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z.string().optional(),
+    args: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+  })
+  .passthrough();
 
-interface AntigravityTranscriptRow {
-  step_index?: number;
-  type?: string;
-  status?: string;
-  created_at?: string;
-  thinking?: string;
-  content?: string;
-  tool_calls?: AntigravityTranscriptToolCall[];
-  truncated_fields?: string[];
-}
+const AntigravityTranscriptRowSchema = z
+  .object({
+    step_index: z.number().int().nonnegative().optional(),
+    type: z.string().optional(),
+    status: z.string().optional(),
+    created_at: z.string().optional(),
+    thinking: z.string().optional(),
+    content: z.string().optional(),
+    tool_calls: z.array(AntigravityTranscriptToolCallSchema).optional(),
+    truncated_fields: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+type AntigravityTranscriptToolCall = z.infer<typeof AntigravityTranscriptToolCallSchema>;
+type AntigravityTranscriptRow = z.infer<typeof AntigravityTranscriptRowSchema>;
+
+type AntigravityReplayItem =
+  | { kind: "thought"; remainingText: string }
+  | { kind: "message"; remainingText: string }
+  | { kind: "tool_call"; title: string; toolKind: ToolKind };
 
 function isAntigravityCommand(command: readonly string[] | undefined): boolean {
   const binary = command?.[0];
@@ -397,15 +408,19 @@ function parseAntigravityToolArgs(
   }
   try {
     const parsed: unknown = JSON.parse(rawArgs);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
+    return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
 
-function formatAntigravityToolTitle(name: string, args: Record<string, unknown>): string {
+function formatAntigravityToolTitle({
+  name,
+  args,
+}: {
+  name: string;
+  args: Record<string, unknown>;
+}): string {
   const label =
     (typeof args.toolSummary === "string" && args.toolSummary) ||
     (typeof args.CommandLine === "string" && args.CommandLine) ||
@@ -444,10 +459,13 @@ function hasAntigravityDaemonToolCall(
   });
 }
 
-function isAntigravityReactiveWakeup(
-  row: AntigravityTranscriptRow,
-  previousRow: AntigravityTranscriptRow | undefined,
-): boolean {
+function isAntigravityReactiveWakeup({
+  row,
+  previousRow,
+}: {
+  row: AntigravityTranscriptRow;
+  previousRow: AntigravityTranscriptRow | undefined;
+}): boolean {
   if (row.type !== "SYSTEM_MESSAGE") {
     return false;
   }
@@ -472,7 +490,8 @@ function parseAntigravityTranscriptJsonl(raw: string): AntigravityTranscriptRow[
   }
   return trimmed.split("\n").flatMap((line) => {
     try {
-      return [JSON.parse(line) as AntigravityTranscriptRow];
+      const parsed = AntigravityTranscriptRowSchema.safeParse(JSON.parse(line));
+      return parsed.success ? [parsed.data] : [];
     } catch {
       return [];
     }
@@ -485,8 +504,11 @@ async function readAntigravityTranscriptRows(
   try {
     const raw = await fs.readFile(path.join(logsDir, "transcript.jsonl"), "utf8");
     return parseAntigravityTranscriptJsonl(raw);
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -501,14 +523,21 @@ async function readAntigravityFullRowsMap(
         map.set(row.step_index, row);
       }
     }
-  } catch {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
   return map;
 }
 
-function resolveAntigravityFullRow(
-  row: AntigravityTranscriptRow,
-  fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null,
-): AntigravityTranscriptRow {
+function resolveAntigravityFullRow({
+  row,
+  fullRows,
+}: {
+  row: AntigravityTranscriptRow;
+  fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null;
+}): AntigravityTranscriptRow {
   if (
     !fullRows ||
     !Array.isArray(row.truncated_fields) ||
@@ -529,37 +558,33 @@ function findLastAntigravityUserIndex(rows: readonly AntigravityTranscriptRow[])
   return -1;
 }
 
-function findFirstAntigravityWakeupIndex(
-  rows: readonly AntigravityTranscriptRow[],
-  lastUserIndex: number,
-): number {
+function findFirstAntigravityWakeupIndex({
+  rows,
+  lastUserIndex,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  lastUserIndex: number;
+}): number {
   if (lastUserIndex < 0) {
     return -1;
   }
   for (let index = lastUserIndex + 1; index < rows.length; index += 1) {
-    if (isAntigravityReactiveWakeup(rows[index]!, rows[index - 1])) {
+    if (isAntigravityReactiveWakeup({ row: rows[index]!, previousRow: rows[index - 1] })) {
       return index;
     }
   }
   return -1;
 }
 
-function computeInitialAntigravitySyncedStepIndex(
-  rows: readonly AntigravityTranscriptRow[],
-  firstWakeupIndex: number,
-  canBackfillFromWakeup: boolean,
-): number {
-  if (canBackfillFromWakeup && firstWakeupIndex >= 0) {
-    return (rows[firstWakeupIndex]?.step_index ?? 0) - 1;
-  }
-  return rows[rows.length - 1]?.step_index ?? 0;
-}
-
-function hasTruncatedAntigravityStepsAfter(
-  rows: readonly AntigravityTranscriptRow[],
-  scanStart: number,
-  syncedStepIndex: number,
-): boolean {
+function hasTruncatedAntigravityStepsAfter({
+  rows,
+  scanStart,
+  syncedStepIndex,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  scanStart: number;
+  syncedStepIndex: number;
+}): boolean {
   return rows
     .slice(scanStart)
     .some(
@@ -570,12 +595,17 @@ function hasTruncatedAntigravityStepsAfter(
     );
 }
 
-function collectAntigravityToolResults(
-  rows: readonly AntigravityTranscriptRow[],
-  startIndex: number,
-  expectedCount: number,
-  fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null,
-): AntigravityTranscriptRow[] | null {
+function collectAntigravityToolResults({
+  rows,
+  startIndex,
+  expectedCount,
+  fullRows,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  startIndex: number;
+  expectedCount: number;
+  fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null;
+}): AntigravityTranscriptRow[] | null {
   const results: AntigravityTranscriptRow[] = [];
   for (
     let nextIndex = startIndex;
@@ -584,7 +614,7 @@ function collectAntigravityToolResults(
   ) {
     const nextRow = rows[nextIndex]!;
     if (nextRow.type === "GENERIC") {
-      results.push(resolveAntigravityFullRow(nextRow, fullRows));
+      results.push(resolveAntigravityFullRow({ row: nextRow, fullRows }));
     } else if (
       nextRow.type === "PLANNER_RESPONSE" ||
       nextRow.type === "SYSTEM_MESSAGE" ||
@@ -602,12 +632,14 @@ function collectAntigravityToolResults(
   return results;
 }
 
-function isParentPlannerStepDaemon(
-  rows: readonly AntigravityTranscriptRow[],
-  index: number,
-  windowStart: number,
-): boolean {
-  for (let parentIndex = index; parentIndex >= windowStart; parentIndex -= 1) {
+function isParentPlannerStepDaemon({
+  rows,
+  index,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  index: number;
+}): boolean {
+  for (let parentIndex = index; parentIndex >= 0; parentIndex -= 1) {
     if (rows[parentIndex]?.type === "PLANNER_RESPONSE") {
       return hasAntigravityDaemonToolCall(rows[parentIndex]?.tool_calls);
     }
@@ -615,12 +647,17 @@ function isParentPlannerStepDaemon(
   return false;
 }
 
-function isEntitySettledInSubsequentRows(
-  rows: readonly AntigravityTranscriptRow[],
-  startIndex: number,
-  entityId: string,
-  cancelPattern: RegExp,
-): boolean {
+function isEntitySettledInSubsequentRows({
+  rows,
+  startIndex,
+  entityId,
+  cancelPattern,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  startIndex: number;
+  entityId: string;
+  cancelPattern: RegExp;
+}): boolean {
   for (let nextIndex = startIndex; nextIndex < rows.length; nextIndex += 1) {
     const nextRow = rows[nextIndex]!;
     const nextContent = nextRow.content ?? "";
@@ -637,47 +674,33 @@ function isEntitySettledInSubsequentRows(
   return false;
 }
 
-async function isAntigravityBackgroundTaskRowActive(
-  rows: readonly AntigravityTranscriptRow[],
-  index: number,
-  windowStart: number,
-  sessionBrainDir: string,
-  idleMs: number,
-): Promise<boolean> {
+function isAntigravityBackgroundTaskRowActive({
+  rows,
+  index,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  index: number;
+}): boolean {
   const row = rows[index]!;
   const taskMatch = (row.content ?? "").match(/background task with task id:\s*([^\s"\\]+)/u);
-  if (!taskMatch || isParentPlannerStepDaemon(rows, index, windowStart)) {
+  if (!taskMatch || isParentPlannerStepDaemon({ rows, index })) {
     return false;
   }
-  const settledInTranscript = isEntitySettledInSubsequentRows(
+  return !isEntitySettledInSubsequentRows({
     rows,
-    index + 1,
-    taskMatch[1]!,
-    /killed|cancelled|terminated|not found/iu,
-  );
-  if (settledInTranscript) {
-    return false;
-  }
-  const outputPath = path.join(
-    sessionBrainDir,
-    ".system_generated",
-    "steps",
-    String(row.step_index ?? index),
-    "output.txt",
-  );
-  try {
-    const stat = await fs.stat(outputPath);
-    if (Date.now() - stat.mtimeMs > idleMs) {
-      return false;
-    }
-  } catch {}
-  return true;
+    startIndex: index + 1,
+    entityId: taskMatch[1]!,
+    cancelPattern: /killed|cancelled|terminated|not found|completed|finished|stopped/iu,
+  });
 }
 
-function isAntigravitySubagentRowActive(
-  rows: readonly AntigravityTranscriptRow[],
-  index: number,
-): boolean {
+function isAntigravitySubagentRowActive({
+  rows,
+  index,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  index: number;
+}): boolean {
   const content = rows[index]?.content ?? "";
   if (!content.includes("Created the following subagent:")) {
     return false;
@@ -686,47 +709,72 @@ function isAntigravitySubagentRowActive(
   if (!subagentMatch) {
     return false;
   }
-  return !isEntitySettledInSubsequentRows(
+  return !isEntitySettledInSubsequentRows({
     rows,
-    index + 1,
-    subagentMatch[1]!,
-    /killed|terminated/iu,
-  );
+    startIndex: index + 1,
+    entityId: subagentMatch[1]!,
+    cancelPattern: /killed|terminated/iu,
+  });
 }
 
-async function hasActiveAntigravityBackgroundWork(
-  rows: readonly AntigravityTranscriptRow[],
-  lastUserIndex: number,
-  syncedStepIndex: number,
-  sessionBrainDir: string,
-  idleMs: number,
-): Promise<boolean> {
+function hasIncompletePlannerToolCalls({
+  rows,
+  lastUserIndex,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  lastUserIndex: number;
+}): boolean {
+  for (let index = lastUserIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (row.type !== "PLANNER_RESPONSE") {
+      continue;
+    }
+    if (row.status !== "DONE") {
+      return true;
+    }
+    const expectedCount = Array.isArray(row.tool_calls) ? row.tool_calls.length : 0;
+    if (
+      expectedCount > 0 &&
+      !collectAntigravityToolResults({
+        rows,
+        startIndex: index + 1,
+        expectedCount,
+        fullRows: null,
+      })
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasActiveAntigravityBackgroundWork({
+  rows,
+  lastUserIndex,
+}: {
+  rows: readonly AntigravityTranscriptRow[];
+  lastUserIndex: number;
+}): boolean {
   if (lastUserIndex < 0) {
     return false;
   }
   const lastRow = rows[rows.length - 1];
-  const hasPendingPostWakeupSteps =
-    (lastRow?.step_index ?? 0) > syncedStepIndex ||
-    (rows.length > lastUserIndex + 1 &&
-      (lastRow?.type !== "PLANNER_RESPONSE" ||
-        lastRow?.status !== "DONE" ||
-        (Array.isArray(lastRow.tool_calls) && lastRow.tool_calls.length > 0)));
-  if (hasPendingPostWakeupSteps) {
+  const hasIncompleteFinalStep =
+    rows.length > lastUserIndex + 1 &&
+    (lastRow?.type !== "PLANNER_RESPONSE" ||
+      lastRow?.status !== "DONE" ||
+      (Array.isArray(lastRow.tool_calls) && lastRow.tool_calls.length > 0));
+  if (hasIncompleteFinalStep || hasIncompletePlannerToolCalls({ rows, lastUserIndex })) {
     return true;
   }
-  const windowStart = Math.max(0, rows.length - ANTIGRAVITY_RECENT_STEP_WINDOW);
-  for (let index = windowStart; index < rows.length; index += 1) {
+  for (let index = 0; index < rows.length; index += 1) {
     if (rows[index]?.type !== "GENERIC") {
       continue;
     }
-    const taskActive = await isAntigravityBackgroundTaskRowActive(
-      rows,
-      index,
-      windowStart,
-      sessionBrainDir,
-      idleMs,
-    );
-    if (taskActive || isAntigravitySubagentRowActive(rows, index)) {
+    if (
+      isAntigravityBackgroundTaskRowActive({ rows, index }) ||
+      isAntigravitySubagentRowActive({ rows, index })
+    ) {
       return true;
     }
   }
@@ -934,7 +982,6 @@ interface ACPAgentSessionOptions {
   terminateProcess?: ProcessTerminator;
   antigravityBrainDir?: string;
   antigravityPollIntervalMs?: number;
-  antigravityTaskOutputIdleMs?: number;
   antigravitySubscribeCatchupMs?: number;
 }
 
@@ -2203,15 +2250,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly terminateProcess: ProcessTerminator;
   private readonly antigravityBrainDir: string;
   private readonly antigravityPollIntervalMs: number;
-  private readonly antigravityTaskOutputIdleMs: number;
   private readonly antigravitySubscribeCatchupMs: number;
   private pendingAntigravityResponse: { response: PromptResponse; turnId: string } | null = null;
   private antigravityPollTimer: ReturnType<typeof setTimeout> | null = null;
   private antigravityCatchupTimer: ReturnType<typeof setTimeout> | null = null;
   private antigravityBackgroundBusy = false;
   private antigravitySyncedStepIndex: number | undefined = undefined;
-  private readonly antigravitySynthesizedChunks = new Set<string>();
-  private antigravitySynthesizedToolCallCount = 0;
+  private readonly antigravityReplayQueue: AntigravityReplayItem[] = [];
   private readonly antigravitySkippedToolCallIds = new Set<string>();
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
@@ -2256,8 +2301,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       options.antigravityBrainDir ?? path.join(homedir(), ".gemini", "antigravity-cli", "brain");
     this.antigravityPollIntervalMs =
       options.antigravityPollIntervalMs ?? ANTIGRAVITY_BACKGROUND_POLL_MS;
-    this.antigravityTaskOutputIdleMs =
-      options.antigravityTaskOutputIdleMs ?? ANTIGRAVITY_TASK_OUTPUT_IDLE_MS;
     this.antigravitySubscribeCatchupMs =
       options.antigravitySubscribeCatchupMs ?? ANTIGRAVITY_SUBSCRIBE_CATCHUP_MS;
   }
@@ -2510,6 +2553,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.subscribers.delete(callback);
       if (this.subscribers.size === 0) {
         this.clearAntigravityCatchupTimer();
+        if (this.activeForegroundTurnId === null) {
+          this.clearAntigravityPollTimer();
+        }
       }
     };
   }
@@ -3964,7 +4010,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       default:
         if (this.isAntigravitySession()) {
           this.pendingAntigravityResponse = { response, turnId };
-          void this.pollAntigravityBackgroundTurn(turnId);
+          void this.pollAntigravityBackgroundTurn({ turnId });
           break;
         }
         this.finishTurn({
@@ -4009,65 +4055,93 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (this.closed || !this.sessionId) {
         return;
       }
-      const shouldBackfillWakeup = this.historyPending;
+      if (this.activeForegroundTurnId !== null && this.pendingAntigravityResponse === null) {
+        return;
+      }
       if (this.historyPending) {
         this.persistedHistory.length = 0;
         this.historyPending = false;
         this.antigravitySyncedStepIndex = undefined;
       }
-      void this.pollAntigravityBackgroundTurn(
-        this.activeForegroundTurnId ?? undefined,
-        shouldBackfillWakeup,
-      );
+      void this.pollAntigravityBackgroundTurn();
     }, this.antigravitySubscribeCatchupMs);
+  }
+
+  private consumeAntigravityReplayTextChunk({
+    kind,
+    text,
+  }: {
+    kind: "thought" | "message";
+    text: string;
+  }): boolean {
+    if (!text) {
+      return false;
+    }
+    const head = this.antigravityReplayQueue[0];
+    if (!head || head.kind !== kind || !head.remainingText.startsWith(text)) {
+      this.antigravityReplayQueue.length = 0;
+      return false;
+    }
+    head.remainingText = head.remainingText.slice(text.length);
+    if (head.remainingText.length === 0) {
+      this.antigravityReplayQueue.shift();
+    }
+    return true;
   }
 
   private shouldSkipReplayedAntigravityUpdate(update: SessionUpdate): boolean {
     if (this.replayingHistory || !this.isAntigravitySession()) {
       return false;
     }
+    if (update.sessionUpdate === "tool_call_update") {
+      if (!this.antigravitySkippedToolCallIds.has(update.toolCallId)) {
+        return false;
+      }
+      if (update.status === "completed" || update.status === "failed") {
+        this.antigravitySkippedToolCallIds.delete(update.toolCallId);
+      }
+      return true;
+    }
+    if (this.antigravityReplayQueue.length === 0) {
+      return false;
+    }
     if (
       update.sessionUpdate === "agent_thought_chunk" ||
       update.sessionUpdate === "agent_message_chunk"
     ) {
-      if (this.antigravitySynthesizedChunks.size === 0) {
-        return false;
-      }
-      const prefix = update.sessionUpdate === "agent_thought_chunk" ? "t:" : "m:";
-      const key = `${prefix}${contentBlockToText(update.content).slice(0, 120)}`;
-      if (this.antigravitySynthesizedChunks.has(key)) {
-        this.antigravitySynthesizedChunks.delete(key);
-        return true;
-      }
-      return false;
+      const kind = update.sessionUpdate === "agent_thought_chunk" ? "thought" : "message";
+      return this.consumeAntigravityReplayTextChunk({
+        kind,
+        text: contentBlockToText(update.content),
+      });
     }
     if (update.sessionUpdate === "tool_call") {
-      if (this.antigravitySynthesizedToolCallCount > 0) {
-        this.antigravitySynthesizedToolCallCount -= 1;
+      const head = this.antigravityReplayQueue[0];
+      if (
+        head?.kind === "tool_call" &&
+        (update.title === head.title || update.kind === head.toolKind)
+      ) {
+        this.antigravityReplayQueue.shift();
         this.antigravitySkippedToolCallIds.add(update.toolCallId);
         return true;
       }
-      return false;
-    }
-    if (update.sessionUpdate === "tool_call_update") {
-      if (this.antigravitySkippedToolCallIds.has(update.toolCallId)) {
-        if (update.status === "completed" || update.status === "failed") {
-          this.antigravitySkippedToolCallIds.delete(update.toolCallId);
-        }
-        return true;
-      }
+      this.antigravityReplayQueue.length = 0;
       return false;
     }
     return false;
   }
 
-  private emitAntigravityWakeupStep(
-    row: AntigravityTranscriptRow,
-    stepIndex: number,
-    genericResults: readonly AntigravityTranscriptRow[],
-  ): void {
+  private emitAntigravityWakeupStep({
+    row,
+    stepIndex,
+    genericResults,
+  }: {
+    row: AntigravityTranscriptRow;
+    stepIndex: number;
+    genericResults: readonly AntigravityTranscriptRow[];
+  }): void {
     if (row.thinking) {
-      this.antigravitySynthesizedChunks.add(`t:${row.thinking.slice(0, 120)}`);
+      this.antigravityReplayQueue.push({ kind: "thought", remainingText: row.thinking });
       this.deliverTranslatedEvents([this.wrapTimeline({ type: "reasoning", text: row.thinking })]);
     }
     const toolCalls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
@@ -4076,9 +4150,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       const parsedArgs = parseAntigravityToolArgs(toolCall.args);
       const rawOutput = genericResults[callIndex]?.content ?? "";
       const callId = toolCall.id ?? `agy-bg-${stepIndex}-${callIndex}`;
-      const title = formatAntigravityToolTitle(toolCall.name ?? "tool", parsedArgs);
+      const title = formatAntigravityToolTitle({
+        name: toolCall.name ?? "tool",
+        args: parsedArgs,
+      });
       const kind = inferAntigravityToolKind(toolCall.name ?? "");
-      this.antigravitySynthesizedToolCallCount += 1;
+      this.antigravityReplayQueue.push({ kind: "tool_call", title, toolKind: kind });
       this.deliverTranslatedEvents(
         this.handleToolCallUpdate(
           callId,
@@ -4100,7 +4177,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       );
     }
     if (row.content) {
-      this.antigravitySynthesizedChunks.add(`m:${row.content.slice(0, 120)}`);
+      this.antigravityReplayQueue.push({ kind: "message", remainingText: row.content });
       this.deliverTranslatedEvents([
         this.wrapTimeline({
           type: "assistant_message",
@@ -4111,11 +4188,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private flushAntigravityWakeupSteps(
-    rows: readonly AntigravityTranscriptRow[],
-    scanStart: number,
-    fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null,
-  ): void {
+  private flushAntigravityWakeupSteps({
+    rows,
+    scanStart,
+    fullRows,
+  }: {
+    rows: readonly AntigravityTranscriptRow[];
+    scanStart: number;
+    fullRows: ReadonlyMap<number, AntigravityTranscriptRow> | null;
+  }): void {
     if (this.antigravitySyncedStepIndex === undefined) {
       return;
     }
@@ -4137,17 +4218,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         break;
       }
       const toolCalls = Array.isArray(candidate.tool_calls) ? candidate.tool_calls : [];
-      const genericResults = collectAntigravityToolResults(
+      const genericResults = collectAntigravityToolResults({
         rows,
-        index + 1,
-        toolCalls.length,
+        startIndex: index + 1,
+        expectedCount: toolCalls.length,
         fullRows,
-      );
+      });
       if (!genericResults) {
         break;
       }
-      const row = resolveAntigravityFullRow(candidate, fullRows);
-      this.emitAntigravityWakeupStep(row, stepIndex, genericResults);
+      const row = resolveAntigravityFullRow({ row: candidate, fullRows });
+      this.emitAntigravityWakeupStep({ row, stepIndex, genericResults });
       const lastResultStepIndex =
         genericResults[genericResults.length - 1]?.step_index ?? stepIndex;
       this.antigravitySyncedStepIndex = Math.max(stepIndex, lastResultStepIndex);
@@ -4166,10 +4247,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * running so Paseo keeps the turn open, streams wakeup steps onto the
    * timeline, and prevents idle runtime cleanup from killing the process early.
    */
-  private async pollAntigravityBackgroundTurn(
-    turnId: string | undefined = this.pendingAntigravityResponse?.turnId,
-    allowWakeupBackfill = false,
-  ): Promise<void> {
+  private async pollAntigravityBackgroundTurn(options?: { turnId?: string }): Promise<void> {
+    const turnId = options?.turnId ?? this.pendingAntigravityResponse?.turnId;
     this.clearAntigravityPollTimer();
     if (this.closed || !this.sessionId) {
       this.antigravityBackgroundBusy = false;
@@ -4178,69 +4257,84 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const sessionBrainDir = path.join(this.antigravityBrainDir, this.sessionId);
     const logsDir = path.join(sessionBrainDir, ".system_generated", "logs");
-    const rows = await readAntigravityTranscriptRows(logsDir);
-    if (this.closed) {
-      this.antigravityBackgroundBusy = false;
-      return;
-    }
-    if (!rows) {
-      this.settleAntigravityPollOutcome(turnId, false);
-      return;
-    }
+    try {
+      const rows = await readAntigravityTranscriptRows(logsDir);
+      if (this.closed) {
+        this.antigravityBackgroundBusy = false;
+        return;
+      }
+      if (!rows) {
+        this.settleAntigravityPollOutcome({ turnId, busy: false });
+        return;
+      }
 
-    const lastUserIndex = findLastAntigravityUserIndex(rows);
-    const firstWakeupIndex = findFirstAntigravityWakeupIndex(rows, lastUserIndex);
-    this.antigravitySyncedStepIndex ??= computeInitialAntigravitySyncedStepIndex(
-      rows,
-      firstWakeupIndex,
-      Boolean(turnId) || allowWakeupBackfill,
-    );
+      const lastUserIndex = findLastAntigravityUserIndex(rows);
+      const firstWakeupIndex = findFirstAntigravityWakeupIndex({ rows, lastUserIndex });
+      const canEmitWakeupSteps =
+        firstWakeupIndex >= 0 &&
+        (this.subscribers.size > 0 ||
+          this.activeForegroundTurnId !== null ||
+          this.replayingHistory);
 
-    const scanStart = firstWakeupIndex >= 0 ? firstWakeupIndex : lastUserIndex + 1;
-    const needsFullRows =
-      lastUserIndex >= 0 &&
-      hasTruncatedAntigravityStepsAfter(rows, scanStart, this.antigravitySyncedStepIndex);
-    const fullRows = needsFullRows ? await readAntigravityFullRowsMap(logsDir) : null;
-    if (this.closed) {
-      this.antigravityBackgroundBusy = false;
-      return;
+      if (canEmitWakeupSteps) {
+        this.antigravitySyncedStepIndex ??= (rows[firstWakeupIndex]?.step_index ?? 0) - 1;
+        const needsFullRows = hasTruncatedAntigravityStepsAfter({
+          rows,
+          scanStart: firstWakeupIndex,
+          syncedStepIndex: this.antigravitySyncedStepIndex,
+        });
+        const fullRows = needsFullRows ? await readAntigravityFullRowsMap(logsDir) : null;
+        if (this.closed) {
+          this.antigravityBackgroundBusy = false;
+          return;
+        }
+        this.flushAntigravityWakeupSteps({
+          rows,
+          scanStart: firstWakeupIndex,
+          fullRows,
+        });
+      }
+
+      const hasActiveBackgroundWork = hasActiveAntigravityBackgroundWork({ rows, lastUserIndex });
+      this.settleAntigravityPollOutcome({ turnId, busy: hasActiveBackgroundWork });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "Failed to read Antigravity transcript during background poll",
+      );
+      this.settleAntigravityPollOutcome({ turnId, busy: false });
     }
-
-    if (lastUserIndex >= 0) {
-      this.flushAntigravityWakeupSteps(rows, scanStart, fullRows);
-    }
-
-    const hasActiveBackgroundWork = await hasActiveAntigravityBackgroundWork(
-      rows,
-      lastUserIndex,
-      this.antigravitySyncedStepIndex,
-      sessionBrainDir,
-      this.antigravityTaskOutputIdleMs,
-    );
-    if (this.closed) {
-      this.antigravityBackgroundBusy = false;
-      return;
-    }
-
-    this.settleAntigravityPollOutcome(turnId, hasActiveBackgroundWork);
   }
 
-  private settleAntigravityPollOutcome(turnId: string | undefined, busy: boolean): void {
+  private settleAntigravityPollOutcome({
+    turnId,
+    busy,
+  }: {
+    turnId: string | undefined;
+    busy: boolean;
+  }): void {
     this.antigravityBackgroundBusy = busy;
-    if (
-      !turnId ||
-      this.activeForegroundTurnId !== turnId ||
-      this.pendingAntigravityResponse?.turnId !== turnId
-    ) {
+    const isHeldForegroundTurn =
+      turnId !== undefined &&
+      this.activeForegroundTurnId === turnId &&
+      this.pendingAntigravityResponse?.turnId === turnId;
+
+    if (isHeldForegroundTurn) {
+      if (busy) {
+        this.antigravityPollTimer = setTimeout(() => {
+          void this.pollAntigravityBackgroundTurn({ turnId });
+        }, this.antigravityPollIntervalMs);
+        return;
+      }
+      this.completePendingAntigravityTurn(turnId);
       return;
     }
-    if (busy) {
+
+    if (busy && this.subscribers.size > 0 && this.activeForegroundTurnId === null) {
       this.antigravityPollTimer = setTimeout(() => {
-        void this.pollAntigravityBackgroundTurn(turnId);
+        void this.pollAntigravityBackgroundTurn();
       }, this.antigravityPollIntervalMs);
-      return;
     }
-    this.completePendingAntigravityTurn(turnId);
   }
 
   private completePendingAntigravityTurn(turnId: string): void {
