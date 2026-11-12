@@ -895,6 +895,7 @@ export interface CheckoutStatusGitNonPaseo {
   isDirty: boolean;
   baseRef: string | null;
   baseRefExact?: string | null;
+  defaultBranchRef?: string | null;
   comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   // Remote-tracking ref for currentBranch, e.g. "refs/remotes/origin/main". Null when the
@@ -916,6 +917,7 @@ export interface CheckoutStatusGitPaseo {
   isDirty: boolean;
   baseRef: string;
   baseRefExact?: string | null;
+  defaultBranchRef?: string | null;
   comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   upstreamRef: string | null;
@@ -1702,6 +1704,29 @@ async function resolveBaseRef(repoRoot: string, context?: CheckoutContext): Prom
   return resolveRepositoryDefaultBranch(repoRoot, context);
 }
 
+// Workspace creation prefers the remote tip. Diff and merge bases keep their existing
+// local-branch policy in resolveRepositoryDefaultBranch.
+export async function resolveRepositoryDefaultBranchRef(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  const branch = await resolveRepositoryDefaultBranch(cwd, context);
+  if (!branch) return null;
+  const remoteBranch = branch.startsWith("origin/") ? branch : `origin/${branch}`;
+  const remoteRef = `refs/remotes/${remoteBranch}`;
+  const git = getRunGitCommand(context);
+  try {
+    await git(["show-ref", "--verify", "--quiet", remoteRef], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    return remoteRef;
+  } catch {
+    // Repositories without a remote default use the available local default branch.
+    return `refs/heads/${branch}`;
+  }
+}
+
 interface ComparisonBaseRefName {
   localName: string;
   originRef: string;
@@ -2423,6 +2448,7 @@ export async function getCheckoutStatus(
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : null;
   const upstreamStatus = facts.upstreamStatus;
+  const defaultBranchRef = await resolveRepositoryDefaultBranchRef(cwd, context);
   // The wire carries the display name: clients label the base with it and send it back to
   // request diffs and merges. The exact ref stays in worktree.json and in facts, where the
   // comparisons and actions read it.
@@ -2440,6 +2466,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
+      defaultBranchRef,
       comparisonBaseRef,
       aheadBehind,
       upstreamRef,
@@ -2460,6 +2487,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,
+    defaultBranchRef,
     comparisonBaseRef,
     aheadBehind,
     upstreamRef,

@@ -162,6 +162,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     isDirty: boolean | null;
     baseRef: string | null;
     baseRefExact?: string | null;
+    defaultBranchRef?: string | null;
     comparisonBaseRef?: string | null;
     aheadBehind: { ahead: number; behind: number } | null;
     upstreamRef: string | null;
@@ -3695,6 +3696,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         : (target.latestGit?.isDirty ?? checkoutStatus.isDirty),
       baseRef: checkoutStatus.baseRef,
       baseRefExact: checkoutStatus.baseRefExact,
+      defaultBranchRef: checkoutStatus.defaultBranchRef,
       comparisonBaseRef: checkoutStatus.comparisonBaseRef,
       aheadBehind: checkoutStatus.aheadBehind,
       upstreamRef: checkoutStatus.upstreamRef,

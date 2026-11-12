@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { expect, test as base } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
@@ -18,8 +19,14 @@ import {
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
-import { submitNewWorkspaceEmpty } from "../support/helpers/new-workspace";
+import {
+  expectPickerSelected,
+  selectWorkspaceIsolation,
+  submitNewWorkspaceEmpty,
+} from "../support/helpers/new-workspace";
+import { commitLocalOnly, readWorktreeBranchInfo } from "../support/helpers/workspace";
 
 const test = base.extend<{
   seedForkWorkspace: (options: MockAgentOptions) => Promise<MockAgentWorkspace>;
@@ -211,13 +218,27 @@ test.describe("Assistant fork menu", () => {
     await awaitAssistantMessage(page);
     await session.client.waitForFinish(session.agentId, 45_000);
 
+    execFileSync("git", ["checkout", "-b", "feature/fork-source"], { cwd: session.cwd });
+    const localHead = commitLocalOnly(session.cwd, "fork-source-only");
+    await session.client.checkoutRefresh(session.cwd);
     await forkMostRecentAssistantTurnToNewWorkspace(page);
     await expectChatHistoryAttachment(page);
+    await selectWorkspaceIsolation(page, "worktree");
+    await expectPickerSelected(page, "feature/fork-source");
 
     await submitNewWorkspaceEmpty(page);
 
     const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
     await expect(userMessage).toBeVisible({ timeout: 30_000 });
     await expect(userMessage).not.toContainText("Source agent:");
+    const { entries } = await session.client.fetchWorkspaces();
+    const created = entries.find((entry) =>
+      page.url().includes(buildHostWorkspaceRoute(getServerId(), entry.id)),
+    );
+    expect(created).toBeDefined();
+    if (!created) throw new Error("Fork workspace was not created");
+    const branchInfo = await readWorktreeBranchInfo({ worktreePath: created.workspaceDirectory });
+    expect(branchInfo.hasAncestor(localHead)).toBe(true);
+    await session.client.archiveWorkspace(created.id);
   });
 });

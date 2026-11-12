@@ -549,6 +549,46 @@ describe("checkout git utilities", () => {
     ).toContain("refs/heads/feature/new-name");
   });
 
+  it.each(["main", "develop"])(
+    "exposes the remote default %s independently of the current branch and stored base",
+    async (defaultBranch) => {
+      execFileSync("git", ["update-ref", `refs/remotes/origin/${defaultBranch}`, "HEAD"], {
+        cwd: repoDir,
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${defaultBranch}`],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+      await writePaseoWorktreeMetadata(repoDir, { baseRefName: "feature/unrelated" });
+
+      const status = await getCheckoutStatus(repoDir);
+      expect(status.currentBranch).toBe("feature/unrelated");
+      expect(status.defaultBranchRef).toBe(`refs/remotes/origin/${defaultBranch}`);
+    },
+  );
+
+  it("uses the local default when origin/HEAD is stale", async () => {
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/heads/main");
+  });
+
+  it("resolves the remote default when there is no matching local branch", async () => {
+    execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"],
+      {
+        cwd: repoDir,
+      },
+    );
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/remotes/origin/develop");
+  });
+
   it("handles status/diff/commit in a normal repo", async () => {
     writeFileSync(join(repoDir, "file.txt"), "updated\n");
 
@@ -557,6 +597,7 @@ describe("checkout git utilities", () => {
     expect(status.currentBranch).toBe("main");
     expect(status.isDirty).toBe(true);
     expect(status.hasRemote).toBe(false);
+    expect(status.defaultBranchRef).toBe("refs/heads/main");
 
     const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted" });
     expect(diff.diff).toContain("-hello");

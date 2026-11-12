@@ -85,6 +85,7 @@ import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-works
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
+  resolveNewWorkspaceBaseContext,
 } from "./new-workspace-fork-context";
 import {
   buildPickerOptionData,
@@ -990,6 +991,14 @@ export function NewWorkspaceScreen({
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
+  const { checkoutSourceDirectory, forkFromCurrentBranch } = resolveNewWorkspaceBaseContext({
+    forkSetup: forkDraftSetup,
+    selectedServerId,
+    sourceServerId: serverId,
+    selectedProject,
+    sourceProject: routeProject,
+    sourceDirectory: selectedSourceDirectory,
+  });
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
     () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
@@ -1045,7 +1054,7 @@ export function NewWorkspaceScreen({
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: checkoutSourceDirectory ?? "",
   });
 
   const { effectiveIsolation, setIsolation, showRefPicker } = useWorkspaceIsolation({
@@ -1098,8 +1107,10 @@ export function NewWorkspaceScreen({
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
   const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
+    () =>
+      selectedItem ??
+      (checkoutStatus ? defaultBasePickerItem(checkoutStatus, { forkFromCurrentBranch }) : null),
+    [checkoutStatus, selectedItem, forkFromCurrentBranch],
   );
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
@@ -1249,12 +1260,13 @@ export function NewWorkspaceScreen({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
+            cwd: checkoutSourceDirectory ?? selectedSourceDirectory,
           })
         : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
-            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+            selectedItem ??
+              defaultBasePickerItem(checkoutStatusForCreate, { forkFromCurrentBranch }),
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
@@ -1282,7 +1294,9 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      checkoutSourceDirectory,
       effectiveIsolation,
+      forkFromCurrentBranch,
       mergeWorkspaces,
       queryClient,
       selectedItem,

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -795,6 +796,29 @@ test.describe("New workspace flow", () => {
       };
     }
 
+    test("starts from the repository default when the source checkout is on an unrelated branch", async ({
+      page,
+    }, testInfo) => {
+      const tempRepo = await createTempGitRepo("ref-default-feature-", { withRemote: true });
+      try {
+        const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
+        execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: tempRepo.path });
+        const featureHead = commitLocalOnly(tempRepo.path, "feature-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "main");
+        await page.screenshot({ path: testInfo.outputPath("default-main-from-feature.png") });
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(originHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(featureHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "main",
+          baseRef: "refs/remotes/origin/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     test("branches off the upstream when the local branch is ahead and the picker is untouched", async ({
       page,
     }) => {
@@ -847,7 +871,7 @@ test.describe("New workspace flow", () => {
       }
     });
 
-    test("branches off a fork's upstream remote and records the branch name", async ({
+    test("uses the repository default rather than the current branch's non-origin upstream", async ({
       page,
     }, testInfo) => {
       const tempRepo = await createTempGitRepo("ref-default-fork-", { withRemote: true });
@@ -859,14 +883,8 @@ test.describe("New workspace flow", () => {
         const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
 
         await openStartingRefPicker(page);
-        // Branch suggestions only know about origin, so the upstream the fork actually
-        // tracks gets its own row rather than silently sharing origin's. Two rows reading
-        // "main" is the ambiguity this whole change exists to remove.
-        await expectStartingRefRows(page, [
-          "main (upstream), upstream branch",
-          "main, origin branch",
-        ]);
-        await expectPickerSelected(page, "main (upstream)");
+        await expectStartingRefRows(page, ["main, origin branch"]);
+        await expectPickerSelected(page, "main");
         const screenshotPath = testInfo.outputPath("ref-picker-fork.png");
         await captureStartingRefPicker(page, screenshotPath);
         await testInfo.attach("Ref picker: fork tracking upstream/main", {
@@ -877,12 +895,13 @@ test.describe("New workspace flow", () => {
 
         const created = await createWorktreeAndRead(page, openedProject);
 
-        expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(false);
+        expect(created.branchInfo.hasAncestor(originHead)).toBe(true);
         expect(upstreamHead).not.toBe(originHead);
         // The name is what the UI shows; the ref is what resolves back to this commit.
         expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
           baseRefName: "main",
-          baseRef: "refs/remotes/upstream/main",
+          baseRef: "refs/remotes/origin/main",
         });
       } finally {
         await tempRepo.cleanup();

@@ -128,6 +128,7 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
 export interface BaseRefCheckoutStatus {
   currentBranch: string | null;
   upstreamRef?: string | null;
+  defaultBranchRef?: string | null;
 }
 
 // Display only. The exact ref is what every request carries; this is just how a ref reads in
@@ -157,10 +158,19 @@ function refQualifier(refName: string): string | null {
 // row, the trigger label, and the created ref all read this; computing it twice is how the
 // picker once showed local main while branching off something else.
 //
-// The upstream wins when the branch has one, because branching off the local ref silently
-// carries unpushed commits into the new workspace. The daemon sends the resolved ref rather
-// than a remote name, so a fork tracking upstream/main branches from upstream/main.
-export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem | null {
+export function defaultBasePickerItem(
+  status: BaseRefCheckoutStatus,
+  options: { forkFromCurrentBranch: boolean } = { forkFromCurrentBranch: false },
+): PickerItem | null {
+  if (options.forkFromCurrentBranch) {
+    if (!status.currentBranch) return null;
+    return baseBranchItem(`refs/heads/${status.currentBranch}`, "local");
+  }
+  if (status.defaultBranchRef !== undefined) {
+    return status.defaultBranchRef ? baseBranchItem(status.defaultBranchRef, "default") : null;
+  }
+  // COMPAT(defaultBranchRef): added in v0.16.0, remove after 2027-05-13 once the
+  // daemon floor sends defaultBranchRef. Older hosts retain their current-branch default.
   const currentBranch = status.currentBranch;
   if (!currentBranch) return null;
   // COMPAT(checkoutUpstreamRef): added in v0.2.6, remove after 2027-02-01 once the daemon
@@ -169,12 +179,16 @@ export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem
   const refName = status.upstreamRef ?? `refs/heads/${currentBranch}`;
   // The upstream branch can be named differently from the local one, so the row reads the
   // ref rather than the branch the user happens to be on.
+  return baseBranchItem(refName, status.upstreamRef ? "upstream" : "local");
+}
+
+function baseBranchItem(refName: string, qualifier: string): PickerItem {
   const name = branchNameFromRef(refName);
   return {
     kind: "branch",
     name,
     refName,
-    accessibilityLabel: status.upstreamRef ? `${name}, upstream branch` : `${name}, local branch`,
+    accessibilityLabel: `${name}, ${qualifier} branch`,
   };
 }
 

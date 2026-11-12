@@ -313,6 +313,47 @@ describe("buildPickerOptionData", () => {
 });
 
 describe("defaultBasePickerItem", () => {
+  it("starts fresh workspaces at the repository default instead of the checked-out feature", () => {
+    const baseItem = defaultBasePickerItem({
+      currentBranch: "feature/unrelated",
+      upstreamRef: "refs/remotes/origin/feature/unrelated",
+      defaultBranchRef: "refs/remotes/origin/main",
+    });
+    const data = buildPickerOptionData({ branchDetails: [mainRow], prItems: [], baseItem });
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/origin/main"));
+    expect(pickerItemToCheckoutRequest(baseItem)).toEqual({
+      action: "branch-off",
+      refName: "refs/remotes/origin/main",
+    });
+  });
+
+  it("forks from the source agent's local branch, preserving unpushed commits", () => {
+    const item = defaultBasePickerItem(
+      {
+        currentBranch: "feature/agent",
+        upstreamRef: "refs/remotes/origin/feature/agent",
+        defaultBranchRef: "refs/remotes/origin/main",
+      },
+      { forkFromCurrentBranch: true },
+    );
+    expect(pickerItemToCheckoutRequest(item)).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/feature/agent",
+    });
+  });
+
+  it("uses the default branch from a detached source checkout", () => {
+    expect(
+      defaultBasePickerItem({ currentBranch: null, defaultBranchRef: "refs/heads/develop" }),
+    ).toMatchObject({ name: "develop", refName: "refs/heads/develop" });
+  });
+
+  it("does not substitute an unrelated feature when no repository default exists", () => {
+    expect(
+      defaultBasePickerItem({ currentBranch: "feature/agent", defaultBranchRef: null }),
+    ).toBeNull();
+  });
+
   it("uses origin when the current branch tracks origin", () => {
     expect(
       defaultBasePickerItem({
