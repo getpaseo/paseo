@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { windowLevelDbfs } from "./silero-vad-session.js";
+import { isMostlySound, windowLevelDbfs } from "./silero-vad-session.js";
 
 function tone(amplitude: number): Float32Array {
   return Float32Array.from({ length: 512 }, (_, i) => amplitude * Math.sin((2 * Math.PI * i) / 32));
@@ -20,5 +20,17 @@ describe("windowLevelDbfs", () => {
   test("treats digital silence and an empty window as infinitely quiet", () => {
     expect(windowLevelDbfs(new Float32Array(512))).toBe(-Infinity);
     expect(windowLevelDbfs(new Float32Array(0))).toBe(-Infinity);
+  });
+});
+
+describe("isMostlySound", () => {
+  test("accepts speech, which fills most windows while it is confirmed", () => {
+    // A lone "Stop.": about 13 of the 16 windows in half a second.
+    expect(isMostlySound(13, 16)).toBe(true);
+  });
+
+  test("rejects key clicks, which fill about one window in five", () => {
+    expect(isMostlySound(3, 16)).toBe(false);
+    expect(isMostlySound(0, 0)).toBe(false);
   });
 });

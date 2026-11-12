@@ -24,6 +24,14 @@ const DEFAULT_SILENCE_MS = 1000;
 // where a talker sits at -10 to -30 dBFS). Windows quieter than this reach it as silence.
 const DEFAULT_MIN_WINDOW_DBFS = -55;
 
+// Speech fills most of the windows while it is being confirmed; clicks and taps fill few.
+const MIN_LOUD_SHARE_TO_CONFIRM = 0.5;
+
+/** Whether enough of the windows heard while confirming speech were above the level gate. */
+export function isMostlySound(loudWindows: number, windows: number): boolean {
+  return windows > 0 && loudWindows >= windows * MIN_LOUD_SHARE_TO_CONFIRM;
+}
+
 /** Root-mean-square level of float samples in dB relative to full scale. */
 export function windowLevelDbfs(samples: Float32Array): number {
   if (samples.length === 0) {
@@ -76,7 +84,7 @@ export interface SherpaSileroVadSessionConfig {
 
 type VadPhase =
   | { state: "idle" }
-  | { state: "confirming"; startedAt: number }
+  | { state: "confirming"; startedAt: number; windows: number; loudWindows: number }
   | { state: "speaking" }
   | { state: "ending"; startedAt: number };
 
@@ -169,12 +177,11 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
       while (this.inputBuffer.size() > this.windowSize) {
         const window = this.inputBuffer.get(this.inputBuffer.head(), this.windowSize, false);
         this.inputBuffer.pop(this.windowSize);
-        this.vad.acceptWaveform(
-          windowLevelDbfs(window) < this.minWindowDbfs ? this.silentWindow : window,
-        );
+        const loud = windowLevelDbfs(window) >= this.minWindowDbfs;
+        this.vad.acceptWaveform(loud ? window : this.silentWindow);
         this.windowTimestamp += this.msPerWindow;
         windowsProcessed++;
-        this.stepStateMachine();
+        this.stepStateMachine(loud);
       }
     } catch (error) {
       this.emit("error", error instanceof Error ? error : new Error(String(error)));
@@ -220,7 +227,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
     this.windowTimestamp = 0;
   }
 
-  private stepStateMachine(): void {
+  private stepStateMachine(loud = false): void {
     const detected = this.vad.isDetected();
     const now = this.windowTimestamp;
 
@@ -228,7 +235,12 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
       case "idle": {
         if (detected) {
           this.logger.debug({ now }, "[VAD] idle → confirming (detection started)");
-          this.phase = { state: "confirming", startedAt: now };
+          this.phase = {
+            state: "confirming",
+            startedAt: now,
+            windows: 1,
+            loudWindows: loud ? 1 : 0,
+          };
         }
         break;
       }
@@ -243,7 +255,18 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
           this.phase = { state: "idle" };
           break;
         }
+        this.phase.windows += 1;
+        this.phase.loudWindows += loud ? 1 : 0;
         const elapsed = now - this.phase.startedAt;
+        if (
+          elapsed >= this.confirmMs &&
+          !isMostlySound(this.phase.loudWindows, this.phase.windows)
+        ) {
+          // Sparse bursts (key clicks, taps) keep the model on between them. Keep waiting
+          // for a stretch that is mostly sound.
+          this.phase = { state: "confirming", startedAt: now, windows: 0, loudWindows: 0 };
+          break;
+        }
         if (elapsed >= this.confirmMs) {
           this.logger.debug(
             { elapsed, confirmMs: this.confirmMs },
