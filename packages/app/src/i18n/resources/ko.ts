@@ -3077,6 +3077,7 @@ export const ko: TranslationResources = {
         setDefault: "새 세션의 기본값으로 설정",
         clearDefault: "기본값 지우기 (공급자 기본값 사용)",
         defaultBadge: "기본값",
+        setDefaultFailed: "기본 모델을 업데이트할 수 없습니다",
       },
       diagnostic: {
         title: "진단",

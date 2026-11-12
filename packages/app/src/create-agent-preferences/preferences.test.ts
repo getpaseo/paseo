@@ -9,6 +9,25 @@ import {
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
+  it("stores and clears the pinned model without touching the saved model", () => {
+    const pinned = mergeProviderPreferences({
+      preferences: { providerPreferences: { codex: { model: "gpt-5.4" } } },
+      provider: "codex",
+      updates: { pinnedModel: "gpt-5.3-codex" },
+    });
+    expect(pinned.providerPreferences?.codex).toEqual({
+      model: "gpt-5.4",
+      pinnedModel: "gpt-5.3-codex",
+    });
+
+    const cleared = mergeProviderPreferences({
+      preferences: pinned,
+      provider: "codex",
+      updates: { pinnedModel: null },
+    });
+    expect(cleared.providerPreferences?.codex).toEqual({ model: "gpt-5.4" });
+  });
+
   it("keeps the selected mode after saving model and thinking", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

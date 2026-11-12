@@ -3091,6 +3091,7 @@ export const ja: TranslationResources = {
         setDefault: "新しいセッションのデフォルトに設定",
         clearDefault: "デフォルトを解除（プロバイダーのデフォルトを使用）",
         defaultBadge: "デフォルト",
+        setDefaultFailed: "デフォルトモデルを更新できませんでした",
       },
       diagnostic: {
         title: "診断",

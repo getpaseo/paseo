@@ -3094,6 +3094,7 @@ export const ar: TranslationResources = {
         setDefault: "تعيين كافتراضي للجلسات الجديدة",
         clearDefault: "مسح الافتراضي (استخدام افتراضي المزود)",
         defaultBadge: "افتراضي",
+        setDefaultFailed: "تعذّر تحديث النموذج الافتراضي",
       },
       diagnostic: {
         title: "التشخيص",

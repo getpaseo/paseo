@@ -5,6 +5,12 @@ const optionsSchema = z.record(z.string(), z.json());
 
 export interface ProviderPreferences {
   model?: string;
+  /**
+   * The model pinned as the default for new sessions (provider settings pin).
+   * Kept separate from `model`: ordinary chat model switches write `model`,
+   * and a switch must never override the pin.
+   */
+  pinnedModel?: string;
   mode?: string;
   thinkingByModel?: Record<string, string>;
   /** Last-used values of the provider's option controls, by option key. */
@@ -145,9 +151,10 @@ function mergeDefinedRecord<T>(
 
 function applyProviderPreferenceUpdates(
   existing: ProviderPreferences,
-  updates: Omit<Partial<ProviderPreferences>, "mode" | "model"> & {
+  updates: Omit<Partial<ProviderPreferences>, "mode" | "model" | "pinnedModel"> & {
     mode?: string | null;
     model?: string | null;
+    pinnedModel?: string | null;
   },
 ): ProviderPreferences {
   const next: ProviderPreferences = { ...existing };
@@ -158,6 +165,11 @@ function applyProviderPreferenceUpdates(
     delete next.model;
   } else if (updates.model !== undefined) {
     next.model = updates.model;
+  }
+  if (updates.pinnedModel === null) {
+    delete next.pinnedModel;
+  } else if (updates.pinnedModel !== undefined) {
+    next.pinnedModel = updates.pinnedModel;
   }
   if (updates.mode === null) {
     delete next.mode;
@@ -177,9 +189,10 @@ function applyProviderPreferenceUpdates(
 export function mergeProviderPreferences(args: {
   preferences: FormPreferences;
   provider: AgentProvider;
-  updates: Omit<Partial<ProviderPreferences>, "mode" | "model"> & {
+  updates: Omit<Partial<ProviderPreferences>, "mode" | "model" | "pinnedModel"> & {
     mode?: string | null;
     model?: string | null;
+    pinnedModel?: string | null;
   };
 }): FormPreferences {
   const { preferences, provider, updates } = args;
