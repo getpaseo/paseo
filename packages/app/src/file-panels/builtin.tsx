@@ -7,6 +7,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
+import { MarkdownPreviewFind } from "./markdown-preview/find";
 import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
@@ -33,18 +34,24 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
   const handleLayout = useCallback(() => setRendered(true), []);
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator>
-        <View onLayout={handleLayout}>
-          <FileMarkdownPreview
-            source={text}
-            filePath={params.path}
-            workspaceRoot={workspaceRoot ?? ""}
-            client={client}
-            serverId={host.id}
-          />
-        </View>
-      </ScrollView>
-      {rendered ? null : <FilePanelLoading />}
+      <MarkdownPreviewFind source={text}>
+        <ScrollView
+          style={styles.container}
+          showsVerticalScrollIndicator
+          testID="markdown-preview-scroll"
+        >
+          <View onLayout={handleLayout}>
+            <FileMarkdownPreview
+              source={text}
+              filePath={params.path}
+              workspaceRoot={workspaceRoot ?? ""}
+              client={client}
+              serverId={host.id}
+            />
+          </View>
+        </ScrollView>
+        {rendered ? null : <FilePanelLoading />}
+      </MarkdownPreviewFind>
     </View>
   );
 }
