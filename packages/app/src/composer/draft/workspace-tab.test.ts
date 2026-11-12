@@ -1,4 +1,6 @@
-import { describe, expect, test } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, test, vi } from "vitest";
+import { keyedDraftAgentRequest } from "./creation-key";
 
 import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
 
@@ -81,5 +83,52 @@ describe("workspace draft empty text readiness", () => {
         attachments: [],
       }),
     ).toBe(false);
+  });
+});
+
+// Use Node's SHA-256 implementation in place of the native Expo bridge.
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digestStringAsync: async (_algorithm: string, value: string) =>
+    createHash("sha256").update(value).digest("hex"),
+}));
+
+const request = {
+  config: { provider: "codex", cwd: "/repo", model: "gpt-6" },
+  workspaceId: "workspace-1",
+  initialPrompt: "Build this",
+  clientMessageId: "draft-1:initial-message",
+};
+
+describe("draft agent creation identity after a timeout", () => {
+  it("reuses the identity when resubmitting unchanged inputs, including after remount", async () => {
+    const first = await keyedDraftAgentRequest("draft-1", request);
+    const retry = await keyedDraftAgentRequest("draft-1", {
+      ...request,
+      config: { model: "gpt-6", cwd: "/repo", provider: "codex" },
+    });
+    expect(retry).toEqual(first);
+  });
+
+  it.each([
+    { initialPrompt: "Try something else" },
+    { config: { ...request.config, model: "gpt-6-mini" } },
+    { config: { ...request.config, provider: "claude" } },
+    { config: { ...request.config, providerOptions: { effort: "high" } } },
+    { metadata: { "issues.key": "PAS-1" } },
+    { attachments: [{ type: "text" as const, text: "Context", mimeType: "text/plain" as const }] },
+    { images: [{ data: "aGVsbG8=", mimeType: "image/png" }] },
+  ])("starts a new intent when the failed draft is edited: %j", async (edit) => {
+    const first = await keyedDraftAgentRequest("draft-1", request);
+    const next = await keyedDraftAgentRequest("draft-1", { ...request, ...edit });
+    expect(next.idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(next).toMatchObject({ ...request, ...edit });
+    expect(await keyedDraftAgentRequest("draft-1", { ...request, ...edit })).toEqual(next);
+  });
+
+  it("keeps identical submissions in different draft tabs independent", async () => {
+    const first = await keyedDraftAgentRequest("draft-1", request);
+    const next = await keyedDraftAgentRequest("draft-2", request);
+    expect(next.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 });
