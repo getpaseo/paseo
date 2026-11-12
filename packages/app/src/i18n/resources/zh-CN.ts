@@ -1169,6 +1169,8 @@ export const zhCN: TranslationResources = {
     title: "新功能",
     installed: "已安装",
     showMore: "显示更多",
+    showAllChanges: "显示全部变更",
+    hideAllChanges: "收起全部变更",
     openWebsite: "完整更新日志",
     error: {
       title: "无法加载更新日志",

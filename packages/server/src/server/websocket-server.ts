@@ -2187,6 +2187,8 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: true,
         hopliteProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hoplite"),
+        // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
+        fxProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("fx"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -2196,6 +2198,8 @@ export class VoiceAssistantWebSocketServer {
         forgeProviders: true,
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: true,
+        // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+        timelineFreshnessCheck: true,
         explicitEventSubscriptions: true,
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: true,

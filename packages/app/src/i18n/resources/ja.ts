@@ -1190,6 +1190,8 @@ export const ja: TranslationResources = {
     title: "新着情報",
     installed: "インストール済み",
     showMore: "もっと見る",
+    showAllChanges: "すべての変更を表示",
+    hideAllChanges: "すべての変更を非表示",
     openWebsite: "変更履歴をすべて表示",
     error: {
       title: "変更履歴を読み込めません",

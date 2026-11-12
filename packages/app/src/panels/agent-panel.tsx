@@ -81,6 +81,7 @@ import {
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
+import { OverlayDismissalScope } from "@/components/ui/overlay-dismissal";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
@@ -726,13 +727,11 @@ function ChatAgentContent({
     (listener: () => void) => viewedTimelineSync?.subscribe(listener) ?? (() => {}),
     [viewedTimelineSync],
   );
-  const readTimelineStatus = useCallback(
-    () =>
-      !agentId || !viewedTimelineSync
-        ? ("ready" as const)
-        : viewedTimelineSync.getAgentTimelineStatus(agentId),
-    [agentId, viewedTimelineSync],
-  );
+  const readTimelineStatus = useCallback((): ViewedTimelineStatus => {
+    if (!agentId) return "ready";
+    // Until the owner is published nothing has confirmed this chat, so its check has not begun.
+    return viewedTimelineSync?.getAgentTimelineStatus(agentId) ?? "checking";
+  }, [agentId, viewedTimelineSync]);
   const timelineStatus = useSyncExternalStore(
     subscribeToVisibilityCatchUp,
     readTimelineStatus,
@@ -1319,10 +1318,14 @@ function ChatSurface({
   disabled: boolean;
   fullscreen: boolean;
 }) {
+  // The tracks above the composer open their pages from outside it, so focusing the composer
+  // closes everything the chat opened.
   return (
-    <FileDropZone style={styles.container} disabled={disabled}>
-      <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
-    </FileDropZone>
+    <OverlayDismissalScope>
+      <FileDropZone style={styles.container} disabled={disabled}>
+        <ComposerDock fullscreen={fullscreen}>{children}</ComposerDock>
+      </FileDropZone>
+    </OverlayDismissalScope>
   );
 }
 

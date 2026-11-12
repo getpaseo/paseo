@@ -86,6 +86,8 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     workspaceId,
     provider: agent.provider,
     status: agent.status,
+    backgroundWork: Object.freeze({ count: agent.backgroundWork?.count ?? 0 }),
+    background: agent.background ?? false,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.lastActivityAt.toISOString(),

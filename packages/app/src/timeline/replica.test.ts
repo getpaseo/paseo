@@ -63,6 +63,7 @@ function createOwner(
     ready: Promise.resolve(),
     release: async () => undefined,
   }),
+  checksFreshness = false,
 ): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
@@ -76,8 +77,16 @@ function createOwner(
     drainQueuedAgentMessage: () => undefined,
     applyTurnLiveness,
     ports: {
+      canCheckFreshness: () => checksFreshness,
       observe,
-      readCursor: () => undefined,
+      readCursor: () => {
+        if (!checksFreshness) return undefined;
+        const session = useSessionStore.getState().sessions[SERVER_ID];
+        const timeline = selectAgentTimelineState(session, AGENT_ID);
+        return timeline.status === "synced" && timeline.range
+          ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+          : undefined;
+      },
       fetchPage,
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
@@ -894,6 +903,155 @@ describe("the turn footer changes together with its messages", () => {
     owner.dispose();
   });
 
+  type Answer = "current" | "behind";
+
+  // A chat whose subscribes wait for the test to answer them, and whose fetches are recorded.
+  function createCheckedChat(cachedReply: string | null) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+      items: cachedReply ? [item("reply-1", cachedReply, 4)] : [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+    const unanswered: ((answer: Answer, beforeAnswer?: () => void) => void)[] = [];
+    let fetches = 0;
+    let finishFetch = () => {};
+    const owner = createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      undefined,
+      () => {
+        fetches += 1;
+        return new Promise((resolve) => {
+          finishFetch = () => resolve({ hasNewer: false, endCursor: null });
+        });
+      },
+      () => ({
+        // The host runtime keeps the answer's agent rows in this same continuation.
+        ready: new Promise((resolve) => {
+          unanswered.push((answer, beforeAnswer) => {
+            beforeAnswer?.();
+            resolve({ timelines: { [AGENT_ID]: answer } });
+          });
+        }),
+        release: async () => undefined,
+      }),
+      true,
+    );
+    const answer = async (value: Answer, beforeAnswer?: () => void) => {
+      await expect.poll(() => unanswered.length).toBeGreaterThan(0);
+      unanswered.shift()?.(value, beforeAnswer);
+    };
+    const open = async () => {
+      owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+      owner.setConnected(true);
+      await answer("current");
+      await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    };
+    return { owner, answer, open, fetchCount: () => fetches, finishFetch: () => finishFetch() };
+  }
+
+  function leaveAndReturn(owner: ViewedTimelineOwner, way: "reconnect" | "foreground"): void {
+    if (way === "reconnect") {
+      owner.setConnected(false);
+      owner.setConnected(true);
+      return;
+    }
+    owner.setActive(false);
+    owner.setActive(true);
+  }
+
+  it.each([
+    ["reconnect", "reattaching"],
+    ["foreground", "checking"],
+  ] as const)(
+    "freshness check on %s: the held turn stays through the check and current settles it",
+    async (way, status) => {
+      const chat = createCheckedChat("Done.");
+      agentIsRunning();
+      await chat.open();
+
+      leaveAndReturn(chat.owner, way);
+      idleSnapshotArrives();
+      expect(chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe(status);
+      expect(footer()).toBe("running");
+
+      const recorder = recordCommits();
+      await chat.answer("current");
+      await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+      recorder.stop();
+
+      expect(footer()).toBe("settled");
+      expect(replies()).toEqual(["Done."]);
+      expect(chat.fetchCount()).toBe(0);
+      expect(recorder.commits.map((commit) => commit.footer).slice(0, 2)).toEqual([
+        "running",
+        "settled",
+      ]);
+      chat.owner.dispose();
+    },
+  );
+
+  it("freshness check: an idle row carried by the current answer settles the footer in the same step", async () => {
+    const chat = createCheckedChat("Done.");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+
+    let footerAfterRow: Footer | null = null;
+    await chat.answer("current", () => {
+      idleSnapshotArrives();
+      footerAfterRow = footer();
+    });
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+
+    expect(footerAfterRow).toBe("running");
+    expect(footer()).toBe("settled");
+    chat.owner.dispose();
+  });
+
+  it("freshness check: an agent still running keeps its footer after current", async () => {
+    const chat = createCheckedChat("Half");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+
+    await chat.answer("current");
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+
+    expect(footer()).toBe("running");
+    idleSnapshotArrives();
+    expect(footer()).toBe("settled");
+    chat.owner.dispose();
+  });
+
+  it("freshness check: behind holds the turn until the fetched rows land with the completed footer", async () => {
+    const chat = createCheckedChat("Half");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+    idleSnapshotArrives();
+
+    await chat.answer("behind");
+    await expect.poll(() => chat.fetchCount()).toBe(1);
+    expect(footer()).toBe("running");
+
+    const recorder = recordCommits();
+    chat.owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    recorder.stop();
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(["HalfDone."]);
+    expect(recorder.commits.at(-2)).toMatchObject({ footer: "running", replies: ["Half"] });
+    expect(recorder.commits.at(-1)).toMatchObject({ footer: "settled", replies: ["HalfDone."] });
+    chat.finishFetch();
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    chat.owner.dispose();
+  });
+
   it("catch-up failure gives the footer the true status", async () => {
     let failNext = false;
     const owner = createChat("Half", async () => {
@@ -1172,6 +1330,7 @@ describe("create handoff lifetime", () => {
       drainQueuedAgentMessage: () => undefined,
       applyTurnLiveness: () => undefined,
       ports: {
+        canCheckFreshness: () => false,
         observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
         readCursor: () => undefined,
         fetchPage: async () => {

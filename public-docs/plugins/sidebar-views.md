@@ -110,7 +110,8 @@ Existing workspace panels can continue passing a host-local string ID to `useWor
 Workspace snapshots include `project`, `pinnedAt`, `labels`, `background`, `branch`,
 `lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). Use `indicator` and the
 localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
-status. Agent snapshots include their workspace and parent refs. Project snapshots provide
+status. Agent snapshots include their workspace and parent refs, `background`, and
+`backgroundWork.count`. Project snapshots provide
 `displayName`, `rootPath`, `kind` and `iconRevision`.
 
 ## List terminals

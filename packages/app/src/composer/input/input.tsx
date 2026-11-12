@@ -40,12 +40,12 @@ import {
   type ToolbarGlyph,
   toolbarSlot,
 } from "@/components/ui/control-geometry";
+import { bySizing } from "@/components/ui/control-sizing";
 import {
   COMPOSER_PADDING_BOTTOM,
   COMPOSER_PADDING_HORIZONTAL,
   COMPOSER_CORNER_RADIUS,
   COMPOSER_PADDING_TOP,
-  COMPOSER_TOOLBAR_SHAPES,
   composerToolbarOverhang,
   resolveComposerLeadingEdge,
 } from "@/composer/input/toolbar-rails";
@@ -225,9 +225,12 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  isFocused: () => boolean;
   getText: () => string;
   getInputSnapshot: () => ComposerInputSnapshot;
   replaceText: (text: string, selection?: { start: number; end: number }) => void;
+  /** Clamped to the text the input holds. */
+  setSelection: (selection: { start: number; end: number }) => void;
   runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
    * Web-only: return the underlying DOM element for focus assertions/retries.
@@ -1486,6 +1489,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       focus: () => {
         textInputRef.current?.focus();
       },
+      isFocused: () => textInputRef.current?.isFocused() ?? false,
       blur: () => {
         textInputRef.current?.blur();
       },
@@ -1493,6 +1497,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getInputSnapshot: () =>
         getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
       replaceText,
+      setSelection: (selection) => {
+        const text = textInputRef.current?.getText() ?? valueRef.current;
+        const clamped = resolveRetainedSelection(selection, text.length);
+        selectionRef.current = clamped;
+        textInputRef.current?.setSelection(clamped);
+      },
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
           focusInput: () => textInputRef.current?.focus(),
@@ -1983,7 +1993,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const voiceButtonStyle = useCallback(
       ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
         styles.voiceButton,
-        isDictating && styles.voiceButtonRecording,
         Boolean(hovered || pressed) && !isDictating && styles.iconButtonHovered,
         Boolean(pressed) && isDictating && styles.discPressed,
         !isDictationStartEnabled && styles.buttonDisabled,
@@ -2238,7 +2247,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               voiceMuteToggleKeys={voiceMuteToggleKeys}
               dictationToggleKeys={dictationToggleKeys}
             />
-            {sendButton}
+            <View style={styles.trailingDisc}>{sendButton}</View>
           </View>
         </View>
       ),
@@ -2470,8 +2479,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     gap: TOOLBAR_CONTROL_GAP,
   },
+  // Touch-sized the row's highlights touch, but the disc is always painted, so a pressed neighbour
+  // keeps clear of it instead of merging with it.
+  trailingDisc: {
+    marginLeft: bySizing({ touch: theme.spacing[1.5], pointer: 0 }),
+  },
+  // Touch-sized the plus is all thin arms, so beside the picker's glyph the same gap reads wider.
+  // Its highlight can overlap the picker's: only one control is ever pressed.
   attachButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.attach),
+    ...toolbarSlot(),
+    marginRight: bySizing({ touch: -2, pointer: 0 }),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -2483,13 +2500,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
   },
   voiceButton: {
-    ...toolbarSlot(COMPOSER_TOOLBAR_SHAPES.dictation),
+    ...toolbarSlot(),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  voiceButtonRecording: {
-    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
   },
   voiceButtonRecordingDisc: {
     width: TOOLBAR_DISC_SIZE,
@@ -2501,7 +2515,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   sendButton: {
     minWidth: TOOLBAR_DISC_SIZE,
-    marginHorizontal: toolbarSlot(COMPOSER_TOOLBAR_SHAPES.disc).marginHorizontal,
     height: TOOLBAR_DISC_SIZE,
     alignItems: "center",
     justifyContent: "center",

@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -711,6 +711,29 @@ implementations provide it:
 - A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
+
+`focus` differs per implementation on purpose. A running agent's model reveals the agent with
+`navigateToAgent` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
+input that is revealed attaches. `isRevealed` is stricter than `isLive`: a compact overlay panel and
+an unfocused pane leave the input live but unable to take the keyboard, so the agent is revealed
+first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change
+re-runs `attachInput`, which is what tells the pending request the input is on screen. The draft
+half has nothing to navigate to and does not pull the user back to a draft they left, so it rejects
+when not revealed. Sheets, menus, pickers and modals the composer opens over itself do not count
+against `revealed`: `takeInputFocus` closes them through the `OverlayDismissalScope` in
+`components/ui/overlay-dismissal.tsx`, and places the cursor only after the commit that removes
+them. A web modal hands focus back to the button that opened it in that commit, so placing the
+cursor earlier loses it. The overlay primitives register while open: every controlled bottom
+sheet through `useIsolatedBottomSheetVisibility`, `AdaptiveModalSheet`'s desktop dialog, `MenuRoot`,
+`Combobox`, and `Modal` through its `onRequestClose`. Their close must close; a surface built on none
+of them must call `useDismissibleOverlay`. Overlapping requests share each overlay's close, and the
+latest request places the cursor while the earlier ones settle with it. A native input reports
+focus synchronously and refuses it while not editable, such as during dictation, so the native
+branch checks `isFocused()` instead of trusting the call. The agent panel opens the scope around its whole chat
+because the tracks above the composer render outside `Composer`, and the composer's own scope
+joins it. `toPluginComposer` clears the Command Center's focus restore, which would
+otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so
+the app's web-only `focusInput` stays separate and plugins go through `takeInputFocus`.
 
 `ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
 implementations and `toPluginComposer`; never branch on `context` in the host.

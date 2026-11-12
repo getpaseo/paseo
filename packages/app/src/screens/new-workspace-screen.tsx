@@ -8,6 +8,7 @@ import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -909,6 +910,7 @@ export function NewWorkspaceScreen({
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
+  const isScreenFocused = useIsFocused();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1544,7 +1546,7 @@ export function NewWorkspaceScreen({
       submitLabel={terminalSubmitLabel}
       agentId={draftKey}
       serverId={selectedServerId}
-      isPaneFocused={true}
+      isPaneFocused={isScreenFocused}
       onSubmitMessage={handleSubmitTerminalLaunch}
       allowEmptySubmit={true}
       submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
@@ -1568,7 +1570,7 @@ export function NewWorkspaceScreen({
       editingSession={composerEditing.chat}
       agentId={draftKey}
       serverId={selectedServerId}
-      isPaneFocused={true}
+      isPaneFocused={isScreenFocused}
       onSubmitMessage={handleSubmitNewWorkspace}
       allowEmptySubmit={true}
       submitButtonAccessibilityLabel={t("newWorkspace.create")}
