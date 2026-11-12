@@ -7,6 +7,7 @@ export {
   PluginComposerPills,
   PluginComposerToolbarButtons,
   PluginHeaderButtons,
+  PluginTimelineButtons,
   PluginVerticalBarButtons,
   usePluginWorkspaceMenu,
 } from "./buttons/view";

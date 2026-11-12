@@ -59,6 +59,7 @@ import {
 import { usePluginButtonMenuOpen } from "./menu-open";
 import { pluginButtonStore } from "./store";
 import { resolvePluginPlatform } from "../platform";
+import { scrollAgentTimeline } from "@/agent-stream/timeline-navigation";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
@@ -88,12 +89,14 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
 /** Toolbar and vertical bar buttons show only their icon. */
 const ICON_ONLY_PLACEMENTS: ReadonlySet<RegisteredPluginButton["placement"]> = new Set([
   "composer-toolbar",
+  "timeline",
   "vertical-bar",
 ]);
 /** Composer buttons open their surface above, toward the transcript. */
 const OPENS_ABOVE_PLACEMENTS: ReadonlySet<RegisteredPluginButton["placement"]> = new Set([
   "composer",
   "composer-toolbar",
+  "timeline",
 ]);
 
 function placementButtonStyle(
@@ -102,7 +105,7 @@ function placementButtonStyle(
   disabled: boolean,
   state: IconButtonChromeState,
 ) {
-  if (placement === "composer-toolbar") {
+  if (placement === "composer-toolbar" || placement === "timeline") {
     return iconButtonChromeStyle({ size: "small", compact, disabled, round: true, state });
   }
   if (placement === "vertical-bar") {
@@ -128,7 +131,11 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
 function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
   const color = view.props.theme.colors.foregroundMuted;
   const size =
-    view.entry.placement === "header" || view.entry.placement === "vertical-bar" ? 16 : 14;
+    view.entry.placement === "header" ||
+    view.entry.placement === "timeline" ||
+    view.entry.placement === "vertical-bar"
+      ? 16
+      : 14;
   const Icon = pluginIconComponent(icon);
   return (
     <View
@@ -144,6 +151,16 @@ function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }
 }
 
 function pressButton(view: ButtonView, path: readonly string[]) {
+  if (path.length === 0 && view.entry.button.behavior.kind === "timeline") {
+    if (view.props.context === "agent") {
+      scrollAgentTimeline(
+        view.props.host.id,
+        view.props.agentId,
+        view.entry.button.behavior.target,
+      );
+    }
+    return;
+  }
   void pluginButtonStore.run(view.entry.key, path).catch((error: unknown) => {
     view.toast.error(error instanceof Error ? error.message : String(error));
   });
@@ -293,7 +310,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
   const toolbar = ICON_ONLY_PLACEMENTS.has(entry.placement);
   const opensAbove = OPENS_ABOVE_PLACEMENTS.has(entry.placement);
   const disabled = button.disabled || entry.pending;
-  const expanded = button.behavior.kind !== "action";
+  const expanded = button.behavior.kind === "menu" || button.behavior.kind === "popover";
   // A chevron marks a button that opens something. Composer pills keep their label on compact and
   // open their surface above, so theirs points up and shows at every width; compact headers drop
   // the label and the chevron with it.
@@ -701,6 +718,32 @@ export function PluginComposerToolbarButtons({
   return (
     <GlobalButtons
       placement="composer-toolbar"
+      serverId={serverId}
+      renderContext={renderContext}
+      compact={compact}
+    />
+  );
+}
+
+/** Plugin controls floating over an agent transcript. */
+export function PluginTimelineButtons({
+  serverId,
+  workspaceId,
+  agentId,
+  compact,
+}: {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  compact: boolean;
+}) {
+  const renderContext = useMemo<PluginButtonContext>(
+    () => ({ context: "agent", workspaceId, agentId }),
+    [workspaceId, agentId],
+  );
+  return (
+    <GlobalButtons
+      placement="timeline"
       serverId={serverId}
       renderContext={renderContext}
       compact={compact}

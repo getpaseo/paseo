@@ -1,0 +1,12 @@
+{
+  "name": "paseo-scroll-to-last-user-message",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "^0.16.0-beta.2",
+    "typescript": "^5.9.3"
+  }
+}

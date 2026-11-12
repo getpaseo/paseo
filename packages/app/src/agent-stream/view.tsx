@@ -78,6 +78,8 @@ import { renderStreamRow, type RenderStreamItem } from "./stream-row";
 import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import { registerAgentTimelineNavigator } from "@/agent-stream/timeline-navigation";
+import { PluginTimelineButtons } from "@/plugins";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
@@ -304,11 +306,13 @@ function ScrollToBottomButton({
   isTimelineDetached,
   bottomOffset,
   onPress,
+  pluginControls,
 }: {
   nearBottom: NearBottom;
   isTimelineDetached: boolean;
   bottomOffset: number;
   onPress: () => void;
+  pluginControls?: ReactNode;
 }) {
   const { t } = useTranslation();
   const isNearBottom = useIsNearBottom(nearBottom);
@@ -316,20 +320,25 @@ function ScrollToBottomButton({
     () => [stylesheet.scrollToBottomContainer, { bottom: bottomOffset }],
     [bottomOffset],
   );
-  if (isNearBottom && !isTimelineDetached) return null;
+  const showBottomButton = !isNearBottom || isTimelineDetached;
   return (
     <View style={containerStyle} pointerEvents="box-none">
-      <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-        <Pressable
-          style={stylesheet.scrollToBottomButton}
-          onPress={onPress}
-          accessibilityRole="button"
-          accessibilityLabel={t("agentStream.scrollToBottom")}
-          testID="scroll-to-bottom-button"
-        >
-          <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-        </Pressable>
-      </Animated.View>
+      <View style={stylesheet.timelineControls}>
+        {pluginControls}
+        {showBottomButton ? (
+          <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
+            <Pressable
+              style={stylesheet.scrollToBottomButton}
+              onPress={onPress}
+              accessibilityRole="button"
+              accessibilityLabel={t("agentStream.scrollToBottom")}
+              testID="scroll-to-bottom-button"
+            >
+              <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+            </Pressable>
+          </Animated.View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -652,6 +661,31 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         onError: handleTimelineHistoryLoadError,
       });
     }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    const scrollToLastUserMessage = useCallback(() => {
+      const lastUserMessage = [...presentation.tail, ...presentation.head]
+        .toReversed()
+        .find((item) => item.kind === "user_message");
+      if (lastUserMessage) viewportRef.current?.scrollToMessage?.(lastUserMessage.id);
+    }, [presentation.head, presentation.tail]);
+    useEffect(
+      () =>
+        registerAgentTimelineNavigator(resolvedServerId, agentId, (target) => {
+          if (target === "last-user-message") scrollToLastUserMessage();
+        }),
+      [agentId, resolvedServerId, scrollToLastUserMessage],
+    );
+    const pluginTimelineControls = useMemo(
+      () =>
+        context.workspaceId ? (
+          <PluginTimelineButtons
+            serverId={resolvedServerId}
+            workspaceId={context.workspaceId}
+            agentId={agentId}
+            compact={isMobile}
+          />
+        ) : null,
+      [agentId, context.workspaceId, isMobile, resolvedServerId],
+    );
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -1207,6 +1241,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isTimelineDetached={isTimelineDetached}
               bottomOffset={scrollToBottomOffset}
               onPress={scrollToBottom}
+              pluginControls={pluginTimelineControls}
             />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
@@ -1761,6 +1796,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     alignItems: "center",
+  },
+  timelineControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   scrollToBottomButton: {
     width: 48,

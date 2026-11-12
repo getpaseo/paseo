@@ -39,6 +39,9 @@ export function createPluginClientRuntime(
     addVerticalBarButton(contribution) {
       return pluginButtonStore.addVerticalBarButton(installation, contribution);
     },
+    addTimelineButton(contribution) {
+      return pluginButtonStore.addTimelineButton(installation, contribution);
+    },
     openPanel(panelId, options) {
       openClientPanel({ installation, state, panelId, options });
     },

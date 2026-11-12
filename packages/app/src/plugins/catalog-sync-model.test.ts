@@ -156,6 +156,7 @@ function harness() {
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
         addComposerToolbarButton: () => ({ update() {}, remove() {} }),
+        addTimelineButton: () => ({ update() {}, remove() {} }),
         addVerticalBarButton: () => ({ update() {}, remove() {} }),
         subscribe: () => {
           throw new Error("Subscriptions are not used here");

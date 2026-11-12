@@ -2236,6 +2236,28 @@ and returns the same registration. On a folded iPhone the button appears in the 
 those actions are in the bar, so it disappears when the bar is off or absent. Its icon and popover
 props carry the `workspaceId` on screen.
 
+## Timeline buttons
+
+`client.addTimelineButton({ id, button })` adds an icon-only floating control beside the active
+agent transcript's scroll-to-bottom button. The button receives the active agent context for icon
+and popover content. Timeline controls stay on screen while the transcript is open.
+
+Use the host-owned timeline behavior when the button navigates the transcript:
+
+```tsx
+client.addTimelineButton({
+  id: "last-user-message",
+  button: {
+    title: "Scroll to last user message",
+    icon: "ChevronUp",
+    behavior: { kind: "timeline", target: "last-user-message" },
+  },
+});
+```
+
+`target: "last-user-message"` scrolls to the newest user message currently available in the
+agent's timeline. It is only valid for timeline buttons.
+
 ## Vertical bar
 
 On a folded iPhone, iOS 27.1 places a vertical bar along one edge of the screen. It holds the status

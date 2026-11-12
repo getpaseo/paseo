@@ -7,6 +7,7 @@ import type {
   PluginHeaderButtonContribution,
   PluginComposerPillContribution,
   PluginComposerToolbarButtonContribution,
+  PluginTimelineButtonContribution,
   PluginVerticalBarButtonContribution,
 } from "@getpaseo/plugin/client";
 import type { InstalledPlugin } from "../types";
@@ -17,8 +18,16 @@ import {
   type ResolvedPluginButton,
 } from "./validation";
 
-export type ButtonPlacement = "header" | "composer" | "composer-toolbar" | "vertical-bar";
-export type GlobalButtonPlacement = Extract<ButtonPlacement, "composer-toolbar" | "vertical-bar">;
+export type ButtonPlacement =
+  | "header"
+  | "composer"
+  | "composer-toolbar"
+  | "timeline"
+  | "vertical-bar";
+export type GlobalButtonPlacement = Extract<
+  ButtonPlacement,
+  "composer-toolbar" | "timeline" | "vertical-bar"
+>;
 
 /** Global buttons belong to every composer or workspace; each supplies its context when it renders. */
 export type RegisteredButtonContext = PluginButtonContext | { context: "global" };
@@ -99,6 +108,13 @@ export class PluginButtonStore {
     return this.add(installation, input, "vertical-bar", { context: "global" });
   }
 
+  addTimelineButton(
+    installation: InstalledPlugin,
+    input: PluginTimelineButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
+    return this.add(installation, input, "timeline", { context: "global" });
+  }
+
   private add(
     installation: InstalledPlugin,
     input: { id: string; button: PluginButton<PluginText> },
@@ -106,6 +122,9 @@ export class PluginButtonStore {
     context: RegisteredButtonContext,
   ): PluginButtonRegistration<PluginText> {
     const id = requireButtonId(input.id);
+    if (input.button.behavior.kind === "timeline" && placement !== "timeline") {
+      throw new Error("Plugin timeline behavior needs a timeline button");
+    }
     if (context.context !== "global" && !context.workspaceId.trim())
       throw new Error("Plugin button needs a workspace");
     const duplicate = this.entries.some(

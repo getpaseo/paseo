@@ -74,6 +74,33 @@ describe("plugin buttons", () => {
     expect(buttons.getSnapshot()).toEqual([]);
   });
 
+  it("registers timeline buttons separately and reserves timeline behavior for them", () => {
+    const buttons = store();
+    const plugin = installation();
+    buttons.addTimelineButton(plugin, {
+      id: "last-user-message",
+      button: {
+        title: "Last user message",
+        icon: "Scan",
+        behavior: { kind: "timeline", target: "last-user-message" },
+      },
+    });
+
+    const [entry] = buttons.getSnapshot();
+    expect(globalButtonMatches(entry, "timeline", "host-a")).toBe(true);
+    expect(globalButtonMatches(entry, "composer-toolbar", "host-a")).toBe(false);
+    expect(() =>
+      buttons.addComposerToolbarButton(plugin, {
+        id: "invalid-timeline",
+        button: {
+          title: "Invalid timeline",
+          icon: "Scan",
+          behavior: { kind: "timeline", target: "last-user-message" },
+        },
+      }),
+    ).toThrow("Plugin timeline behavior needs a timeline button");
+  });
+
   it("updates visibility in place, closes hidden content, and scopes each placement", () => {
     const buttons = store();
     const plugin = installation();

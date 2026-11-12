@@ -122,6 +122,7 @@ export type PluginClientRuntime = Pick<
   | "addHeaderButton"
   | "addComposerToolbarButton"
   | "addVerticalBarButton"
+  | "addTimelineButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
 // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
@@ -567,6 +568,10 @@ export function runPluginClientBundle(
     addVerticalBarButton(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addVerticalBarButton(contribution));
+    },
+    addTimelineButton(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addTimelineButton(contribution));
     },
   };
   const runtimeRequire = (name: string): unknown => {

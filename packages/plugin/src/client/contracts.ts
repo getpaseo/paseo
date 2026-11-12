@@ -24,6 +24,7 @@ import type {
   PluginComposerPillContribution,
   PluginComposerToolbarButtonContribution,
   PluginVerticalBarButtonContribution,
+  PluginTimelineButtonContribution,
 } from "./buttons.js";
 import type {
   PluginTheme,
@@ -232,6 +233,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addVerticalBarButton(
     contribution: PluginVerticalBarButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addTimelineButton(
+    contribution: PluginTimelineButtonContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;

@@ -56,6 +56,7 @@ export type {
   PluginComposerToolbarButtonContribution,
   PluginHeaderButtonContribution,
   PluginVerticalBarButtonContribution,
+  PluginTimelineButtonContribution,
 } from "./buttons.js";
 export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
 export type {
