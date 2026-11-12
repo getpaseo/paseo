@@ -560,6 +560,25 @@ function NativeTerminalEmulator({
       if (!terminal || !model || rows <= 0) {
         return;
       }
+      const metrics = metricsRef.current;
+      if (!selectionRangeRef.current && metrics) {
+        const point = gestureStartRef.current;
+        const applicationInput = terminal.getScrollInput({
+          direction,
+          rows,
+          column: Math.floor(point.x / metrics.cellWidth) + 1,
+          row: Math.floor(point.y / metrics.cellHeight) + 1,
+          x: Math.floor(point.x) + 1,
+          y: Math.floor(point.y) + 1,
+        });
+        if (applicationInput !== null) {
+          if (applicationInput.length > 0) {
+            claimActiveTerminalSize();
+            callbacksRef.current.onInput?.(applicationInput);
+          }
+          return;
+        }
+      }
       const visibleRows = resolveVisibleRows(terminal);
       const screen =
         direction === "up"
@@ -567,7 +586,7 @@ function NativeTerminalEmulator({
           : model.scrollDown({ rows, visibleRows });
       commitTerminalScreen(screen);
     },
-    [commitTerminalScreen, resolveVisibleRows],
+    [claimActiveTerminalSize, commitTerminalScreen, resolveVisibleRows],
   );
 
   const returnToBottom = useCallback(() => {

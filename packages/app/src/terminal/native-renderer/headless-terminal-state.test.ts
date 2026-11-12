@@ -19,6 +19,53 @@ function expectedBenchmarkLine(index: number): string {
 }
 
 describe("native headless terminal state", () => {
+  test("routes alternate-screen finger scrolling to the application's cursor keys", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
+    const scroll = { direction: "up" as const, rows: 2, column: 4, row: 3, x: 24, y: 40 };
+    expect(terminal.getScrollInput(scroll)).toBeNull();
+
+    await terminal.write("\x1b[?1049h\x1b[?1h");
+    const bounds = terminal.getBufferBounds();
+    expect(bounds.oldestRow).toBe(bounds.bottomViewport.firstRow);
+    expect(terminal.getScrollInput(scroll)).toBe("\x1bOA\x1bOA");
+    expect(terminal.getScrollInput({ ...scroll, direction: "down", rows: 1 })).toBe("\x1bOB");
+
+    await terminal.write("\x1b[?1l");
+    expect(terminal.getScrollInput({ ...scroll, rows: 1 })).toBe("\x1b[A");
+    await terminal.write("\x1b[?1049l");
+    expect(terminal.getScrollInput(scroll)).toBeNull();
+    terminal.dispose();
+  });
+
+  test.each([1000, 1002, 1003])(
+    "routes finger scrolling through mouse tracking mode %i",
+    async (mode) => {
+      const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
+      const scroll = { direction: "up" as const, rows: 2, column: 4, row: 3, x: 24, y: 40 };
+      await terminal.write(`\x1b[?1049h\x1b[?${mode}h\x1b[?1006h`);
+      expect(terminal.getScrollInput(scroll)).toBe("\x1b[<64;4;3M\x1b[<64;4;3M");
+      expect(terminal.getScrollInput({ ...scroll, direction: "down", rows: 1 })).toBe(
+        "\x1b[<65;4;3M",
+      );
+
+      await terminal.write(`\x1b[?${mode}l`);
+      expect(terminal.getScrollInput({ ...scroll, rows: 1 })).toBe("\x1b[A");
+      terminal.dispose();
+    },
+  );
+
+  test("keeps xterm's legacy and pixel mouse encodings for finger scroll input", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
+    const scroll = { direction: "up" as const, rows: 1, column: 4, row: 3, x: 24, y: 40 };
+    await terminal.write("\x1b[?1000h");
+    expect(terminal.getScrollInput(scroll)).toBe("\x1b[M`$#");
+    await terminal.write("\x1b[?1006h\x1b[?1016h");
+    expect(terminal.getScrollInput(scroll)).toBe("\x1b[<64;24;40M");
+    terminal.reset();
+    expect(terminal.getScrollInput(scroll)).toBeNull();
+    terminal.dispose();
+  });
+
   test("exposes application cursor key mode from headless xterm", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
 

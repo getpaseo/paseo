@@ -27,11 +27,21 @@ export interface NativeHeadlessTerminal {
   write(data: NativeTerminalWriteData): Promise<void>;
   getViewportState(input?: TerminalViewportStateInput): TerminalViewportState;
   getInputModeState(): NativeHeadlessTerminalInputModeState;
+  getScrollInput(input: NativeTerminalScrollInput): string | null;
   getBufferBounds(): TerminalBufferBounds;
   getBufferWindow(input: TerminalBufferWindowInput): TerminalBufferWindow;
   resize(input: { rows: number; cols: number }): void;
   reset(): void;
   dispose(): void;
+}
+
+export interface NativeTerminalScrollInput {
+  direction: "up" | "down";
+  rows: number;
+  column: number;
+  row: number;
+  x: number;
+  y: number;
 }
 
 export interface NativeHeadlessTerminalInputModeState {
@@ -95,6 +105,9 @@ interface XtermCoreService {
 interface HeadlessTerminalWithCore {
   _core?: {
     coreService?: XtermCoreService;
+    mouseStateService?: {
+      encodeMouseEvent(event: XtermMouseWheelEvent): string;
+    };
     _bufferService?: {
       buffer?: {
         lines?: {
@@ -103,6 +116,18 @@ interface HeadlessTerminalWithCore {
       };
     };
   };
+}
+
+interface XtermMouseWheelEvent {
+  col: number;
+  row: number;
+  x: number;
+  y: number;
+  button: 4;
+  action: 0 | 1;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
 }
 
 interface TerminalCoordinateStorage {
@@ -357,6 +382,34 @@ export function createNativeHeadlessTerminal(
     },
     getInputModeState(): NativeHeadlessTerminalInputModeState {
       return extractInputModeState(terminal);
+    },
+    getScrollInput(input: NativeTerminalScrollInput): string | null {
+      const mouseMode = terminal.modes.mouseTrackingMode;
+      const reportsWheel = mouseMode !== "none" && mouseMode !== "x10";
+      if (reportsWheel) {
+        // Use the pinned xterm encoder so SGR, legacy and pixel reports follow the same modes
+        // as the web terminal. The native view supplies one-based cell and pixel coordinates.
+        const mouse = (terminal as unknown as HeadlessTerminalWithCore)._core?.mouseStateService;
+        if (!mouse) throw new Error("Native terminal mouse encoder is unavailable");
+        const report = mouse.encodeMouseEvent({
+          col: Math.max(1, Math.min(terminal.cols, input.column)),
+          row: Math.max(1, Math.min(terminal.rows, input.row)),
+          x: input.x,
+          y: input.y,
+          button: 4,
+          action: input.direction === "up" ? 0 : 1,
+          ctrl: false,
+          alt: false,
+          shift: false,
+        });
+        return report.repeat(input.rows);
+      }
+      if (terminal.buffer.active.type === "alternate") {
+        const prefix = terminal.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[";
+        const key = input.direction === "up" ? "A" : "B";
+        return `${prefix}${key}`.repeat(input.rows);
+      }
+      return null;
     },
     getBufferBounds(): TerminalBufferBounds {
       return extractBufferBounds(terminal, coordinateEpoch, getActiveCoordinateStorage().oldestRow);
