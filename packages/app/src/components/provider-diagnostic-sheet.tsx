@@ -640,27 +640,6 @@ export function ProviderDiagnosticSheet({
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
 
-  const defaultModelId = useMemo(
-    () => preferences.providerPreferences?.[provider]?.model ?? null,
-    [preferences, provider],
-  );
-  const handleToggleDefaultModel = useCallback(
-    async (modelId: string) => {
-      try {
-        const alreadyDefault = preferences.providerPreferences?.[provider]?.model === modelId;
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: provider as AgentProvider,
-            updates: { model: alreadyDefault ? null : modelId },
-          }),
-        );
-      } catch (error) {
-        console.warn("[ProviderDiagnosticSheet] toggle default model failed", error);
-      }
-    },
-    [preferences, provider, updatePreferences],
-  );
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -688,6 +667,60 @@ export function ProviderDiagnosticSheet({
     previousCache: stableDiscoveredRef.current,
   });
   stableDiscoveredRef.current = nextDiscoveredCache;
+
+  const defaultModelId = useMemo(
+    () =>
+      additionalModels.find((model) => model.isDefault)?.id ??
+      preferences.providerPreferences?.[provider]?.model ??
+      null,
+    [additionalModels, preferences, provider],
+  );
+  const handleToggleDefaultModel = useCallback(
+    async (modelId: string) => {
+      try {
+        const alreadyDefault =
+          preferences.providerPreferences?.[provider]?.model === modelId ||
+          additionalModels.some((model) => model.id === modelId && model.isDefault);
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: provider as AgentProvider,
+            updates: { model: alreadyDefault ? null : modelId },
+          }),
+        );
+        // Mirror the pin into the daemon config so the default also holds for
+        // headless clients (paseo run, CLI): the catalog resolution in the
+        // agent manager reads isDefault from the provider's additionalModels.
+        const label =
+          additionalModels.find((model) => model.id === modelId)?.label ??
+          discoveredModels.find((model) => model.id === modelId)?.label ??
+          modelId;
+        await patchConfig({
+          providers: {
+            [provider]: {
+              additionalModels: alreadyDefault
+                ? additionalModels.map((model) =>
+                    model.isDefault ? { ...model, isDefault: false } : model,
+                  )
+                : [
+                    ...additionalModels.map((model) =>
+                      model.isDefault ? { ...model, isDefault: false } : model,
+                    ),
+                    ...(additionalModels.some((model) => model.id === modelId)
+                      ? []
+                      : [{ id: modelId, label }]),
+                  ].map((model) =>
+                    model.id === modelId ? { ...model, isDefault: true } : model,
+                  ),
+            },
+          },
+        });
+      } catch (error) {
+        console.warn("[ProviderDiagnosticSheet] toggle default model failed", error);
+      }
+    },
+    [additionalModels, discoveredModels, patchConfig, preferences, provider, updatePreferences],
+  );
 
   useEffect(() => {
     if (!visible) {
