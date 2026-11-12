@@ -644,6 +644,22 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '```typescript\nconst answer = "yes";\n  return answer;\n```\n\nAfter code.',
     );
 
+    // Crossing into part of the block keeps the selected code lines as a fenced block.
+    await selectAssistantAcrossCodeLines(page, "not a generated link.", "return");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      'not a generated link.\n\n```typescript\nconst answer = "yes";\n  return\n```',
+    );
+
+    // So does starting partway through the block and leaving it.
+    await selectAssistantAcrossCodeLines(page, "answer", "After code.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      '```typescript\nanswer = "yes";\n  return answer;\n```\n\nAfter code.',
+    );
+
     // Selecting a whole line runs off its end into the newline node. A trailing
     // newline auto-executes the line when it is pasted into a terminal.
     await selectAssistantAcrossCodeLines(page, "const", "  ");
