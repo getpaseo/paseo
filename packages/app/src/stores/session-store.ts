@@ -134,6 +134,8 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  /** Daemon-computed sidebar counts; null/absent on hosts that predate the field. */
+  agentStatusCounts?: WorkspaceDescriptorPayload["agentStatusCounts"];
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -179,6 +181,8 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
+    // COMPAT(workspaceAgentCounts): added in v0.16.1, remove the null fallback after 2027-05-12.
+    agentStatusCounts: payload.agentStatusCounts ?? null,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),

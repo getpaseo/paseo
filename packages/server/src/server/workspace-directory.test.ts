@@ -191,6 +191,14 @@ class WorkspaceStatus {
     return entries.entries[0]?.status ?? "done";
   }
 
+  async agentStatusCounts(): Promise<WorkspaceDescriptorPayload["agentStatusCounts"]> {
+    const entries = await this.directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-agent-counts",
+    });
+    return entries.entries[0]?.agentStatusCounts ?? null;
+  }
+
   async workspaceStatuses(): Promise<Record<string, WorkspaceDescriptorPayload["status"]>> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
@@ -326,6 +334,61 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("counts finished-but-unopened, running and finished root agents", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({
+      id: "unread",
+      status: "idle",
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    workspace.hasRootAgent({ id: "running", status: "running" });
+    workspace.hasRootAgent({ id: "read", status: "idle" });
+    workspace.hasRootAgent({ id: "closed", status: "closed" });
+    workspace.hasRootAgent({
+      id: "failed",
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    workspace.hasRootAgent({ id: "permission", status: "idle", pendingPermissionCount: 1 });
+    workspace.hasRootAgent({ id: "archived", status: "idle", archivedAt: NOW });
+
+    await expect(workspace.agentStatusCounts()).resolves.toEqual({
+      unread: 1,
+      running: 1,
+      read: 2,
+    });
+  });
+
+  test("counts a root as running while a delegated child still runs", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgent({ id: "child", status: "running" });
+
+    await expect(workspace.agentStatusCounts()).resolves.toEqual({
+      unread: 0,
+      running: 1,
+      read: 0,
+    });
+  });
+
+  test("counts a root as running while a provider subagent still runs", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasProviderSubagent({
+      parentAgentId: "parent-agent",
+      status: "running",
+      updatedAt: NOW,
+    });
+
+    await expect(workspace.agentStatusCounts()).resolves.toEqual({
+      unread: 0,
+      running: 1,
+      read: 0,
+    });
+  });
+
   test("treats background work as running without changing foreground status", async () => {
     const workspace = new WorkspaceStatus();
     workspace.hasRootAgent({

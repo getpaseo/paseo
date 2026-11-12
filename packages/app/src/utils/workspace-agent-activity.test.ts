@@ -188,6 +188,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "done",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      statusCounts: { unread: 0, running: 0, read: 1 },
     });
   });
 
@@ -340,9 +341,10 @@ describe("workspace agent activity index", () => {
       ]),
     );
 
-    // One attention agent (unread), one running, and the already-opened "done" one (read).
-    // failed / needs_input / initializing contribute to none of the three.
-    expect(index.get("workspace-a")?.statusCounts).toEqual({ unread: 1, running: 1, read: 1 });
+    // One attention agent (unread), one running, and two finished ones (read): the plain
+    // `done` agent plus the error the user already saw, which settles into `done` too.
+    // needs_input / initializing contribute to none of the three.
+    expect(index.get("workspace-a")?.statusCounts).toEqual({ unread: 1, running: 1, read: 2 });
   });
 
   it("preserves the activity index while the same agent remains in the same status", () => {

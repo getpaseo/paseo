@@ -71,6 +71,31 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry agent status counts", () => {
+  it("prefers the daemon-provided counts over the local projection", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: {
+        ...workspaceWithForge(undefined, "https://example.com/pr/1"),
+        agentStatusCounts: { unread: 3, running: 1, read: 2 },
+      },
+      workspaceAgentActivity: new Map(),
+    });
+
+    expect(entry.agentStatusCounts).toEqual({ unread: 3, running: 1, read: 2 });
+  });
+
+  it("falls back to zeros when the daemon predates the counts field", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://example.com/pr/1"),
+      workspaceAgentActivity: new Map(),
+    });
+
+    expect(entry.agentStatusCounts).toEqual({ unread: 0, running: 0, read: 0 });
+  });
+});
+
 describe("createSidebarWorkspaceEntry workspace directory label", () => {
   it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");

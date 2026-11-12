@@ -304,6 +304,12 @@ export class WorkspaceDirectory {
       activeAgents,
       activeWorkspaceIds,
     );
+    const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent]));
+    const runningRootAgentIds = collectRunningRootAgentIds({
+      activeAgents,
+      activeAgentsById,
+      providerSubagentActivity,
+    });
 
     // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
     // on `resolveStatusEnteredAt`).
@@ -311,6 +317,11 @@ export class WorkspaceDirectory {
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+      descriptor.agentStatusCounts = countWorkspaceAgentStatuses({
+        workspaceAgents: contributingAgents,
+        activeAgentsById,
+        runningRootAgentIds,
+      });
       const result = this.resolveStatusEnteredAt({
         workspaceId,
         winningBucket: descriptor.status,
@@ -774,4 +785,75 @@ export function resolveWorkspaceRootAgent(
     seen.add(parentAgentId);
     current = parent;
   }
+}
+
+/**
+ * Three numbers the sidebar shows per workspace row: finished-but-not-opened
+ * (`unread`), running right now (`running`), and everything else that already
+ * finished (`read`). Computed daemon-side because the client agent directory is a
+ * replaceable projection: any partial directory snapshot would collapse a row to
+ * zero. Root agents only — delegated children show up as `running` on their root.
+ */
+export interface WorkspaceAgentStatusCounts {
+  unread: number;
+  running: number;
+  read: number;
+}
+
+/**
+ * Roots that are running right now, either because the root itself runs or because
+ * a same-workspace descendant / provider sub-agent still runs. Precomputed once per
+ * directory build so each workspace only resolves its own roots.
+ */
+function collectRunningRootAgentIds(input: {
+  activeAgents: AgentSnapshotPayload[];
+  activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>;
+  providerSubagentActivity: ProviderSubagentWorkspaceActivity[];
+}): Set<string> {
+  const runningRootAgentIds = new Set<string>();
+  for (const agent of input.activeAgents) {
+    if (agent.status !== "running") continue;
+    const isDelegated = getParentAgentIdFromLabels(agent.labels) !== undefined;
+    const root = isDelegated ? resolveWorkspaceRootAgent(agent, input.activeAgentsById) : agent;
+    if (root) runningRootAgentIds.add(root.id);
+  }
+  for (const subagent of input.providerSubagentActivity) {
+    if (subagent.status !== "running") continue;
+    const parent = input.activeAgentsById.get(subagent.parentAgentId);
+    const root = parent ? resolveWorkspaceRootAgent(parent, input.activeAgentsById) : null;
+    if (root) runningRootAgentIds.add(root.id);
+  }
+  return runningRootAgentIds;
+}
+
+function countWorkspaceAgentStatuses(input: {
+  workspaceAgents: AgentSnapshotPayload[];
+  activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>;
+  runningRootAgentIds: ReadonlySet<string>;
+}): WorkspaceAgentStatusCounts {
+  const counts: WorkspaceAgentStatusCounts = { unread: 0, running: 0, read: 0 };
+  for (const agent of input.workspaceAgents) {
+    const root = resolveWorkspaceRootAgent(agent, input.activeAgentsById);
+    if (root?.id !== agent.id) {
+      continue;
+    }
+    if (input.runningRootAgentIds.has(agent.id)) {
+      counts.running += 1;
+      continue;
+    }
+    const bucket = deriveAgentStateBucket({
+      status: agent.status,
+      pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+      requiresAttention: agent.requiresAttention,
+      attentionReason: agent.attentionReason ?? null,
+    });
+    if (bucket === "attention") {
+      counts.unread += 1;
+    } else if (bucket === "running") {
+      counts.running += 1;
+    } else if (bucket === "done") {
+      counts.read += 1;
+    }
+  }
+  return counts;
 }

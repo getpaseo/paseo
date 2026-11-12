@@ -175,7 +175,12 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    // Prefer the daemon's counts: the local agent directory is a replaceable
+    // projection, so a partial sync would read as "nothing outstanding". The
+    // activity-index counts stay as the fallback for hosts that predate the field.
+    // COMPAT(workspaceAgentCounts): drop the fallback after 2027-05-12.
     agentStatusCounts:
+      input.workspace.agentStatusCounts ??
       input.workspaceAgentActivity?.get(input.workspace.id)?.statusCounts ??
       EMPTY_AGENT_STATUS_COUNTS,
     archivingAt: input.workspace.archivingAt,
