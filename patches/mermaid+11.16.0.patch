@@ -1,0 +1,21 @@
+diff --git a/node_modules/mermaid/dist/chunks/mermaid.core/chunk-Q4XR5HBZ.mjs b/node_modules/mermaid/dist/chunks/mermaid.core/chunk-Q4XR5HBZ.mjs
+index 3f0dd6d..cf17c41 100644
+--- a/node_modules/mermaid/dist/chunks/mermaid.core/chunk-Q4XR5HBZ.mjs
++++ b/node_modules/mermaid/dist/chunks/mermaid.core/chunk-Q4XR5HBZ.mjs
+@@ -209,6 +209,7 @@ function applyStyle(dom, styleFn) {
+ }
+ __name(applyStyle, "applyStyle");
+ var maxSafeSizeForWidth = 16384;
++var maxRoundingError = 1;
+ async function addHtmlSpan(element, node, width, classes, addBackground = false, config = getConfig()) {
+   const fo = element.append("foreignObject");
+   fo.attr("width", `${Math.min(10 * width, maxSafeSizeForWidth)}px`);
+@@ -233,7 +234,7 @@ async function addHtmlSpan(element, node, width, classes, addBackground = false,
+     div.attr("class", "labelBkg");
+   }
+   let bbox = div.node().getBoundingClientRect();
+-  if (bbox.width === width) {
++  if (bbox.width >= width - maxRoundingError) {
+     div.style("display", "table");
+     div.style("white-space", "break-spaces");
+     div.style("width", width + "px");
