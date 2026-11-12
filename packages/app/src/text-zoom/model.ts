@@ -1,7 +1,7 @@
 /** A surface whose text size a pinch can change, independently of the others. */
-export type TextZoomSurface = "chat" | "terminal";
+export type TextZoomSurface = "chat" | "terminal" | "files";
 
-export const TEXT_ZOOM_SURFACES: readonly TextZoomSurface[] = ["chat", "terminal"];
+export const TEXT_ZOOM_SURFACES: readonly TextZoomSurface[] = ["chat", "terminal", "files"];
 
 /** Multipliers on the Appearance settings: 1 shows the settings' size. */
 export type TextZoomState = Readonly<Record<TextZoomSurface, number>>;
@@ -13,10 +13,10 @@ const TEXT_ZOOM_STEPS_PER_UNIT = 20;
 // One notch of a mouse wheel reports about 100; a trackpad pinch reports a few per event.
 const WHEEL_ZOOM_PER_DELTA = 0.01;
 
-export const DEFAULT_TEXT_ZOOM_STATE: TextZoomState = { chat: 1, terminal: 1 };
+export const DEFAULT_TEXT_ZOOM_STATE: TextZoomState = { chat: 1, terminal: 1, files: 1 };
 
 export function isTextZoomSurface(value: unknown): value is TextZoomSurface {
-  return value === "chat" || value === "terminal";
+  return value === "chat" || value === "terminal" || value === "files";
 }
 
 /** Clamps to the supported range and snaps to 5% steps, so sizes land on whole pixels more often. */
@@ -68,5 +68,5 @@ export function parseStoredTextZoom(raw: string | null): TextZoomState {
     const value: unknown = Reflect.get(parsed, surface);
     return typeof value === "number" ? clampTextZoom(value) : DEFAULT_TEXT_ZOOM;
   };
-  return { chat: read("chat"), terminal: read("terminal") };
+  return { chat: read("chat"), terminal: read("terminal"), files: read("files") };
 }

@@ -4,15 +4,21 @@ import { clearAsyncStorageStub } from "../../test-stubs/async-storage";
 import {
   TEXT_ZOOM_STORAGE_KEY,
   enablePinchTextZoom,
+  applyPinchTextZoom,
+  beginTextZoomPinch,
+  endTextZoomPinch,
   getTextZoom,
-  getTextZoomPreview,
+  getTextZoomPinch,
   hydrateTextZoom,
   isPinchTextZoomEnabled,
   resetTextZoomForTests,
   setTextZoom,
-  setTextZoomPreview,
   subscribeTextZoom,
 } from "./store";
+
+async function savedZooms(): Promise<unknown> {
+  return JSON.parse((await AsyncStorage.getItem(TEXT_ZOOM_STORAGE_KEY)) ?? "null");
+}
 
 describe("text zoom store", () => {
   beforeEach(() => {
@@ -40,10 +46,7 @@ describe("text zoom store", () => {
     setTextZoom("chat", 2);
     setTextZoom("chat", 1);
     expect(getTextZoom("chat")).toBe(1);
-    expect(JSON.parse((await AsyncStorage.getItem(TEXT_ZOOM_STORAGE_KEY)) ?? "{}")).toEqual({
-      chat: 1,
-      terminal: 1,
-    });
+    expect(await savedZooms()).toEqual({ chat: 1, terminal: 1, files: 1 });
   });
 
   it("keeps a zoom set before the saved zooms load", async () => {
@@ -53,17 +56,52 @@ describe("text zoom store", () => {
     expect(getTextZoom("terminal")).toBe(1.5);
   });
 
-  it("keeps pinch on while any enabler holds it, and clears its preview when the last lets go", () => {
+  it("keeps pinch on while any enabler holds it, and ends a pinch when the last lets go", () => {
     const first = enablePinchTextZoom("chat");
     const second = enablePinchTextZoom("chat");
-    setTextZoomPreview({ surface: "chat", zoom: 1.3 });
+    beginTextZoomPinch("chat", null);
     first();
     first();
     expect(isPinchTextZoomEnabled("chat")).toBe(true);
     expect(isPinchTextZoomEnabled("terminal")).toBe(false);
     second();
     expect(isPinchTextZoomEnabled("chat")).toBe(false);
-    expect(getTextZoomPreview()).toBeNull();
+    expect(getTextZoomPinch()).toBeNull();
+  });
+
+  it("changes the size live during a pinch and saves it once, when the pinch ends", async () => {
+    beginTextZoomPinch("terminal", { x: 10, y: 20 });
+    applyPinchTextZoom(1.1);
+    applyPinchTextZoom(1.25);
+    expect(getTextZoom("terminal")).toBe(1.25);
+    expect(await savedZooms()).toBeNull();
+    endTextZoomPinch();
+    expect(getTextZoomPinch()).toBeNull();
+    expect(await savedZooms()).toEqual({ chat: 1, terminal: 1.25, files: 1 });
+  });
+
+  it("keeps every surface's zoom apart", () => {
+    for (const [surface, zoom] of [
+      ["chat", 1.5],
+      ["terminal", 0.75],
+      ["files", 2],
+    ] as const) {
+      const before = {
+        chat: getTextZoom("chat"),
+        terminal: getTextZoom("terminal"),
+        files: getTextZoom("files"),
+      };
+      beginTextZoomPinch(surface, null);
+      applyPinchTextZoom(zoom);
+      endTextZoomPinch();
+      expect(getTextZoom(surface)).toBe(zoom);
+      for (const other of ["chat", "terminal", "files"] as const) {
+        if (other !== surface) expect(getTextZoom(other)).toBe(before[other]);
+      }
+    }
+    setTextZoom("chat", 1);
+    expect(getTextZoom("terminal")).toBe(0.75);
+    expect(getTextZoom("files")).toBe(2);
   });
 
   it("notifies only on changes", () => {
@@ -73,10 +111,8 @@ describe("text zoom store", () => {
     });
     setTextZoom("chat", 1.2);
     setTextZoom("chat", 1.2);
-    setTextZoomPreview({ surface: "chat", zoom: 1.3 });
-    setTextZoomPreview({ surface: "chat", zoom: 1.3 });
     unsubscribe();
     setTextZoom("chat", 1.5);
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 });

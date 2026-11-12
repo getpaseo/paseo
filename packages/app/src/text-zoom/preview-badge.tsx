@@ -1,12 +1,13 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { formatTextZoom, type TextZoomSurface } from "./model";
-import { useTextZoomPreview } from "./store";
+import { useTextZoom, useTextZoomPinching } from "./store";
 
-/** The size a pinch would apply, over the surface while the fingers are down. */
+/** The surface's size, live, over the surface while a pinch on it is in progress. */
 export function TextZoomPreviewBadge({ surface }: { surface: TextZoomSurface }) {
-  const zoom = useTextZoomPreview(surface);
-  if (zoom === null) return null;
+  const pinching = useTextZoomPinching(surface);
+  const zoom = useTextZoom(surface);
+  if (!pinching) return null;
   return (
     <View pointerEvents="none" style={styles.layer}>
       <View style={styles.badge}>

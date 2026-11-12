@@ -2344,17 +2344,24 @@ your subscriptions, timers, and other resources.
 
 ## Text zoom
 
-The chat and the terminal each have a text zoom on this device: a multiplier on the sizes in
-**Settings → Appearance** (content size for the chat, code size for the terminal). `1` is the
-Appearance size. Paseo saves each zoom on the device, so it survives a relaunch, and clamps it to
-0.5–3 in 5% steps. The chat zoom scales message text, Markdown and its code blocks, and
-`StreamedText` inside the transcript; plugin panels and file views keep their size. The terminal
-zoom changes the terminal's font size, so its cells and the PTY size follow.
+The chat, the terminal and file views each have their own text zoom on this device: a multiplier
+on the sizes in **Settings → Appearance**. `1` is the Appearance size. Paseo saves each zoom on
+the device, so it survives a relaunch, and clamps it to 0.5–3 in 5% steps. Changing one surface
+never changes another.
+
+| Surface      | Scales                                                                                        | Base size    |
+| ------------ | --------------------------------------------------------------------------------------------- | ------------ |
+| `"chat"`     | Message text, Markdown and its code blocks, and `StreamedText` in the transcript              | Content size |
+| `"terminal"` | The terminal's font; its cells reflow and the PTY gets the new size once the pinch settles    | Code size    |
+| `"files"`    | Source in the file panel (code and line numbers), rendered Markdown files, and the diff views | Code size    |
+
+Plugin panels, HTML previews and images keep their size.
 
 Call `enablePinchTextZoom(surface)` to let a pinch change a surface's zoom: two fingers on iOS and
-Android, a trackpad pinch or ctrl+wheel in a browser or the desktop app. Paseo shows the new size
-while the pinch is in progress and applies it when the fingers lift, so a long transcript lays out
-once. One-finger scrolling, text selection and the chat's floating buttons are unaffected. The
+Android, a trackpad pinch or ctrl+wheel in a browser or the desktop app. The size changes while the
+fingers move, one 5% step at a time and at most once a frame, keeping your place in the content,
+and a badge shows the percentage. It is saved when the fingers lift. One-finger
+scrolling, text selection, line taps and the chat's floating buttons are unaffected. The
 function returns the remover; Paseo also removes it when the plugin stops. Pinch stays on while
 any plugin has it on.
 
@@ -2390,7 +2397,7 @@ export default function contribute(client: PluginClientContext) {
 | `setTextZoom(surface, zoom)`   | Sets and saves a zoom. `1` resets the surface to its Appearance size. |
 | `enablePinchTextZoom(surface)` | Lets a pinch change the zoom until the returned remover runs.         |
 
-`surface` is `"chat"` or `"terminal"`; any other value throws. A zoom stays after the plugin that
+`surface` is `"chat"`, `"terminal"` or `"files"`; any other value throws. A zoom stays after the plugin that
 set it is removed, so reset it first if it should not outlive the plugin. Apps that predate text
 zoom do not supply these functions; check `typeof enablePinchTextZoom === "function"` before
 calling them.

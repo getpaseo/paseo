@@ -28,6 +28,8 @@ import {
   type NativeTerminalOutputDrain,
 } from "../terminal/native-renderer/headless-terminal-output-drain";
 import { TerminalGridView } from "../terminal/native-renderer/terminal-grid-view.native";
+import { isPinchTextZoomEnabled, startTextZoomPinch } from "../text-zoom";
+import { createTouchPinchRecognizer } from "../text-zoom/touch-pinch";
 import type { TerminalGridCellMetrics } from "../terminal/native-renderer/terminal-grid-metrics";
 import {
   createNativeTerminalScreenModel,
@@ -667,6 +669,17 @@ function NativeTerminalEmulator({
   );
   selectionControllerRef.current = selectionController;
 
+  // This responder owns every touch on the grid, so the pinch-to-zoom text size is recognized
+  // here: an ancestor gesture-handler pinch never saw these touches on iOS.
+  const pinchRecognizer = useMemo(
+    () =>
+      createTouchPinchRecognizer((focal) =>
+        isPinchTextZoomEnabled("terminal") ? startTextZoomPinch("terminal", focal) : null,
+      ),
+    [],
+  );
+  useEffect(() => () => pinchRecognizer.release(), [pinchRecognizer]);
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -677,15 +690,31 @@ function NativeTerminalEmulator({
           gestureStartRef.current = point;
           selectionController.press(point);
         },
-        onPanResponderMove: (_event, gesture) =>
+        onPanResponderMove: (event, gesture) => {
+          const wasPinching = pinchRecognizer.active;
+          if (pinchRecognizer.move(event.nativeEvent.touches)) {
+            // The second finger turns the touch into a pinch: no scroll, selection or tap.
+            if (!wasPinching) selectionController.cancel();
+            return;
+          }
           selectionController.move({
             x: gestureStartRef.current.x + gesture.dx,
             y: gestureStartRef.current.y + gesture.dy,
-          }),
-        onPanResponderRelease: () => selectionController.release(),
-        onPanResponderTerminate: () => selectionController.cancel(),
+          });
+        },
+        onPanResponderRelease: () => {
+          if (pinchRecognizer.active) {
+            pinchRecognizer.release();
+            return;
+          }
+          selectionController.release();
+        },
+        onPanResponderTerminate: () => {
+          pinchRecognizer.release();
+          selectionController.cancel();
+        },
       }),
-    [selectionController],
+    [pinchRecognizer, selectionController],
   );
 
   const backgroundColor = xtermTheme.background ?? "#0b0b0b";

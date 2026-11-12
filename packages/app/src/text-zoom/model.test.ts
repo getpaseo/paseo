@@ -36,12 +36,18 @@ describe("text zoom model", () => {
   });
 
   it("reads saved zooms and drops anything unreadable", () => {
+    // Zooms saved before file views had one load with files at 100%.
     expect(parseStoredTextZoom('{"chat":1.25,"terminal":0.8}')).toEqual({
       chat: 1.25,
       terminal: 0.8,
+      files: 1,
     });
-    expect(parseStoredTextZoom('{"chat":"big","terminal":12}')).toEqual({ chat: 1, terminal: 3 });
-    expect(parseStoredTextZoom("not json")).toEqual({ chat: 1, terminal: 1 });
-    expect(parseStoredTextZoom(null)).toEqual({ chat: 1, terminal: 1 });
+    expect(parseStoredTextZoom('{"chat":"big","terminal":12,"files":0.75}')).toEqual({
+      chat: 1,
+      terminal: 3,
+      files: 0.75,
+    });
+    expect(parseStoredTextZoom("not json")).toEqual({ chat: 1, terminal: 1, files: 1 });
+    expect(parseStoredTextZoom(null)).toEqual({ chat: 1, terminal: 1, files: 1 });
   });
 });

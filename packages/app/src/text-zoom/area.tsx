@@ -1,66 +1,69 @@
 import { useMemo, useRef, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { pinchTextZoom, type TextZoomSurface } from "./model";
+import type { TextZoomSurface } from "./model";
+import { startTextZoomPinch, type TextZoomPinchSession } from "./pinch-session";
 import { TextZoomPreviewBadge } from "./preview-badge";
 import { TextZoomScope } from "./scope";
-import { getTextZoom, setTextZoom, setTextZoomPreview, usePinchTextZoomEnabled } from "./store";
+import { setTextZoomPinchFocal, usePinchTextZoomEnabled } from "./store";
 
 interface TextZoomAreaProps {
   surface: TextZoomSurface;
   style?: StyleProp<ViewStyle>;
+  /**
+   * "content" when the content recognizes its own pinch, as the native terminal does from the
+   * touches its responder already owns. The area then only scopes the zoom and shows the badge.
+   */
+  pinch?: "area" | "content";
   children: ReactNode;
 }
 
 /**
- * A surface whose text size a two-finger pinch changes, once a plugin enables it. The pinch only
- * previews the size; it applies when the fingers lift, so a long transcript lays out once and a
- * terminal resizes its PTY once.
+ * A surface whose text size a two-finger pinch changes, once a plugin enables it. The size changes
+ * live in 5% steps and is saved when the fingers lift.
  *
  * The pinch needs two pointers, so one-finger scrolling, long-press selection and taps still
- * reach the content. When it activates, gesture-handler cancels the content's JS touch
- * responder, which ends a terminal selection gesture that had started.
+ * reach the content. When it activates, gesture-handler cancels the content's JS touch responder.
  */
-export function TextZoomArea({ surface, style, children }: TextZoomAreaProps) {
-  const enabled = usePinchTextZoomEnabled(surface);
-  const startZoomRef = useRef(1);
-  const pendingZoomRef = useRef<number | null>(null);
+export function TextZoomArea({ surface, style, pinch = "area", children }: TextZoomAreaProps) {
+  const enabled = usePinchTextZoomEnabled(surface) && pinch === "area";
+  const viewRef = useRef<View>(null);
+  const sessionRef = useRef<TextZoomPinchSession | null>(null);
 
   const gesture = useMemo(
     () =>
       Gesture.Pinch()
         .enabled(enabled)
         .runOnJS(true)
-        .onStart(() => {
-          startZoomRef.current = getTextZoom(surface);
-          pendingZoomRef.current = null;
+        .onStart((event) => {
+          sessionRef.current?.end();
+          sessionRef.current = startTextZoomPinch(surface, null);
+          const { focalX, focalY } = event;
+          viewRef.current?.measureInWindow((x, y) => {
+            setTextZoomPinchFocal({ x: x + focalX, y: y + focalY });
+          });
         })
         .onUpdate((event) => {
           // Android sends one more update after a finger lifts, scaled from the remaining one.
           if (event.numberOfPointers < 2) return;
-          const zoom = pinchTextZoom(startZoomRef.current, event.scale);
-          pendingZoomRef.current = zoom;
-          setTextZoomPreview({ surface, zoom });
-        })
-        .onEnd((_event, success) => {
-          const zoom = pendingZoomRef.current;
-          if (success && zoom !== null) setTextZoom(surface, zoom);
+          sessionRef.current?.scale(event.scale);
         })
         .onFinalize(() => {
-          pendingZoomRef.current = null;
-          setTextZoomPreview(null);
+          sessionRef.current?.end();
+          sessionRef.current = null;
         }),
     [enabled, surface],
   );
 
+  const content = (
+    <View ref={viewRef} collapsable={false} style={style}>
+      {children}
+      <TextZoomPreviewBadge surface={surface} />
+    </View>
+  );
   return (
     <TextZoomScope surface={surface}>
-      <GestureDetector gesture={gesture}>
-        <View collapsable={false} style={style}>
-          {children}
-          <TextZoomPreviewBadge surface={surface} />
-        </View>
-      </GestureDetector>
+      {pinch === "area" ? <GestureDetector gesture={gesture}>{content}</GestureDetector> : content}
     </TextZoomScope>
   );
 }

@@ -135,7 +135,7 @@ export type { Query, Group, GroupKey } from "./query.js";
 export type { PluginPaseoApi, PluginProjectHandle, PluginTerminalHandle } from "./reference-api.js";
 
 /** A surface whose text size the user can zoom, separately from the others. */
-export type PluginTextZoomSurface = "chat" | "terminal";
+export type PluginTextZoomSurface = "chat" | "terminal" | "files";
 /**
  * A surface's text zoom on this device: a multiplier on the size set in Settings → Appearance.
  * 1 is that size. Supplied by the app's client bundle loader.
@@ -152,7 +152,8 @@ export declare function subscribeTextZoom(listener: () => void): () => void;
 export declare function setTextZoom(surface: PluginTextZoomSurface, zoom: number): void;
 /**
  * Lets a pinch on the surface change its text zoom: two fingers on iOS and Android, a trackpad
- * pinch or ctrl+wheel in a browser or the desktop app. The new size applies when the pinch ends.
- * Returns the function that turns it off; Paseo also turns it off when the plugin stops.
+ * pinch or ctrl+wheel in a browser or the desktop app. The size changes live in 5% steps and is
+ * saved when the pinch ends. Returns the function that turns it off; Paseo also turns it off when
+ * the plugin stops.
  */
 export declare function enablePinchTextZoom(surface: PluginTextZoomSurface): () => void;

@@ -1,29 +1,34 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
-import { pinchTextZoom, wheelTextZoom, type TextZoomSurface } from "./model";
+import { wheelTextZoom, type TextZoomSurface } from "./model";
+import { startTextZoomPinch, type TextZoomPinchSession } from "./pinch-session";
 import { TextZoomPreviewBadge } from "./preview-badge";
 import { TextZoomScope } from "./scope";
-import { getTextZoom, setTextZoom, setTextZoomPreview, usePinchTextZoomEnabled } from "./store";
+import { usePinchTextZoomEnabled } from "./store";
 
 interface TextZoomAreaProps {
   surface: TextZoomSurface;
   style?: StyleProp<ViewStyle>;
+  /** Native only; on web every surface takes the browser's pinch here. */
+  pinch?: "area" | "content";
   children: ReactNode;
 }
 
 // A wheel pinch has no end event. It counts as over once the wheel has been quiet this long.
-const WHEEL_SETTLE_MS = 250;
+export const WHEEL_PINCH_SETTLE_MS = 150;
 
 // Safari's trackpad pinch. Not in the DOM typings.
 interface SafariGestureEvent extends UIEvent {
   readonly scale: number;
+  readonly clientX: number;
+  readonly clientY: number;
 }
 
 /**
  * Browsers deliver a trackpad pinch as a wheel event with `ctrlKey` set, and Safari as
  * `gesturestart`/`gesturechange`/`gestureend`. Both are taken in the capture phase, before
- * xterm or the list scroll them, and default-prevented so the page does not zoom. The size
- * previews during the pinch and applies when it settles.
+ * xterm, CodeMirror or the list scroll them, and default-prevented so the page does not zoom.
+ * The size changes live in 5% steps and is saved when the pinch ends.
  */
 export function TextZoomArea({ surface, style, children }: TextZoomAreaProps) {
   const enabled = usePinchTextZoomEnabled(surface);
@@ -32,41 +37,43 @@ export function TextZoomArea({ surface, style, children }: TextZoomAreaProps) {
   useEffect(() => {
     const element = ref.current as unknown as HTMLElement | null;
     if (!enabled || !element) return;
-    let pendingZoom: number | null = null;
+    let session: TextZoomPinchSession | null = null;
+    let wheelZoom = 1;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
-    let gestureStartZoom = 1;
 
-    const preview = (zoom: number) => {
-      pendingZoom = zoom;
-      setTextZoomPreview({ surface, zoom });
-    };
-    const commit = () => {
+    const end = () => {
       if (settleTimer !== null) clearTimeout(settleTimer);
       settleTimer = null;
-      if (pendingZoom !== null) setTextZoom(surface, pendingZoom);
-      pendingZoom = null;
-      setTextZoomPreview(null);
+      session?.end();
+      session = null;
     };
 
     const handleWheel = (event: WheelEvent) => {
       if (!event.ctrlKey) return;
       event.preventDefault();
       event.stopPropagation();
-      preview(wheelTextZoom(pendingZoom ?? getTextZoom(surface), event.deltaY));
+      if (!session) {
+        session = startTextZoomPinch(surface, { x: event.clientX, y: event.clientY });
+        wheelZoom = session.startZoom;
+      }
+      wheelZoom = wheelTextZoom(wheelZoom, event.deltaY);
+      session.zoomTo(wheelZoom);
       if (settleTimer !== null) clearTimeout(settleTimer);
-      settleTimer = setTimeout(commit, WHEEL_SETTLE_MS);
+      settleTimer = setTimeout(end, WHEEL_PINCH_SETTLE_MS);
     };
     const handleGestureStart = (event: Event) => {
       event.preventDefault();
-      gestureStartZoom = getTextZoom(surface);
+      const gesture = event as SafariGestureEvent;
+      end();
+      session = startTextZoomPinch(surface, { x: gesture.clientX, y: gesture.clientY });
     };
     const handleGestureChange = (event: Event) => {
       event.preventDefault();
-      preview(pinchTextZoom(gestureStartZoom, (event as SafariGestureEvent).scale));
+      session?.scale((event as SafariGestureEvent).scale);
     };
     const handleGestureEnd = (event: Event) => {
       event.preventDefault();
-      commit();
+      end();
     };
 
     const capture = { capture: true, passive: false } as const;
@@ -79,8 +86,7 @@ export function TextZoomArea({ surface, style, children }: TextZoomAreaProps) {
       element.removeEventListener("gesturestart", handleGestureStart, capture);
       element.removeEventListener("gesturechange", handleGestureChange, capture);
       element.removeEventListener("gestureend", handleGestureEnd, capture);
-      if (settleTimer !== null) clearTimeout(settleTimer);
-      if (pendingZoom !== null) setTextZoomPreview(null);
+      end();
     };
   }, [enabled, surface]);
 

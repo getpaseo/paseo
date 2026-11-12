@@ -92,7 +92,13 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
-import { TextZoomArea, useTextZoom, zoomedFontSize } from "@/text-zoom";
+import {
+  TextZoomArea,
+  getTextZoomPinch,
+  subscribeTextZoom,
+  useTextZoom,
+  zoomedFontSize,
+} from "@/text-zoom";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -116,6 +122,7 @@ interface TerminalPaneProps {
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
 const TERMINAL_RESIZE_DEBOUNCE_MS = 100;
+const TERMINAL_PINCH_RESIZE_DEBOUNCE_MS = 150;
 const TERMINAL_KEY_BAR_MAX_WIDTH = 880;
 
 const MODIFIER_LABELS = {
@@ -944,11 +951,24 @@ export function TerminalPane({
   const terminalResizeDebouncer = useMemo(
     () =>
       createTerminalResizeDebouncer({
-        delayMs: TERMINAL_RESIZE_DEBOUNCE_MS,
+        // While a pinch changes the font live, the shell gets the new size once it settles.
+        delayMs: () =>
+          getTextZoomPinch()?.surface === "terminal"
+            ? TERMINAL_PINCH_RESIZE_DEBOUNCE_MS
+            : TERMINAL_RESIZE_DEBOUNCE_MS,
         emit: sendTerminalResize,
       }),
     [sendTerminalResize],
   );
+
+  useEffect(() => {
+    let pinching = getTextZoomPinch()?.surface === "terminal";
+    return subscribeTextZoom(() => {
+      const next = getTextZoomPinch()?.surface === "terminal";
+      if (pinching && !next) terminalResizeDebouncer.flush();
+      pinching = next;
+    });
+  }, [terminalResizeDebouncer]);
 
   useEffect(
     () => () => terminalResizeDebouncer.cancel(),
@@ -1176,7 +1196,12 @@ export function TerminalPane({
     <Animated.View style={containerStyle}>
       <FileDropZone style={styles.outputContainer}>
         <TerminalFileDropSink onFiles={handleDroppedFiles} />
-        <TextZoomArea surface="terminal" style={styles.terminalGestureContainer}>
+        <TextZoomArea
+          surface="terminal"
+          // On native the terminal's own touch responder recognizes the pinch.
+          pinch="content"
+          style={styles.terminalGestureContainer}
+        >
           <TerminalEmulator
             ref={emulatorRef}
             dom={TERMINAL_EMULATOR_DOM_PROPS}
