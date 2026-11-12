@@ -282,6 +282,43 @@ describe("VoiceSession streaming transcription", () => {
     },
   );
 
+  test.each([
+    { transcript: "The English rounders?", stops: true },
+    {
+      transcript: "grew out of older bat-and-ball games like English rounders",
+      stops: false,
+    },
+  ])(
+    "well into a reply, its own words $transcript stop it: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsPlaybackHold = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({
+        text: "Baseball grew out of older bat-and-ball games like English rounders.",
+      });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        detector.emit("speech_started");
+        await vi.advanceTimersByTimeAsync(0);
+        detector.emit("speech_stopped");
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitCommitted({ segmentId: "quote", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "quote", transcript, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
   test("once a reply's audio has played for a few seconds, unrelated words stop it", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
     host.supportsPlaybackHold = () => true;

@@ -1248,6 +1248,15 @@ export class VoiceSession {
     if (replies.length === 0) {
       return false;
     }
+    // Once the echo canceller has adapted, a few of the reply's words are the user quoting
+    // it ("The English rounders?"). Echo that still gets through then is a client without
+    // working cancellation, which sends the reply back in long stretches.
+    if (
+      !this.bargeInDuringEchoWarmup &&
+      wordTokens(transcript).length < MIN_ECHO_WORDS_AFTER_WARMUP
+    ) {
+      return false;
+    }
     const echo = isEchoOfReplyText(
       transcript,
       replies.map((reply) => reply.text),
@@ -1547,6 +1556,7 @@ const BARGE_IN_MAX_CLIP_MS = 4000;
  * interrupts only with an interrupt word. The detector reports sound 0.8 s after it begins.
  */
 const ECHO_WARMUP_MS = 3500;
+const MIN_ECHO_WORDS_AFTER_WARMUP = 5;
 /** How long after a reply's playback ends its echo can still reach the microphone. */
 const ECHO_TAIL_MS = 3000;
 const MAX_SPOKEN_REPLIES = 4;
