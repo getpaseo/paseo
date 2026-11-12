@@ -1640,6 +1640,18 @@ function hasInterruptWord(text: string): boolean {
   return wordTokens(text).some((word) => INTERRUPT_WORDS.has(word));
 }
 
+const NUMBER_WORDS = new Set(
+  (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen " +
+    "fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy " +
+    "eighty ninety hundred hundreds thousand thousands"
+  ).split(" "),
+);
+
+function isNumberWord(word: string): boolean {
+  return /^\d/.test(word) || NUMBER_WORDS.has(word);
+}
+
 function wordTokens(text: string): string[] {
   return (text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).map((token) =>
     token.replace(/'/g, ""),
@@ -1653,11 +1665,13 @@ function wordTokens(text: string): string[] {
  * ("A bicycle began a day." for "The bicycle began in 1817"), so this matches words, not text.
  */
 export function isEchoOfReplyText(transcript: string, replyTexts: readonly string[]): boolean {
-  const words = wordTokens(transcript);
+  // Numbers come back as digits from one speech-to-text model and as words from another
+  // ("1876", "eighteen seventy-six"), so they say nothing about whose speech this is.
+  const words = wordTokens(transcript).filter((word) => !isNumberWord(word));
   if (words.length === 0) {
     return false;
   }
-  const replyWords = replyTexts.flatMap(wordTokens);
+  const replyWords = replyTexts.flatMap(wordTokens).filter((word) => !isNumberWord(word));
   const replyWordSet = new Set(replyWords);
   if (words.some((word) => INTERRUPT_WORDS.has(word) && !replyWordSet.has(word))) {
     return false;

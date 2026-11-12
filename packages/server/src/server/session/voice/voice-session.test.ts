@@ -785,6 +785,17 @@ describe("isEchoOfReplyText", () => {
     expect(isEchoOfReplyText(text, [BICYCLE_REPLY])).toBe(false);
   });
 
+  test("matches echo whose years were transcribed as words", () => {
+    expect(
+      isEchoOfReplyText(
+        "Philip Rice experimented with transmitting sound electrically in eighteen.",
+        [
+          "Antonio Meucci and Johann Philipp Reis experimented with transmitting sound electrically. In 1876, Alexander Graham Bell was granted the first patent.",
+        ],
+      ),
+    ).toBe(true);
+  });
+
   test("matches nothing without a reply", () => {
     expect(isEchoOfReplyText("A bicycle began a day.", [])).toBe(false);
   });
