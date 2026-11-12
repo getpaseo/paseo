@@ -729,13 +729,25 @@ test.describe("on a touch-capable desktop browser", () => {
   // The pan accepts touch only, and a mouse drag must still extend the browser's selection.
   test.use({ hasTouch: true });
 
-  test("a mouse drag selects across assistant paragraphs", async ({ page }) => {
+  test("a mouse drag selects across assistant list, quote, and code blocks", async ({ page }) => {
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "assistant-selection-drag-",
       title: "Assistant selection drag",
-      initialPrompt: "Render three paragraphs.",
+      initialPrompt: "Render structured text.",
       featureValues: {
-        mockAssistantResponse: "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+        mockAssistantResponse: [
+          "First paragraph.",
+          "",
+          "- List item.",
+          "",
+          "> Quote text.",
+          "",
+          "```ts",
+          "const answer = 1;",
+          "```",
+          "",
+          "Third paragraph.",
+        ].join("\n"),
       },
     });
 
@@ -760,6 +772,9 @@ test.describe("on a touch-capable desktop browser", () => {
 
       const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
       expect(selected).toContain("First paragraph.");
+      expect(selected).toContain("List item.");
+      expect(selected).toContain("Quote text.");
+      expect(selected).toContain("const answer = 1;");
       expect(selected).toContain("Third paragraph.");
     } finally {
       await agent.cleanup();
