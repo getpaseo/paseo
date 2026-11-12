@@ -20,7 +20,11 @@ export function useDirectoryDemand(serverId: string | null | undefined): void {
  * (the favicon, the aggregated agent list) does not have to subscribe to every agent map to
  * keep the directories loading.
  */
-export function useAllDirectoryDemand(serverIds: readonly string[], enabled = true): void {
+export function useAllDirectoryDemand(input: {
+  serverIds: readonly string[];
+  enabled: boolean;
+}): void {
+  const { serverIds, enabled } = input;
   useEffect(() => {
     if (!enabled) return;
     const runtime = getHostRuntimeStore();

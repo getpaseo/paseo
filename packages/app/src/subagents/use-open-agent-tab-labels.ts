@@ -2,10 +2,10 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/shallow";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
+import { getAgentTabsNeedingOpenLabel, selectOpenTabAgents } from "./open-tab-labels";
 
 function increment(value: number): number {
   return value + 1;
@@ -24,12 +24,9 @@ export function useOpenAgentTabLabels(input: {
   // Only the agents with open tabs can need a label. Subscribing to the whole agent map would
   // re-render the workspace screen on every update to any agent on the host.
   const openAgents = useSessionStore(
-    useShallow((state): (Agent | null)[] => {
-      const session = state.sessions[input.serverId];
-      return openAgentIds.map(
-        (agentId) => session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null,
-      );
-    }),
+    useShallow((state) =>
+      selectOpenTabAgents(state, { serverId: input.serverId, agentIds: openAgentIds }),
+    ),
   );
   const pendingAgentIdsRef = useRef(new Set<string>());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

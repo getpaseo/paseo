@@ -1,9 +1,14 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import { memoizeOnSessionMaps } from "./memoize-on-session-maps";
 
 export type DesktopBadgeWorkspaceStatus = WorkspaceDescriptor["status"];
 
+interface WorkspaceStatusSession {
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
+}
+
 interface WorkspaceStatusSource {
-  sessions: Record<string, { workspaces: ReadonlyMap<string, WorkspaceDescriptor> } | undefined>;
+  sessions: Record<string, WorkspaceStatusSession | undefined>;
 }
 
 export function isWorkspaceActionableForDesktopBadge(status: DesktopBadgeWorkspaceStatus): boolean {
@@ -23,4 +28,14 @@ export function selectMacDockBadgeCount(state: WorkspaceStatusSource): number | 
     }
   }
   return actionableCount > 0 ? actionableCount : undefined;
+}
+
+/** A session-store selector for the dock badge count that recounts only when a workspace map changes. */
+export function createMacDockBadgeCountSelector(): (
+  state: WorkspaceStatusSource,
+) => number | undefined {
+  return memoizeOnSessionMaps<WorkspaceStatusSession, WorkspaceStatusSource, number | undefined>(
+    (session) => session.workspaces,
+    selectMacDockBadgeCount,
+  );
 }

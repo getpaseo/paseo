@@ -32,7 +32,7 @@ export function useAggregatedAgents(options?: {
   const includeArchived = options?.includeArchived ?? false;
   const demand = options?.demand ?? true;
   const serverIds = useMemo(() => daemons.map((daemon) => daemon.serverId), [daemons]);
-  useAllDirectoryDemand(serverIds, demand);
+  useAllDirectoryDemand({ serverIds, enabled: demand });
   const runtimeVersion = useSyncExternalStore(
     (onStoreChange) => runtime.subscribeAll(onStoreChange),
     () => runtime.getVersion(),

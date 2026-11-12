@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
+  createMacDockBadgeCountSelector,
   isWorkspaceActionableForDesktopBadge,
   selectMacDockBadgeCount,
 } from "./desktop-badge-state";
@@ -70,5 +71,16 @@ describe("desktop-badge-state", () => {
       },
     };
     expect(selectMacDockBadgeCount(state)).toBe(3);
+  });
+
+  it("recounts only when a workspace map is replaced", () => {
+    const select = createMacDockBadgeCountSelector();
+    const state = stateWith(workspace("a", "attention"));
+    expect(select(state)).toBe(1);
+
+    state.sessions.srv_a.workspaces.set("b", workspace("b", "failed"));
+    expect(select({ sessions: { ...state.sessions } })).toBe(1);
+
+    expect(select(stateWith(workspace("a", "attention"), workspace("b", "failed")))).toBe(2);
   });
 });
