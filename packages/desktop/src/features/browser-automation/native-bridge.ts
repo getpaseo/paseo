@@ -19,7 +19,9 @@ interface Capture {
   acknowledgements: Set<number>;
   frame: NativeBrowserFrame | null;
   streaming: boolean;
-  demandedAt: number;
+  generation: number;
+  stillTask: Promise<void> | null;
+  lastStillAttemptAt: number;
   notBefore: number;
   previousThrottling: boolean | null;
   host: WebContents | null;
@@ -63,7 +65,9 @@ function observe(contents: WebContents): Capture {
     rawFrame: null,
     acknowledgements: new Set(),
     streaming: false,
-    demandedAt: 0,
+    generation: 0,
+    stillTask: null,
+    lastStillAttemptAt: -Infinity,
     notBefore: 0,
     previousThrottling: null,
     host: null,
@@ -108,15 +112,20 @@ function observe(contents: WebContents): Capture {
   });
   contents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
     if (isMainFrame) {
+      capture.generation++;
       capture.frame = null;
       capture.notBefore = Date.now() + 50;
     }
   });
   contents.on("did-navigate", () => {
+    capture.generation++;
     capture.frame = null;
     capture.notBefore = Date.now() + 50;
   });
   contents.debugger.on("detach", () => {
+    capture.generation++;
+    capture.rawFrame = null;
+    capture.acknowledgements.clear();
     if (capture.stopTimer) clearTimeout(capture.stopTimer);
     capture.stopTimer = null;
     capture.streaming = false;
@@ -127,6 +136,7 @@ function observe(contents: WebContents): Capture {
     releaseHost(capture, contents);
   });
   contents.once("destroyed", () => {
+    capture.generation++;
     if (capture.stopTimer) clearTimeout(capture.stopTimer);
     releaseHost(capture, contents);
     capture.events = [];
@@ -197,12 +207,43 @@ function consumeNativeFrame(contents: WebContents, capture: Capture): void {
   }
 }
 
+async function captureStillFrame(contents: WebContents, capture: Capture): Promise<void> {
+  const generation = capture.generation;
+  const capturedAt = Date.now();
+  const metrics = await contents.debugger.sendCommand("Page.getLayoutMetrics");
+  const viewport = metrics.cssVisualViewport;
+  const width = viewport.clientWidth;
+  const height = viewport.clientHeight;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0)
+    throw new Error("Native guest viewport is unavailable");
+  const scale = Math.min(1, 1280 / width, 960 / height);
+  const result = await contents.debugger.sendCommand("Page.captureScreenshot", {
+    format: "jpeg",
+    quality: 65,
+    fromSurface: true,
+    captureBeyondViewport: false,
+    clip: { x: 0, y: 0, width, height, scale },
+  });
+  if (contents.isDestroyed() || capture.generation !== generation) return;
+  if (
+    typeof result.data !== "string" ||
+    !/^[A-Za-z0-9+/=]+$/.test(result.data) ||
+    result.data.length > 1_099_900
+  )
+    throw new Error("Native screenshot exceeds the image size limit or is invalid");
+  capture.frame = {
+    data: `data:image/jpeg;base64,${result.data}`,
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    capturedAt,
+  };
+}
+
 export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain): void {
   ipc.handle("paseo:browser:native-frame", async (event, raw: unknown) => {
     const input = NativeBrowserFrameRequestSchema.parse(raw);
     const contents = resolveGuest(hostSender(event), input);
     const capture = observe(contents);
-    capture.demandedAt = Date.now();
     if (!capture.streaming) {
       capture.streaming = true;
       capture.host = hostSender(event);
@@ -245,6 +286,20 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
       capture.acknowledgements.clear();
       capture.stopTimer = null;
     }, 2500);
+    const frame = capture.frame;
+    const fresh =
+      frame && frame.capturedAt + 1500 > Date.now() && frame.capturedAt > (input.notBefore ?? 0);
+    if (!fresh && Date.now() > capture.notBefore) {
+      // Screencast frames arrive only on paint. Refresh quiet pages with a bounded
+      // screenshot rather than relabeling an old paint with a new timestamp.
+      if (!capture.stillTask && Date.now() - capture.lastStillAttemptAt >= 1000) {
+        capture.lastStillAttemptAt = Date.now();
+        capture.stillTask = captureStillFrame(contents, capture).finally(() => {
+          capture.stillTask = null;
+        });
+      }
+      if (capture.stillTask) await capture.stillTask;
+    }
     return capture.frame &&
       capture.frame.capturedAt + 1500 > Date.now() &&
       capture.frame.capturedAt > (input.notBefore ?? 0)
@@ -311,6 +366,9 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
     // Queueing its unblocker behind it would leave the guest permanently paused.
     const unblockers = new Set([
       "Page.handleJavaScriptDialog",
+      "Debugger.evaluateOnCallFrame",
+      "Debugger.getScriptSource",
+      "Runtime.getProperties",
       "Debugger.resume",
       "Debugger.stepInto",
       "Debugger.stepOut",

@@ -92,5 +92,6 @@ Cookie operations and permission/download settings use the guest's browser conte
 
 Enable a CDP domain before reading its events. The event buffer is bounded by count and
 bytes and reports a dropped-event counter; consumers should drain it promptly. Dialog
-responses and debugger resume/step commands can run while a previous command waits for
-JavaScript to continue. Finish intercepted requests and resume execution after debugging.
+responses, paused-frame/object inspection and debugger resume/step commands can run while
+a previous command waits for JavaScript to continue. Quiet pages use bounded still captures
+when the screencast has no fresh paint. Finish intercepted requests and resume execution after debugging.
