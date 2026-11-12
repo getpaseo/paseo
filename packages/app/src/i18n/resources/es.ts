@@ -1271,6 +1271,8 @@ export const es: TranslationResources = {
         labels: "Etiquetas",
         diff: "Estadísticas de cambios",
         timestamp: "Última actividad",
+        agentStatus: "Estado del agente",
+        agentStatusCounts: "{{unread}} sin leer, {{running}} en ejecución, {{read}} leídos",
       },
       checks: {
         iconAndText: "Icono y texto",

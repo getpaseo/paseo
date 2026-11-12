@@ -12,10 +12,14 @@ import type {
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
-import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
+import type {
+  WorkspaceAgentActivity,
+  WorkspaceAgentStatusCounts,
+} from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
+const EMPTY_AGENT_STATUS_COUNTS: WorkspaceAgentStatusCounts = { unread: 0, running: 0, read: 0 };
 
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
 
@@ -39,6 +43,7 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 }
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
+  agentStatusCounts?: WorkspaceAgentStatusCounts;
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
   // Raw user-set title (null when the name is derived from branch/directory).
@@ -170,6 +175,9 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    agentStatusCounts:
+      input.workspaceAgentActivity?.get(input.workspace.id)?.statusCounts ??
+      EMPTY_AGENT_STATUS_COUNTS,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(

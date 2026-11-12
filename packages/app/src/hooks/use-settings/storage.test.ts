@@ -207,6 +207,26 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("loads agent status trailing and falls back to timestamp for unknown values", async () => {
+    const agentStatusDeps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarWorkspaceTrailing: "agentStatus" }),
+      }),
+    });
+    const unknownDeps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarWorkspaceTrailing: "future-trailing" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(agentStatusDeps)).sidebarWorkspaceTrailing).toBe(
+      "agentStatus",
+    );
+    expect((await loadAppSettingsFromStorage(unknownDeps)).sidebarWorkspaceTrailing).toBe(
+      "timestamp",
+    );
+  });
+
   it("enables the chat outline by default", async () => {
     const deps = makeDeps();
 
