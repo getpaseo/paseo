@@ -323,16 +323,26 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             {t("sidebar.display.grouping.label")}
           </MenuSubTrigger>
           {preferences.grouping === "project" ? (
-            <MenuSubTrigger
-              id="sort"
-              value={
-                workspaceSortSupported || preferences.workspaceSort === "manual"
-                  ? t(`sidebar.display.sort.${preferences.workspaceSort}`)
-                  : undefined
-              }
-            >
-              {t("sidebar.display.sort.label")}
-            </MenuSubTrigger>
+            <>
+              <MenuSubTrigger
+                id="sort"
+                value={
+                  workspaceSortSupported || preferences.workspaceSort === "manual"
+                    ? t(`sidebar.display.sort.${preferences.workspaceSort}`)
+                    : undefined
+                }
+              >
+                {t("sidebar.display.sort.label")}
+              </MenuSubTrigger>
+              <MenuItem
+                selected={preferences.nestProjects}
+                closeOnSelect={false}
+                onSelect={preferences.toggleNestProjects}
+                testID="sidebar-display-nest-projects"
+              >
+                {t("sidebar.display.nestProjects")}
+              </MenuItem>
+            </>
           ) : null}
           <MenuSubTrigger
             id="titleSource"

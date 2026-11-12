@@ -1219,6 +1219,7 @@ export const ar: TranslationResources = {
       done: "تم",
     },
     display: {
+      nestProjects: "تداخل المشاريع حسب الدليل",
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
       heading: "العرض",

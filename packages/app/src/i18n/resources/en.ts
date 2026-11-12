@@ -1229,6 +1229,7 @@ export const en = {
       done: "Done",
     },
     display: {
+      nestProjects: "Nest projects by directory",
       showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
