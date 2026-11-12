@@ -336,6 +336,84 @@ describe("voice turn controller", () => {
     expect(harness.sttSessions[0]?.commitCount).toBe(1);
   });
 
+  it("ends the utterance being captured on request, without waiting for the detector", async () => {
+    const harness = createControllerHarness();
+
+    await harness.controller.start();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+    await harness.controller.endUtterance();
+
+    expect(harness.sttSessions[0]?.commitCount).toBe(1);
+    expect(harness.onSpeechStopped).toHaveBeenCalledTimes(1);
+
+    // Nothing is being captured now, so a second request does nothing.
+    await harness.controller.endUtterance();
+    expect(harness.sttSessions[0]?.commitCount).toBe(1);
+  });
+
+  it("delivers a stopped utterance's transcript when new sound starts before it arrives", async () => {
+    const harness = createControllerHarness();
+
+    await harness.controller.start();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+    harness.detector.emit("speech_stopped");
+    await settleSerialQueue();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+
+    harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+    harness.sttSessions[0]?.emitTranscript({
+      segmentId: "segment-1",
+      transcript: "stop",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+
+    expect(harness.onFinalTranscript).toHaveBeenCalledTimes(1);
+    expect(harness.onFinalTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ segmentId: "segment-1", transcript: "stop" }),
+    );
+  });
+
+  it("gives each of two stopped utterances its own transcript, in order", async () => {
+    const harness = createControllerHarness();
+
+    await harness.controller.start();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+    harness.detector.emit("speech_stopped");
+    await settleSerialQueue();
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+    harness.detector.emit("speech_stopped");
+    await settleSerialQueue();
+
+    harness.sttSessions[0]?.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+    harness.sttSessions[0]?.emitCommitted({
+      segmentId: "segment-2",
+      previousSegmentId: "segment-1",
+    });
+    harness.sttSessions[0]?.emitTranscript({
+      segmentId: "segment-1",
+      transcript: "first",
+      isFinal: true,
+    });
+    harness.sttSessions[0]?.emitTranscript({
+      segmentId: "segment-2",
+      transcript: "second",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+    await settleSerialQueue();
+
+    expect(harness.onFinalTranscript.mock.calls.map(([final]) => final.transcript)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
   it("fires onFinalTranscript after speech stop, commit, and final transcript", async () => {
     const harness = createControllerHarness();
 

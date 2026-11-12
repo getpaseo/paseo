@@ -62,6 +62,8 @@ export interface VoiceTurnController {
   start(): Promise<void>;
   stop(): Promise<void>;
   appendClientChunk(input: { audioBase64: string; format: string }): Promise<void>;
+  /** End the utterance being captured now, as if the detector had reported silence. */
+  endUtterance(): Promise<void>;
 }
 
 interface TranscriptSegmentMeta {
@@ -112,7 +114,10 @@ export function createVoiceTurnController(params: {
   let partialTranscriptFired = false;
   let reconnectAttemptedForTurn = false;
   const sealedTranscriptSegmentIds = new Set<string>();
-  let currentFinalizingTurn: FinalizingVoiceTurn | null = null;
+  // Utterances that have stopped and are waiting for their final transcript, oldest first.
+  // New sound can start before a transcript arrives (echo re-triggers the detector within
+  // the transcription delay), and that transcript may hold the user's words, so it is kept.
+  const finalizingTurns: FinalizingVoiceTurn[] = [];
 
   function fail(error: unknown): void {
     params.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
@@ -129,22 +134,27 @@ export function createVoiceTurnController(params: {
     });
   }
 
-  function clearFinalizingTurnTimeout(): void {
-    if (currentFinalizingTurn) {
-      clearTimeout(currentFinalizingTurn.timeout);
+  function clearFinalizingTurns(): void {
+    for (const turn of finalizingTurns) {
+      clearTimeout(turn.timeout);
     }
+    finalizingTurns.length = 0;
+  }
+
+  function findTurnAwaitingCommit(): FinalizingVoiceTurn | null {
+    return finalizingTurns.find((turn) => turn.committedSegmentIds.length === 0) ?? null;
   }
 
   function getFinalizingTurnForSegment(segmentId: string): FinalizingVoiceTurn | null {
-    if (!currentFinalizingTurn) {
-      return null;
+    const committedTurn = finalizingTurns.find((turn) =>
+      turn.committedSegmentIds.includes(segmentId),
+    );
+    if (committedTurn) {
+      return committedTurn;
     }
 
-    if (currentFinalizingTurn.committedSegmentIds.includes(segmentId)) {
-      return currentFinalizingTurn;
-    }
-
-    if (currentFinalizingTurn.committedSegmentIds.length > 0) {
+    const uncommittedTurn = findTurnAwaitingCommit();
+    if (!uncommittedTurn) {
       return null;
     }
 
@@ -152,7 +162,7 @@ export function createVoiceTurnController(params: {
       return null;
     }
 
-    return currentFinalizingTurn;
+    return uncommittedTurn;
   }
 
   function getOrderedFinalSegmentIds(turn: FinalizingVoiceTurn): string[] {
@@ -194,13 +204,14 @@ export function createVoiceTurnController(params: {
   }
 
   function fireFinalTranscript(turn: FinalizingVoiceTurn, reason: "complete" | "timeout"): void {
-    if (turn.fired || currentFinalizingTurn?.turnId !== turn.turnId) {
+    const turnIndex = finalizingTurns.indexOf(turn);
+    if (turn.fired || turnIndex === -1) {
       return;
     }
 
     turn.fired = true;
     clearTimeout(turn.timeout);
-    currentFinalizingTurn = null;
+    finalizingTurns.splice(turnIndex, 1);
 
     const finalTranscript = assembleFinalTranscript(turn);
     if (reason === "timeout") {
@@ -328,7 +339,9 @@ export function createVoiceTurnController(params: {
       if (state.status === "capturing" && !activeTranscriptSegmentId) {
         activeTranscriptSegmentId = segmentId;
       }
-      const turn = currentFinalizingTurn;
+      // Each stopped utterance commits once, in order; any further segment a provider
+      // commits belongs to the latest one.
+      const turn = findTurnAwaitingCommit() ?? finalizingTurns.at(-1);
       if (turn && !turn.committedSegmentIds.includes(segmentId)) {
         turn.committedSegmentIds.push(segmentId);
         maybeFireFinalTranscript(turn);
@@ -409,8 +422,6 @@ export function createVoiceTurnController(params: {
     activeTranscriptSegmentId = null;
     partialTranscriptFired = false;
     reconnectAttemptedForTurn = false;
-    clearFinalizingTurnTimeout();
-    currentFinalizingTurn = null;
     state = {
       status: "capturing",
       utteranceId: uuidv4(),
@@ -447,7 +458,7 @@ export function createVoiceTurnController(params: {
       }, VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS),
       fired: false,
     };
-    currentFinalizingTurn = finalizingTurn;
+    finalizingTurns.push(finalizingTurn);
 
     detector.reset();
     try {
@@ -484,7 +495,7 @@ export function createVoiceTurnController(params: {
 
     async stop(): Promise<void> {
       await runSerial(async () => {
-        clearFinalizingTurnTimeout();
+        clearFinalizingTurns();
         detector.close();
         sttSession?.close();
         resampler?.reset();
@@ -492,9 +503,12 @@ export function createVoiceTurnController(params: {
         resampler = null;
         sttResampler = null;
         sttSession = null;
-        currentFinalizingTurn = null;
         state = { status: "idle" };
       });
+    },
+
+    async endUtterance(): Promise<void> {
+      await runSerial(handleSpeechStopped);
     },
 
     async appendClientChunk(input): Promise<void> {

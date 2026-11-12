@@ -179,7 +179,9 @@ export class VoiceSession {
   private isVoiceMode = false;
   private speechInProgress = false;
   private isDetectorSpeaking = false;
-  private playbackHeld = false;
+  /** Sound arrived while a reply was at stake; the transcript decides whether it stops. */
+  private bargeInPending = false;
+  private bargeInClipTimer: ReturnType<typeof setTimeout> | null = null;
   /** Replies sent to speech: playing (endedAt null) or ended within ECHO_TAIL_MS. */
   private spokenReplies: Array<{ text: string; endedAt: number | null }> = [];
 
@@ -443,7 +445,7 @@ export class VoiceSession {
       );
       await this.disableVoiceModeForActiveAgent(true);
       this.isVoiceMode = false;
-      this.playbackHeld = false;
+      this.clearPendingBargeIn();
       this.sessionLogger.info({ elapsedMs: Date.now() - startedAt }, "Voice mode disabled");
       if (requestId) {
         this.emit({
@@ -598,21 +600,12 @@ export class VoiceSession {
           // confirmed speech event so interruption does not wait for transcription.
           this.sessionLogger.debug("Voice VAD speech_started");
           this.isDetectorSpeaking = true;
-          // Sound during a reply may be noise or the reply's own echo. Capable clients
-          // pause instead of dropping the reply; the transcript decides what follows.
-          const hold = this.shouldHoldPlayback();
-          this.emit({
-            type: "voice_input_state",
-            payload: {
-              isSpeaking: true,
-              ...(hold ? { playback: "hold" as const } : {}),
-            },
-          });
-          if (hold) {
-            this.holdPlaybackForSpeech();
-          } else {
-            await this.handleVoiceSpeechStart();
+          if (this.shouldDeferBargeIn()) {
+            this.deferBargeIn();
+            return;
           }
+          this.emit({ type: "voice_input_state", payload: { isSpeaking: true } });
+          await this.handleVoiceSpeechStart();
         },
         onPartialTranscript: async ({ segmentId, transcript }) => {
           this.sessionLogger.debug(
@@ -622,6 +615,12 @@ export class VoiceSession {
         },
         onSpeechStopped: async () => {
           this.isDetectorSpeaking = false;
+          this.clearBargeInClipTimer();
+          if (this.bargeInPending) {
+            // The client was never told about this sound; it hears of it only if it has words.
+            this.setPhase("transcribing");
+            return;
+          }
           this.handleVoiceSpeechStopped();
           this.setPhase("transcribing");
           this.emit({
@@ -670,7 +669,7 @@ export class VoiceSession {
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
           this.isDetectorSpeaking = false;
-          this.releaseHeldPlayback("resume", "turn controller error");
+          this.clearPendingBargeIn();
           this.clearSpeechInProgress("turn controller error");
           this.setPhase("idle");
         },
@@ -686,7 +685,7 @@ export class VoiceSession {
 
   private async stopVoiceTurnController(): Promise<void> {
     this.isDetectorSpeaking = false;
-    this.playbackHeld = false;
+    this.clearPendingBargeIn();
     this.spokenReplies = [];
     this.clearSpeechInProgress("voice turn controller stopped");
     if (!this.voiceTurnController) {
@@ -1005,39 +1004,58 @@ export class VoiceSession {
     });
   }
 
-  private async settleHeldPlaybackForTranscript(transcriptText: string): Promise<void> {
-    if (!this.playbackHeld) {
-      return;
+  /**
+   * Decide a deferred barge-in. Returns true when the sound was not the user's words, in
+   * which case the reply continues and the client hears nothing about it.
+   */
+  private async settlePendingBargeIn(result: VoiceTranscriptionResultPayload): Promise<boolean> {
+    // Speech-to-text turns noise and half-heard echo into fragments ("S-") and fillers
+    // ("Mm-hmm."). On a speakerphone the reply's own audio comes back as its words
+    // ("A bicycle began a day."), which is echo too.
+    let noise: string | null = null;
+    if (!hasSpokenWord(result.text)) {
+      noise = "no words";
+    } else if (this.isEchoOfSpokenReply(result.text)) {
+      noise = "echo of the reply";
     }
-    if (!transcriptText) {
+    if (noise) {
       const hasAnotherSpeechSegment =
         this.isDetectorSpeaking || this.pendingAudioSegments.length > 0;
       if (!hasAnotherSpeechSegment) {
-        this.releaseHeldPlayback("resume", "empty transcription");
+        this.bargeInPending = false;
+        this.clearSpeechInProgress("sound during a reply was not speech");
       }
-      return;
+      this.sessionLogger.info({ reason: noise }, "Barge-in verdict: reply continues");
+      this.setPhase("idle");
+      await this.flushPendingAudioSegments("sound during a reply was not speech");
+      return true;
     }
-    this.releaseHeldPlayback("stop", "speech transcribed");
+
+    // Sound that is still going belongs to the next clip, which gets its own verdict.
+    if (!this.isDetectorSpeaking) {
+      this.clearPendingBargeIn();
+    }
+    this.sessionLogger.info({ reason: "speech transcribed" }, "Barge-in verdict: reply stops");
+    this.emitTranscriptionResult(result, result.text);
+    this.emit({ type: "voice_input_state", payload: { isSpeaking: false, playback: "stop" } });
     await this.handleAbort();
+    return false;
   }
 
   private async handleTranscriptionResultPayload(
     result: VoiceTranscriptionResultPayload,
   ): Promise<void> {
-    // A held reply resumes unless the user said a word: speech-to-text turns noise and
-    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm."). On a speakerphone the
-    // reply's own audio comes back as its words ("A bicycle began a day."), which is echo too.
-    const heldNoise =
-      this.playbackHeld && (!hasSpokenWord(result.text) || this.isEchoOfSpokenReply(result.text));
-    const transcriptText = heldNoise ? "" : result.text.trim();
-
-    this.emitTranscriptionResult(result, heldNoise ? "" : result.text);
-    if (this.playbackHeld) {
-      await this.settleHeldPlaybackForTranscript(transcriptText);
+    if (this.bargeInPending) {
+      if (await this.settlePendingBargeIn(result)) {
+        return;
+      }
+    } else {
+      this.emitTranscriptionResult(result, result.text);
     }
+    const transcriptText = result.text.trim();
 
     if (!transcriptText) {
-      this.sessionLogger.debug({ heldNoise }, "Empty transcription (false positive), not aborting");
+      this.sessionLogger.debug("Empty transcription (false positive), not aborting");
       this.setPhase("idle");
       if (!this.isDetectorSpeaking) {
         this.clearSpeechInProgress("empty transcription");
@@ -1228,41 +1246,64 @@ export class VoiceSession {
     if (echo) {
       this.sessionLogger.info(
         { transcriptLength: transcript.length },
-        "Held transcript matches the reply being spoken; treating it as echo",
+        "Transcript matches the reply being spoken; treating it as echo",
       );
     }
     return echo;
   }
 
-  private shouldHoldPlayback(): boolean {
+  /**
+   * Whether detected sound should wait for its transcript before it interrupts anything.
+   * Only clients that act on a later "stop" qualify; older ones stop on speech start.
+   */
+  private shouldDeferBargeIn(): boolean {
     if (!this.host.supportsPlaybackHold()) {
       return false;
     }
     return (
-      this.playbackHeld ||
+      this.bargeInPending ||
       this.ttsManager.hasPendingPlayback() ||
       this.host.hasActiveAgentRun(this.voiceModeAgentId)
     );
   }
 
   /**
-   * Start a user turn without touching the reply: the client has paused it, the agent
-   * keeps running, and the transcript decides between resume and stop.
+   * Start a user turn without touching the reply or telling the client. Sound during a
+   * reply is mostly noise or the reply's own echo off a loudspeaker, and pausing on it
+   * breaks the reply up, so the reply keeps playing and the agent keeps running until a
+   * transcript has the user's words.
    */
-  private holdPlaybackForSpeech(): void {
+  private deferBargeIn(): void {
     this.speechInProgress = true;
-    this.playbackHeld = true;
-    this.sessionLogger.info("Voice speech detected during a reply – holding playback");
+    this.bargeInPending = true;
+    this.sessionLogger.info("Voice sound during a reply – waiting for the transcript");
     this.dropBufferedInput();
+    // A detector that stays on (steady echo, a hum) never ends the utterance, and the
+    // user's words would wait with it. Cut the clip so the transcript can decide.
+    this.clearBargeInClipTimer();
+    this.bargeInClipTimer = setTimeout(() => {
+      this.bargeInClipTimer = null;
+      if (!this.bargeInPending || !this.isDetectorSpeaking) {
+        return;
+      }
+      this.sessionLogger.info(
+        { maxClipMs: BARGE_IN_MAX_CLIP_MS },
+        "Sound during a reply has not stopped; transcribing it so far",
+      );
+      void this.voiceTurnController?.endUtterance();
+    }, BARGE_IN_MAX_CLIP_MS);
   }
 
-  private releaseHeldPlayback(playback: "resume" | "stop", reason: string): void {
-    if (!this.playbackHeld) {
-      return;
+  private clearBargeInClipTimer(): void {
+    if (this.bargeInClipTimer) {
+      clearTimeout(this.bargeInClipTimer);
+      this.bargeInClipTimer = null;
     }
-    this.playbackHeld = false;
-    this.sessionLogger.info({ playback, reason }, `Releasing held playback: ${playback}`);
-    this.emit({ type: "voice_input_state", payload: { isSpeaking: false, playback } });
+  }
+
+  private clearPendingBargeIn(): void {
+    this.bargeInPending = false;
+    this.clearBargeInClipTimer();
   }
 
   private dropBufferedInput(): void {
@@ -1447,6 +1488,7 @@ export class VoiceSession {
     this.closed = true;
     this.abortController.abort();
     this.clearBufferTimeout();
+    this.clearBargeInClipTimer();
     this.pendingAudioSegments = [];
     this.audioBuffer = null;
     const failures: unknown[] = [];
@@ -1479,6 +1521,8 @@ export class VoiceSession {
   }
 }
 
+/** Longest stretch of unbroken sound during a reply before it is transcribed as it stands. */
+const BARGE_IN_MAX_CLIP_MS = 4000;
 /** How long after a reply's playback ends its echo can still reach the microphone. */
 const ECHO_TAIL_MS = 3000;
 const MAX_SPOKEN_REPLIES = 4;
