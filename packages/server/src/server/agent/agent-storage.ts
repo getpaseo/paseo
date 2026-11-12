@@ -17,6 +17,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
+    selectionSource: z.enum(["explicit", "implicit"]).nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Read-only; folded on parse.
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -91,6 +92,7 @@ export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
   | "modeId"
   | "model"
+  | "selectionSource"
   | "thinkingOptionId"
   | "providerOptions"
   | "toolPolicy"
