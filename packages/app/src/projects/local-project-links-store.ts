@@ -101,12 +101,20 @@ export function unlinkLocalProject(input: {
 export function createLocalProjectLinksStore(
   storage: PersistStorage<LocalProjectLinksPersistedState>,
 ) {
+  let resolveHydration: () => void;
+  const hydration = new Promise<void>((resolve) => {
+    resolveHydration = resolve;
+  });
+
   return create<LocalProjectLinksStoreState>()(
     persist(
       (set, get) => {
         const updateLinks = async (
           update: (links: readonly LocalProjectLink[]) => LocalProjectLink[],
         ): Promise<void> => {
+          // Validated storage deliberately skips writes during its initial read. Wait until that
+          // read has settled so this update applies to the saved links and can be acknowledged.
+          await hydration;
           const previousLinks = get().links;
           try {
             // Zustand's persist middleware returns the storage write from this wrapped set call.
@@ -131,6 +139,7 @@ export function createLocalProjectLinksStore(
         name: LOCAL_PROJECT_LINKS_STORAGE_KEY,
         storage,
         partialize: (state) => ({ links: state.links }),
+        onRehydrateStorage: () => () => resolveHydration(),
       },
     ),
   );
