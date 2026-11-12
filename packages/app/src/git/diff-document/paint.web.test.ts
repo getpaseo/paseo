@@ -134,6 +134,130 @@ describe("web diff text shaping", () => {
     expect(paintedText).toEqual(["fi", "fi"]);
   });
 
+  it("paints passive and active find match highlights beneath cell text with horizontal offset", () => {
+    const events: string[] = [];
+    const warningFills: Array<{
+      alpha: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+    const strokes: Array<{
+      color: string;
+      alpha: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+    let fillStyle = "";
+    let strokeStyle = "";
+    let globalAlpha = 1;
+    const stateStack: Array<{ fillStyle: string; strokeStyle: string; globalAlpha: number }> = [];
+    const context = {
+      setTransform() {},
+      clearRect() {},
+      fillRect(x: number, y: number, width: number, height: number) {
+        if (fillStyle === "warning") {
+          events.push("find-fill");
+          warningFills.push({ alpha: globalAlpha, x, y, width, height });
+        }
+      },
+      strokeRect(x: number, y: number, width: number, height: number) {
+        events.push("find-stroke");
+        strokes.push({ color: strokeStyle, alpha: globalAlpha, x, y, width, height });
+      },
+      save() {
+        stateStack.push({ fillStyle, strokeStyle, globalAlpha });
+      },
+      restore() {
+        const previous = stateStack.pop();
+        if (!previous) return;
+        fillStyle = previous.fillStyle;
+        strokeStyle = previous.strokeStyle;
+        globalAlpha = previous.globalAlpha;
+      },
+      beginPath() {},
+      rect() {},
+      clip() {},
+      fillText() {
+        events.push("text");
+      },
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string | CanvasGradient | CanvasPattern) {
+        fillStyle = String(value);
+      },
+      get strokeStyle() {
+        return strokeStyle;
+      },
+      set strokeStyle(value: string | CanvasGradient | CanvasPattern) {
+        strokeStyle = String(value);
+      },
+      get globalAlpha() {
+        return globalAlpha;
+      },
+      set globalAlpha(value: number) {
+        globalAlpha = value;
+      },
+      lineWidth: 1,
+      font: "",
+      textBaseline: "alphabetic",
+    } as unknown as CanvasRenderingContext2D;
+
+    paintWebViewport({
+      context,
+      model,
+      palette,
+      typography: { family: "monospace", size: 12, lineHeight: 18 },
+      headerTypography,
+      measureText: { measure: () => 0 },
+      scrollTop: 0,
+      viewportWidth: 200,
+      viewportHeight: 100,
+      horizontalOffsets: new Map([["src/a.ts", 4]]),
+      selection: null,
+      find: {
+        matches: [
+          {
+            fileIndex: 0,
+            path: "src/a.ts",
+            rowIndex: 0,
+            cellIndex: 0,
+            side: "new",
+            sourceIdentity: { hunkIndex: 0, lineIndex: 1, side: "new" },
+            start: 0,
+            end: 1,
+          },
+          {
+            fileIndex: 0,
+            path: "src/a.ts",
+            rowIndex: 0,
+            cellIndex: 0,
+            side: "new",
+            sourceIdentity: { hunkIndex: 0, lineIndex: 1, side: "new" },
+            start: 1,
+            end: 2,
+          },
+        ],
+        activeIndex: 1,
+      },
+      activeHeaderPath: null,
+      devicePixelRatio: 1,
+    });
+
+    expect(warningFills).toEqual([
+      { alpha: 0.22, x: 24, y: 0, width: 10, height: 18 },
+      { alpha: 0.42, x: 34, y: 0, width: 5, height: 18 },
+    ]);
+    expect(strokes).toEqual([
+      { color: "warning", alpha: 0.95, x: 34.5, y: 0.5, width: 4, height: 17 },
+    ]);
+    expect(events).toEqual(["find-fill", "find-fill", "find-stroke", "text", "text"]);
+  });
+
   it("paints review space with the surface color and continues the gutter divider", () => {
     const fills: Array<{ color: string; x: number; y: number; width: number; height: number }> = [];
     let fillStyle = "";
