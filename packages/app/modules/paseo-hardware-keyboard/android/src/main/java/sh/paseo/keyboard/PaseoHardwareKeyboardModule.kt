@@ -10,11 +10,16 @@ import android.view.KeyEvent
 import android.view.Window
 import android.widget.EditText
 import android.view.inputmethod.BaseInputConnection
+import com.facebook.react.R
 import com.facebook.react.bridge.UiThreadUtil
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.interfaces.ExtraWindowEventListener
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+
+// Matched against the hidden terminal input's `nativeID`
+// (TERMINAL_INPUT_NATIVE_ID in terminal-input.native.tsx).
+private const val TERMINAL_INPUT_NATIVE_ID = "paseo-terminal-input"
 
 internal object HardwareKeyboard {
   var module: PaseoHardwareKeyboardModule? = null
@@ -22,6 +27,7 @@ internal object HardwareKeyboard {
   private val windows = mutableMapOf<Window, KeyboardWindowCallback>()
   val dispatcher = WindowKeyDispatcher<KeyEvent>()
   private val consumedPresses = mutableSetOf<Int>()
+  private val terminalArrowCodes = setOf("ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight")
 
   fun observe(window: Window) {
     if (windows.containsKey(window)) return
@@ -38,7 +44,7 @@ internal object HardwareKeyboard {
     consumedPresses.clear()
   }
 
-  fun dispatch(event: KeyEvent, composing: Boolean): Boolean {
+  fun dispatch(event: KeyEvent, composing: Boolean, terminalFocused: Boolean): Boolean {
     if (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD != 0) return false
     if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
     val code = code(event.keyCode)
@@ -64,8 +70,12 @@ internal object HardwareKeyboard {
     ))
     if (event.action == KeyEvent.ACTION_UP) return consumedPresses.remove(event.keyCode)
     val overlayOwnsKey = key != "Dead" && key in overlayKeys && !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !composing
-    if (overlayOwnsKey) consumedPresses.add(event.keyCode)
-    return overlayOwnsKey
+    // Without this the hidden input consumes the arrows as caret movement and
+    // its next text change stops being a plain append. Modifiers stay
+    // forwarded: Alt/Shift+arrow are terminal editing keys.
+    val terminalOwnsKey = terminalFocused && !composing && code in terminalArrowCodes
+    if (overlayOwnsKey || terminalOwnsKey) consumedPresses.add(event.keyCode)
+    return overlayOwnsKey || terminalOwnsKey
   }
 
   private fun code(keyCode: Int): String = when (keyCode) {
@@ -107,9 +117,15 @@ internal object HardwareKeyboard {
 
 private class KeyboardWindowCallback(private val window: Window, val previous: Window.Callback) : Window.Callback by previous {
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-    val editable = (window.currentFocus as? EditText)?.text
+    val focus = window.currentFocus
+    val editable = (focus as? EditText)?.text
     val composing = editable != null && BaseInputConnection.getComposingSpanStart(editable) >= 0
-    return HardwareKeyboard.dispatcher.dispatch(event, { HardwareKeyboard.dispatch(event, composing) }, { previous.dispatchKeyEvent(event) })
+    val terminalFocused = focus?.getTag(R.id.view_tag_native_id) == TERMINAL_INPUT_NATIVE_ID
+    return HardwareKeyboard.dispatcher.dispatch(
+      event,
+      { HardwareKeyboard.dispatch(event, composing, terminalFocused) },
+      { previous.dispatchKeyEvent(event) },
+    )
   }
 }
 

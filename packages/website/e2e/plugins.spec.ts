@@ -9,6 +9,12 @@ async function openPlugins(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: /^Plugins/ })).toBeVisible();
 }
 
+async function waitForInteractivePage(page: Page) {
+  // Server-rendered content is visible before hydration attaches its click handlers.
+  // The language selector stays disabled until that page has hydrated.
+  await expect(page.getByRole("button", { name: "Language: English" }).first()).toBeEnabled();
+}
+
 function pluginCards(page: Page, section: string): Locator {
   return page
     .getByRole("region", { name: section })
@@ -78,15 +84,18 @@ test("browses from the directory into a category, a plugin, and its author", asy
     });
   });
   await openPlugins(page);
+  await waitForInteractivePage(page);
 
   await page.getByRole("region", { name: "Categories" }).getByRole("link", { name: /Git/ }).click();
   await expect(page).toHaveURL(/\/plugins\/category\/git$/);
   await expect(page.getByRole("heading", { level: 1, name: /^Git/ })).toBeVisible();
+  await waitForInteractivePage(page);
   await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
+  await waitForInteractivePage(page);
   await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
     page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
