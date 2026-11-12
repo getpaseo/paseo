@@ -73,11 +73,15 @@ export async function enableProjectNesting(page: Page): Promise<void> {
   await page.keyboard.press("Escape");
 }
 
-export async function expectProjectNestedUnder(
-  page: Page,
-  parentName: string,
-  childName: string,
-): Promise<void> {
+export async function expectProjectNestedUnder({
+  page,
+  parentName,
+  childName,
+}: {
+  page: Page;
+  parentName: string;
+  childName: string;
+}): Promise<void> {
   const parent = projectGroup(page, parentName);
   const child = projectGroup(page, childName);
   await expect(async () => {
