@@ -23,6 +23,7 @@ import {
 import {
   accountLocatorKey,
   resolveAntigravityDataDir,
+  resolveConversationDatabasePath,
   resolveConversationTranscriptPath,
 } from "./data-dir.js";
 import { DriverProcess } from "./process.js";
@@ -45,6 +46,9 @@ import {
 import {
   computeStepContextWindowTokens,
   extractTranscriptToolResultOutput,
+  isConversationStepWaitingForApproval,
+  isNonTerminalStepStatus,
+  isWaitingStepStatus,
   JsonlTranscriptReader,
   parseSystemWakeupMessage,
   type SystemWakeupInfo,
@@ -72,10 +76,8 @@ import {
 
 const INTERRUPT_GRACE_MS = 350;
 const ROOT_TRANSCRIPT_POLL_MS = 180;
-const AUTONOMOUS_ACP_SETTLE_MS = 1_000;
 const AUTONOMOUS_TRANSCRIPT_SETTLE_MS = 120;
 const AUTONOMOUS_TOOL_STALL_TIMEOUT_MS = 15_000;
-const AUTONOMOUS_PLANNER_TIMEOUT_MS = 90_000;
 
 interface ActiveTurn {
   id: string;
@@ -93,10 +95,12 @@ interface AutonomousTurn {
   id: string;
   receivedAcpUpdates: boolean;
   awaitingPlannerResponse: boolean;
+  lastPlannerStepIndex: number;
+  transcriptReportedWaiting: boolean;
+  waitingSince: number | null;
   pendingTranscriptTools: AcpToolCallPayload[];
   settleTimer: NodeJS.Timeout | null;
   toolStallTimer: NodeJS.Timeout | null;
-  plannerTimeoutTimer: NodeJS.Timeout | null;
 }
 
 type PendingPermission =
@@ -141,8 +145,9 @@ export class Session {
   private rootMonitorTimer: NodeJS.Timeout | null = null;
   private rootTranscriptSyncPromise: Promise<void> | null = null;
   private rootTranscriptSyncRequested = false;
+  private lastRootStepIndex = -1;
   private latestContextWindowUsedTokens: number | undefined;
-  private latestContextWindowMaxTokens: number | undefined;
+  private latestContextWindowMaxTokens: { model: string | null; maxTokens: number } | null = null;
   private conversationId: string | null;
   private model: string | null;
   private defaultModel: string | null = null;
@@ -153,6 +158,9 @@ export class Session {
   private autonomousTurn: AutonomousTurn | null = null;
   private shouldReplayOnLoad: boolean;
   private replayWindow: "replay" | "skip" | null = null;
+  private hasUnstreamedPostTurnSteps = false;
+  private awaitingPostTurnCatchupEcho = false;
+  private filteringSlashPostTurnCatchup = false;
   private turnSeq = 0;
   private wakeupSeq = 0;
   private chunkEpoch = 0;
@@ -324,17 +332,17 @@ export class Session {
           { sessionId: this.conversationId, modelId: targetModel },
           acpSessionResultSchema,
         );
-        this.model = result.models?.currentModelId ?? targetModel;
+        this.updateModelSelection(result.models?.currentModelId ?? targetModel);
         this.modelDirty = false;
         return;
       }
       await this.retireDriver();
-      this.model = null;
+      this.updateModelSelection(null);
       this.modelDirty = false;
       return;
     }
 
-    this.model = targetModel;
+    this.updateModelSelection(targetModel);
     this.modelDirty = true;
   }
 
@@ -342,11 +350,27 @@ export class Session {
     return this.defaultModel ?? this.options.catalog().models[0]?.id ?? null;
   }
 
+  private effectiveModelId(): string | null {
+    return this.model ?? this.resolveDefaultModel();
+  }
+
+  private updateModelSelection(nextModel: string | null): void {
+    const previousEffective = this.effectiveModelId();
+    this.model = nextModel;
+    if (this.effectiveModelId() !== previousEffective) {
+      this.latestContextWindowMaxTokens = null;
+    }
+  }
+
   private resolveContextWindowMaxTokens(): number | undefined {
-    return (
-      this.latestContextWindowMaxTokens ??
-      inferModelContextWindowMaxTokens(this.model ?? this.resolveDefaultModel())
-    );
+    const activeModel = this.effectiveModelId();
+    if (
+      this.latestContextWindowMaxTokens !== null &&
+      this.latestContextWindowMaxTokens.model === activeModel
+    ) {
+      return this.latestContextWindowMaxTokens.maxTokens;
+    }
+    return inferModelContextWindowMaxTokens(activeModel);
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
@@ -377,7 +401,9 @@ export class Session {
     };
     this.turn = turn;
     this.resetTurnState();
-    this.catchupChunkBuffers.clear();
+    this.armPostTurnCatchupFence(
+      prompt.input.type === "command" || isSlashCommandPromptText(encoded.nativeText),
+    );
     this.ensureRootMonitor();
 
     this.emitPromptStarted(prompt, encoded.text, turnId);
@@ -643,6 +669,9 @@ export class Session {
     } catch (error) {
       this.handleForegroundTurnFailure(turn, error);
     } finally {
+      if (this.awaitingPostTurnCatchupEcho) {
+        this.hasUnstreamedPostTurnSteps = true;
+      }
       this.releasePostTurnCatchupFence();
       turn.resolveSettled();
     }
@@ -853,7 +882,7 @@ export class Session {
       { sessionId: this.conversationId, modelId: targetModel },
       acpSessionResultSchema,
     );
-    this.model = result.models?.currentModelId ?? targetModel;
+    this.updateModelSelection(result.models?.currentModelId ?? targetModel);
     this.modelDirty = false;
     this.emitConfig();
   }
@@ -904,9 +933,9 @@ export class Session {
         { sessionId: this.conversationId, modelId: targetModel },
         acpSessionResultSchema,
       );
-      this.model = modelResult.models?.currentModelId ?? targetModel;
+      this.updateModelSelection(modelResult.models?.currentModelId ?? targetModel);
     } else if (reportedModel) {
-      this.model = reportedModel;
+      this.updateModelSelection(reportedModel);
     }
     this.modelDirty = false;
   }
@@ -980,6 +1009,7 @@ export class Session {
     if (!this.rootTranscriptReader || this.rootTranscriptReader.filePath !== expectedPath) {
       this.rootTranscriptReader = new JsonlTranscriptReader(expectedPath);
       this.seenRootSteps.clear();
+      this.lastRootStepIndex = -1;
     }
   }
 
@@ -991,6 +1021,9 @@ export class Session {
     });
     for (const step of existingSteps) {
       this.seenRootSteps.add(step.stepIndex);
+      if (step.stepIndex > this.lastRootStepIndex) {
+        this.lastRootStepIndex = step.stepIndex;
+      }
       const contextUsed = computeStepContextWindowTokens(step);
       if (contextUsed !== undefined) {
         this.latestContextWindowUsedTokens = contextUsed;
@@ -1029,7 +1062,11 @@ export class Session {
           });
           for (const step of steps) {
             if (this.seenRootSteps.has(step.stepIndex)) continue;
+            if (this.shouldDeferRootTranscriptStep(step)) continue;
             this.seenRootSteps.add(step.stepIndex);
+            if (step.stepIndex > this.lastRootStepIndex) {
+              this.lastRootStepIndex = step.stepIndex;
+            }
             await this.applyRootTranscriptStep(step);
           }
         }
@@ -1038,6 +1075,20 @@ export class Session {
       }
     })();
     await this.rootTranscriptSyncPromise;
+  }
+
+  private shouldDeferRootTranscriptStep(step: TranscriptStep): boolean {
+    if (step.type === "PLANNER_RESPONSE" && isNonTerminalStepStatus(step.status)) {
+      return true;
+    }
+    if (step.type === "GENERIC" && isWaitingStepStatus(step.status)) {
+      if (this.turn === null && this.autonomousTurn) {
+        this.autonomousTurn.transcriptReportedWaiting = true;
+        this.syncAutonomousToolStallGuard(this.autonomousTurn);
+      }
+      return true;
+    }
+    return false;
   }
 
   private async applyRootTranscriptStep(step: TranscriptStep): Promise<void> {
@@ -1112,12 +1163,16 @@ export class Session {
     step: TranscriptStep,
     wakeup: SystemWakeupInfo | null,
   ): Promise<void> {
+    if (!this.autonomousTurn?.receivedAcpUpdates && step.type !== "USER_INPUT") {
+      this.hasUnstreamedPostTurnSteps = true;
+    }
+
     if (wakeup) {
       this.acknowledgeWakeupTask(wakeup);
       await this.subagents.handleParentWakeupSender(wakeup.sender);
       const auto = this.ensureAutonomousTurn("transcript");
       auto.awaitingPlannerResponse = true;
-      this.armAutonomousPlannerTimeout(auto);
+      auto.lastPlannerStepIndex = Math.max(auto.lastPlannerStepIndex, step.stepIndex);
       return;
     }
 
@@ -1134,8 +1189,10 @@ export class Session {
   }
 
   private applyAutonomousPlannerStep(auto: AutonomousTurn, step: TranscriptStep): void {
+    auto.lastPlannerStepIndex = Math.max(auto.lastPlannerStepIndex, step.stepIndex);
+    auto.transcriptReportedWaiting = false;
+    auto.waitingSince = null;
     auto.awaitingPlannerResponse = false;
-    this.clearAutonomousPlannerTimeout(auto);
 
     if (!auto.receivedAcpUpdates) {
       this.emitAutonomousPlannerTextAndUsage(auto, step);
@@ -1151,7 +1208,11 @@ export class Session {
       return;
     }
 
-    if (step.status === "CANCELED" || step.status === "CANCELLED") {
+    if (
+      step.status === "CANCELED" ||
+      step.status === "CANCELLED" ||
+      step.status === "INTERRUPTED"
+    ) {
       this.settleAutonomousTurn("canceled");
       return;
     }
@@ -1214,7 +1275,9 @@ export class Session {
 
   private enqueueAutonomousToolCalls(auto: AutonomousTurn, step: TranscriptStep): void {
     auto.awaitingPlannerResponse = true;
-    this.armAutonomousPlannerTimeout(auto);
+    auto.lastPlannerStepIndex = Math.max(auto.lastPlannerStepIndex, step.stepIndex);
+    auto.transcriptReportedWaiting = false;
+    auto.waitingSince = null;
     step.toolCalls.forEach((call, index) => {
       const payload: AcpToolCallPayload = {
         toolCallId: call.id ?? `wakeup-tool-${step.stepIndex}-${index}`,
@@ -1255,6 +1318,8 @@ export class Session {
   }
 
   private applyAutonomousToolResultStep(auto: AutonomousTurn, step: TranscriptStep): void {
+    auto.transcriptReportedWaiting = false;
+    auto.waitingSince = null;
     const pending = auto.pendingTranscriptTools.shift()!;
     const output = extractTranscriptToolResultOutput(step);
     const isFailed = step.status === "ERROR";
@@ -1274,7 +1339,9 @@ export class Session {
     }
     this.inspectToolSideEffects(updatedPayload);
     this.syncAutonomousToolStallGuard(auto);
-    this.scheduleAutonomousSettleCheck();
+    if (!auto.awaitingPlannerResponse) {
+      this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+    }
   }
 
   private acknowledgeWakeupTask(wakeup: SystemWakeupInfo): void {
@@ -1312,11 +1379,13 @@ export class Session {
     const auto: AutonomousTurn = {
       id: turnId,
       receivedAcpUpdates: source === "acp",
-      awaitingPlannerResponse: false,
+      awaitingPlannerResponse: true,
+      lastPlannerStepIndex: this.lastRootStepIndex,
+      transcriptReportedWaiting: false,
+      waitingSince: null,
       pendingTranscriptTools: [],
       settleTimer: null,
       toolStallTimer: null,
-      plannerTimeoutTimer: null,
     };
     this.autonomousTurn = auto;
     this.options.emit({
@@ -1328,32 +1397,58 @@ export class Session {
     return auto;
   }
 
-  private hasUnapprovedAutonomousTool(auto: AutonomousTurn): boolean {
-    return auto.pendingTranscriptTools.some(
-      (tool) => !this.shouldAutoApproveTool(tool, mapAcpToolDetail(tool)),
+  private isAutonomousToolWaitingForApproval(auto: AutonomousTurn): boolean {
+    if (auto.transcriptReportedWaiting) return true;
+    if (!this.conversationId) return false;
+    return isConversationStepWaitingForApproval(
+      resolveConversationDatabasePath(this.dataDir, this.conversationId),
+      auto.lastPlannerStepIndex,
     );
   }
 
   private syncAutonomousToolStallGuard(auto: AutonomousTurn): void {
-    const shouldArm =
+    const shouldMonitor =
       this.autonomousTurn === auto &&
       !this.driver?.skipPermissions &&
       !auto.receivedAcpUpdates &&
-      this.hasUnapprovedAutonomousTool(auto) &&
+      auto.pendingTranscriptTools.length > 0 &&
       this.pendingPermissions.size === 0;
-    if (!shouldArm) {
+    if (!shouldMonitor) {
+      auto.waitingSince = null;
       this.clearAutonomousToolStallTimeout(auto);
       return;
     }
     this.clearAutonomousToolStallTimeout(auto);
+    const pollMs = Math.min(250, Math.max(25, Math.floor(this.autonomousToolStallTimeoutMs / 3)));
     auto.toolStallTimer = setTimeout(() => {
+      auto.toolStallTimer = null;
       if (this.autonomousTurn !== auto || this.closed) return;
-      if (!this.hasUnapprovedAutonomousTool(auto) || this.pendingPermissions.size > 0) return;
-      void this.abortStalledAutonomousTools(
-        auto,
-        "Background wakeup cannot prompt for interactive tool approval after a turn has ended. Switch session mode to Full access for unattended background tool execution.",
-      );
-    }, this.autonomousToolStallTimeoutMs);
+      if (
+        auto.pendingTranscriptTools.length === 0 ||
+        this.pendingPermissions.size > 0 ||
+        this.driver?.skipPermissions ||
+        auto.receivedAcpUpdates
+      ) {
+        auto.waitingSince = null;
+        return;
+      }
+      if (this.isAutonomousToolWaitingForApproval(auto)) {
+        const now = Date.now();
+        if (auto.waitingSince === null) {
+          auto.waitingSince = now;
+        }
+        if (now - auto.waitingSince >= this.autonomousToolStallTimeoutMs) {
+          void this.abortStalledAutonomousTools(
+            auto,
+            "Background wakeup cannot prompt for interactive tool approval after a turn has ended. Switch session mode to Full access for unattended background tool execution.",
+          );
+          return;
+        }
+      } else {
+        auto.waitingSince = null;
+      }
+      this.syncAutonomousToolStallGuard(auto);
+    }, pollMs);
     auto.toolStallTimer.unref?.();
   }
 
@@ -1389,34 +1484,15 @@ export class Session {
     }
   }
 
-  private armAutonomousPlannerTimeout(auto: AutonomousTurn): void {
-    this.clearAutonomousPlannerTimeout(auto);
-    auto.plannerTimeoutTimer = setTimeout(() => {
-      if (this.autonomousTurn !== auto || this.closed) return;
-      if (auto.pendingTranscriptTools.length > 0) return;
-      auto.awaitingPlannerResponse = false;
-      this.scheduleAutonomousSettleCheck(50);
-    }, AUTONOMOUS_PLANNER_TIMEOUT_MS);
-    auto.plannerTimeoutTimer.unref?.();
-  }
-
-  private clearAutonomousPlannerTimeout(auto: AutonomousTurn): void {
-    if (auto.plannerTimeoutTimer) {
-      clearTimeout(auto.plannerTimeoutTimer);
-      auto.plannerTimeoutTimer = null;
-    }
-  }
-
   private clearAutonomousTimers(auto: AutonomousTurn): void {
     if (auto.settleTimer) {
       clearTimeout(auto.settleTimer);
       auto.settleTimer = null;
     }
     this.clearAutonomousToolStallTimeout(auto);
-    this.clearAutonomousPlannerTimeout(auto);
   }
 
-  private scheduleAutonomousSettleCheck(delayMs = AUTONOMOUS_ACP_SETTLE_MS): void {
+  private scheduleAutonomousSettleCheck(delayMs = AUTONOMOUS_TRANSCRIPT_SETTLE_MS): void {
     const auto = this.autonomousTurn;
     if (!auto || this.closed) return;
     if (auto.settleTimer) {
@@ -1522,8 +1598,11 @@ export class Session {
       if (isPostTurnLive) {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        auto.waitingSince = null;
         this.clearAutonomousToolStallTimeout(auto);
-        this.scheduleAutonomousSettleCheck();
+        if (!auto.awaitingPlannerResponse) {
+          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+        }
       }
       this.emitUsageUpdate(update);
       return;
@@ -1537,8 +1616,11 @@ export class Session {
       if (isPostTurnLive && update.sessionUpdate !== "user_message_chunk") {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        auto.waitingSince = null;
         this.clearAutonomousToolStallTimeout(auto);
-        this.scheduleAutonomousSettleCheck();
+        if (!auto.awaitingPlannerResponse) {
+          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+        }
       }
       this.applyChunkUpdate(update);
       return;
@@ -1548,8 +1630,11 @@ export class Session {
       if (isPostTurnLive) {
         const auto = this.ensureAutonomousTurn("acp");
         auto.receivedAcpUpdates = true;
+        auto.waitingSince = null;
         this.clearAutonomousToolStallTimeout(auto);
-        this.scheduleAutonomousSettleCheck();
+        if (!auto.awaitingPlannerResponse) {
+          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+        }
       }
       this.chunkIds.clear();
       this.chunkEpoch += 1;
@@ -1571,7 +1656,10 @@ export class Session {
       this.latestContextWindowUsedTokens = update.used;
     }
     if (update.size !== undefined && update.size > 0) {
-      this.latestContextWindowMaxTokens = update.size;
+      this.latestContextWindowMaxTokens = {
+        model: this.effectiveModelId(),
+        maxTokens: update.size,
+      };
     }
     const activeTurnId = this.turn?.id ?? this.autonomousTurn?.id;
     const cachedInputTokens = update.cachedInputTokens ?? update.cachedReadTokens;
@@ -1709,8 +1797,8 @@ export class Session {
       return;
     }
 
-    if (this.turn === null && this.replayWindow === null) {
-      this.ensureAutonomousTurn(isRootSession ? "acp" : "transcript");
+    if (this.turn === null && this.replayWindow === null && isRootSession) {
+      this.ensureAutonomousTurn("acp");
     }
 
     const permissionId = `perm-${++this.permissionSeq}`;
@@ -1750,10 +1838,10 @@ export class Session {
   }
 
   private handleElicitationRequest(rpcId: string | number, params: AcpElicitationParams): void {
-    if (this.turn === null && this.replayWindow === null) {
-      const isRootSession =
-        !this.conversationId || !params.sessionId || params.sessionId === this.conversationId;
-      this.ensureAutonomousTurn(isRootSession ? "acp" : "transcript");
+    const isRootSession =
+      !this.conversationId || !params.sessionId || params.sessionId === this.conversationId;
+    if (this.turn === null && this.replayWindow === null && isRootSession) {
+      this.ensureAutonomousTurn("acp");
     }
 
     const questions = parseElicitationQuestions(params);
@@ -1924,13 +2012,25 @@ export class Session {
       this.releasePostTurnCatchupFence();
       return update;
     }
+    if (this.awaitingPostTurnCatchupEcho) {
+      return null;
+    }
     if (
       (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
       this.synthesizedWakeupToolIds.has(update.toolCallId)
     ) {
       return null;
     }
-    if (this.turn === null) return update;
+    if (!this.filteringSlashPostTurnCatchup || this.turn === null) {
+      return update;
+    }
+    if (
+      update.sessionUpdate === "tool_call" ||
+      update.sessionUpdate === "tool_call_update" ||
+      update.sessionUpdate === "usage_update"
+    ) {
+      return null;
+    }
     if (
       update.sessionUpdate !== "agent_message_chunk" &&
       update.sessionUpdate !== "agent_thought_chunk"
@@ -1947,14 +2047,23 @@ export class Session {
     >,
   ): AcpSessionUpdate | null {
     if (update.content.type !== "text" || !update.content.text) return update;
+    const bufferKey = `${update.sessionUpdate}:${update.messageId ?? "default"}`;
+    const previousBuffer = this.catchupChunkBuffers.get(bufferKey) ?? "";
+
+    if (previousBuffer.length === 0 && update.content.text.trim().length === 0) {
+      return null;
+    }
+
     const candidates =
       update.sessionUpdate === "agent_thought_chunk"
         ? this.unstreamedWakeupThoughts
         : this.unstreamedWakeupMessages;
-    if (candidates.length === 0) return update;
+    if (candidates.length === 0) {
+      this.releasePostTurnCatchupFence();
+      return update;
+    }
 
-    const bufferKey = `${update.sessionUpdate}:${update.messageId ?? "default"}`;
-    const combined = `${this.catchupChunkBuffers.get(bufferKey) ?? ""}${update.content.text}`;
+    const combined = `${previousBuffer}${update.content.text}`;
 
     if (matchesRecordedWakeupPrefix(candidates, combined)) {
       if (consumeExactWakeupMatch(candidates, combined)) {
@@ -1973,13 +2082,34 @@ export class Session {
     };
   }
 
+  private armPostTurnCatchupFence(isSlashPrompt: boolean): void {
+    this.catchupChunkBuffers.clear();
+    if (!this.hasUnstreamedPostTurnSteps) {
+      this.releasePostTurnCatchupFence();
+      return;
+    }
+    this.hasUnstreamedPostTurnSteps = false;
+    if (isSlashPrompt) {
+      this.awaitingPostTurnCatchupEcho = false;
+      this.filteringSlashPostTurnCatchup = true;
+    } else {
+      this.awaitingPostTurnCatchupEcho = true;
+      this.filteringSlashPostTurnCatchup = false;
+      this.unstreamedWakeupThoughts.length = 0;
+      this.unstreamedWakeupMessages.length = 0;
+    }
+  }
+
   private releasePostTurnCatchupFence(): void {
+    this.awaitingPostTurnCatchupEcho = false;
+    this.filteringSlashPostTurnCatchup = false;
     this.unstreamedWakeupThoughts.length = 0;
     this.unstreamedWakeupMessages.length = 0;
     this.catchupChunkBuffers.clear();
   }
 
   private clearPostTurnCatchupState(): void {
+    this.hasUnstreamedPostTurnSteps = false;
     this.releasePostTurnCatchupFence();
     this.synthesizedWakeupToolIds.clear();
   }
@@ -1997,12 +2127,16 @@ export class Session {
 }
 
 function matchesRecordedWakeupPrefix(candidates: readonly string[], accumulated: string): boolean {
-  const trimmed = accumulated.trimStart();
+  const trimmed = accumulated.trim();
   return candidates.some(
     (candidate) =>
       candidate.startsWith(accumulated) ||
-      (trimmed.length > 0 && candidate.trimStart().startsWith(trimmed)),
+      (trimmed.length > 0 && candidate.trim().startsWith(trimmed)),
   );
+}
+
+function isSlashCommandPromptText(nativeText: string): boolean {
+  return /^\/[a-zA-Z0-9_:-]+(?:\s|$)/.test(nativeText.trimStart());
 }
 
 function consumeExactWakeupMatch(candidates: string[], accumulated: string): boolean {

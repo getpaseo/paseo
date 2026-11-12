@@ -73,6 +73,7 @@ function createConnection(
 ): ProviderConnection {
   const sessions = new Map<string, Session>();
   const sessionQueues = new Map<string, Promise<void>>();
+  const activeOpens = new Map<string, Promise<void>>();
   const inFlight = new Set<Promise<void>>();
   const listeners = new Set<(event: ProviderEvent) => void>();
   let discovered: ProviderCatalog | null = null;
@@ -102,15 +103,15 @@ function createConnection(
       if (catalogPromise === request) catalogPromise = null;
     }
   }
-  async function resolveSession(id: string): Promise<Session> {
-    const immediate = sessions.get(id);
-    if (immediate) return immediate;
-    const pendingQueue = sessionQueues.get(id);
-    if (pendingQueue) await pendingQueue;
-    const afterQueue = sessions.get(id);
-    if (!afterQueue)
+  async function resolveSession(id: string, waitForOpen = true): Promise<Session> {
+    if (waitForOpen) {
+      const pendingOpen = activeOpens.get(id);
+      if (pendingOpen) await pendingOpen;
+    }
+    const existing = sessions.get(id);
+    if (!existing)
       throw new AntigravityError(`Unknown Antigravity session: ${id}`, "UNKNOWN_SESSION");
-    return afterQueue;
+    return existing;
   }
   async function openSession(
     input: Extract<ProviderInput, { type: "session.open" }>,
@@ -160,7 +161,7 @@ function createConnection(
         await openSession(input);
         return;
       case "session.prompt":
-        await (await resolveSession(input.sessionId)).prompt(input.prompt);
+        await (await resolveSession(input.sessionId, false)).prompt(input.prompt);
         return;
       case "session.permission":
         (await resolveSession(input.sessionId)).respondToPermission(
@@ -169,7 +170,7 @@ function createConnection(
         );
         return;
       case "session.configure":
-        await (await resolveSession(input.sessionId)).configure(input.changes);
+        await (await resolveSession(input.sessionId, false)).configure(input.changes);
         break;
       case "session.interrupt":
         await (await resolveSession(input.sessionId)).interrupt();
@@ -232,6 +233,14 @@ function createConnection(
         return undefined;
       })
       .catch((error) => failed(input, error));
+    if (input.type === "session.open" && !sessions.has(input.sessionId)) {
+      activeOpens.set(input.sessionId, next);
+      void next.finally(() => {
+        if (activeOpens.get(input.sessionId) === next) {
+          activeOpens.delete(input.sessionId);
+        }
+      });
+    }
     sessionQueues.set(input.sessionId, next);
     trackTask(
       next.finally(() => {

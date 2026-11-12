@@ -991,6 +991,119 @@ describe("image prompts", () => {
       }),
     );
   });
+
+  it("fails queued session.prompt, session.configure, and concurrent session.can_stop_runtime without deadlocking when session.open fails", async () => {
+    const h = await harness({ AGY_TEST_STARTUP: "auth" });
+
+    await h.connection.send({
+      type: "session.open",
+      requestId: "open-fail-queue",
+      sessionId: "s-deadlock",
+      config: {
+        cwd: h.cwd,
+        env: {},
+        settings: {},
+        mcpServers: {},
+        persist: true,
+      },
+    });
+    await h.connection.send({
+      type: "session.configure",
+      requestId: "cfg-after-failed-open",
+      sessionId: "s-deadlock",
+      changes: { mode: "accept-edits" },
+    });
+    await h.connection.send({
+      type: "session.prompt",
+      sessionId: "s-deadlock",
+      prompt: {
+        clientMessageId: "prompt-after-failed-open",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Hello" }] },
+      },
+    });
+    await h.connection.send({
+      type: "session.can_stop_runtime",
+      requestId: "can-stop-during-failed-open",
+      sessionId: "s-deadlock",
+    });
+
+    await h.wait((e) => e.type === "request.failed" && e.requestId === "open-fail-queue");
+    expect(
+      await h.wait((e) => e.type === "request.failed" && e.requestId === "cfg-after-failed-open"),
+    ).toMatchObject({
+      type: "request.failed",
+      error: { code: "UNKNOWN_SESSION" },
+    });
+    expect(
+      await h.wait(
+        (e) =>
+          e.type === "session.prompt_result" && e.clientMessageId === "prompt-after-failed-open",
+      ),
+    ).toMatchObject({
+      type: "session.prompt_result",
+      result: { type: "failed", error: { code: "UNKNOWN_SESSION" } },
+    });
+    expect(
+      await h.wait(
+        (e) => e.type === "request.failed" && e.requestId === "can-stop-during-failed-open",
+      ),
+    ).toMatchObject({
+      type: "request.failed",
+      error: { code: "UNKNOWN_SESSION" },
+    });
+
+    // connection.close() awaits all inFlight promises — proves zero self-deadlock on sessionQueues
+    await h.connection.close();
+  });
+
+  it("refreshes contextWindowMaxTokens instead of reusing a stale usage_update.size after switching models", async () => {
+    const h = await harness({ AGY_TEST_EXTRA_MODELS: "claude" });
+    await h.open();
+
+    const firstPromptId = await h.prompt("USAGE_SIZE_OVERRIDE");
+    await h.completed(firstPromptId);
+    const firstTurnResult = h.events.find(
+      (e): e is Extract<ProviderEvent, { type: "session.prompt_result" }> =>
+        e.type === "session.prompt_result" && e.clientMessageId === firstPromptId,
+    );
+    const firstTurnId =
+      firstTurnResult?.result.type === "turn" ? firstTurnResult.result.turnId : "";
+    expect(
+      h.events.find(
+        (e): e is Extract<ProviderEvent, { type: "session.usage" }> =>
+          e.type === "session.usage" && e.turnId === firstTurnId,
+      )?.usage.contextWindowMaxTokens,
+    ).toBe(900_000);
+
+    await h.request({
+      type: "session.configure",
+      requestId: "switch-to-claude",
+      sessionId: "s",
+      changes: { model: "claude-sonnet-4-6" },
+    });
+    expect(h.events).toContainEqual({
+      type: "request.completed",
+      requestId: "switch-to-claude",
+    });
+
+    const secondPromptId = await h.prompt("USAGE_USED_ONLY");
+    await h.completed(secondPromptId);
+    const secondTurnResult = h.events.find(
+      (e): e is Extract<ProviderEvent, { type: "session.prompt_result" }> =>
+        e.type === "session.prompt_result" && e.clientMessageId === secondPromptId,
+    );
+    const secondTurnId =
+      secondTurnResult?.result.type === "turn" ? secondTurnResult.result.turnId : "";
+    const secondTurnUsages = h.events.filter(
+      (e): e is Extract<ProviderEvent, { type: "session.usage" }> =>
+        e.type === "session.usage" && e.turnId === secondTurnId,
+    );
+    expect(secondTurnUsages.length).toBeGreaterThan(0);
+    for (const usageEvt of secondTurnUsages) {
+      expect(usageEvt.usage.contextWindowMaxTokens).toBe(200_000);
+    }
+  });
 });
 
 it.runIf(process.platform === "win32")(

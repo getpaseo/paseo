@@ -24,6 +24,10 @@ export function resolveConversationTranscriptPath(dataDir: string, conversationI
   );
 }
 
+export function resolveConversationDatabasePath(dataDir: string, conversationId: string): string {
+  return path.join(dataDir, "conversations", `${conversationId}.db`);
+}
+
 export function accountLocatorKey(
   dataDir: string,
   env: Readonly<Record<string, string | undefined>>,

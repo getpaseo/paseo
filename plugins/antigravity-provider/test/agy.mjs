@@ -27,7 +27,9 @@ if (args.includes("models")) {
     process.stderr.write(fixture("models-unauthenticated", "stderr").join("\n"));
     process.exit(1);
   }
-  process.stdout.write(fixture("models-api-key").join("\n") + "\n");
+  const extraModels =
+    process.env.AGY_TEST_EXTRA_MODELS === "claude" ? ["claude-sonnet-4-6\tClaude Sonnet 4.6"] : [];
+  process.stdout.write([...fixture("models-api-key"), ...extraModels].join("\n") + "\n");
   process.exit(0);
 }
 
@@ -175,12 +177,24 @@ let activePromptId = null;
 const pendingClientRequests = new Map();
 const stepCounters = new Map();
 
+function compactTranscriptField(text) {
+  if (typeof text !== "string" || text.length <= 2000) return { value: text, truncated: false };
+  const head = text.slice(0, 900);
+  const tail = text.slice(-900);
+  const omitted = text.length - 1800;
+  return {
+    value: `${head}\n<truncated ${omitted} chars>\n${tail}`,
+    truncated: true,
+  };
+}
+
 function appendTranscriptStep(convId, step) {
   const dataDir = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
   if (!dataDir) return;
   const logDir = path.join(dataDir, "brain", convId, ".system_generated", "logs");
   mkdirSync(logDir, { recursive: true });
   const transcriptPath = path.join(logDir, "transcript.jsonl");
+  const fullTranscriptPath = path.join(logDir, "transcript_full.jsonl");
   if (!stepCounters.has(convId) && existsSync(transcriptPath)) {
     const existingCount = readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean).length;
     stepCounters.set(convId, existingCount);
@@ -193,7 +207,48 @@ function appendTranscriptStep(convId, step) {
     status: "DONE",
     ...step,
   };
-  appendFileSync(transcriptPath, `${JSON.stringify(fullStep)}\n`);
+  const compactStep = { ...fullStep };
+  const truncatedFields = [];
+  if (typeof compactStep.content === "string") {
+    const c = compactTranscriptField(compactStep.content);
+    compactStep.content = c.value;
+    if (c.truncated) truncatedFields.push("content");
+  }
+  if (typeof compactStep.thinking === "string") {
+    const t = compactTranscriptField(compactStep.thinking);
+    compactStep.thinking = t.value;
+    if (t.truncated) truncatedFields.push("thinking");
+  }
+  if (truncatedFields.length > 0) {
+    compactStep.truncated_fields = truncatedFields;
+  }
+  appendFileSync(transcriptPath, `${JSON.stringify(compactStep)}\n`);
+  appendFileSync(fullTranscriptPath, `${JSON.stringify(fullStep)}\n`);
+  return nextIndex;
+}
+
+function upsertConversationStepDb(convId, idx, status, stepType = 132) {
+  const dataDir = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
+  if (!dataDir) return false;
+  const sqlite = process.getBuiltinModule?.("node:sqlite");
+  if (!sqlite?.DatabaseSync) return false;
+  const convDir = path.join(dataDir, "conversations");
+  mkdirSync(convDir, { recursive: true });
+  const dbPath = path.join(convDir, `${convId}.db`);
+  const db = new sqlite.DatabaseSync(dbPath);
+  try {
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)",
+    );
+    db.prepare("INSERT OR REPLACE INTO steps (idx, step_type, status) VALUES (?, ?, ?)").run(
+      idx,
+      stepType,
+      status,
+    );
+    return true;
+  } finally {
+    db.close();
+  }
 }
 
 function send(msg) {
@@ -228,14 +283,20 @@ const PROMPT_ROUTES = [
   ["TOOL_HANG", (id, text) => handleHangPrompt(id, text)],
   ["HANG", (id, text) => handleHangPrompt(id, text)],
   ["Attached image: ", (id, text) => handleImagePrompt(id, text)],
+  ["BG_WAKEUP_SLOW_TOOLS_DEFAULT", (id) => handleBgWakeupSlowToolsDefault(id)],
   ["TOOLS", (id) => handleToolsPrompt(id)],
   ["EDIT_AND_SHELL", (id) => handleEditAndShellPrompt(id)],
   ["ASK_QUESTION", (id) => handleAskQuestionPrompt(id)],
   ["PROMPT_CACHED_USAGE", (id) => handlePromptCachedUsage(id)],
+  ["USAGE_SIZE_OVERRIDE", (id) => handleUsageSizeOverride(id)],
+  ["USAGE_USED_ONLY", (id) => handleUsageUsedOnly(id)],
   ["BG_RUN_COMMAND_WAKEUP", (id) => handleBgRunCommandWakeup(id)],
   ["BG_WAKEUP_SHELL_TOOL", (id) => handleBgWakeupShellTool(id)],
+  ["BG_WAKEUP_LONG_TRUNCATED", (id) => handleBgWakeupLongTruncated(id)],
   ["BG_WAKEUP_APPROVED_READ", (id) => handleBgWakeupApprovedRead(id)],
+  ["FOLLOWUP_AFTER_LONG_WAKEUP", (id, text) => handleFollowupAfterLongWakeup(id, text)],
   ["FOLLOWUP_AFTER_WAKEUP", (id, text) => handleFollowupAfterWakeup(id, text)],
+  ["/compact-after-long", (id) => handleSlashCompactAfterLongWakeup(id)],
   ["/compact", (id) => handleSlashCompactAfterWakeup(id)],
   ["BG_SCHEDULE_ONESHOT_WAKEUP", (id) => handleBgScheduleOneshotWakeup(id)],
   ["BG_SCHEDULE_DAEMON_WAKEUP", (id) => handleBgScheduleDaemonWakeup(id)],
@@ -261,7 +322,12 @@ async function handlePrompt(id, params) {
     .join("\n");
   record({ input: { message: { content: text } } });
 
-  if (!text.includes("FOLLOWUP_AFTER_WAKEUP") && !text.trimStart().startsWith("/")) {
+  const isSlashCmd = /^\/[a-zA-Z0-9_:-]+(?:\s|$)/.test(text.trimStart());
+  if (
+    !text.includes("FOLLOWUP_AFTER_WAKEUP") &&
+    !text.includes("FOLLOWUP_AFTER_LONG_WAKEUP") &&
+    !isSlashCmd
+  ) {
     notifyUpdate({
       sessionUpdate: "user_message_chunk",
       content: { type: "text", text },
@@ -542,6 +608,48 @@ function handlePromptCachedUsage(id) {
   });
 }
 
+function handleUsageSizeOverride(id) {
+  notifyUpdate({
+    sessionUpdate: "usage_update",
+    used: 42000,
+    size: 900000,
+    inputTokens: 1000,
+    outputTokens: 50,
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "USAGE_SIZE_OK\n" },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleUsageUsedOnly(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nUSAGE_USED_ONLY\n</USER_REQUEST>",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    content: "USAGE_USED_ONLY_OK\n",
+    input_tokens: 1200,
+    cache_read_tokens: 300,
+    output_tokens: 60,
+  });
+  notifyUpdate({
+    sessionUpdate: "usage_update",
+    used: 1560,
+    inputTokens: 1200,
+    outputTokens: 60,
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "USAGE_USED_ONLY_OK\n" },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
 function handleBgRunCommandWakeup(id) {
   const taskId = `${sessionId}/task-1`;
   appendTranscriptStep(sessionId, {
@@ -646,8 +754,17 @@ function handleBgWakeupShellTool(id) {
       ],
     });
     // Real agy closes its ACP conversation stream goroutine when session/prompt exits:
-    // without --dangerously-skip-permissions, run_command stalls in WAITING_FOR_USER.
+    // without --dangerously-skip-permissions, run_command stalls in CORTEX_STEP_STATUS_WAITING (9).
     if (!args.includes("--dangerously-skip-permissions")) {
+      const waitingIdx = stepCounters.get(sessionId) ?? 10;
+      if (!upsertConversationStepDb(sessionId, waitingIdx, 9)) {
+        appendTranscriptStep(sessionId, {
+          source: "SYSTEM",
+          type: "GENERIC",
+          status: "WAITING_FOR_USER",
+          content: "",
+        });
+      }
       return;
     }
     appendTranscriptStep(sessionId, {
@@ -662,6 +779,88 @@ function handleBgWakeupShellTool(id) {
       content: "WAKEUP_SHELL_TOOL_OK: 2026-11-11 17:01:50",
     });
   }, 160);
+}
+
+function handleBgWakeupSlowToolsDefault(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nBG_WAKEUP_SLOW_TOOLS_DEFAULT\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "sched-slow-default-1",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 60, Prompt: "Run slow approved/read/MCP tools in default mode" },
+    rawOutput: { output: "Scheduled 60s timer" },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T17:10:00Z sender=scheduler priority=HIGH content=Run slow tools\n</SYSTEM_MESSAGE>",
+    });
+    const plannerIdx = appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: "Running slow search, policy-allowlisted command, and MCP query.",
+      tool_calls: [
+        {
+          id: "wakeup-slow-grep-1",
+          name: "grep_search",
+          args: { SearchPath: "/workspace", Query: "Session" },
+        },
+        {
+          id: "wakeup-slow-cmd-1",
+          name: "run_command",
+          args: { CommandLine: "git status --short" },
+        },
+        {
+          id: "wakeup-slow-mcp-1",
+          name: "mcp__docs__search",
+          args: { query: "autonomous wakeup" },
+        },
+      ],
+    });
+    // Record CORTEX_STEP_STATUS_RUNNING (2) — actively running, NOT waiting for user approval (9).
+    upsertConversationStepDb(sessionId, plannerIdx + 1, 2);
+    upsertConversationStepDb(sessionId, plannerIdx + 2, 2);
+    upsertConversationStepDb(sessionId, plannerIdx + 3, 2);
+
+    setTimeout(() => {
+      upsertConversationStepDb(sessionId, plannerIdx + 1, 3);
+      upsertConversationStepDb(sessionId, plannerIdx + 2, 3);
+      upsertConversationStepDb(sessionId, plannerIdx + 3, 3);
+      appendTranscriptStep(sessionId, {
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        content: "session.ts:118: export class Session",
+      });
+      appendTranscriptStep(sessionId, {
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        content: "Command exited with code 0.\n\nCommand output:\nclean\n",
+      });
+      appendTranscriptStep(sessionId, {
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        content: "Found 2 docs entries",
+      });
+      appendTranscriptStep(sessionId, {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        content: "SLOW_DEFAULT_TOOLS_WAKEUP_OK",
+      });
+    }, 380);
+  }, 60);
 }
 
 function handleFollowupAfterWakeup(id, text) {
@@ -712,6 +911,165 @@ function handleSlashCompactAfterWakeup(id) {
     sessionUpdate: "agent_message_chunk",
     messageId: "slash-compact-reply",
     content: { type: "text", text: "Compacted 12 steps into summary." },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+const LONG_WAKEUP_BODY = [
+  "# Redis Persistence Deep Comparison",
+  "SECTION_A: " + "RDB binary snapshot vs AOF append-only log analysis. ".repeat(45),
+  "MIDDLE_UNTRUNCATED_SENTINEL_998877",
+  "SECTION_B: " +
+    "Hybrid persistence combines snapshot prefix with incremental AOF tail. ".repeat(45),
+  "【LONG_WAKEUP_TAIL_ANCHOR】",
+].join("\n\n");
+
+function handleBgWakeupLongTruncated(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nBG_WAKEUP_LONG_TRUNCATED\n</USER_REQUEST>",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    tool_calls: [
+      {
+        name: "schedule",
+        args: { DurationSeconds: 5, Prompt: "POST_WAKEUP_LONG" },
+      },
+    ],
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    status: "RUNNING",
+    content: "Timer running",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_fg_schedule_777",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 5, Prompt: "POST_WAKEUP_LONG" },
+    rawOutput: { output: "Scheduled 5s timer" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "fg-short-ack",
+    content: { type: "text", text: "Timer armed." },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T18:00:05Z sender=scheduler priority=HIGH content=POST_WAKEUP_LONG\n</SYSTEM_MESSAGE>",
+    });
+    // Real agy omits `id` in transcript tool_calls while emitting `call_...` over ACP catch-up!
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: "Executing wakeup check before writing long report.",
+      tool_calls: [
+        {
+          name: "run_command",
+          args: { CommandLine: "echo OK", WaitMsBeforeAsync: 5000 },
+        },
+      ],
+    });
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "GENERIC",
+      status: "DONE",
+      content: "Command exited with code 0.\n\nCommand output:\nOK\n",
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: "Synthesizing detailed storage comparison.",
+      content: LONG_WAKEUP_BODY,
+    });
+  }, 120);
+}
+
+function emitLongWakeupCatchupReplay() {
+  // Real agy replays background schedule + wakeup tool calls with native `call_...` IDs,
+  // thought chunks followed by trailing "\n\n\n" chunks, and multi-chunk full assistant text.
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_fg_schedule_777",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 5, Prompt: "POST_WAKEUP_LONG" },
+    rawOutput: { output: "Timer fired" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "Executing wakeup check before writing long report." },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "\n\n\n" },
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_real_acp_wakeup_cmd_888",
+    title: "echo OK",
+    kind: "execute",
+    status: "completed",
+    rawInput: { CommandLine: "echo OK" },
+    rawOutput: { output: "OK\n" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "Synthesizing detailed storage comparison." },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "\n\n\n" },
+  });
+  const mid = Math.floor(LONG_WAKEUP_BODY.length / 2);
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "stale-long-wakeup-msg",
+    content: { type: "text", text: LONG_WAKEUP_BODY.slice(0, mid) },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "stale-long-wakeup-msg",
+    content: { type: "text", text: LONG_WAKEUP_BODY.slice(mid) },
+  });
+}
+
+function handleFollowupAfterLongWakeup(id, text) {
+  emitLongWakeupCatchupReplay();
+  notifyUpdate({
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "Answering user follow-up cleanly.\n\n\n" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "fresh-long-followup-msg",
+    content: { type: "text", text: "CLEAN_TURN2_AFTER_LONG_WAKEUP" },
+  });
+  respond(id, { stopReason: "end_turn" });
+}
+
+function handleSlashCompactAfterLongWakeup(id) {
+  emitLongWakeupCatchupReplay();
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    messageId: "slash-compact-after-long-reply",
+    content: { type: "text", text: "Compacted long wakeup history cleanly." },
   });
   respond(id, { stopReason: "end_turn" });
 }
@@ -888,6 +1246,16 @@ async function handleInTurnWakeupSplit(id) {
 }
 
 function handleAcpUnsolicitedWakeup(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nACP_UNSOLICITED_WAKEUP\n</USER_REQUEST>",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    content: "INITIAL_TURN_DONE\n",
+  });
   notifyUpdate({
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "INITIAL_TURN_DONE\n" },
@@ -901,9 +1269,33 @@ function handleAcpUnsolicitedWakeup(id) {
     });
     notifyUpdate({
       sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "ACP_WAKEUP_HELLO" },
+      messageId: "acp-wakeup-msg",
+      content: { type: "text", text: "ACP_WAKEUP_PART1:" },
     });
-  }, 150);
+    // Non-terminal PLANNER_RESPONSE during mid-reply pause (> 1000ms) must not finish the turn early.
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "GENERATING",
+      thinking: "Post-turn ACP thought...",
+      content: "ACP_WAKEUP_PART1:",
+    });
+
+    setTimeout(() => {
+      notifyUpdate({
+        sessionUpdate: "agent_message_chunk",
+        messageId: "acp-wakeup-msg",
+        content: { type: "text", text: "ACP_WAKEUP_HELLO" },
+      });
+      appendTranscriptStep(sessionId, {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        thinking: "Post-turn ACP thought...",
+        content: "ACP_WAKEUP_PART1:ACP_WAKEUP_HELLO",
+      });
+    }, 1150);
+  }, 120);
 }
 
 function handleSubagentLiveAndWakeup(id) {

@@ -396,7 +396,14 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
         e.type === "timeline.item" &&
         e.sessionId === "s" &&
         e.item.type === "assistant_message" &&
-        e.item.text === "ACP_WAKEUP_HELLO",
+        e.item.text === "ACP_WAKEUP_PART1:",
+    );
+    await h.wait(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "ACP_WAKEUP_PART1:ACP_WAKEUP_HELLO",
     );
     await h.wait(
       (e) =>
@@ -405,6 +412,22 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
         e.turnId === "wakeup-1" &&
         e.state === "completed",
     );
+    const part2Idx = h.events.findIndex(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "ACP_WAKEUP_PART1:ACP_WAKEUP_HELLO",
+    );
+    const wakeupCompletedIdx = h.events.findIndex(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-1" &&
+        e.state === "completed",
+    );
+    expect(part2Idx).toBeGreaterThanOrEqual(0);
+    expect(wakeupCompletedIdx).toBeGreaterThan(part2Idx);
   });
 
   it("bridges native subagents, nested children, post-turn child permissions, send_message, kill, and load replay", async () => {
@@ -677,10 +700,33 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     expect(allLaunches[1]).toContain("--dangerously-skip-permissions");
   });
 
-  it("aborts stalled post-turn unpromptable tools in default mode while allowing slow approved tools in accept-edits mode", async () => {
+  it("allows slow running tools (search, policy-approved shell, MCP) in default mode while aborting tools genuinely stuck in WAITING_FOR_USER", async () => {
     const h = await setupHarness({ AGY_AUTONOMOUS_TOOL_STALL_TIMEOUT_MS: "150" });
     await h.open(undefined, "s", "default");
 
+    // 1. Slow (380ms > 150ms) grep_search, policy-approved run_command, and external MCP tool
+    //    with SQLite steps.status = RUNNING (2) in default mode must NOT be canceled!
+    await h.prompt("BG_WAKEUP_SLOW_TOOLS_DEFAULT");
+    expect(await h.canStopRuntime()).toBe(false);
+
+    await h.wait(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "SLOW_DEFAULT_TOOLS_WAKEUP_OK",
+    );
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-1" &&
+        e.state === "completed",
+    );
+    expect(await h.wasSessionCanceled()).toBe(false);
+
+    // 2. Unpromptable post-turn shell tool genuinely stuck in CORTEX_STEP_STATUS_WAITING (9)
+    //    with no pending ACP permission IS aborted cleanly.
     await h.prompt("BG_WAKEUP_SHELL_TOOL");
     expect(await h.canStopRuntime()).toBe(false);
 
@@ -698,13 +744,13 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       (e) =>
         e.type === "session.turn" &&
         e.sessionId === "s" &&
-        e.turnId === "wakeup-1" &&
+        e.turnId === "wakeup-2" &&
         e.state === "completed",
     );
     expect(await h.canStopRuntime()).toBe(true);
     expect(await h.wasSessionCanceled()).toBe(true);
 
-    // Switch to accept-edits: a slow 300ms view_file (> 150ms stall timeout) must NOT be aborted!
+    // 3. Switch to accept-edits: a slow 300ms view_file (> 150ms stall timeout) also succeeds cleanly.
     await h.sendRequest({
       type: "session.configure",
       requestId: "cfg-accept-edits-read",
@@ -723,7 +769,7 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
       (e) =>
         e.type === "session.turn" &&
         e.sessionId === "s" &&
-        e.turnId === "wakeup-2" &&
+        e.turnId === "wakeup-3" &&
         e.state === "completed",
     );
   });
@@ -797,5 +843,120 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     expect(lastTurnState(KILLED_SUBAGENT_C4)).toBe("canceled");
     expect(lastTurnState(ORPHAN_SUBAGENT_C5)).toBe("canceled");
     expect(await h.canStopRuntime("s-reloaded")).toBe(true);
+  });
+
+  it("reads untruncated transcript_full.jsonl for long post-turn wakeups and suppresses real ACP catch-up overlap across normal, path-prefixed, and slash prompts", async () => {
+    const h = await setupHarness();
+    await h.open(undefined, "s", "full-access");
+
+    // 1. Trigger a post-turn wakeup whose reply (> 5000 chars) is truncated in transcript.jsonl
+    //    and whose tool_calls omit `id` (matching real agy).
+    await h.prompt("BG_WAKEUP_LONG_TRUNCATED");
+    const liveWakeupMsg = await h.wait<Extract<ProviderEvent, { type: "timeline.item" }>>(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s" &&
+        e.item.type === "assistant_message" &&
+        e.item.text.includes("【LONG_WAKEUP_TAIL_ANCHOR】"),
+    );
+    // Live wakeup bubble must contain the untruncated middle sentinel from transcript_full.jsonl!
+    expect(liveWakeupMsg.item.type === "assistant_message" && liveWakeupMsg.item.text).toContain(
+      "MIDDLE_UNTRUNCATED_SENTINEL_998877",
+    );
+    expect(
+      liveWakeupMsg.item.type === "assistant_message" &&
+        liveWakeupMsg.item.text.includes("<truncated"),
+    ).toBe(false);
+
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-1" &&
+        e.state === "completed",
+    );
+
+    // 2. Follow-up starting with a filesystem path (/workspace/foo.ts ...) must NOT be misclassified
+    //    as a slash command and must drop ALL pre-echo catch-up items (mismatched call_... IDs,
+    //    trailing "\n\n\n" thought chunks, and the 5000-char wakeup message).
+    const beforeFollowup = h.events.length;
+    await h.prompt("/workspace/foo.ts FOLLOWUP_AFTER_LONG_WAKEUP");
+    const followupSlice = h.events.slice(beforeFollowup);
+
+    expect(
+      followupSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("LONG_WAKEUP_TAIL_ANCHOR"),
+      ),
+    ).toBe(false);
+    expect(
+      followupSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "tool_call" &&
+          (e.item.id === "call_fg_schedule_777" || e.item.id === "call_real_acp_wakeup_cmd_888"),
+      ),
+    ).toBe(false);
+    expect(
+      followupSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "reasoning" &&
+          e.item.text.includes("Synthesizing detailed storage comparison"),
+      ),
+    ).toBe(false);
+    expect(
+      followupSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text === "CLEAN_TURN2_AFTER_LONG_WAKEUP",
+      ),
+    ).toBe(true);
+
+    // 3. Slash command (/compact-after-long, which emits NO user_message_chunk) after a long wakeup
+    //    also suppresses mismatched tool calls, trailing "\n\n\n" thought chunks, and full wakeup text.
+    await h.prompt("BG_WAKEUP_LONG_TRUNCATED");
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" &&
+        e.sessionId === "s" &&
+        e.turnId === "wakeup-2" &&
+        e.state === "completed",
+    );
+
+    const beforeSlash = h.events.length;
+    await h.prompt("/compact-after-long");
+    const slashSlice = h.events.slice(beforeSlash);
+
+    expect(
+      slashSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("LONG_WAKEUP_TAIL_ANCHOR"),
+      ),
+    ).toBe(false);
+    expect(
+      slashSlice.some(
+        (e) => e.type === "timeline.item" && e.sessionId === "s" && e.item.type === "tool_call",
+      ),
+    ).toBe(false);
+    expect(
+      slashSlice.some(
+        (e) =>
+          e.type === "timeline.item" &&
+          e.sessionId === "s" &&
+          e.item.type === "assistant_message" &&
+          e.item.text === "Compacted long wakeup history cleanly.",
+      ),
+    ).toBe(true);
   });
 });
