@@ -118,7 +118,6 @@ function IconActionButton({
   testID,
   onPress,
   style,
-  pointerEvents,
   children,
 }: {
   accessibilityLabel: string;
@@ -127,7 +126,6 @@ function IconActionButton({
   style?:
     | StyleProp<ViewStyle>
     | ((state: PressableStateCallbackType & { hovered?: boolean }) => StyleProp<ViewStyle>);
-  pointerEvents?: "auto" | "none";
   children: React.ReactNode;
 }) {
   if (isNative) {
@@ -150,7 +148,6 @@ function IconActionButton({
           onPress={onPress}
           hitSlop={8}
           style={style}
-          pointerEvents={pointerEvents}
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
@@ -690,7 +687,6 @@ function ModelRowProfileAction({
     <IconActionButton
       onPress={onPress}
       style={pressableStyle}
-      pointerEvents={visible ? "auto" : "none"}
       accessibilityLabel={label}
       testID={testID}
     >
@@ -1731,8 +1727,10 @@ const styles = StyleSheet.create((theme) => ({
   rowIconButtonPressed: {
     backgroundColor: theme.colors.surface1,
   },
+  // Hidden in style so every pressable branch that applies the style also stops taking taps.
   profileActionHidden: {
     opacity: 0,
+    pointerEvents: "none",
   },
   emptyState: {
     padding: theme.spacing[4],
