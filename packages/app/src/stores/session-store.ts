@@ -112,6 +112,14 @@ export interface Agent {
   projectPlacement?: ProjectPlacementPayload | null;
 }
 
+/**
+ * Sidebar counts for one workspace: finished-but-not-opened, running, and finished.
+ * Canonical shape comes from the wire payload so daemon and app cannot drift.
+ */
+export type WorkspaceAgentStatusCounts = NonNullable<
+  WorkspaceDescriptorPayload["agentStatusCounts"]
+>;
+
 export interface WorkspaceDescriptor {
   parentWorkspaceId?: string;
   createdAt: Date | null;

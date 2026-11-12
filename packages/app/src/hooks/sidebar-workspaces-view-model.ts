@@ -12,10 +12,8 @@ import type {
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
-import type {
-  WorkspaceAgentActivity,
-  WorkspaceAgentStatusCounts,
-} from "@/utils/workspace-agent-activity";
+import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
+import type { WorkspaceAgentStatusCounts } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
@@ -175,14 +173,9 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
-    // Prefer the daemon's counts: the local agent directory is a replaceable
-    // projection, so a partial sync would read as "nothing outstanding". The
-    // activity-index counts stay as the fallback for hosts that predate the field.
-    // COMPAT(workspaceAgentCounts): drop the fallback after 2027-05-12.
-    agentStatusCounts:
-      input.workspace.agentStatusCounts ??
-      input.workspaceAgentActivity?.get(input.workspace.id)?.statusCounts ??
-      EMPTY_AGENT_STATUS_COUNTS,
+    // Daemon-computed only: the local agent directory is a replaceable projection, so a
+    // partial sync would understate the totals. Hosts that predate the field send nothing.
+    agentStatusCounts: input.workspace.agentStatusCounts ?? EMPTY_AGENT_STATUS_COUNTS,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(

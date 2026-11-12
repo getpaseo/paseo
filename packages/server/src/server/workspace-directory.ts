@@ -794,11 +794,9 @@ export function resolveWorkspaceRootAgent(
  * replaceable projection: any partial directory snapshot would collapse a row to
  * zero. Root agents only — delegated children show up as `running` on their root.
  */
-export interface WorkspaceAgentStatusCounts {
-  unread: number;
-  running: number;
-  read: number;
-}
+export type WorkspaceAgentStatusCounts = NonNullable<
+  WorkspaceDescriptorPayload["agentStatusCounts"]
+>;
 
 /**
  * Roots that are running right now, either because the root itself runs or because
@@ -837,20 +835,27 @@ function countWorkspaceAgentStatuses(input: {
     if (root?.id !== agent.id) {
       continue;
     }
-    if (input.runningRootAgentIds.has(agent.id)) {
-      counts.running += 1;
-      continue;
-    }
     const bucket = deriveAgentStateBucket({
       status: agent.status,
+      backgroundWork: agent.backgroundWork,
       pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason ?? null,
     });
+    if (bucket === "needs_input" || bucket === "failed") {
+      continue;
+    }
+    if (bucket === "running" || input.runningRootAgentIds.has(agent.id)) {
+      counts.running += 1;
+      continue;
+    }
+    // An agent still starting up has nothing to report yet — unless a descendant is running,
+    // which the promotion above already covered.
+    if (agent.status === "initializing") {
+      continue;
+    }
     if (bucket === "attention") {
       counts.unread += 1;
-    } else if (bucket === "running") {
-      counts.running += 1;
     } else if (bucket === "done") {
       counts.read += 1;
     }

@@ -6,7 +6,7 @@ import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list"
 import { useAppSettings } from "@/hooks/use-settings";
 import type { SidebarWorkspaceTrailing } from "@/hooks/use-settings";
 import { useCompactTimeAgo } from "@/hooks/use-time-ago";
-import type { WorkspaceAgentStatusCounts } from "@/utils/workspace-agent-activity";
+import type { WorkspaceAgentStatusCounts } from "@/stores/session-store";
 
 export type { SidebarWorkspaceTrailing };
 
@@ -27,18 +27,7 @@ export function useSidebarWorkspaceTrailing(): SidebarWorkspaceTrailing {
   return sidebarWorkspaceTrailing;
 }
 
-/** Whether the slot has anything to draw for this workspace under the current preference. */
-export function hasSidebarWorkspaceTrailing({
-  workspace,
-  trailing,
-}: {
-  workspace: SidebarWorkspaceEntry;
-  trailing: SidebarWorkspaceTrailing;
-}): boolean {
-  if (trailing === "diff") return workspace.diffStat !== null;
-  if (trailing === "timestamp") return workspace.statusEnteredAt !== null;
-  return trailing === "agentStatus";
-}
+export { hasSidebarWorkspaceTrailing } from "./availability";
 
 export function SidebarWorkspaceTrailingContent({
   workspace,
@@ -71,10 +60,8 @@ export function SidebarAgentStatusCounts({
   testID?: string;
 }) {
   const { t } = useTranslation();
-  // Nothing to report: the slot stays empty rather than spending width on zeroes.
-  if (counts.unread === 0 && counts.running === 0 && counts.read === 0) {
-    return null;
-  }
+  // The wrapper is always mounted so gaining or losing the first count never changes how much
+  // room the title gets. Zeroes draw no text, but their slot keeps its width.
   return (
     <View
       style={styles.agentStatusCounts}

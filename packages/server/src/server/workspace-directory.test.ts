@@ -361,6 +361,29 @@ describe("WorkspaceDirectory", () => {
     });
   });
 
+  test("counts a root with background work as running, like the workspace bucket does", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "bg", status: "idle", backgroundWork: { count: 2 } });
+
+    await expect(workspace.agentStatusCounts()).resolves.toEqual({
+      unread: 0,
+      running: 1,
+      read: 0,
+    });
+  });
+
+  test("keeps permission waits and initializing roots out of the counts", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "permission", status: "idle", pendingPermissionCount: 1 });
+    workspace.hasRootAgent({ id: "initializing", status: "initializing" });
+
+    await expect(workspace.agentStatusCounts()).resolves.toEqual({
+      unread: 0,
+      running: 0,
+      read: 0,
+    });
+  });
+
   test("counts a root as running while a delegated child still runs", async () => {
     const workspace = new WorkspaceStatus();
     workspace.hasRootAgent({ id: "parent-agent", status: "idle" });

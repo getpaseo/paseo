@@ -325,20 +325,6 @@ test.describe("Sidebar workspace list", () => {
         modeId: "load-test",
         model: "e2e-fast-stream",
       });
-      const running = await seeded.client.createAgent({
-        provider: "mock",
-        cwd: seeded.repoPath,
-        workspaceId: seeded.workspaceId,
-        title: "Running",
-        modeId: "load-test",
-        model: "e2e-fast-stream",
-        initialPrompt: "Keep working",
-      });
-      await seeded.client.waitForAgentUpsert(
-        running.id,
-        (snapshot) => snapshot.status === "running",
-        15_000,
-      );
       const second = await seeded.client.createWorkspace({
         source: { kind: "directory", path: seeded.repoPath, projectId: seeded.projectId },
         title: "Second",
@@ -367,6 +353,22 @@ test.describe("Sidebar workspace list", () => {
 
       await selectTrailing("diff");
       await expect(firstRow).toContainText("+1");
+      // Start the running agent last, and with a stream long enough to outlive the preference
+      // switch: an early start lets a fast stream finish before the count is asserted.
+      const running = await seeded.client.createAgent({
+        provider: "mock",
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "Running",
+        modeId: "load-test",
+        model: "ten-second-stream",
+        initialPrompt: "Keep working",
+      });
+      await seeded.client.waitForAgentUpsert(
+        running.id,
+        (snapshot) => snapshot.status === "running",
+        15_000,
+      );
       await selectTrailing("agentStatus");
       await expect(firstRow).not.toContainText("+1");
       // Three numbers, zeroes hidden: the running agent is the only one we can pin down here,
