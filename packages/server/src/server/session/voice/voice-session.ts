@@ -1433,9 +1433,11 @@ const FILLER_WORDS = new Set([
 /**
  * True when a transcript holds at least one word: a Latin token of two or more letters
  * that is not a filler, or any token in another script (one Han character can be a word).
+ * A token cut off with a trailing hyphen ("Sna-") is a fragment, not a word.
  */
 export function hasSpokenWord(text: string): boolean {
-  const tokens = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
+  const withoutFragments = text.replace(/[\p{L}\p{N}']+-+(?=$|[\s\p{P}])/gu, " ");
+  const tokens = withoutFragments.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
   return tokens.some((token) => {
     const bare = token.replace(/'/g, "");
     if (/[^\p{Script=Latin}\p{N}]/u.test(bare)) return true;

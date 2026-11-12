@@ -167,7 +167,7 @@ describe("VoiceSession streaming transcription", () => {
     }
   });
 
-  test.each(["", "S-", "Mm-hmm.", "uh, um", "..."])(
+  test.each(["", "S-", "Sna-", "Mm-hmm.", "uh, um", "..."])(
     "holds a reply for a capable client and resumes it when the transcript is %j",
     async (transcript) => {
       const tts: TextToSpeechProvider = {
@@ -449,11 +449,17 @@ describe("VoiceSession streaming transcription", () => {
 });
 
 describe("hasSpokenWord", () => {
-  test.each(["stop", "No.", "OK", "wait, stop", "停", "l'eau"])("counts %j as speech", (text) => {
-    expect(hasSpokenWord(text)).toBe(true);
-  });
+  test.each(["stop", "No.", "OK", "wait, stop", "well-known", "停", "l'eau"])(
+    "counts %j as speech",
+    (text) => {
+      expect(hasSpokenWord(text)).toBe(true);
+    },
+  );
 
-  test.each(["", "S-", "Mm-hmm.", "uh, um", "...", "I"])("counts %j as noise", (text) => {
-    expect(hasSpokenWord(text)).toBe(false);
-  });
+  test.each(["", "S-", "Sna-", "Snarf-- uh", "Mm-hmm.", "uh, um", "...", "I"])(
+    "counts %j as noise",
+    (text) => {
+      expect(hasSpokenWord(text)).toBe(false);
+    },
+  );
 });
