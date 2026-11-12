@@ -83,6 +83,7 @@ function projectionInput(options?: {
     ]),
     projectNamesByViewKey: new Map([["project", "Project"]]),
     groupMode: options?.groupMode ?? ("project" as const),
+    nestProjects: false,
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
@@ -151,6 +152,37 @@ describe("buildSidebarProjection", () => {
       { serverId: "srv", workspaceId: "pinned" },
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
+  });
+
+  it("uses the visible nested project order for shortcut targets", () => {
+    const child = makeWorkspace("child", "done", [], "child");
+    const parent = makeWorkspace("parent", "done", [], "parent");
+    const input = {
+      ...projectionInput(),
+      projects: [
+        makeProject([child.placement], "child"),
+        makeProject([parent.placement], "parent"),
+      ],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      nestProjects: true,
+    };
+    input.projects[0]!.hosts[0]!.iconWorkingDir = "/repo/parent/child";
+    expect(
+      buildSidebarProjection(input).pinnedGroups.unpinnedProjects.map((project) => project.viewKey),
+    ).toEqual(["parent", "child"]);
+    expect(
+      buildSidebarProjection(input).shortcutModel.shortcutTargets.map(
+        (target) => target.workspaceId,
+      ),
+    ).toEqual(["parent", "child"]);
+    const collapsed = buildSidebarProjection({
+      ...input,
+      collapsedProjectKeys: new Set(["parent"]),
+    });
+    expect(collapsed.pinnedGroups.unpinnedProjects.map((project) => project.viewKey)).toEqual([
+      "parent",
+    ]);
+    expect(collapsed.shortcutModel.shortcutTargets).toEqual([]);
   });
 
   it("keeps pinned chats above status groups and removes them from those groups", () => {

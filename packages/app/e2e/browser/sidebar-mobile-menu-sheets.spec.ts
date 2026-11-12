@@ -26,6 +26,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
     await expect(page.getByRole("menuitem")).toHaveText([
       /^Grouping/,
       /^Sort/,
+      "Nest projects by directory",
       /^Title/,
       "Show",
       "Project",

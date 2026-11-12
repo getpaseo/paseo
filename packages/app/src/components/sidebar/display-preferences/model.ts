@@ -22,6 +22,8 @@ export interface SidebarDisplayPreferences {
   grouping: SidebarGroupMode;
   workspaceSort: WorkspaceSort;
   setWorkspaceSort: (sort: WorkspaceSort) => void;
+  nestProjects: boolean;
+  toggleNestProjects: () => void;
   setGrouping: (mode: SidebarGroupMode) => void;
   titleSource: WorkspaceTitleSource;
   setTitleSource: (source: WorkspaceTitleSource) => void;
@@ -57,6 +59,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const toggleBackground = useSidebarViewStore((state) => state.toggleBackground);
   const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
   const setWorkspaceSort = useSidebarViewStore((state) => state.setWorkspaceSort);
+  const nestProjects = useSidebarViewStore((state) => state.nestProjects);
+  const toggleNestProjects = useSidebarViewStore((state) => state.toggleNestProjects);
   const grouping = useSidebarViewStore((state) => state.groupMode);
   const setGrouping = useSidebarViewStore((state) => state.setGroupMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
@@ -118,6 +122,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       grouping,
       workspaceSort,
       setWorkspaceSort,
+      nestProjects,
+      toggleNestProjects,
       setGrouping,
       titleSource: workspaceTitleSource,
       setTitleSource,
@@ -143,6 +149,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       grouping,
       workspaceSort,
       setWorkspaceSort,
+      nestProjects,
+      toggleNestProjects,
       setGrouping,
       workspaceTitleSource,
       setTitleSource,

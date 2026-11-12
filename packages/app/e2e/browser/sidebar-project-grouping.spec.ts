@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { expect } from "@playwright/test";
 import { test as base } from "../support/fixtures";
 import {
   beginWorkspaceFromProject,
@@ -365,6 +366,52 @@ test.describe("Sidebar project grouping", () => {
       { projectName: "Repository root project", workspaceName: "Repository root workspace" },
       { projectName: "App package project", workspaceName: "App package workspace" },
     ]);
+  });
+
+  test("nests a subdirectory project and folds it with its parent", async ({
+    page,
+    rootAndSubdirectoryProjects,
+  }, testInfo) => {
+    await openScenario(page, rootAndSubdirectoryProjects);
+    const root = page
+      .getByTestId(/^sidebar-project-row-/)
+      .filter({ hasText: "Repository root project" });
+    const child = page
+      .getByTestId(/^sidebar-project-row-/)
+      .filter({ hasText: "App package project" });
+    await expect(root).toBeVisible();
+    await expect(child).toBeVisible();
+    await page.mouse.move(1000, 80);
+    await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("flat-projects.png") });
+
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await page.getByTestId("sidebar-display-nest-projects").click();
+    await page.keyboard.press("Escape");
+
+    await expect(async () => {
+      const rootBounds = await root.boundingBox();
+      const childBounds = await child.boundingBox();
+      expect(rootBounds).not.toBeNull();
+      expect(childBounds).not.toBeNull();
+      expect(childBounds!.y).toBeGreaterThan(rootBounds!.y);
+      expect(childBounds!.x).toBeGreaterThan(rootBounds!.x);
+    }).toPass();
+    await page.mouse.move(1000, 80);
+    await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("nested-projects.png") });
+
+    await root.click();
+    await expect(child).toHaveCount(0);
+    await root.click();
+    await expect(child).toBeVisible();
+
+    await page.reload();
+    await expect(async () => {
+      const rootBounds = await root.boundingBox();
+      const childBounds = await child.boundingBox();
+      expect(childBounds!.x).toBeGreaterThan(rootBounds!.x);
+    }).toPass();
   });
 
   test("groups the same repository subdirectory across hosts", async ({
