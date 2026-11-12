@@ -695,14 +695,57 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     }
     expect(streamed).toHaveLength(4);
 
+    // A new tool-only wakeup step and final reply arrive after streamHistory drained.
+    writeTranscript([
+      ...baseRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-12T10:41:00.000Z",
+        content: "[Message] timestamp=2026-11-12T10:41:00Z sender=task-2 content=Done",
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "call-post-history",
+            name: "run_command",
+            args: JSON.stringify({
+              CommandLine: "curl -fsS https://example.com/ready",
+              toolSummary: "Post-history check",
+            }),
+          },
+        ],
+      },
+      {
+        step_index: 7,
+        type: "GENERIC",
+        status: "DONE",
+        content: "200 OK",
+      },
+      {
+        step_index: 8,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Post-history check complete.",
+        tool_calls: [],
+      },
+    ]);
+
     const liveEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => liveEvents.push(event));
 
     await vi.advanceTimersByTimeAsync(50);
     await flushAsyncIo();
 
-    // Already-delivered wakeup step 4 must not be repeated.
-    expect(summarizeEvents(liveEvents)).toEqual([]);
+    // Already-delivered wakeup step 4 must not be repeated, while unseen tool-only step 6 and step 8 are emitted.
+    expect(summarizeEvents(liveEvents)).toEqual([
+      "tool:execute:completed",
+      "assistant:Post-history check complete.",
+    ]);
   });
 
   test("interrupt during a held background turn cancels immediately", async () => {
