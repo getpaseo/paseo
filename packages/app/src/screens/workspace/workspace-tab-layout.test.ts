@@ -14,6 +14,7 @@ import {
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
   resolveInlineWorkspaceTabBudget,
+  resolveInlineWorkspaceTitleWidth,
   resolveInlineWorkspaceTabPresentation,
   shouldUseInlineWorkspaceHeader,
   workspaceTabNaturalWidth,
@@ -324,26 +325,87 @@ describe("inline workspace rail transitions", () => {
     expect(resolveInlineWorkspaceTabPresentation(320, null, "switcher")).toBe("tabs");
   });
 
-  it("caps title reservation and switches at the projected Explorer allocation", () => {
-    const budget = (width: number) =>
+  it("reserves the measured title and lets the rail absorb the rest", () => {
+    const budget = (width: number, titleWidth = 196) =>
       resolveInlineWorkspaceTabBudget({
         width,
         horizontalInset: 24,
-        leadingWidth: 240,
+        navigationWidth: 44,
+        navigationGap: 8,
+        titleWidth,
         gap: 16,
       });
-    expect(budget(600)).toBe(368);
-    expect(budget(450)).toBe(268);
-    expect(resolveInlineWorkspaceTabPresentation(budget(600), 300)).toBe("tabs");
-    expect(resolveInlineWorkspaceTabPresentation(budget(450), 300)).toBe("switcher");
+    expect(budget(600)).toEqual({ titleWidth: 192, railWidth: 316 });
+    expect(budget(450)).toEqual({ titleWidth: 142, railWidth: 216 });
+    expect(budget(600, 100)).toEqual({ titleWidth: 100, railWidth: 408 });
+  });
+
+  it("caps long titles and switches at the projected Explorer allocation", () => {
+    const budget = (width: number, titleWidth: number) =>
+      resolveInlineWorkspaceTabBudget({
+        width,
+        horizontalInset: 24,
+        navigationWidth: 44,
+        navigationGap: 8,
+        titleWidth,
+        gap: 16,
+      });
+    expect(budget(600, 240).titleWidth).toBe(192);
+    expect(resolveInlineWorkspaceTabPresentation(budget(600, 240).railWidth, 300)).toBe("tabs");
+    expect(resolveInlineWorkspaceTabPresentation(budget(450, 240).railWidth, 300)).toBe("switcher");
+  });
+
+  it("does not charge the navigation gap before navigation is measured", () => {
+    expect(
+      resolveInlineWorkspaceTabBudget({
+        width: 600,
+        horizontalInset: 24,
+        navigationWidth: 0,
+        navigationGap: 8,
+        titleWidth: 100,
+        gap: 16,
+      }),
+    ).toEqual({ titleWidth: 100, railWidth: 460 });
+  });
+
+  it("caps the title at the remaining width rather than the one-third share", () => {
+    expect(
+      resolveInlineWorkspaceTabBudget({
+        width: 300,
+        horizontalInset: 24,
+        navigationWidth: 44,
+        navigationGap: 8,
+        titleWidth: 240,
+        gap: 16,
+      }),
+    ).toEqual({ titleWidth: 92, railWidth: 116 });
+  });
+
+  it("returns rail space unused by a naturally narrower track to the title", () => {
+    const width = (preferredTitleWidth: number, naturalRailWidth: number | null) =>
+      resolveInlineWorkspaceTitleWidth({
+        titleWidth: 178,
+        preferredTitleWidth,
+        railWidth: 288,
+        naturalRailWidth,
+      });
+    expect(width(240, 180)).toBe(240);
+    expect(width(240, null)).toBe(178);
+    expect(width(240, 300)).toBe(178);
+    expect(width(200, 180)).toBe(200);
+  });
+
+  it("never returns a negative rail budget", () => {
     expect(
       resolveInlineWorkspaceTabBudget({
         width: 20,
         horizontalInset: 24,
-        leadingWidth: 240,
+        navigationWidth: 44,
+        navigationGap: 8,
+        titleWidth: 240,
         gap: 16,
       }),
-    ).toBe(0);
+    ).toEqual({ titleWidth: 0, railWidth: 0 });
   });
 
   it("preserves embedded natural widths through fit and overflow, including the add button", () => {

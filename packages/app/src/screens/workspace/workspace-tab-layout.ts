@@ -32,19 +32,63 @@ export function resolveInlineWorkspaceTabPresentation(
   return naturalWidth <= width ? "tabs" : "switcher";
 }
 
+export interface InlineWorkspaceTabAllocation {
+  /** Title width the native row reserves for the workspace identity. */
+  titleWidth: number;
+  /** Remaining width the tab rail viewport may claim. */
+  railWidth: number;
+}
+
 export function resolveInlineWorkspaceTabBudget({
   width,
   horizontalInset,
-  leadingWidth,
+  navigationWidth,
+  titleWidth,
+  navigationGap,
   gap,
 }: {
   width: number;
   horizontalInset: number;
-  leadingWidth: number;
+  navigationWidth: number;
+  titleWidth: number;
+  navigationGap: number;
   gap: number;
-}): number {
+}): InlineWorkspaceTabAllocation {
   const contentWidth = Math.max(0, width - horizontalInset);
-  return Math.max(0, contentWidth - Math.min(leadingWidth, contentWidth / 3) - gap);
+  const navigation = Math.min(Math.max(0, navigationWidth), contentWidth);
+  const afterNavigation = Math.max(
+    0,
+    contentWidth - navigation - (navigation > 0 ? navigationGap : 0),
+  );
+  // Keep the existing 240pt preferred-title measurement capped by the one-third
+  // reservation. The visible row enforces this number as a title width instead of
+  // letting flex layout shrink the title to zero when the projected rail is wider
+  // than the row that Fabric is about to lay out.
+  const reservedTitle = Math.min(Math.max(0, titleWidth), contentWidth / 3, afterNavigation);
+  return {
+    titleWidth: reservedTitle,
+    railWidth: Math.max(0, afterNavigation - reservedTitle - gap),
+  };
+}
+
+/**
+ * Returns rail width the track does not use to its title reservation. A narrow natural
+ * track must not leave the title truncated below its preferred width.
+ */
+export function resolveInlineWorkspaceTitleWidth({
+  titleWidth,
+  preferredTitleWidth,
+  railWidth,
+  naturalRailWidth,
+}: {
+  titleWidth: number;
+  preferredTitleWidth: number;
+  railWidth: number;
+  naturalRailWidth: number | null;
+}): number {
+  const renderedRailWidth = Math.min(naturalRailWidth ?? railWidth, railWidth);
+  const unusedRailWidth = Math.max(0, railWidth - renderedRailWidth);
+  return Math.min(preferredTitleWidth, titleWidth + unusedRailWidth);
 }
 
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
