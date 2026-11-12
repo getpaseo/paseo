@@ -28,7 +28,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useTranslation } from "react-i18next";
-import type { StreamItem } from "@/types/stream";
+import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
@@ -448,8 +448,18 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [clearPendingUserScrollEnd, disposeHistoryStart, evaluateHistoryStart]);
 
+  const scrollToMessage = useStableEvent((messageId: string) => {
+    const index = rows.findIndex((item) => getStreamItemMessageId(item) === messageId);
+    if (index < 0) return;
+    bottomAnchorController.detachByUser();
+    listRef.current?.cancelScroll();
+    void listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    onNearBottomChange(false);
+  });
+
   useEffect(() => {
     const handle: StreamViewportHandle = {
+      scrollToMessage,
       scrollToBottom: (reason = "jump-to-bottom") => {
         bottomAnchorController.requestLocalAnchor({
           agentId,
@@ -467,7 +477,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, holdRow, viewportRef]);
+  }, [agentId, bottomAnchorController, holdRow, viewportRef, scrollToMessage]);
 
   // The scroll-to-bottom button shows whenever following would not resume on its own. A detached
   // list resumes only from the end, so the button shows anywhere short of it. While following, the

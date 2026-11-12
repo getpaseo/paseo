@@ -1206,14 +1206,24 @@ test.describe("Agent message submission", () => {
   test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,
-  }) => {
+  }, testInfo) => {
     const prompt = "Restore this rejected submission.";
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-before-jump.png") });
+    await page.getByRole("button", { name: "View message", exact: true }).click();
+    const highlighted = page.getByTestId("user-message-highlight");
+    await expect(highlighted).toHaveCount(1);
+    await expect(highlighted).toContainText(prompt);
+    await expect(highlighted).toBeInViewport();
+    await expect(
+      page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
+    ).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-recovery.png") });
     await retryRestoredSubmission(page, prompt);
+    await expect(highlighted).toHaveCount(0);
   });
-
   test("restores an ambiguous Steer failure without retrying or interrupting", async ({
     page,
   }, testInfo) => {
@@ -1409,6 +1419,11 @@ test.describe("Agent message submission", () => {
     ).toBeVisible();
     await unrelatedRunningScenario.gate.disconnect();
     await expectFailedSubmissionRestored(page, prompt);
+    const viewMessage = page.getByRole("button", { name: "View message", exact: true });
+    await viewMessage.click();
+    await expect(page.getByTestId("view-submitted-message-error")).toBeVisible();
+    await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
+    await expect(viewMessage).toBeEnabled();
   });
 
   test("keeps a submitted prompt before its response when canonical history arrives", async ({

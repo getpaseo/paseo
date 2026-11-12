@@ -422,8 +422,10 @@ describe("dispatchComposerAgentMessage", () => {
   it("forwards the configured active-turn intent without provider capability checks", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
+    const submittedIds: string[] = [];
 
     await dispatchComposerAgentMessage({
+      onSubmittedMessage: (id) => submittedIds.push(id),
       client,
       agentId: "agent",
       text: "steer this turn",
@@ -434,6 +436,7 @@ describe("dispatchComposerAgentMessage", () => {
     });
 
     expect(client.calls[0]?.options.activeTurnBehavior).toBe("steer");
+    expect(submittedIds).toEqual([client.calls[0]?.options.messageId]);
   });
 
   it("stamps only a steer optimistic row with the daemon active turn ID", async () => {

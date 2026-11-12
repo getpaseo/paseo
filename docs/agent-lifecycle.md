@@ -121,6 +121,12 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+Codex retires its app-server when `turn/interrupt` times out. It confirms process exit before
+settling cancellation; the next prompt resumes the saved thread in a fresh process. A failed
+termination retains foreground ownership, and Stop retries termination. The manager's outer
+interrupt budget includes RPC timeout and process retirement; its shorter post-acknowledgement
+settlement budget is separate. Other provider errors retain their existing refusal behavior.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.

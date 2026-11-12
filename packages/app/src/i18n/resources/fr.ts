@@ -123,6 +123,7 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "Voir le message",
     placeholders: {
       desktop: "Écrivez à l’agent, mentionnez des @fichiers ou utilisez les /commandes et /skills",
       mobile: "Message, @fichiers, /commandes",
@@ -185,6 +186,7 @@ export const fr: TranslationResources = {
       removeReview: "Retirer la revue jointe",
     },
     errors: {
+      messageNotFound: "Ce message ne figure pas encore dans la conversation.",
       failedToSend: "Impossible d’envoyer le message",
       failedToCreateAgent: "Impossible de créer l’agent",
       noHostSelected: "Aucun hôte sélectionné",

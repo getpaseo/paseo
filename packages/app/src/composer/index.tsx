@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -978,6 +980,7 @@ interface ComposerProps {
   commandDraft?: DraftCommandTarget;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
   onMessageSent?: () => void;
+  onViewSubmittedMessage?: (clientMessageId: string) => Promise<boolean>;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -1297,6 +1300,7 @@ function ComposerContentImpl({
   onFocusInput,
   commandDraft,
   onMessageSent,
+  onViewSubmittedMessage,
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1411,6 +1415,26 @@ function ComposerContentImpl({
   const editingSession = useComposerEditingSession(inputMode, providedEditingSession);
   const isFullscreen = useComposerFullscreen(editingSession);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [submittedMessageId, setSubmittedMessageId] = useState<string | null>(null);
+  const viewSubmittedMessage = useMutation({
+    mutationFn: async () => {
+      if (!submittedMessageId || !onViewSubmittedMessage) return;
+      const found = await onViewSubmittedMessage(submittedMessageId);
+      if (!found) throw new Error(t("composer.errors.messageNotFound"));
+    },
+  });
+  const { reset: resetMessageLocation, mutate: locateSubmittedMessage } = viewSubmittedMessage;
+  const rememberSubmittedMessage = useCallback(
+    (clientMessageId: string) => {
+      setSubmittedMessageId(clientMessageId);
+      resetMessageLocation();
+    },
+    [resetMessageLocation],
+  );
+  const handleViewSubmittedMessage = useCallback(
+    () => locateSubmittedMessage(),
+    [locateSubmittedMessage],
+  );
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
@@ -1674,7 +1698,10 @@ function ComposerContentImpl({
 
   useEffect(() => {
     agentIdRef.current = agentId;
-  }, [agentId]);
+    setSubmittedMessageId(null);
+    resetMessageLocation();
+    setSendError(null);
+  }, [agentId, serverId, resetMessageLocation]);
 
   useEffect(() => {
     sendAgentMessageRef.current = async (
@@ -1687,6 +1714,7 @@ function ComposerContentImpl({
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       await dispatchComposerAgentMessage({
+        onSubmittedMessage: rememberSubmittedMessage,
         client,
         agentId: targetAgentId,
         text,
@@ -1707,7 +1735,15 @@ function ComposerContentImpl({
       });
       onAttentionPromptSend?.();
     };
-  }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [
+    appSettings.sendBehavior,
+    client,
+    onAttentionPromptSend,
+    serverId,
+    supportsForgeSearch,
+    t,
+    rememberSubmittedMessage,
+  ]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -2530,11 +2566,40 @@ function ComposerContentImpl({
   const sendErrorNode = useMemo(
     () =>
       sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
-          {sendError}
-        </Text>
+        <View>
+          <Text accessibilityRole="alert" style={styles.sendErrorText}>
+            {sendError}
+          </Text>
+          {submittedMessageId && onViewSubmittedMessage ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={viewSubmittedMessage.isPending}
+              style={styles.viewMessageButton}
+              onPress={handleViewSubmittedMessage}
+            >
+              {t("composer.viewMessage")}
+            </Button>
+          ) : null}
+          {viewSubmittedMessage.error ? (
+            <Text
+              accessibilityRole="alert"
+              style={styles.sendErrorText}
+              testID="view-submitted-message-error"
+            >
+              {viewSubmittedMessage.error.message}
+            </Text>
+          ) : null}
+        </View>
       ) : null,
-    [sendError],
+    [
+      sendError,
+      submittedMessageId,
+      onViewSubmittedMessage,
+      viewSubmittedMessage,
+      handleViewSubmittedMessage,
+      t,
+    ],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
@@ -2817,6 +2882,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.accent,
   },
+  viewMessageButton: { alignSelf: "flex-start", paddingHorizontal: 0 },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.base,

@@ -186,6 +186,7 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
 }
 
 export interface DispatchComposerAgentMessageInput {
+  onSubmittedMessage?: (clientMessageId: string) => void;
   client: ComposerSendClient;
   agentId: string;
   text: string;
@@ -216,6 +217,7 @@ export async function dispatchComposerAgentMessage(
       ? { turnId: input.activeTurnId }
       : {}),
   });
+  input.onSubmittedMessage?.(clientMessageId);
   input.submission.begin(input.agentId, userMessage);
   try {
     const imagesData = await input.encodeImages(wirePayload.images);

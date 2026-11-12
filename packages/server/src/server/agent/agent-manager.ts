@@ -117,6 +117,8 @@ import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+// Provider interruption may include bounded process retirement after its RPC times out.
+const INTERRUPT_OPERATION_TIMEOUT_MS = 10_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -900,7 +902,7 @@ export class AgentManager {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
       interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_OPERATION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
@@ -3830,7 +3832,7 @@ export class AgentManager {
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
         ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+        : Math.min(this.rescueTimeouts.interruptSessionMs, INTERRUPT_SESSION_TIMEOUT_MS),
     });
 
     if (!interruptAcknowledged) {
