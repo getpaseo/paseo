@@ -301,7 +301,10 @@ function maskNonCode(source: string): string {
   return chars.join("");
 }
 
-function extractAccessorChain(params: { masked: string; from: number }): string | undefined {
+function extractAccessorChain(params: { masked: string; from: number }): {
+  label: string;
+  argumentFrom: number;
+} | undefined {
   const { masked, from } = params;
   const segments: string[] = [];
   const accessor = /\s*(?:\.\s*([\w$]+)|\[\s*(["'`])([\s\S]*?)\2\s*\])/y;
@@ -322,23 +325,254 @@ function extractAccessorChain(params: { masked: string; from: number }): string 
   if (segments.length === 0 || !/^\s*\(/.test(masked.slice(index))) {
     return undefined;
   }
-  return segments.join(".");
+  return { label: segments.join("."), argumentFrom: index };
 }
 
-function extractCodeModeToolLabel(code: string): string | undefined {
+// Argument keys worth surfacing on the row, in priority order. The first
+// matching string value answers "what did this call actually target".
+const SUMMARY_KEYS = [
+  "query",
+  "url",
+  "name",
+  "identifier",
+  "title",
+  "path",
+  "file",
+  "filepath",
+  "command",
+  "prompt",
+  "description",
+  "q",
+  "id",
+];
+
+const SUMMARY_MAX_LENGTH = 80;
+
+function truncateSummary(value: string): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  if (flat.length <= SUMMARY_MAX_LENGTH) {
+    return flat;
+  }
+  return `${flat.slice(0, SUMMARY_MAX_LENGTH - 3).trimEnd()}...`;
+}
+
+// Extracts the first top-level argument range of the call whose opening paren
+// sits at `openParenIndex`. Scans the original code, skipping string and
+// template literal contents so parens or commas inside strings cannot break
+// the balance scan.
+function extractFirstArgumentRange(
+  code: string,
+  openParenIndex: number,
+): { start: number; end: number } | undefined {
+  let index = openParenIndex;
+  while (index < code.length && /\s/.test(code[index])) {
+    index += 1;
+  }
+  if (code[index] !== "(") {
+    return undefined;
+  }
+  let depth = 0;
+  let start = -1;
+  let end = -1;
+  for (let i = index + 1; i < code.length; i += 1) {
+    const character = code[i];
+    if (character === '"' || character === "'" || character === "`") {
+      // A string literal can be the argument itself: it counts as the start.
+      if (start === -1) {
+        start = i;
+      }
+      i = skipStringLiteral(code, i) - 1;
+      continue;
+    }
+    if (start === -1) {
+      if (character === ")") {
+        return undefined;
+      }
+      if (/\s/.test(character)) {
+        continue;
+      }
+      start = i;
+    }
+    if (character === "(" || character === "{" || character === "[") {
+      depth += 1;
+    } else if (character === ")" || character === "}" || character === "]") {
+      if (depth === 0) {
+        if (character === ")") {
+          end = i;
+          break;
+        }
+        return undefined;
+      }
+      depth -= 1;
+    } else if (depth === 0 && character === ",") {
+      end = i;
+      break;
+    }
+  }
+  if (start === -1 || end === -1) {
+    return undefined;
+  }
+  return { start, end };
+}
+
+// params.start points at the opening quote. Returns the index just after the
+// closing quote (or end of input when unterminated). Template literal
+// `${...}` interpolations are skipped with brace balancing.
+function skipStringLiteral(text: string, start: number): number {
+  const quote = text[start];
+  let i = start + 1;
+  while (i < text.length) {
+    const character = text[i];
+    if (character === "\\") {
+      i += 2;
+      continue;
+    }
+    if (quote === "`" && character === "$" && text[i + 1] === "{") {
+      let depth = 1;
+      i += 2;
+      while (i < text.length && depth > 0) {
+        if (text[i] === '"' || text[i] === "'" || text[i] === "`") {
+          i = skipStringLiteral(text, i);
+          continue;
+        }
+        if (text[i] === "{") {
+          depth += 1;
+        } else if (text[i] === "}") {
+          depth -= 1;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    if (character === quote) {
+      return i + 1;
+    }
+    i += 1;
+  }
+  return text.length;
+}
+
+function stringLiteralContent(value: string): string | undefined {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if (
+    (quote === '"' || quote === "'" || quote === "`") &&
+    trimmed.length >= 2 &&
+    trimmed[trimmed.length - 1] === quote
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return undefined;
+}
+
+// Splits on top-level separators only: string and template literal contents
+// (and nested brackets) are skipped, so commas inside strings cannot split.
+function splitTopLevel(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    const character = text[i];
+    if (character === '"' || character === "'" || character === "`") {
+      i = skipStringLiteral(text, i);
+      continue;
+    }
+    if (character === "(" || character === "{" || character === "[") {
+      depth += 1;
+    } else if (character === ")" || character === "}" || character === "]") {
+      depth -= 1;
+    } else if (depth === 0 && character === separator) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+    i += 1;
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+// Picks a short, human-readable summary from the first argument's source text:
+// a bare string literal is used directly; an object literal contributes the
+// first matching summary key's string value (or the first string value at all);
+// anything else is shown as-is, truncated.
+function summarizeArgumentText(argument: string): string | undefined {
+  const trimmed = argument.trim();
+  const bareLiteral = stringLiteralContent(trimmed);
+  if (bareLiteral !== undefined) {
+    return bareLiteral.trim() ? truncateSummary(bareLiteral) : undefined;
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const body = trimmed.slice(1, -1);
+    let firstString: string | undefined;
+    for (const entry of splitTopLevel(body, ",")) {
+      const pair = entry.match(/^\s*([\w$]+)\s*:\s*([\s\S]+)$/);
+      if (!pair) {
+        continue;
+      }
+      const key = pair[1].toLowerCase();
+      const value = stringLiteralContent(pair[2]);
+      if (value === undefined || !value.trim()) {
+        continue;
+      }
+      if (SUMMARY_KEYS.includes(key)) {
+        return truncateSummary(value);
+      }
+      firstString ??= value;
+    }
+    return firstString ? truncateSummary(firstString) : undefined;
+  }
+
+  return truncateSummary(trimmed);
+}
+
+// Short summary for a tool input object without any code to parse (direct MCP
+// tool calls): the first matching summary key's string value, else the first
+// string value at all.
+function summarizeToolInput(input: unknown): string | undefined {
+  if (!isRecord(input)) {
+    return undefined;
+  }
+  const entries = Object.entries(input);
+  let firstString: string | undefined;
+  for (const [key, value] of entries) {
+    if (typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    if (SUMMARY_KEYS.includes(key.toLowerCase())) {
+      return truncateSummary(value);
+    }
+    firstString ??= value;
+  }
+  return firstString ? truncateSummary(firstString) : undefined;
+}
+
+function extractCodeModeCall(code: string): { label: string; summary?: string } | undefined {
   // Offsets are preserved by the same-length mask, so candidates are found in
   // the masked text (comments and string literals blanked) while the accessor
-  // chain itself is parsed from the original code — bracket accessors like
-  // `tools["charlotte"]` keep their string content.
+  // chain and its argument are parsed from the original code — bracket
+  // accessors like `tools["charlotte"]` keep their string content.
   const masked = maskNonCode(code);
   const word = /\btools\b/g;
   for (let match = word.exec(masked); match !== null; match = word.exec(masked)) {
-    const label = extractAccessorChain({
+    const chain = extractAccessorChain({
       masked: code,
       from: match.index + match[0].length,
     });
-    if (label) {
-      return label;
+    if (chain) {
+      const range = extractFirstArgumentRange(code, chain.argumentFrom);
+      let summary: string | undefined;
+      if (range) {
+        const argument = code.slice(range.start, range.end).trim();
+        if (argument) {
+          summary = summarizeArgumentText(argument);
+        }
+      }
+      return {
+        label: chain.label,
+        ...(summary ? { summary } : {}),
+      };
     }
   }
   return undefined;
@@ -686,8 +920,8 @@ export function deriveOpencodeToolDetail(
 
   if (toolName.trim().toLowerCase() === "execute" && isRecord(input)) {
     const code = input.code;
-    const label = typeof code === "string" ? extractCodeModeToolLabel(code) : undefined;
-    if (label) {
+    const call = typeof code === "string" ? extractCodeModeCall(code) : undefined;
+    if (call) {
       // Keep the executed code alongside the output: the previous `unknown`
       // detail exposed input and output, so the detail sheet must not lose
       // the arguments the agent sent.
@@ -697,8 +931,9 @@ export function deriveOpencodeToolDetail(
         .join("\n\n");
       return {
         type: "plain_text",
-        label,
-        title: label,
+        label: call.label,
+        title: call.label,
+        ...(call.summary ? { summary: call.summary } : {}),
         icon: "wrench",
         ...(text ? { text } : {}),
       } satisfies ToolCallDetail;
@@ -712,6 +947,34 @@ export function deriveOpencodeToolDetail(
   });
   if (detail) {
     return detail;
+  }
+  // Tools with no dedicated detail branch (MCP tools such as webfetch or
+  // websearch) still deserve more than a bare tool name: promote to a titled
+  // plain_text row whose summary carries the call's key argument. The JSON
+  // input stays available in the detail sheet when it is small. Execute calls
+  // without a recognizable tool chain stay unknown: summarizing raw code is
+  // noise, not information.
+  const fallbackName = toolName.trim();
+  const fallbackSummary =
+    fallbackName.toLowerCase() === "execute" ? undefined : summarizeToolInput(input);
+  if (fallbackName && fallbackSummary) {
+    let fallbackText: string | undefined;
+    try {
+      const serialized = JSON.stringify(input, null, 2);
+      if (serialized && serialized.length <= 2000) {
+        fallbackText = serialized;
+      }
+    } catch {
+      fallbackText = undefined;
+    }
+    return {
+      type: "plain_text",
+      label: fallbackName,
+      title: fallbackName,
+      summary: fallbackSummary,
+      icon: "wrench",
+      ...(fallbackText ? { text: fallbackText } : {}),
+    } satisfies ToolCallDetail;
   }
   return {
     type: "unknown",

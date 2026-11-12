@@ -332,6 +332,8 @@ export type ToolCallDetail =
       label?: string;
       /** Replaces the row's tool-name title; `label` stays a subtitle for older apps. */
       title?: string;
+      /** Short human-readable argument summary shown on the row (query, URL, skill name). */
+      summary?: string;
       text?: string;
       icon?: ToolCallIconName;
     }

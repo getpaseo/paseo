@@ -56,6 +56,7 @@ describe("opencode tool-call mapper", () => {
       type: "plain_text",
       label: "hzmcp.memory__write_note",
       title: "hzmcp.memory__write_note",
+      summary: "x",
       icon: "wrench",
       text: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
     });
@@ -93,6 +94,102 @@ describe("opencode tool-call mapper", () => {
     );
 
     expect(item.detail?.type).toBe("unknown");
+  });
+
+  it("labels execute calls with the Code Mode tool name and its key argument", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-1",
+        status: "completed",
+        input: {
+          code: 'const r = await tools.searxng.searxng_web_search({ query: "paseo default model", categories: ["general"] });',
+        },
+        output: "{}",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "searxng.searxng_web_search",
+      label: "searxng.searxng_web_search",
+      summary: "paseo default model",
+    });
+  });
+
+  it("keeps bracket accessor server names and reads string arguments", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-2",
+        status: "completed",
+        input: {
+          code: 'await tools["hzmcp"].memory__read_note({ identifier: "benjamin/memory" });',
+        },
+        output: "note",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "hzmcp.memory__read_note",
+      summary: "benjamin/memory",
+    });
+  });
+
+  it("summarizes bare string arguments and falls back to the first string value", () => {
+    const stringArgument = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-3",
+        status: "completed",
+        input: {
+          code: 'await tools.webfetch.webfetch("https://example.com/docs/setup");',
+        },
+        output: "page",
+      }),
+    );
+    expect(stringArgument.detail).toMatchObject({
+      title: "webfetch.webfetch",
+      summary: "https://example.com/docs/setup",
+    });
+
+    const firstStringFallback = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-4",
+        status: "completed",
+        input: {
+          code: 'await tools.hzmcp.memory__write_note({ folder: "benjamin", title: "status update" });',
+        },
+        output: "ok",
+      }),
+    );
+    expect(firstStringFallback.detail).toMatchObject({
+      title: "hzmcp.memory__write_note",
+      summary: "status update",
+    });
+  });
+
+  it("truncates long argument summaries", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-summary-5",
+        status: "completed",
+        input: {
+          code: 'await tools.shell.exec({ command: "npm run build -- --single --skip-web-ui --verbose --environment production --output-path dist/bundle" });',
+        },
+        output: "ok",
+      }),
+    );
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "shell.exec",
+    });
+    const summary = (item.detail as { summary?: string }).summary ?? "";
+    expect(summary.length).toBeLessThanOrEqual(80);
+    expect(summary.endsWith("...")).toBe(true);
   });
 
   it("ignores tools mentioned in comments and keeps the executed call label", () => {
@@ -661,23 +758,24 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
-  it("maps unknown tools to unknown detail with raw payloads", () => {
+  it("promotes unknown MCP tools to a titled detail with the key argument", () => {
     const item = expectMapped(
       mapOpencodeToolCall({
-        toolName: "my_custom_tool",
+        toolName: "webfetch",
         callId: "opencode-call-4",
         status: "completed",
-        input: { foo: "bar" },
+        input: { url: "https://example.com/docs", format: "markdown" },
         output: { ok: true },
       }),
     );
 
     expect(item.status).toBe("completed");
     expect(item.error).toBeNull();
-    expect(item.detail).toEqual({
-      type: "unknown",
-      input: { foo: "bar" },
-      output: { ok: true },
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "webfetch",
+      label: "webfetch",
+      summary: "https://example.com/docs",
     });
   });
 
@@ -794,10 +892,10 @@ describe("opencode tool-call mapper", () => {
     );
 
     expect(item.name).toBe("paseo_voice.speak");
-    expect(item.detail).toEqual({
-      type: "unknown",
-      input: { text: "Voice response from OpenCode." },
-      output: { ok: true },
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      title: "paseo_voice.speak",
+      summary: "Voice response from OpenCode.",
     });
   });
 
