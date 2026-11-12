@@ -29,6 +29,7 @@ function plugin(input: {
     legacySidebarItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],

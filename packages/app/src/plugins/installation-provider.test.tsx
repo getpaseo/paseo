@@ -48,6 +48,7 @@ function installation(invoked: string[]): InstalledPlugin {
     legacySidebarItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],

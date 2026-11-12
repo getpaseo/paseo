@@ -127,6 +127,7 @@ export class PluginRegistry {
           legacySidebarItems: [],
           filePanels: [],
           composerItems: [],
+          composerSections: [],
           newWorkspaceItems: [],
           workspacePanels: [],
           commandCenterItems: [],

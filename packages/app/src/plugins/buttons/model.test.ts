@@ -28,6 +28,7 @@ function installation(): InstalledPlugin {
     legacySidebarItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],

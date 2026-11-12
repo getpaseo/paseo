@@ -46,6 +46,7 @@ function plugin(): InstalledPlugin {
     sidebarViews: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],

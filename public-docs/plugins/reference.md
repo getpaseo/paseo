@@ -2114,6 +2114,42 @@ you reach from outside:
 - Drafts and the New workspace screen are not addressable by reference. Only an item inside one
   reaches its composer, through `useComposer()`.
 
+## Composer sections
+
+`client.addComposerSection({ id, Component })` mounts inline content below a running agent's
+composer tracks and above its normal message input. It adds no pill, popover, title, padding,
+or dismiss control. Return `null` when your section has nothing to show; it reserves no space.
+Sections stay inline on compact layouts instead of moving into the toolbar overflow sheet.
+
+The component receives `PluginComposerSectionProps`: the usual `theme`, `host`, and `layout`,
+plus `agentId` and `workspaceId`. Read and edit that agent's composer with
+`useComposers({ agentId })`. The section is under the installation's normal SDK, RPC,
+translation, toast, and client-state providers. `useComposer()` is for toolbar items;
+sections address their agent by reference.
+
+```tsx
+function Suggestions({ agentId, theme }: PluginComposerSectionProps) {
+  const [composer] = useComposers({ agentId });
+  if (!composer || composer.prompt) return null;
+  return <Text style={{ color: theme.colors.foregroundMuted }}>Suggested replies</Text>;
+}
+client.addComposerSection({ id: "suggestions", Component: Suggestions });
+```
+
+This client API is unreleased. A plugin adopting it must require a client built with this API;
+the 0.16.0-beta.2 published client does not supply it. No daemon protocol change is needed.
+
+Register once per installation. Paseo scopes the section to that installation's host and
+passes each mounted agent's identity; it does not render sections for new-agent or
+New workspace drafts. Plugin and registration order determine section order. Each section
+has its own render error boundary. The registration returns an idempotent remover; plugin
+teardown removes it as well.
+
+Your plugin owns section content and visibility. For suggested replies, generate off the input
+path, reject stale results, clear them after acceptance, typing, or a new turn, and insert into
+the normal composer without sending. Do not let suggestions reappear when the user clears a
+draft. The host does not generate model output or intercept keyboard shortcuts for sections.
+
 ## New workspace items
 
 `client.addNewWorkspaceItem({ id, Component })` puts a field on the New workspace screen, beside

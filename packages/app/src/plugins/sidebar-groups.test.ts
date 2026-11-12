@@ -39,6 +39,7 @@ function installed(
     legacySidebarItems,
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
