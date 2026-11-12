@@ -665,6 +665,8 @@ export class VoiceSession {
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
           this.releaseHeldPlayback("resume", "turn controller error");
+          this.clearSpeechInProgress("turn controller error");
+          this.setPhase("idle");
         },
       },
     });
@@ -977,12 +979,15 @@ export class VoiceSession {
   private async handleTranscriptionResultPayload(
     result: VoiceTranscriptionResultPayload,
   ): Promise<void> {
-    const transcriptText = result.text.trim();
+    // A held reply resumes unless the user said a word: speech-to-text turns noise and
+    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm.").
+    const heldNoise = this.playbackHeld && !hasSpokenWord(result.text);
+    const transcriptText = heldNoise ? "" : result.text.trim();
 
     this.emit({
       type: "transcription_result",
       payload: {
-        text: result.text,
+        text: heldNoise ? "" : result.text,
         ...(result.language ? { language: result.language } : {}),
         ...(result.duration !== undefined ? { duration: result.duration } : {}),
         requestId: result.requestId,
@@ -1006,7 +1011,7 @@ export class VoiceSession {
     }
 
     if (!transcriptText) {
-      this.sessionLogger.debug("Empty transcription (false positive), not aborting");
+      this.sessionLogger.debug({ heldNoise }, "Empty transcription (false positive), not aborting");
       this.setPhase("idle");
       this.clearSpeechInProgress("empty transcription");
       await this.flushPendingAudioSegments("empty transcription");
@@ -1406,4 +1411,34 @@ export class VoiceSession {
       }
     }
   }
+}
+
+const FILLER_WORDS = new Set([
+  "ah",
+  "eh",
+  "er",
+  "erm",
+  "hm",
+  "hmm",
+  "huh",
+  "mhm",
+  "mm",
+  "mmm",
+  "uh",
+  "uhm",
+  "um",
+  "umm",
+]);
+
+/**
+ * True when a transcript holds at least one word: a Latin token of two or more letters
+ * that is not a filler, or any token in another script (one Han character can be a word).
+ */
+export function hasSpokenWord(text: string): boolean {
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
+  return tokens.some((token) => {
+    const bare = token.replace(/'/g, "");
+    if (/[^\p{Script=Latin}\p{N}]/u.test(bare)) return true;
+    return bare.length >= 2 && !FILLER_WORDS.has(bare);
+  });
 }
