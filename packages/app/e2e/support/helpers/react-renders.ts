@@ -2,7 +2,6 @@ import type { Page } from "@playwright/test";
 
 declare global {
   var __PASEO_E2E_REACT_RENDERS__: Record<string, number> | undefined;
-  var __PASEO_E2E_REACT_COMMITS__: number | undefined;
 }
 
 /**
@@ -29,7 +28,6 @@ export async function recordReactRenders(page: Page): Promise<void> {
       return component.displayName || nameOf(component.render) || nameOf(component.type);
     };
     const record = (root: Fiber) => {
-      globalThis.__PASEO_E2E_REACT_COMMITS__ = (globalThis.__PASEO_E2E_REACT_COMMITS__ ?? 0) + 1;
       const renders = (globalThis.__PASEO_E2E_REACT_RENDERS__ ??= {});
       const pending: Fiber[] = [root];
       while (pending.length > 0) {
@@ -68,7 +66,6 @@ export async function recordReactRenders(page: Page): Promise<void> {
 export async function resetReactRenders(page: Page): Promise<void> {
   await page.evaluate(() => {
     globalThis.__PASEO_E2E_REACT_RENDERS__ = {};
-    globalThis.__PASEO_E2E_REACT_COMMITS__ = 0;
   });
 }
 
@@ -78,9 +75,4 @@ export async function readReactRenders(page: Page): Promise<Record<string, numbe
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return { ...globalThis.__PASEO_E2E_REACT_RENDERS__ };
   });
-}
-
-/** React commits since the last reset. */
-export async function readReactCommits(page: Page): Promise<number> {
-  return page.evaluate(() => globalThis.__PASEO_E2E_REACT_COMMITS__ ?? 0);
 }
