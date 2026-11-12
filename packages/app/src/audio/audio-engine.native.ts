@@ -234,8 +234,8 @@ export function createAudioEngine(
 
     play: playback.play,
     stop() {
-      pauseGate.set(false);
       playback.stop();
+      pauseGate.set(false);
     },
     clearQueue: playback.clearQueue,
     pause() {

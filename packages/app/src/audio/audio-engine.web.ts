@@ -83,7 +83,13 @@ export function createAudioEngine(
     }
     const context = refs.playbackContext;
     // A paused context stays suspended; sources started now play once it resumes.
-    if (context.state === "suspended" && !refs.playbackPaused) {
+    if (refs.playbackPaused) {
+      if (context.state === "running") {
+        await context.suspend().catch(() => undefined);
+      }
+      return context;
+    }
+    if (context.state === "suspended") {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
@@ -319,11 +325,11 @@ export function createAudioEngine(
 
     play: playback.play,
     stop() {
+      playback.stop();
       if (refs.playbackPaused) {
         refs.playbackPaused = false;
         void refs.playbackContext?.resume().catch(() => undefined);
       }
-      playback.stop();
     },
     clearQueue: playback.clearQueue,
     pause() {

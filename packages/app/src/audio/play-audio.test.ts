@@ -201,16 +201,19 @@ test("voice playback shares PCM sample-rate parsing", () => {
   expect(parsePcmSampleRate("audio/pcm;rate=0")).toBeNull();
 });
 
-test("a paused clip keeps its remaining time and the next clip waits without resuming", async () => {
+test("a paused clip keeps its remaining time and the next clip waits without playing", async () => {
   vi.useFakeTimers();
   try {
     const gate = createPcmPauseGate();
     let resumes = 0;
+    const written: number[] = [];
     const output = {
       resumePlayback() {
         resumes += 1;
       },
-      playPCMData() {},
+      playPCMData(bytes: Uint8Array) {
+        written.push(bytes.byteLength);
+      },
       stopPlayback() {},
     };
     // One second of 16 kHz PCM.
@@ -226,12 +229,13 @@ test("a paused clip keeps its remaining time and the next clip waits without res
       return duration;
     });
     expect(resumes).toBe(1);
+    expect(written).toEqual([32000]);
     await vi.advanceTimersByTimeAsync(400);
     gate.set(true);
     await vi.advanceTimersByTimeAsync(5000);
     expect(finished).toBe(false);
 
-    void playPcm16(
+    const second = playPcm16(
       new Uint8Array(3200),
       "audio/pcm;rate=16000;bits=16",
       new AbortController().signal,
@@ -239,13 +243,48 @@ test("a paused clip keeps its remaining time and the next clip waits without res
       gate,
     );
     expect(resumes).toBe(1);
+    expect(written).toEqual([32000]);
 
     gate.set(false);
-    await vi.advanceTimersByTimeAsync(599);
+    expect(resumes).toBe(2);
+    expect(written).toEqual([32000, 3200]);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(second).resolves.toBe(0.1);
+    await vi.advanceTimersByTimeAsync(499);
     expect(finished).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await expect(first).resolves.toBe(1);
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("a clip aborted while paused never starts native playback", async () => {
+  const gate = createPcmPauseGate();
+  gate.set(true);
+  let played = false;
+  let stopped = false;
+  const owner = new AbortController();
+  const promise = playPcm16(
+    new Uint8Array(3200),
+    "audio/pcm;rate=16000;bits=16",
+    owner.signal,
+    {
+      resumePlayback() {
+        played = true;
+      },
+      playPCMData() {
+        played = true;
+      },
+      stopPlayback() {
+        stopped = true;
+      },
+    },
+    gate,
+  );
+  owner.abort();
+  gate.set(false);
+  await expect(promise).rejects.toThrow("Playback stopped");
+  expect(played).toBe(false);
+  expect(stopped).toBe(true);
 });

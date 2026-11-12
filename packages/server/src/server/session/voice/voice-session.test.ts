@@ -287,6 +287,61 @@ describe("VoiceSession streaming transcription", () => {
     }
   });
 
+  test("preserves a playback hold across repeated noise bursts before the transcript arrives", async () => {
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+      },
+    };
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(tts);
+    const interrupted: string[] = [];
+    host.interruptAgentIfRunning = async (agentId) => {
+      interrupted.push(agentId);
+    };
+    host.supportsPlaybackHold = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+
+      // Second noise burst arrives before the first final transcript settles.
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+
+      const voiceInputStates = host.emitted.filter((msg) => msg.type === "voice_input_state");
+      expect(voiceInputStates).toEqual([
+        { type: "voice_input_state", payload: { isSpeaking: true, playback: "hold" } },
+        { type: "voice_input_state", payload: { isSpeaking: false } },
+        { type: "voice_input_state", payload: { isSpeaking: true, playback: "hold" } },
+        { type: "voice_input_state", payload: { isSpeaking: false } },
+      ]);
+      expect(interrupted).toEqual([]);
+
+      sttSession.emitCommitted({ segmentId: "noise-2", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "noise-2", transcript: "", isFinal: true });
+      await settle();
+
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "resume" },
+      });
+
+      const audio = host.emitted.find(isAudioOutput);
+      if (audio?.type !== "audio_output") throw new Error("no audio output");
+      voiceSession.handleAudioPlayed(audio.payload.id);
+      await playback;
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
   test("session abort stops later audio even when the speak tool supplies its own signal", async () => {
     const tts: TextToSpeechProvider = {
       async synthesizeSpeech() {

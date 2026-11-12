@@ -304,6 +304,25 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     playback.processing = false;
   }
 
+  function hasStartedVoicePlaybackGroup(): boolean {
+    for (const group of playback.groups.values()) {
+      if (group.started && group.isVoiceMode) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function resolvePhaseAfterResume(): VoiceRuntimePhase {
+    if (state.snapshot.phase === "playing" || hasStartedVoicePlaybackGroup()) {
+      return "playing";
+    }
+    if (state.turnInProgress) {
+      return "waiting";
+    }
+    return "listening";
+  }
+
   function activateNextPlaybackGroup(): void {
     while (playback.orderedGroupIds.length > 0) {
       const groupId = playback.orderedGroupIds[0];
@@ -551,15 +570,22 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     }));
   }
 
-  async function performLocalStop(): Promise<void> {
+  function clearActiveTurnAndPlayback(): void {
     stopCue();
     uploader.reset();
     resetPlaybackState();
     deps.engine.stop();
     deps.engine.clearQueue();
+    state.turnInProgress = false;
+    state.serverSpeechDetected = false;
+    resetCaptureTelemetry();
+    getActiveSession()?.adapter.setAssistantAudioPlaying(false);
+  }
+
+  async function performLocalStop(): Promise<void> {
+    clearActiveTurnAndPlayback();
     await deps.engine.stopCapture().catch(() => undefined);
     await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
-    getActiveSession()?.adapter.setAssistantAudioPlaying(false);
     resetToDisabledState();
   }
 
@@ -635,6 +661,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }
       if (!connected) {
         state.transportReady = false;
+        clearActiveTurnAndPlayback();
+        if (
+          state.snapshot.isVoiceMode &&
+          state.snapshot.phase !== "starting" &&
+          state.snapshot.phase !== "stopping"
+        ) {
+          patchSnapshot((prev) => ({ ...prev, phase: "listening" }));
+        }
         return;
       }
       void resyncVoiceMode(serverId);
@@ -750,6 +784,11 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           previousServerId &&
           (previousServerId !== serverId || previousAgentId !== agentId)
         ) {
+          stopCue();
+          resetPlaybackState();
+          deps.engine.stop();
+          deps.engine.clearQueue();
+          state.serverSpeechDetected = false;
           const previousSession = sessions.get(previousServerId);
           if (previousSession) {
             previousSession.adapter.setAssistantAudioPlaying(false);
@@ -901,6 +940,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         return;
       }
 
+      if (playback.held) {
+        return;
+      }
+
       state.turnInProgress = false;
       patchSnapshot((prev) => ({ ...prev, phase: "listening" }));
       stopCue();
@@ -922,6 +965,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         if (playback.held) {
           playback.held = false;
           deps.engine.resume();
+          const nextPhase = resolvePhaseAfterResume();
+          patchSnapshot((prev) => ({ ...prev, phase: nextPhase }));
         }
       } else if (isSpeaking || playbackAction === "stop") {
         const shouldInterruptPlayback =

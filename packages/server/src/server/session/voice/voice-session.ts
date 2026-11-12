@@ -178,6 +178,7 @@ export class VoiceSession {
 
   private isVoiceMode = false;
   private speechInProgress = false;
+  private isDetectorSpeaking = false;
   private playbackHeld = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
@@ -594,6 +595,7 @@ export class VoiceSession {
           // Voice STT providers return final transcripts only. Use the detector's
           // confirmed speech event so interruption does not wait for transcription.
           this.sessionLogger.debug("Voice VAD speech_started");
+          this.isDetectorSpeaking = true;
           // Sound during a reply may be noise or the reply's own echo. Capable clients
           // pause instead of dropping the reply; the transcript decides what follows.
           const hold = this.shouldHoldPlayback();
@@ -617,6 +619,7 @@ export class VoiceSession {
           );
         },
         onSpeechStopped: async () => {
+          this.isDetectorSpeaking = false;
           this.handleVoiceSpeechStopped();
           this.setPhase("transcribing");
           this.emit({
@@ -664,6 +667,7 @@ export class VoiceSession {
         },
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
+          this.isDetectorSpeaking = false;
           this.releaseHeldPlayback("resume", "turn controller error");
           this.clearSpeechInProgress("turn controller error");
           this.setPhase("idle");
@@ -679,6 +683,9 @@ export class VoiceSession {
   }
 
   private async stopVoiceTurnController(): Promise<void> {
+    this.isDetectorSpeaking = false;
+    this.playbackHeld = false;
+    this.clearSpeechInProgress("voice turn controller stopped");
     if (!this.voiceTurnController) {
       return;
     }
@@ -976,18 +983,11 @@ export class VoiceSession {
     }
   }
 
-  private async handleTranscriptionResultPayload(
-    result: VoiceTranscriptionResultPayload,
-  ): Promise<void> {
-    // A held reply resumes unless the user said a word: speech-to-text turns noise and
-    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm.").
-    const heldNoise = this.playbackHeld && !hasSpokenWord(result.text);
-    const transcriptText = heldNoise ? "" : result.text.trim();
-
+  private emitTranscriptionResult(result: VoiceTranscriptionResultPayload, text: string): void {
     this.emit({
       type: "transcription_result",
       payload: {
-        text: heldNoise ? "" : result.text,
+        text,
         ...(result.language ? { language: result.language } : {}),
         ...(result.duration !== undefined ? { duration: result.duration } : {}),
         requestId: result.requestId,
@@ -1000,20 +1000,43 @@ export class VoiceSession {
         ...(result.debugRecordingPath ? { debugRecordingPath: result.debugRecordingPath } : {}),
       },
     });
+  }
 
-    if (this.playbackHeld) {
-      if (!transcriptText) {
+  private async settleHeldPlaybackForTranscript(transcriptText: string): Promise<void> {
+    if (!this.playbackHeld) {
+      return;
+    }
+    if (!transcriptText) {
+      const hasAnotherSpeechSegment =
+        this.isDetectorSpeaking || this.pendingAudioSegments.length > 0;
+      if (!hasAnotherSpeechSegment) {
         this.releaseHeldPlayback("resume", "empty transcription");
-      } else {
-        this.releaseHeldPlayback("stop", "speech transcribed");
-        await this.handleAbort();
       }
+      return;
+    }
+    this.releaseHeldPlayback("stop", "speech transcribed");
+    await this.handleAbort();
+  }
+
+  private async handleTranscriptionResultPayload(
+    result: VoiceTranscriptionResultPayload,
+  ): Promise<void> {
+    // A held reply resumes unless the user said a word: speech-to-text turns noise and
+    // half-heard echo into fragments ("S-") and fillers ("Mm-hmm.").
+    const heldNoise = this.playbackHeld && !hasSpokenWord(result.text);
+    const transcriptText = heldNoise ? "" : result.text.trim();
+
+    this.emitTranscriptionResult(result, heldNoise ? "" : result.text);
+    if (this.playbackHeld) {
+      await this.settleHeldPlaybackForTranscript(transcriptText);
     }
 
     if (!transcriptText) {
       this.sessionLogger.debug({ heldNoise }, "Empty transcription (false positive), not aborting");
       this.setPhase("idle");
-      this.clearSpeechInProgress("empty transcription");
+      if (!this.isDetectorSpeaking) {
+        this.clearSpeechInProgress("empty transcription");
+      }
       await this.flushPendingAudioSegments("empty transcription");
       return;
     }
@@ -1171,11 +1194,13 @@ export class VoiceSession {
   }
 
   private shouldHoldPlayback(): boolean {
-    if (this.speechInProgress || !this.host.supportsPlaybackHold()) {
+    if (!this.host.supportsPlaybackHold()) {
       return false;
     }
     return (
-      this.ttsManager.hasPendingPlayback() || this.host.hasActiveAgentRun(this.voiceModeAgentId)
+      this.playbackHeld ||
+      this.ttsManager.hasPendingPlayback() ||
+      this.host.hasActiveAgentRun(this.voiceModeAgentId)
     );
   }
 

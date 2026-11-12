@@ -471,6 +471,87 @@ describe("voice runtime", () => {
     expect(adapter.setAssistantAudioPlaying).toHaveBeenCalledWith(false);
   });
 
+  it("preserves the active turn and restores phase and thinking cue after held noise resumes", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    runtime.onAssistantAudioStarted("server-1");
+
+    runtime.onServerSpeechStateChanged("server-1", true, "hold");
+    runtime.onServerSpeechStateChanged("server-1", false);
+    runtime.onTranscriptionResult("server-1", "");
+    runtime.onServerSpeechStateChanged("server-1", false, "resume");
+
+    expect(engine.resume).toHaveBeenCalledTimes(1);
+    expect(runtime.getSnapshot().phase).toBe("playing");
+
+    // Once that sentence finishes, the agent turn is still running so waiting + thinking cue resume.
+    vi.mocked(engine.play).mockClear();
+    runtime.onAssistantAudioFinished("server-1");
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
+    expect(engine.play).toHaveBeenCalledWith(
+      expect.objectContaining({ type: CUE_MIME_TYPE }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("keeps waiting phase and restarts the thinking cue when held noise resumes before audio arrives", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+
+    runtime.onServerSpeechStateChanged("server-1", true, "hold");
+    runtime.onServerSpeechStateChanged("server-1", false);
+    runtime.onTranscriptionResult("server-1", "");
+    runtime.onServerSpeechStateChanged("server-1", false, "resume");
+
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+    vi.mocked(engine.play).mockClear();
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
+    expect(engine.play).toHaveBeenCalledWith(
+      expect.objectContaining({ type: CUE_MIME_TYPE }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("clears held playback and engine pause when the connection drops and recovers", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    runtime.onAssistantAudioStarted("server-1");
+    runtime.onServerSpeechStateChanged("server-1", true, "hold");
+    vi.mocked(engine.stop).mockClear();
+    vi.mocked(engine.clearQueue).mockClear();
+    vi.mocked(adapter.setAssistantAudioPlaying).mockClear();
+
+    runtime.updateSessionConnection("server-1", false);
+    expect(engine.stop).toHaveBeenCalledTimes(1);
+    expect(engine.clearQueue).toHaveBeenCalledTimes(1);
+    expect(adapter.setAssistantAudioPlaying).toHaveBeenCalledWith(false);
+    expect(runtime.getSnapshot().phase).toBe("listening");
+    expect(runtime.getTelemetrySnapshot().isSpeaking).toBe(false);
+
+    runtime.updateSessionConnection("server-1", true);
+    await Promise.resolve();
+    expect(adapter.setVoiceMode).toHaveBeenLastCalledWith(true, "agent-1");
+
+    // Empty transcript after reconnect is no longer treated as held.
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    runtime.onTranscriptionResult("server-1", "");
+    expect(runtime.getSnapshot().phase).toBe("listening");
+  });
+
   it("drops queued voice chunks that arrive after server speech interrupts playback", async () => {
     const adapter = createSessionAdapter();
     const { runtime, engine } = createRuntime();
