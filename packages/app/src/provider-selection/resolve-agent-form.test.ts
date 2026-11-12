@@ -202,6 +202,38 @@ describe("model aliases", () => {
     expect(resolved.model).toBe("gpt-5.3-codex-legacy");
     expect(resolved.thinkingOptionId).toBe("medium");
   });
+
+  it("prefers the pinned default over the saved last-used model", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { model: "gpt-5.4", pinnedModel: "gpt-5.3-codex" } },
+      },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+    );
+
+    expect(resolved.model).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps the user's explicit model choice over the pinned default", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { pinnedModel: "gpt-5.3-codex" } },
+      },
+      CODEX_MODELS,
+      { ...INITIAL_USER_MODIFIED, model: true },
+      { ...makeState().form, model: "gpt-5.4" },
+      codexProviderMap,
+    );
+
+    expect(resolved.model).toBe("gpt-5.4");
+  });
 });
 
 describe("resolveThinkingOptionId", () => {

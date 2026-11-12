@@ -316,6 +316,15 @@ function resolveModelField(input: {
       ? initialModel
       : resolveCanonicalModelId(availableModels, initialModel) || initialModel;
   }
+  // The pinned default (provider settings pin) outranks the saved last-used
+  // preference: the pin exists precisely to stop last-used drift. It lives in
+  // its own preference field, so ordinary chat model switches never touch it.
+  const pinnedModel = normalizeSelectedModelId(providerPrefs?.pinnedModel);
+  if (pinnedModel) {
+    return !availableModels
+      ? pinnedModel
+      : resolveCanonicalModelId(availableModels, pinnedModel) || pinnedModel;
+  }
   if (preferredModel) {
     return !availableModels
       ? preferredModel
