@@ -1566,6 +1566,7 @@ export class AgentManager {
         purpose: "interactive",
         workspaceId: options.workspaceId ?? null,
         title: options.initialTitle ?? storedConfig.title ?? null,
+        background: options.background,
         labels: options.labels ?? {},
         metadata: options.metadata ?? {},
       },
@@ -1700,6 +1701,7 @@ export class AgentManager {
         purpose,
         workspaceId,
         title: record?.title ?? mergedConfig.title ?? null,
+        background: options?.background,
         ...agentEntityData(record ?? options),
       },
     );
@@ -1881,6 +1883,7 @@ export class AgentManager {
         purpose: "interactive",
         workspaceId: existing.workspaceId,
         title: await this.resolveInitialPersistedTitle(agentId, existing.config, null),
+        background: existing.background,
         labels: existing.labels,
         metadata: existing.metadata,
       },
@@ -6101,6 +6104,7 @@ export class AgentManager {
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
       title?: string | null;
+      background?: boolean;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
     },
@@ -6120,6 +6124,7 @@ export class AgentManager {
         purpose: opening?.purpose ?? "interactive",
         env: { ...env },
         title: opening?.title ?? null,
+        background: opening?.background === true,
         ...agentEntityData(opening),
         tools: [],
         mcpServers: {},

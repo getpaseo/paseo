@@ -13225,6 +13225,7 @@ test.each([
               provider: "codex",
               cwd: workdir,
               title: null,
+              background: false,
               metadata: {},
             },
             turnId: "hook-turn",

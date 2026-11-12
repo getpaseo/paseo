@@ -103,6 +103,8 @@ const beforeSchemas = {
       reason: z.enum(["create", "resume", "refresh", "import"]),
       purpose: z.enum(["interactive", "history"]),
       title: z.string().nullable(),
+      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
+      background: z.boolean().optional(),
       labels: z.record(z.string(), z.string()),
       // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
       metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
@@ -166,6 +168,7 @@ export function describeHookAgent(agent: {
   provider: string;
   cwd: string;
   title?: string | null;
+  background?: boolean;
   labels: Record<string, string>;
   metadata: Record<string, JsonValue>;
 }): PluginHookAgent {
@@ -176,6 +179,7 @@ export function describeHookAgent(agent: {
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
+    background: agent.background === true,
     metadata: agent.metadata,
   };
 }
@@ -219,6 +223,24 @@ export function publishAgentStream(
   }
 }
 
+type SessionOpenRequest = z.infer<(typeof beforeSchemas)["agent.open.before"]>;
+
+// Omitted `background` and `metadata` mean unchanged, so a hook returning its own object keeps working.
+function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpenRequest): boolean {
+  return (
+    previous.agentId !== next.agentId ||
+    previous.workspaceId !== next.workspaceId ||
+    previous.provider !== next.provider ||
+    previous.cwd !== next.cwd ||
+    previous.reason !== next.reason ||
+    previous.purpose !== next.purpose ||
+    previous.title !== next.title ||
+    (next.background !== undefined && previous.background !== next.background) ||
+    !isDeepStrictEqual(previous.labels, next.labels) ||
+    (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
+  );
+}
+
 export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
@@ -228,20 +250,10 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   if (name === "agent.open.before") {
     const previous = beforeSchemas["agent.open.before"].parse(input);
     const next = beforeSchemas["agent.open.before"].parse(result);
-    if (
-      previous.agentId !== next.agentId ||
-      previous.workspaceId !== next.workspaceId ||
-      previous.provider !== next.provider ||
-      previous.cwd !== next.cwd ||
-      previous.reason !== next.reason ||
-      previous.purpose !== next.purpose ||
-      previous.title !== next.title ||
-      !isDeepStrictEqual(previous.labels, next.labels) ||
-      (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
-    ) {
+    if (changesSessionOpenTarget(previous, next)) {
       throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
     }
-    return { ...result, metadata: previous.metadata };
+    return { ...result, background: previous.background, metadata: previous.metadata };
   }
   if (name === "agent.create.before") {
     const previous = beforeSchemas["agent.create.before"].parse(input);
