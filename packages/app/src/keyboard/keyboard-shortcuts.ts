@@ -716,6 +716,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- Tab relative navigation ---
   {
+    id: "workspace-tab-navigate-relative-cmd-alt-left-mac-desktop",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowLeft",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-alt-right-mac-desktop",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowRight",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
+  {
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
@@ -738,6 +762,20 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "tabs-panes",
       label: "Next tab",
     },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowLeft",
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    payload: { type: "delta", delta: -1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowRight",
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    payload: { type: "delta", delta: 1 },
   },
 
   // --- Pane management (mac only) ---

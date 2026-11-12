@@ -227,6 +227,34 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on mac desktop via Cmd+Alt+ArrowLeft even in message input",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "message-input" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on mac desktop via Cmd+Alt+ArrowRight even in terminal",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "terminal" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
+      name: "matches tab relative navigation on mac via Cmd+ArrowLeft outside editable and terminal scopes",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, focusScope: "other" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on mac via Cmd+ArrowRight outside editable and terminal scopes",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, focusScope: "other" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -550,6 +578,26 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, focusScope: "editable" },
     },
     {
+      name: "keeps Cmd+ArrowLeft available for message input line-start caret movement",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps Cmd+ArrowRight available for generic editable line-end caret movement",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "editable" },
+    },
+    {
+      name: "keeps Cmd+ArrowLeft out of terminal focus on mac",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not bind Ctrl+ArrowRight to tab navigation on non-mac",
+      event: { key: "ArrowRight", code: "ArrowRight", ctrlKey: true },
+      context: { isMac: false, usesDesktopBindings: true, focusScope: "other" },
+    },
+    {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
       context: { focusScope: "message-input" },
@@ -728,6 +776,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["alt", "1-9"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
+        "workspace-tab-prev": ["alt", "shift", "["],
+        "workspace-tab-next": ["alt", "shift", "]"],
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
@@ -743,6 +793,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
+        "workspace-tab-prev": ["mod", "alt", "Left"],
+        "workspace-tab-next": ["mod", "alt", "Right"],
         // Derived from `combo: "Cmd+W"`, so the token is `mod` where the row
         // used to be hand-authored as `meta`. This binding is mac-only and
         // `formatShortcut` renders both as ⌘, so the badge is unchanged — see
