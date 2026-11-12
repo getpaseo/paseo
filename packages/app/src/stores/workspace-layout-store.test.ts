@@ -1829,6 +1829,24 @@ describe("workspace-layout-store actions", () => {
     expect(layout.focusedPaneId).toBe("main");
   });
 
+  it("opens auto-opened agent tabs in the order the snapshot lists them", () => {
+    const workspaceKey = createWorkspaceKey();
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["agent-z", "agent-a", "agent-m"],
+      autoOpenAgentIds: ["agent-z", "agent-a", "agent-m"],
+      standaloneTerminalIds: [],
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const agentTabIds = collectAllTabs(layout.root)
+      .filter((tab) => tab.target.kind === "agent")
+      .map((tab) => tab.tabId);
+    expect(agentTabIds).toEqual(["agent_agent-z", "agent_agent-a", "agent_agent-m"]);
+  });
+
   it("opens an Explorer-supported tab there when Explorer is the only pane", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

@@ -133,6 +133,37 @@ describe("workspace agent visibility", () => {
     expect(restored.getState().pinnedAgentIdsByWorkspace["srv:ws-b"]).toBeUndefined();
   });
 
+  it("lists auto-opened agents in the order they were created", () => {
+    const first = makeAgent({
+      id: "f1f89db6",
+      cwd: "/repo",
+      workspaceId: WORKSPACE_ID,
+      createdAt: new Date("2026-03-04T00:00:00.000Z"),
+    });
+    const second = makeAgent({
+      id: "ea982679",
+      cwd: "/repo",
+      workspaceId: WORKSPACE_ID,
+      createdAt: new Date("2026-03-04T00:01:00.000Z"),
+    });
+    const third = makeAgent({
+      id: "215ba7aa",
+      cwd: "/repo",
+      workspaceId: WORKSPACE_ID,
+      createdAt: new Date("2026-03-04T00:02:00.000Z"),
+    });
+    const result = deriveWorkspaceAgentVisibility({
+      workspaceId: WORKSPACE_ID,
+      sessionAgents: new Map([
+        [third.id, third],
+        [first.id, first],
+        [second.id, second],
+      ]),
+    });
+
+    expect([...result.autoOpenAgentIds]).toEqual([first.id, second.id, third.id]);
+  });
+
   it("keeps a background agent active without auto-opening its tab", () => {
     const visible = makeAgent({ id: "visible", cwd: "/repo", workspaceId: WORKSPACE_ID });
     const classifier = makeAgent({

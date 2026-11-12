@@ -270,6 +270,7 @@ export interface WorkspaceTabSnapshot {
   agentsHydrated: boolean;
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
+  /** In the order their tabs open: oldest agent first. */
   autoOpenAgentIds: Iterable<string>;
   foreignAgentIds?: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
@@ -2400,8 +2401,8 @@ function addMissingEntityTabs(input: {
     currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
   );
 
-  const sortedAutoOpenAgentIds = [...autoOpenAgentIds].sort();
-  for (const agentId of sortedAutoOpenAgentIds) {
+  // The snapshot lists agents in creation order, so new tabs keep that order.
+  for (const agentId of autoOpenAgentIds) {
     if (currentAgentIds.has(agentId)) {
       continue;
     }
