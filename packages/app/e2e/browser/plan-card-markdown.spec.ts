@@ -372,6 +372,12 @@ test("copies quote bodies with nested markdown and no surrounding chat text", as
     const codeButton = codeBlock.getByRole("button", { name: "Copy code" });
     await expect(outerButton).toHaveAccessibleName("Copy quote");
 
+    const pointerAligned = await Promise.all([
+      measureCopyAlignment(outer, "outer"),
+      measureCopyAlignment(nested, "nested"),
+      measureCopyAlignment(codeBlock, "code"),
+    ]);
+
     // Wide web: hidden until hover, then focusable without hover.
     await expect(outerButton).toHaveCSS("opacity", "0");
     await outer.hover();
@@ -387,7 +393,33 @@ test("copies quote bodies with nested markdown and no surrounding chat text", as
     // Compact layouts keep the control visible without hover.
     await page.setViewportSize({ width: 480, height: 900 });
     await expect(outerButton).toHaveCSS("opacity", "1");
+    const compactAligned = await Promise.all([
+      measureCopyAlignment(outer, "outer"),
+      measureCopyAlignment(nested, "nested"),
+      measureCopyAlignment(codeBlock, "code"),
+    ]);
     await captureQuoteScreenshot(page, testInfo, `${platform}-quote-compact`);
+    const alignment = { pointer: pointerAligned, compact: compactAligned };
+    await writeAlignmentMetrics(alignment);
+    await testInfo.attach("copy-alignment", {
+      body: JSON.stringify(alignment, null, 2),
+      contentType: "application/json",
+    });
+    for (let index = 0; index < pointerAligned.length; index += 1) {
+      const pointer = pointerAligned[index]!;
+      const compact = compactAligned[index]!;
+      // Ink keeps the same inset while the touch frame grows around it.
+      expect(Math.abs(compact.topInset - pointer.topInset)).toBeLessThanOrEqual(1);
+      expect(Math.abs(compact.rightInset - pointer.rightInset)).toBeLessThanOrEqual(1);
+      expect(pointer.topInset).toBeGreaterThanOrEqual(11);
+      expect(pointer.topInset).toBeLessThanOrEqual(13);
+      expect(pointer.rightInset).toBeGreaterThanOrEqual(11);
+      expect(pointer.rightInset).toBeLessThanOrEqual(13);
+      expect(pointer.insideBlock).toBe(true);
+      expect(compact.insideBlock).toBe(true);
+      expect(compact.buttonWidth).toBeGreaterThanOrEqual(44);
+      expect(compact.buttonHeight).toBeGreaterThanOrEqual(44);
+    }
     await page.setViewportSize({ width: 1280, height: 720 });
 
     // The diagram must be visibly rendered before copying the containing quote.
@@ -491,4 +523,50 @@ async function readRichClipboard(page: Page): Promise<{ html: string; plainText:
       plainText: await (await item.getType("text/plain")).text(),
     };
   });
+}
+
+interface CopyAlignmentMetrics {
+  name: string;
+  topInset: number;
+  rightInset: number;
+  insideBlock: boolean;
+  buttonWidth: number;
+  buttonHeight: number;
+}
+
+async function measureCopyAlignment(block: Locator, name: string): Promise<CopyAlignmentMetrics> {
+  return block.evaluate((element, controlName) => {
+    const wrapper = element.querySelector(':scope > div[data-paseo-markdown-ignore="true"]');
+    const button = wrapper?.querySelector("button");
+    const glyph = button?.querySelector("svg");
+    if (!wrapper || !button || !glyph) {
+      throw new Error(`Missing copy control for ${controlName}`);
+    }
+    const blockRect = element.getBoundingClientRect();
+    const glyphRect = glyph.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const round = (value: number) => Math.round(value * 10) / 10;
+    return {
+      name: controlName,
+      topInset: round(glyphRect.top - blockRect.top),
+      rightInset: round(blockRect.right - glyphRect.right),
+      insideBlock:
+        glyphRect.top >= blockRect.top - 0.5 &&
+        glyphRect.bottom <= blockRect.bottom + 0.5 &&
+        glyphRect.left >= blockRect.left - 0.5 &&
+        glyphRect.right <= blockRect.right + 0.5,
+      buttonWidth: round(buttonRect.width),
+      buttonHeight: round(buttonRect.height),
+    };
+  }, name);
+}
+
+async function writeAlignmentMetrics(metrics: unknown): Promise<void> {
+  const directory = process.env.QUOTE_COPY_QA_DIR;
+  if (!directory) return;
+  await makeDirectory(directory, { recursive: true });
+  await writeTextFile(
+    nodePath.join(directory, "copy-alignment.json"),
+    JSON.stringify(metrics, null, 2),
+  );
 }

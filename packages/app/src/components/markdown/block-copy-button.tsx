@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 import { Button } from "@/components/ui/button";
 import { mutedIconColorMapping } from "@/components/ui/icon-color";
+import { smallIconButtonChromeFrameSize } from "@/components/ui/icon-button-chrome";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
@@ -62,7 +63,11 @@ export const BlockCopyButton = memo(function BlockCopyButton({
     icon = <ThemedCheck size={ICON_SIZE.sm} />;
   }
   return (
-    <View style={styles.wrapper} dataSet={markdownCopyDataSet.ignore} pointerEvents="box-none">
+    <View
+      style={styles.wrapper(compact)}
+      dataSet={markdownCopyDataSet.ignore}
+      pointerEvents="box-none"
+    >
       <ToolbarButton
         compact={compact}
         label={status === "copied" ? t("message.actions.copied") : label}
@@ -92,11 +97,19 @@ export const BlockCopyButton = memo(function BlockCopyButton({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  wrapper: {
-    position: "absolute",
-    top: theme.spacing[2],
-    right: theme.spacing[2],
-    alignItems: "flex-end",
+  // Keep the glyph's ink on its original inset while the canonical button's
+  // hit frame grows outward around it.
+  wrapper: (compact: boolean) => {
+    const inset =
+      theme.spacing[2] +
+      theme.spacing[1] -
+      (smallIconButtonChromeFrameSize(compact) - ICON_SIZE.sm) / 2;
+    return {
+      position: "absolute" as const,
+      top: inset,
+      right: inset,
+      alignItems: "flex-end" as const,
+    };
   },
   visible: { opacity: 1 },
   hidden: { opacity: 0 },
