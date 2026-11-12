@@ -2388,13 +2388,14 @@ function ProjectModeList({
         />
       );
       const depth = projectDepthByViewKey.get(item.viewKey) ?? 0;
-      return depth > 0 ? (
-        <View key={item.viewKey} style={styles.projectIndent(depth)}>
-          {block}
-        </View>
-      ) : (
-        block
-      );
+      if (depth > 0) {
+        return (
+          <View key={item.viewKey} style={styles.projectIndent(depth)}>
+            {block}
+          </View>
+        );
+      }
+      return block;
     },
     [
       collapsedProjectKeys,

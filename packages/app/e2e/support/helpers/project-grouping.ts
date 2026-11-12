@@ -67,6 +67,45 @@ export async function expectSeparateProjects(
   }
 }
 
+export async function enableProjectNesting(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await page.getByTestId("sidebar-display-nest-projects").click();
+  await page.keyboard.press("Escape");
+}
+
+export async function expectProjectNestedUnder(
+  page: Page,
+  parentName: string,
+  childName: string,
+): Promise<void> {
+  const parent = projectGroup(page, parentName);
+  const child = projectGroup(page, childName);
+  await expect(async () => {
+    const parentBounds = await parent.boundingBox();
+    const childBounds = await child.boundingBox();
+    expect(parentBounds).not.toBeNull();
+    expect(childBounds).not.toBeNull();
+    expect(childBounds!.y).toBeGreaterThan(parentBounds!.y);
+    expect(childBounds!.x).toBeGreaterThan(parentBounds!.x);
+  }).toPass();
+}
+
+export async function toggleProjectCollapsed(page: Page, projectName: string): Promise<void> {
+  await projectGroup(page, projectName)
+    .getByTestId(/^sidebar-project-row-/)
+    .click();
+}
+
+export async function expectProjectHidden(page: Page, projectName: string): Promise<void> {
+  await expect(projectGroup(page, projectName)).toHaveCount(0);
+}
+
+export async function captureProjectSidebar(page: Page, filePath: string): Promise<void> {
+  await page.mouse.move(1000, 80);
+  await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+  await page.screenshot({ path: filePath });
+}
+
 export async function beginWorkspaceFromProject(page: Page, projectName: string): Promise<void> {
   const group = projectGroup(page, projectName);
   await expect(group).toBeVisible({ timeout: PROJECT_VISIBILITY_TIMEOUT });
