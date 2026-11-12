@@ -2891,8 +2891,8 @@ diff --git a/file.txt b/file.txt
 
   test.each([
     ["paseo.json missing", undefined],
-    ["paseo.json exists but invalid JSON", "{ nope"],
     ["paseo.json valid but missing metadataGeneration", {}],
+    ["paseo.json exists but invalid JSON", "{ nope"],
     ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
       "metadataGeneration exists but missing commitMessage",
@@ -3100,6 +3100,7 @@ diff --git a/file.txt b/file.txt
   test("generates PR text from checkout diffs read through the workspace git service", async () => {
     const messages: unknown[] = [];
     const workspaceGitService = {
+      resolveRepoRoot: vi.fn().mockResolvedValue(makeRoot()),
       getCheckoutDiff: vi.fn().mockResolvedValue({
         diff: "diff --git a/file.txt b/file.txt\n+hello\n",
         structured: [
@@ -3175,7 +3176,6 @@ diff --git a/file.txt b/file.txt
 
   test.each([
     ["paseo.json missing", undefined],
-    ["paseo.json exists but invalid JSON", "{ nope"],
     ["paseo.json valid but missing metadataGeneration", {}],
     ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
@@ -3198,6 +3198,10 @@ diff --git a/file.txt b/file.txt
     const prompt = await generatePullRequestPromptWithConfig(config);
 
     expect(prompt).toBe(PRE_CHANGE_PULL_REQUEST_PROMPT);
+  });
+
+  test.each(["{ nope"])("does not generate PR text from unreadable policy", async (config) => {
+    expect(await generatePullRequestCallWithConfig(config)).toBeUndefined();
   });
 
   test("PR instructions replace the default PR style", async () => {

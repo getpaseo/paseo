@@ -233,6 +233,10 @@ describe("createGitMetadataGenerator", () => {
       await expect(failing.generatePullRequestText(repoRoot)).rejects.toBeInstanceOf(
         StructuredAgentFallbackError,
       );
+      writeFileSync(join(repoRoot, "paseo.json"), "{invalid");
+      await expect(generator.generatePullRequestText(repoRoot)).rejects.toThrow(
+        "Unable to read project PR instructions",
+      );
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

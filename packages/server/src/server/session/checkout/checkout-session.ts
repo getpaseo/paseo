@@ -45,6 +45,7 @@ import type {
 import {
   commitChanges,
   createPullRequest,
+  capturePrCheckoutState,
   discardChanges,
   forgeAuthStateFromError,
   isForgeAuthError,
@@ -105,6 +106,7 @@ interface PrIssueCandidate {
 }
 
 interface PrCreateInput {
+  head?: string;
   title: string;
   body: string;
   draft?: boolean;
@@ -112,6 +114,8 @@ interface PrCreateInput {
 }
 
 interface PrCreateProposal {
+  checkoutState: Awaited<ReturnType<typeof capturePrCheckoutState>>;
+  requestedBaseRef?: string;
   id: string;
   cwd: string;
   headSha: string;
@@ -140,10 +144,17 @@ function toPrIssueCandidates(items: IssueSummary[]): PrIssueCandidate[] {
   });
 }
 
-function appendIssueLinks(body: string, links: PrIssueLink[]): string {
+function appendIssueLinks(
+  body: string,
+  links: PrIssueLink[],
+  candidates: PrIssueCandidate[],
+): string {
   if (links.length === 0) return body;
   return `${body.trimEnd()}\n\n${links
-    .map((link) => `${link.relation === "close" ? "Closes" : "Related to"} #${link.number}`)
+    .map(
+      (link) =>
+        `${link.relation === "close" ? "Closes" : "Related to"} ${candidates.find((issue) => issue.number === link.number)!.url}`,
+    )
     .join("\n")}`;
 }
 type LegacyGithubSearchResultItem = Omit<ForgeSearchResultItem, "kind"> & { kind: "issue" | "pr" };
@@ -1052,6 +1063,7 @@ export class CheckoutSession {
           body: input.body,
           draft: input.draft,
           base: input.baseRef,
+          ...(input.head ? { head: input.head } : {}),
         },
         service,
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
@@ -1089,7 +1101,19 @@ export class CheckoutSession {
     if (msg.proposalId || msg.issueLinks?.length) {
       throw new Error("A PR preview cannot submit an existing proposal or issue links");
     }
-    const generated = await this.gitMetadataGenerator.generatePullRequestText(msg.cwd, msg.baseRef);
+    const context = { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot };
+    const checkoutState = await capturePrCheckoutState(msg.cwd, msg.baseRef, context);
+    const generated = await this.gitMetadataGenerator.generatePullRequestText(
+      msg.cwd,
+      checkoutState.base,
+    );
+    if (
+      /#\d+|https?:\/\/\S*\/(?:issues?|work_items)\//i.test(`${generated.title}\n${generated.body}`)
+    ) {
+      throw new Error(
+        "Generated PR text contains issue-closing directives; regenerate without issue directives and select relationships in the preview",
+      );
+    }
     const { service } = await this.requireForgeService(msg.cwd);
     const matches = generated.issueSearchQuery
       ? await service.listIssues({
@@ -1100,12 +1124,16 @@ export class CheckoutSession {
           reason: "pr-create-preview",
         })
       : [];
-    const headSha = (await runGitCommand(["rev-parse", "HEAD"], { cwd: msg.cwd })).stdout.trim();
+    const current = await capturePrCheckoutState(msg.cwd, msg.baseRef, context);
+    if (JSON.stringify(current) !== JSON.stringify(checkoutState))
+      throw new Error("Branch or base changed during PR generation; preview the PR again");
     const proposal: PrCreateProposal = {
       id: randomUUID(),
       cwd: msg.cwd,
-      headSha,
-      baseRef: msg.baseRef,
+      headSha: checkoutState.headSha,
+      checkoutState,
+      requestedBaseRef: msg.baseRef,
+      baseRef: checkoutState.base,
       title: generated.title,
       body: generated.body,
       draft: msg.draft ?? generated.draft,
@@ -1131,8 +1159,11 @@ export class CheckoutSession {
     if (!proposal || proposal.cwd !== msg.cwd || proposal.expiresAt <= Date.now()) {
       throw new Error("PR preview expired; preview the PR again");
     }
-    const headSha = (await runGitCommand(["rev-parse", "HEAD"], { cwd: msg.cwd })).stdout.trim();
-    if (headSha !== proposal.headSha) {
+    const current = await capturePrCheckoutState(msg.cwd, proposal.requestedBaseRef, {
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+    });
+    if (JSON.stringify(current) !== JSON.stringify(proposal.checkoutState)) {
       throw new Error("Branch changed since the PR preview; preview the PR again");
     }
     const issueLinks = msg.issueLinks ?? [];
@@ -1143,36 +1174,13 @@ export class CheckoutSession {
     ) {
       throw new Error("Issue links must be selected from the PR preview");
     }
-    await this.validatePrIssueLinks(msg.cwd, proposal, issueLinks);
     return {
+      head: proposal.checkoutState.head,
       title: proposal.title,
-      body: appendIssueLinks(proposal.body, issueLinks),
+      body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),
       draft: proposal.draft,
       baseRef: proposal.baseRef,
     };
-  }
-
-  private async validatePrIssueLinks(
-    cwd: string,
-    proposal: PrCreateProposal,
-    issueLinks: PrIssueLink[],
-  ): Promise<void> {
-    if (issueLinks.length === 0 || !proposal.issueSearchQuery) return;
-    const { service } = await this.requireForgeService(cwd);
-    const fresh = await service.listIssues({
-      cwd,
-      query: proposal.issueSearchQuery,
-      limit: 5,
-      force: true,
-      reason: "pr-create-issue-validation",
-    });
-    if (
-      issueLinks.some(
-        (link) => !fresh.some((item) => isOpenIssue(item) && item.number === link.number),
-      )
-    ) {
-      throw new Error("A selected issue is no longer open; preview the PR again");
-    }
   }
 
   private async resolveLegacyPrCreateInput(

@@ -1845,6 +1845,8 @@ it("previews related issues and creates only explicitly approved issue links", a
     const requests: Array<Parameters<ForgeService["createPullRequest"]>[0]> = [];
     const searches: Array<Parameters<ForgeService["listIssues"]>[0]> = [];
     let issueOpen = true;
+    let generatedBody = "Retries transient failures.";
+    let duringGeneration = () => {};
     const service: ForgeService = {
       ...createGitHubService(),
       listIssues: async (input) => {
@@ -1879,12 +1881,15 @@ it("previews related issues and creates only explicitly approved issue links", a
       paseoHome,
       git: { resolveForge: async () => ({ forge: "github", host: "github.com", service }) },
       gitMetadataGenerator: {
-        generatePullRequestText: async () => ({
-          title: "Fix retry failure",
-          body: "Retries transient failures.",
-          draft: true,
-          issueSearchQuery: "retry failure",
-        }),
+        generatePullRequestText: async () => {
+          duringGeneration();
+          return {
+            title: "Fix retry failure",
+            body: generatedBody,
+            draft: true,
+            issueSearchQuery: "retry failure",
+          };
+        },
       },
     });
     await checkout.handleCheckoutPrCreateRequest({
@@ -1944,14 +1949,14 @@ it("previews related issues and creates only explicitly approved issue links", a
       type: "checkout_pr_create_response",
       payload: { error: null, number: 1 },
     });
-    expect(searches).toHaveLength(2);
+    expect(searches).toHaveLength(1);
     expect(requests).toEqual([
       {
         cwd: created.worktreePath,
         base: "main",
         head: created.branchName,
         title: "Fix retry failure",
-        body: "Retries transient failures.\n\nCloses #7",
+        body: "Retries transient failures.\n\nCloses https://example.com/issues/7",
         draft: true,
       },
     ]);
@@ -1974,9 +1979,38 @@ it("previews related issues and creates only explicitly approved issue links", a
       requestId: "issue-closed",
     });
     expect(emitted.at(-1)).toMatchObject({
-      payload: { error: { message: "A selected issue is no longer open; preview the PR again" } },
+      payload: { error: null, number: 1 },
     });
-    expect(requests).toHaveLength(1);
+    // A closed or lower-ranked issue is still the same approved identity.
+    expect(requests).toHaveLength(2);
+    generatedBody = "Closes\n#7";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "unsafe-body",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: expect.stringContaining("issue-closing directives") },
+      },
+    });
+    generatedBody = "Retries transient failures.";
+    duringGeneration = () => {
+      git(created.worktreePath, "commit", "--allow-empty", "-m", "concurrent change");
+    };
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "generation-race",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: "Branch or base changed during PR generation; preview the PR again" },
+      },
+    });
+    duringGeneration = () => {};
 
     issueOpen = true;
     await checkout.handleCheckoutPrCreateRequest({
@@ -1998,7 +2032,7 @@ it("previews related issues and creates only explicitly approved issue links", a
     expect(emitted.at(-1)).toMatchObject({
       payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
     });
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

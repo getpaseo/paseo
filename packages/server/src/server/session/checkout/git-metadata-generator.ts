@@ -89,6 +89,7 @@ const MAX_COMMIT_PATCH_CHARS = 120_000;
 const MAX_PULL_REQUEST_PATCH_CHARS = 200_000;
 
 interface PromptForDiffInput {
+  prInstructions?: string;
   cwd: string;
   diffOptions: CheckoutDiffOptions;
   maxPatchChars: number;
@@ -135,6 +136,9 @@ export function createGitMetadataGenerator(deps: {
     return buildMetadataPrompt({
       cwd: input.cwd,
       workspaceGitService,
+      ...(input.styleConfigKey === "pullRequest"
+        ? { metadataOverrides: { pullRequest: { instructions: input.prInstructions ?? "" } } }
+        : {}),
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [
@@ -180,6 +184,7 @@ export function createGitMetadataGenerator(deps: {
       const prompt = await buildPromptForDiff({
         cwd,
         diffOptions: { mode: "base", baseRef, includeStructured: true },
+        prInstructions: instructions,
         maxPatchChars: MAX_PULL_REQUEST_PATCH_CHARS,
         contract: [
           "Write a pull request title and body for the changes below.",

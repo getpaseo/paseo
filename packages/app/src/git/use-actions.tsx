@@ -576,9 +576,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           });
           issueLinks.push({ number: issue.number, relation: close ? "close" : "reference" });
         }
+        const issueUrls = new Map(proposal.issues.map((issue) => [issue.number, issue.url]));
         const issueSummary = issueLinks
           .map(
-            (issue) => `${issue.relation === "close" ? "Closes" : "Related to"} #${issue.number}`,
+            (issue) =>
+              `${issue.relation === "close" ? "Closes" : "Related to"} ${issueUrls.get(issue.number)}`,
           )
           .join("\n");
         const approved = await confirmDialog({
