@@ -127,6 +127,23 @@ for (const scenario of [
     await creation.submitPrompt("Retry this workspace and agent together.");
     await creation.expectAgentCount(1);
   });
+
+  test(`editing a failed agent start preserves its ready workspace${scenario.suffix}`, async ({
+    creation,
+    startup,
+  }) => {
+    await creation.openWorkspaceForm("local");
+    await creation.submitPrompt("Start the original task.", "Create");
+    await creation.expectAgentStillStarting();
+    await startup.fail();
+    await creation.expectStartupFailure();
+    await creation.expectOneCreatedWorkspace();
+    await scenario.prepare(creation);
+    await creation.submitPrompt("Start the edited task.");
+    await creation.expectPromptVisible("Start the edited task.");
+    await creation.expectOneCreatedWorkspace();
+    await creation.expectAgentCount(1);
+  });
 }
 
 for (const entry of [

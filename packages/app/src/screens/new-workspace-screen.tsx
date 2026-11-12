@@ -126,7 +126,7 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { retriedAgentRequest } from "./new-workspace/retry-agent-request";
+import { retryWorkspaceAgentCreation } from "./new-workspace/retry-agent-request";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -471,13 +471,13 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
-  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
+  const execute = async (): Promise<AgentSnapshotPayload> => {
     const { agent } = await ensureWorkspace({
       cwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
-      agent: requestedAgent,
+      agent: initialAgent,
       onEvent: (snapshot) => {
         if (!snapshot.workspace || navigated) return;
         navigated = true;
@@ -519,7 +519,13 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   const agentCreation = {
     result: Promise.resolve().then(() => execute()),
     retry: (request: CreateAgentRequestOptions) =>
-      execute(retriedAgentRequest(initialAgent, request, cwd)),
+      retryWorkspaceAgentCreation({
+        initial: initialAgent,
+        request,
+        cwd,
+        retryOriginal: () => execute(),
+        createAgent: (agentRequest) => input.resolveClient().createAgent(agentRequest),
+      }),
   };
   await agentCreation.result;
   if (outcome === "background") clearConsumedDraft();

@@ -1,4 +1,5 @@
-import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
+import { hash } from "fast-sha256";
+import { Buffer } from "buffer";
 import type { CreateAgentRequestOptions } from "@getpaseo/client/internal/daemon-client";
 
 /** A timeout keeps its identity; editing the draft starts a different creation intent. */
@@ -12,6 +13,7 @@ export async function keyedDraftAgentRequest(
     }
     return value;
   });
-  const fingerprint = await digestStringAsync(CryptoDigestAlgorithm.SHA256, intent);
+  // WebCrypto hashing requires HTTPS; the bundled UI also runs on LAN HTTP origins.
+  const fingerprint = Buffer.from(hash(Buffer.from(intent, "utf8"))).toString("hex");
   return { ...request, idempotencyKey: `${draftId}:${fingerprint}` };
 }

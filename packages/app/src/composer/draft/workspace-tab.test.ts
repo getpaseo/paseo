@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, test, vi } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { keyedDraftAgentRequest } from "./creation-key";
 
 import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
@@ -86,13 +86,6 @@ describe("workspace draft empty text readiness", () => {
   });
 });
 
-// Use Node's SHA-256 implementation in place of the native Expo bridge.
-vi.mock("expo-crypto", () => ({
-  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
-  digestStringAsync: async (_algorithm: string, value: string) =>
-    createHash("sha256").update(value).digest("hex"),
-}));
-
 const request = {
   config: { provider: "codex", cwd: "/repo", model: "gpt-6" },
   workspaceId: "workspace-1",
@@ -101,6 +94,13 @@ const request = {
 };
 
 describe("draft agent creation identity after a timeout", () => {
+  it("uses the standard SHA-256 fingerprint without a native or WebCrypto bridge", async () => {
+    const keyed = await keyedDraftAgentRequest("draft-1", { initialPrompt: "日本語 🚀" });
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ initialPrompt: "日本語 🚀" }))
+      .digest("hex");
+    expect(keyed.idempotencyKey).toBe(`draft-1:${fingerprint}`);
+  });
   it("reuses the identity when resubmitting unchanged inputs, including after remount", async () => {
     const first = await keyedDraftAgentRequest("draft-1", request);
     const retry = await keyedDraftAgentRequest("draft-1", {
