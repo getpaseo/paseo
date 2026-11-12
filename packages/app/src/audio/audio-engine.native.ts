@@ -9,7 +9,7 @@ import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import { createPlaybackQueue } from "./playback";
 import { playFile } from "./file-playback";
-import { createPcmPauseGate, playPcm16 } from "./pcm";
+import { playPcm16 } from "./pcm";
 
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
@@ -117,7 +117,7 @@ export function createAudioEngine(
     if (signal.aborted) throw new Error("Playback stopped");
     if (audio.type.startsWith("audio/pcm")) {
       await ensureInitialized();
-      return playPcm16(bytes, audio.type, signal, native, pauseGate);
+      return playPcm16(bytes, audio.type, signal, native);
     }
     // Capture owns its audio session while active. File playback alone must not
     // initialize the microphone or the native two-way engine.
@@ -155,7 +155,6 @@ export function createAudioEngine(
       if (file.exists) file.delete();
     }
   }
-  const pauseGate = createPcmPauseGate();
   const playback = createPlaybackQueue(playAudio, releaseSessionIfIdle);
 
   return {
@@ -233,21 +232,8 @@ export function createAudioEngine(
     },
 
     play: playback.play,
-    stop() {
-      playback.stop();
-      pauseGate.set(false);
-    },
+    stop: playback.stop,
     clearQueue: playback.clearQueue,
-    pause() {
-      if (pauseGate.paused) return;
-      pauseGate.set(true);
-      if (refs.initialized) native.pausePlayback();
-    },
-    resume() {
-      if (!pauseGate.paused) return;
-      if (refs.initialized) native.resumePlayback();
-      pauseGate.set(false);
-    },
     isPlaying: playback.isPlaying,
   };
 }

@@ -96,8 +96,6 @@ test("ending the voice waiting cue leaves a plugin's active audio playing", asyn
     },
     stop: output.stop,
     clearQueue: output.clearQueue,
-    pause: () => {},
-    resume: () => {},
     isPlaying: output.isPlaying,
   };
   const runtime = createVoiceRuntime({

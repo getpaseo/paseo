@@ -147,7 +147,7 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.pluginBinaryPayloads]: true,
   [CLIENT_CAPS.backgroundAgents]: true,
   [CLIENT_CAPS.explicitEventSubscriptions]: true,
-  [CLIENT_CAPS.voicePlaybackHold]: true,
+  [CLIENT_CAPS.voiceDeferredBargeIn]: true,
 } satisfies Record<Exclude<ClientCapability, typeof CLIENT_CAPS.browserHost>, true>;
 
 /** Calling releases demand; ready waits for membership, or local attachment on broadcast hosts. */

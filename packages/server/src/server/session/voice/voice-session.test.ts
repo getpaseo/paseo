@@ -88,7 +88,7 @@ function createFakeHost(): FakeVoiceHost {
     },
     interruptAgentIfRunning: async () => {},
     hasActiveAgentRun: () => false,
-    supportsPlaybackHold: () => false,
+    supportsDeferredBargeIn: () => false,
   };
 }
 
@@ -198,7 +198,7 @@ describe("VoiceSession streaming transcription", () => {
       host.interruptAgentIfRunning = async (agentId) => {
         interrupted.push(agentId);
       };
-      host.supportsPlaybackHold = () => true;
+      host.supportsDeferredBargeIn = () => true;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       const playback = speak({ text: "A spoken response." });
       try {
@@ -228,7 +228,7 @@ describe("VoiceSession streaming transcription", () => {
 
   test("on a speakerphone, a transcript of the reply's own words leaves the reply playing", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     const playback = speak({ text: BICYCLE_REPLY });
     try {
@@ -260,7 +260,7 @@ describe("VoiceSession streaming transcription", () => {
     "right after a reply's audio starts, $transcript stops the reply: $stops",
     async ({ transcript, stops }) => {
       const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-      host.supportsPlaybackHold = () => true;
+      host.supportsDeferredBargeIn = () => true;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       const playback = speak({ text: "Here's the bicycle in six sentences." });
       try {
@@ -293,7 +293,7 @@ describe("VoiceSession streaming transcription", () => {
     "well into a reply, its own words $transcript stop it: $stops",
     async ({ transcript, stops }) => {
       const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-      host.supportsPlaybackHold = () => true;
+      host.supportsDeferredBargeIn = () => true;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       const playback = speak({
         text: "Baseball grew out of older bat-and-ball games like English rounders.",
@@ -332,7 +332,7 @@ describe("VoiceSession streaming transcription", () => {
     "well into a reply, the lone transcript $transcript stops it: $stops",
     async ({ transcript, stops }) => {
       const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-      host.supportsPlaybackHold = () => true;
+      host.supportsDeferredBargeIn = () => true;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       const playback = speak({ text: "Here's the bicycle in six sentences." });
       try {
@@ -359,7 +359,7 @@ describe("VoiceSession streaming transcription", () => {
 
   test("once a reply's audio has played for a few seconds, unrelated words stop it", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     const playback = speak({ text: "Here's the bicycle in six sentences." });
     try {
@@ -400,7 +400,7 @@ describe("VoiceSession streaming transcription", () => {
       host.interruptAgentIfRunning = async (agentId) => {
         interrupted.push(agentId);
       };
-      host.supportsPlaybackHold = () => true;
+      host.supportsDeferredBargeIn = () => true;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       const playback = speak({ text: reply });
       try {
@@ -435,7 +435,7 @@ describe("VoiceSession streaming transcription", () => {
 
   test("sound while the agent is still working does not interrupt it; the user's words do", async () => {
     const { voiceSession, detector, sttSession, host } = createVoiceSession();
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     host.hasActiveAgentRun = () => true;
     const interrupt = vi.fn(async () => {});
     host.interruptAgentIfRunning = interrupt;
@@ -485,7 +485,7 @@ describe("VoiceSession streaming transcription", () => {
     "asks the detector to report sound after $confirmMs ms when the client defers barge-in: $capable",
     async ({ capable, confirmMs }) => {
       const { voiceSession, turnDetection, host } = createVoiceSession();
-      host.supportsPlaybackHold = () => capable;
+      host.supportsDeferredBargeIn = () => capable;
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       try {
         const [params] = vi.mocked(turnDetection.createSession).mock.calls[0];
@@ -498,7 +498,7 @@ describe("VoiceSession streaming transcription", () => {
 
   test("still defers the next sound after a transcription error", async () => {
     const { voiceSession, detector, host } = createVoiceSession();
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     host.hasActiveAgentRun = () => true;
     const interrupt = vi.fn(async () => {});
     host.interruptAgentIfRunning = interrupt;
@@ -525,7 +525,7 @@ describe("VoiceSession streaming transcription", () => {
     host.interruptAgentIfRunning = async (agentId) => {
       interrupted.push(agentId);
     };
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     const playback = speak({ text: "A spoken response." });
     try {
@@ -560,7 +560,7 @@ describe("VoiceSession streaming transcription", () => {
 
   test("transcribes unbroken sound during a reply after four seconds without waiting for silence", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
-    host.supportsPlaybackHold = () => true;
+    host.supportsDeferredBargeIn = () => true;
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     const playback = speak({ text: BICYCLE_REPLY });
     try {

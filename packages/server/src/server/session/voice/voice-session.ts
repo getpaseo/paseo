@@ -129,8 +129,8 @@ export interface VoiceSessionHost {
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
   hasActiveAgentRun(agentId: string | null): boolean;
-  /** Whether the client pauses speech on "hold" and waits for "resume" or "stop". */
-  supportsPlaybackHold(): boolean;
+  /** Whether the client stops a reply on `playback: "stop"`, sent once a transcript has the user's words. */
+  supportsDeferredBargeIn(): boolean;
 }
 
 export interface VoiceSessionOptions {
@@ -598,7 +598,9 @@ export class VoiceSession {
       sttLanguage: this.sttLanguage,
       // A lone "Stop." is shorter than the detector's default confirmation. Reporting
       // sound sooner is safe only where the transcript decides what it interrupts.
-      ...(this.host.supportsPlaybackHold() ? { speechConfirmMs: DEFERRED_SPEECH_CONFIRM_MS } : {}),
+      ...(this.host.supportsDeferredBargeIn()
+        ? { speechConfirmMs: DEFERRED_SPEECH_CONFIRM_MS }
+        : {}),
       callbacks: {
         onSpeechStarted: async () => {
           // Voice STT providers return final transcripts only. Use the detector's
@@ -1284,7 +1286,7 @@ export class VoiceSession {
    * Only clients that act on a later "stop" qualify; older ones stop on speech start.
    */
   private shouldDeferBargeIn(): boolean {
-    if (!this.host.supportsPlaybackHold()) {
+    if (!this.host.supportsDeferredBargeIn()) {
       return false;
     }
     return (

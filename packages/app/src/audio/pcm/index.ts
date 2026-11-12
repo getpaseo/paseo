@@ -91,95 +91,33 @@ interface PcmOutput {
   stopPlayback(): void;
 }
 
-/** Shared pause state for the native player: a paused clip keeps its remaining time. */
-export interface PcmPauseGate {
-  readonly paused: boolean;
-  onChange(listener: (paused: boolean) => void): () => void;
-}
-
-export function createPcmPauseGate(): PcmPauseGate & { set(paused: boolean): void } {
-  const listeners = new Set<(paused: boolean) => void>();
-  let paused = false;
-  return {
-    get paused() {
-      return paused;
-    },
-    onChange(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    set(next) {
-      if (next === paused) return;
-      paused = next;
-      for (const listener of Array.from(listeners)) listener(paused);
-    },
-  };
-}
-
 /** Keep voice output on the native communication engine and its echo reference. */
 export function playPcm16(
   bytes: Uint8Array,
   mimeType: string,
   signal: AbortSignal,
   output: PcmOutput,
-  pause?: PcmPauseGate,
 ): Promise<number> {
   if (signal.aborted) return Promise.reject(new Error("Playback stopped"));
   const pcm = resamplePcm16(bytes, parsePcmSampleRate(mimeType) ?? 24000, 16000);
   const duration = pcm.length / 2 / 16000;
   return new Promise((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let remainingMs = duration * 1000;
-    let startedAt = 0;
-    let enqueued = false;
-    let unsubscribe = () => {};
-    const done = () => {
-      unsubscribe();
-      signal.removeEventListener("abort", abort);
-    };
-    const startTimer = () => {
-      startedAt = Date.now();
-      timeout = setTimeout(() => {
-        done();
-        resolve(duration);
-      }, remainingMs);
-    };
-    const startPlayback = () => {
-      if (!enqueued) {
-        enqueued = true;
-        output.resumePlayback();
-        output.playPCMData(pcm);
-      }
-      startTimer();
-    };
-    // Both native players start audio inside playPCMData(), so keep held bytes
-    // behind the gate and freeze completion time whenever playback pauses.
-    const onPauseChange = (paused: boolean) => {
-      if (paused && timeout !== undefined) {
-        clearTimeout(timeout);
-        timeout = undefined;
-        remainingMs = Math.max(0, remainingMs - (Date.now() - startedAt));
-      } else if (!paused && timeout === undefined) {
-        try {
-          startPlayback();
-        } catch (error) {
-          done();
-          reject(error);
-        }
-      }
-    };
     const abort = () => {
       clearTimeout(timeout);
-      done();
       output.stopPlayback();
       reject(new Error("Playback stopped"));
     };
     signal.addEventListener("abort", abort, { once: true });
     try {
-      if (pause) unsubscribe = pause.onChange(onPauseChange);
-      if (!pause?.paused) startPlayback();
+      output.resumePlayback();
+      output.playPCMData(pcm);
+      timeout = setTimeout(() => {
+        signal.removeEventListener("abort", abort);
+        resolve(duration);
+      }, duration * 1000);
     } catch (error) {
-      done();
+      signal.removeEventListener("abort", abort);
       reject(error);
     }
   });
