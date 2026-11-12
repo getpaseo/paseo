@@ -1,0 +1,17 @@
+# Connected host with no agent profiles, 1600x2560 at density 320. See README.md.
+# FORM_URL=paseo://new?serverId=<serverId>; MODEL_ID names a real catalog model.
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+env PROVIDER_ID=codex
+
+open "${APP_ID}" "${FORM_URL}"
+wait "label=\"Workspace project\"" 20000
+press "id=\"combined-model-selector\""
+wait "id=\"model-provider-${PROVIDER_ID}\"" 10000
+press "id=\"model-provider-${PROVIDER_ID}\""
+wait "id=\"compact-model-list\"" 3000
+# The row's profile action sits inside Android's independent scroll viewport.
+press "id=\"model-create-profile-${PROVIDER_ID}-${MODEL_ID}\""
+wait "text=\"Add agent profile\"" 5000
+back
+close

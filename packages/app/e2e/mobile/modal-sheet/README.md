@@ -85,6 +85,17 @@ agent-device test packages/app/e2e/mobile/modal-sheet/model-tablet.android.ad \
   --artifacts-dir /tmp/paseo-model-tablet-qa
 ```
 
+`model-tablet-profile.android.ad` taps a model row's `+` in New workspace and asserts the seeded
+profile form opens. Run it on the same tablet setup against a host with no agent profiles, so the
+row still shows `+`, and with no remembered model, so the picker opens on its provider page:
+
+```sh
+agent-device test packages/app/e2e/mobile/modal-sheet/model-tablet-profile.android.ad \
+  --serial "$ANDROID_SERIAL" --metro-port "$MODEL_QA_METRO_PORT" \
+  --env FORM_URL="paseo://new?serverId=${SHEET_QA_SERVER_ID}" \
+  --env PROVIDER_ID=codex --env MODEL_ID="$MODEL_QA_MODEL_ID"
+```
+
 The existing-agent journey needs the sidebar pinned so its composer stays narrow. Start each run with no modal open;
 a failed provider tap leaves its modal open, so dismiss it before the next run. These host-dependent
 journeys remain outside the default mobile suite, alongside the compact sheet journeys above.
