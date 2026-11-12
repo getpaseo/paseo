@@ -11,6 +11,7 @@ import {
   workspaceTabSwitcherPopoverLayout,
   selectWorkspaceChrome,
   computeWorkspaceTabLayout,
+  resolvePublishedWorkspaceTabsWidth,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
 
@@ -177,6 +178,37 @@ describe("computeWorkspaceTabLayout", () => {
     });
 
     expect(result.items.map((item) => item.width)).toEqual([102, 138]);
+  });
+});
+
+describe("resolvePublishedWorkspaceTabsWidth", () => {
+  const input = { tabLabelWidths: [56, 70, 49], metrics, compact: false };
+
+  it("keeps the published width while tabs that already fit lay out the same", () => {
+    expect(
+      resolvePublishedWorkspaceTabsWidth({ ...input, publishedWidth: 1200, measuredWidth: 900 }),
+    ).toBe(1200);
+  });
+
+  it("ignores a sub-point change", () => {
+    expect(
+      resolvePublishedWorkspaceTabsWidth({ ...input, publishedWidth: 400, measuredWidth: 400.4 }),
+    ).toBe(400);
+  });
+
+  it("publishes a width that changes how the rail is shared", () => {
+    expect(
+      resolvePublishedWorkspaceTabsWidth({ ...input, publishedWidth: 400, measuredWidth: 360 }),
+    ).toBe(360);
+  });
+
+  it("publishes the first usable width and retains it while hidden", () => {
+    expect(
+      resolvePublishedWorkspaceTabsWidth({ ...input, publishedWidth: 0, measuredWidth: 640 }),
+    ).toBe(640);
+    expect(
+      resolvePublishedWorkspaceTabsWidth({ ...input, publishedWidth: 640, measuredWidth: 0 }),
+    ).toBe(640);
   });
 });
 

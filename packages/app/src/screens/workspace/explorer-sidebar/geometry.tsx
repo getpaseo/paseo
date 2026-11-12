@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import {
   runOnJS,
@@ -6,7 +6,6 @@ import {
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
@@ -34,7 +33,7 @@ export function useExplorerGeometry({
   const resizeWidth = useSharedValue(width);
   const startWidth = useSharedValue(width);
   const resize = useSharedValue<ExplorerSidebarResize | null>(null);
-  const [resizePressed, setResizePressed] = useState(false);
+  const resizePressed = useSharedValue(false);
   useAnimatedReaction(
     () => ({ resize: resize.value, width, containerWidth, overlay, resizeEnabled }),
     ({ resize: currentResize, ...allocation }) => {
@@ -44,14 +43,14 @@ export function useExplorerGeometry({
     [containerWidth, overlay, resize, resizeEnabled, width],
   );
 
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
         .enabled(resizeEnabled)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onBegin(() => scheduleOnRN(showResizeGrip))
+        .onBegin(() => {
+          resizePressed.value = true;
+        })
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
@@ -90,17 +89,16 @@ export function useExplorerGeometry({
           if (!success) {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, false);
           }
-          scheduleOnRN(hideResizeGrip);
+          resizePressed.value = false;
         }),
     [
       resizeEnabled,
       onResize,
       containerWidth,
-      hideResizeGrip,
+      resizePressed,
       overlay,
       resize,
       resizeWidth,
-      showResizeGrip,
       startWidth,
       width,
     ],

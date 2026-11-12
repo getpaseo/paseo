@@ -52,6 +52,28 @@ export function retainWorkspaceTabMeasuredWidth(
   return measuredWidth;
 }
 
+export function resolvePublishedWorkspaceTabsWidth(
+  input: Omit<WorkspaceTabLayoutInput, "viewportWidth"> & {
+    publishedWidth: number;
+    measuredWidth: number;
+  },
+): number {
+  const { publishedWidth, measuredWidth, ...layoutInput } = input;
+  const nextWidth = retainWorkspaceTabMeasuredWidth(publishedWidth, measuredWidth);
+  if (nextWidth === publishedWidth || publishedWidth <= 0) return nextWidth;
+  const current = computeWorkspaceTabLayout({ ...layoutInput, viewportWidth: publishedWidth });
+  const next = computeWorkspaceTabLayout({ ...layoutInput, viewportWidth: nextWidth });
+  const equal =
+    current.closeButtonPolicy === next.closeButtonPolicy &&
+    current.requiresHorizontalScrollFallback === next.requiresHorizontalScrollFallback &&
+    current.items.length === next.items.length &&
+    current.items.every(
+      (item, index) =>
+        item.width === next.items[index]?.width && item.showLabel === next.items[index]?.showLabel,
+    );
+  return equal ? publishedWidth : nextWidth;
+}
+
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {
     return min;

@@ -53,7 +53,11 @@ import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
-import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
+import {
+  resolvePublishedWorkspaceTabsWidth,
+  retainWorkspaceTabMeasuredWidth,
+  type WorkspaceTabLayoutMetrics,
+} from "@/screens/workspace/workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -124,6 +128,7 @@ const TAB_MIN_WIDTH = 64;
 const TAB_MAX_WIDTH = 160;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
+const EMPTY_TAB_LABEL_WIDTHS: number[] = [];
 const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -1109,6 +1114,25 @@ function ResolvedWorkspaceDesktopTabsRow({
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
+  const tabsWidthRef = useRef({ measured: 0, published: 0 });
+  const tabLayoutInputRef = useRef<{
+    tabLabelWidths: number[];
+    metrics: WorkspaceTabLayoutMetrics;
+    compact: boolean;
+  } | null>(null);
+  const publishTabsContainerWidth = useCallback(() => {
+    const layoutInput = tabLayoutInputRef.current;
+    if (!layoutInput) return;
+    const widths = tabsWidthRef.current;
+    const next = resolvePublishedWorkspaceTabsWidth({
+      ...layoutInput,
+      publishedWidth: widths.published,
+      measuredWidth: widths.measured,
+    });
+    if (next === widths.published) return;
+    widths.published = next;
+    setTabsContainerWidth(next);
+  }, []);
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
@@ -1121,9 +1145,13 @@ function ResolvedWorkspaceDesktopTabsRow({
   }, [measurementCache, labelMeasurements]);
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
 
-  const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
-    updateMeasuredWidth(setTabsContainerWidth, event);
-  }, []);
+  const handleTabsContainerLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      tabsWidthRef.current.measured = Math.round(event.nativeEvent.layout.width);
+      publishTabsContainerWidth();
+    },
+    [publishTabsContainerWidth],
+  );
 
   const handleExitFocusModeLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setExitFocusModeWidth, event);
@@ -1271,8 +1299,13 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
+  const tabLabelWidths = trackSnapshot?.labelWidths ?? EMPTY_TAB_LABEL_WIDTHS;
+  useLayoutEffect(() => {
+    tabLayoutInputRef.current = { tabLabelWidths, metrics: layoutMetrics, compact: isCompact };
+    publishTabsContainerWidth();
+  }, [isCompact, layoutMetrics, publishTabsContainerWidth, tabLabelWidths]);
   const { layout } = useWorkspaceTabLayout({
-    tabLabelWidths: trackSnapshot?.labelWidths ?? [],
+    tabLabelWidths,
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
     compact: isCompact,

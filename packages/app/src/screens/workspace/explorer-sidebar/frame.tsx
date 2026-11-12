@@ -10,6 +10,10 @@ import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  createWorkspaceViewportWidthStore,
+  useWorkspaceViewportWidth,
+} from "../workspace-viewport-width";
 import { useExplorerGeometry } from "./geometry";
 import type { ExplorerFrameProps } from "./frame-props";
 
@@ -21,12 +25,17 @@ function ExplorerFrameBase({
   isWorkspaceActive,
   persistenceKey,
 }: ExplorerFrameProps) {
-  const [containerWidth, setContainerWidth] = useState(0);
-  const measureContainer = useCallback(({ nativeEvent }: LayoutChangeEvent) => {
-    const { width, height } = nativeEvent.layout;
-    if (width > 0 && height > 0) setContainerWidth(width);
-  }, []);
+  const [viewportWidth] = useState(createWorkspaceViewportWidthStore);
+  const measureContainer = useCallback(
+    ({ nativeEvent }: LayoutChangeEvent) => {
+      const { width, height } = nativeEvent.layout;
+      if (width > 0 && height > 0) viewportWidth.set(width);
+    },
+    [viewportWidth],
+  );
   const overlay = presentation === "overlay";
+  // A closed dock does not follow the workspace width; the overlay sizes to it even while closed.
+  const containerWidth = useWorkspaceViewportWidth(viewportWidth, overlay || isOpen);
   const settledOpen = useIsMobilePanelActive("file-explorer");
   const active = isWorkspaceActive && (overlay ? settledOpen : isOpen);
   const resizeEnabled = isWorkspaceActive && !overlay && isOpen;

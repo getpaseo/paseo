@@ -3,7 +3,6 @@ import { Children, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { View, useWindowDimensions } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
 import { StyleSheet } from "react-native-unistyles";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -43,9 +42,7 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
   const visibleWidth = resolveVisibleTreeRailWidth(requestedWidth, containerWidth, minimumWidth);
   const startWidthRef = useRef(visibleWidth);
   const resizeWidth = useSharedValue(visibleWidth);
-  const [resizePressed, setResizePressed] = useState(false);
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
+  const resizePressed = useSharedValue(false);
 
   useEffect(() => {
     resizeWidth.value = visibleWidth;
@@ -55,7 +52,9 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
     () =>
       Gesture.Pan()
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onBegin(() => scheduleOnRN(showResizeGrip))
+        .onBegin(() => {
+          resizePressed.value = true;
+        })
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
@@ -70,15 +69,16 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
           );
         })
         .onEnd(() => runOnJS(onWidthChange ?? setSharedWidth)(resizeWidth.value))
-        .onFinalize(() => scheduleOnRN(hideResizeGrip)),
+        .onFinalize(() => {
+          resizePressed.value = false;
+        }),
     [
       containerWidth,
-      hideResizeGrip,
       onWidthChange,
       minimumWidth,
+      resizePressed,
       resizeWidth,
       setSharedWidth,
-      showResizeGrip,
       visibleWidth,
     ],
   );
