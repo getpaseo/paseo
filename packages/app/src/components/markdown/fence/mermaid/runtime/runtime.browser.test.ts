@@ -193,6 +193,33 @@ describe("Mermaid sandbox runtime", () => {
     }
   });
 
+  /**
+   * A gantt chart takes the width of the element Mermaid renders it in. Rendering inside a large
+   * offscreen container must not hand that container's width to the chart.
+   */
+  it("renders a gantt chart at the same readable width whatever frame the host gives it", async () => {
+    const source = [
+      "gantt",
+      "  title Release plan",
+      "  dateFormat YYYY-MM-DD",
+      "  section Build",
+      "  Design :a1, 2024-01-01, 10d",
+      "  Implement :after a1, 20d",
+    ].join("\n");
+    const sizes = [];
+    for (const size of [
+      { height: 0, width: 0 },
+      { height: 240, width: 240 },
+      { height: 600, width: 900 },
+    ]) {
+      const frame = await mountRuntime(size);
+      sizes.push(renderedSize(await render(frame, { revision: 1, source })));
+    }
+
+    expect(sizes[0].width).toBe(1200);
+    expect(sizes).toEqual([sizes[0], sizes[0], sizes[0]]);
+  });
+
   it("coalesces queued input and never reports an obsolete result", async () => {
     const frame = await mountRuntime();
     const obsoleteSource = `flowchart TD\n${Array.from({ length: 250 }, (_, index) => `A${index} --> A${index + 1}`).join("\n")}`;

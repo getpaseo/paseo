@@ -21,6 +21,12 @@ function sendToHost(message: MermaidRuntimeMessage): void {
   }
 }
 
+/**
+ * A gantt chart takes the width of the element it renders in, and that element is the oversized
+ * staging container. Give it the width Mermaid falls back to when there is no container width.
+ */
+const GANTT_WIDTH = 1200;
+
 function initializeMermaid(colorScheme: "light" | "dark"): void {
   mermaid.initialize({
     startOnLoad: false,
@@ -40,6 +46,7 @@ function initializeMermaid(colorScheme: "light" | "dark"): void {
     ],
     flowchart: { htmlLabels: false },
     class: { htmlLabels: false },
+    gantt: { useWidth: GANTT_WIDTH },
   });
 }
 
