@@ -319,6 +319,7 @@ function requestClient(method, params) {
 }
 
 const PROMPT_ROUTES = [
+  ["BG_WAKEUP_OMITTED_CANCELED_TOOL", (id) => handleBgWakeupOmittedCanceledTool(id)],
   ["TWO_IDENTICAL_TIMERS", (id) => handleTwoIdenticalTimers(id)],
   ["SUBAGENT_STREAMING_AND_QUESTION", (id) => handleSubagentStreamingAndQuestion(id)],
   ["SUBAGENT_HANGING_CHILD", (id) => handleSubagentHangingChild(id)],
@@ -1994,6 +1995,99 @@ async function handleSessionLoadRpc(id, params) {
       { name: "compact", description: "Compact conversation context" },
     ],
   });
+
+  if (process.env.AGY_TEST_ASYNC_SESSION_LOAD === "yes") {
+    // Real agy returns session/load before its background trajectory replay goroutine finishes
+    // streaming historical tool_call / thought / message / usage notifications.
+    setTimeout(() => {
+      notifyUpdate({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "POST_LOAD_TRAILING_THOUGHT" },
+      });
+      notifyUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "replay-bg-cmd-1",
+        title: "sleep 10",
+        kind: "execute",
+        status: "completed",
+        rawInput: { CommandLine: "sleep 10", WaitMsBeforeAsync: 500 },
+        rawOutput: {
+          output: `Command started.\nTool is running as a background task with task id: ${sessionId}/task-stale-replay\n`,
+        },
+      });
+    }, 12);
+    setTimeout(() => {
+      notifyUpdate({
+        sessionUpdate: "agent_message_chunk",
+        messageId: "replay-a2",
+        content: { type: "text", text: "POST_LOAD_TRAILING_ASSISTANT" },
+      });
+      notifyUpdate({
+        sessionUpdate: "usage_update",
+        used: 31000,
+        size: 1048576,
+      });
+    }, 28);
+    if (process.env.AGY_TEST_LATE_LOAD_STRAGGLER === "yes") {
+      setTimeout(() => {
+        notifyUpdate({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "replay-straggler",
+          content: { type: "text", text: "SUPER_LATE_STRAGGLER_CHUNK" },
+        });
+      }, 110);
+    }
+  }
+}
+
+function handleBgWakeupOmittedCanceledTool(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nBG_WAKEUP_OMITTED_CANCELED_TOOL\n</USER_REQUEST>",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "sched-canceled-tool-1",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 5, Prompt: "Run canceled tool wakeup" },
+    rawOutput: { output: "Scheduled 5s timer" },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T12:00:05Z sender=scheduler priority=HIGH content=Run canceled tool wakeup\n</SYSTEM_MESSAGE>",
+    });
+    const plannerIdx = appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      thinking: "Running tool that agy cancels internally (status=6).",
+      tool_calls: [
+        {
+          id: "wakeup-canceled-cmd-1",
+          name: "run_command",
+          args: { CommandLine: "echo transient", WaitMsBeforeAsync: 5000 },
+        },
+      ],
+    });
+    // Real agy records CORTEX_STEP_STATUS_CANCELED (6) in SQLite and omits the GENERIC step from
+    // transcript.jsonl / transcript_full.jsonl, jumping straight to the next PLANNER_RESPONSE!
+    upsertConversationStepDb(sessionId, plannerIdx + 1, 6);
+    stepCounters.set(sessionId, plannerIdx + 2);
+    appendTranscriptStep(sessionId, {
+      step_index: plannerIdx + 2,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: "RECOVERED_AFTER_CANCELED_WAKEUP_TOOL",
+    });
+  }, 80);
 }
 
 let failedSetModelOnce = false;
@@ -2078,6 +2172,13 @@ lines.on("line", async (line) => {
         currentModelId: currentModel,
       },
     });
+    if (process.env.AGY_TEST_SET_MODEL_USAGE === "yes") {
+      notifyUpdate({
+        sessionUpdate: "usage_update",
+        used: 31000,
+        size: 1048576,
+      });
+    }
     return;
   }
 

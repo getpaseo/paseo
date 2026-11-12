@@ -83,6 +83,8 @@ const INTERRUPT_GRACE_MS = 350;
 const ROOT_TRANSCRIPT_POLL_MS = 180;
 const AUTONOMOUS_TRANSCRIPT_SETTLE_MS = 120;
 const AUTONOMOUS_TOOL_STALL_TIMEOUT_MS = 15_000;
+const SESSION_LOAD_QUIET_MS = 45;
+const SESSION_LOAD_MAX_DRAIN_MS = 5_000;
 
 interface ActiveTurn {
   id: string;
@@ -183,6 +185,9 @@ export class Session {
   private autonomousTurn: AutonomousTurn | null = null;
   private shouldReplayOnLoad: boolean;
   private replayWindow: "replay" | "skip" | null = null;
+  private driverHasStartedPrompt = false;
+  private sessionUpdateSeq = 0;
+  private opened = false;
   private hasUnstreamedPostTurnSteps = false;
   private awaitingPostTurnCatchupEcho = false;
   private filteringSlashPostTurnCatchup = false;
@@ -297,6 +302,7 @@ export class Session {
       sessionId: this.id,
     });
 
+    this.opened = true;
     this.ensureRootMonitor();
   }
 
@@ -429,6 +435,7 @@ export class Session {
       resolveSettled,
     };
     this.turn = turn;
+    this.driverHasStartedPrompt = true;
     this.resetTurnState();
     this.armPostTurnCatchupFence(
       prompt.input.type === "command" || isSlashCommandPromptText(encoded.nativeText),
@@ -857,7 +864,11 @@ export class Session {
         await driver.stop();
         throw new AntigravityError("Session closed during driver startup", "CLOSED");
       }
-      this.bindRootTranscriptReader();
+      await this.initializeRootTranscriptCursor();
+      if (this.closed || this.driver !== driver) {
+        await driver.stop();
+        throw new AntigravityError("Session closed during driver startup", "CLOSED");
+      }
       this.ensureRootMonitor();
       return driver;
     } catch (error) {
@@ -868,6 +879,7 @@ export class Session {
   }
 
   private spawnDriver(): DriverProcess {
+    this.driverHasStartedPrompt = false;
     const launch: ProviderLaunch = {
       ...this.options.launch,
       env: { ...this.options.launch.env, ...this.options.config.env },
@@ -885,6 +897,7 @@ export class Session {
         onExit: (failure) => {
           if (this.driver !== driver) return;
           this.driver = null;
+          this.driverHasStartedPrompt = false;
           this.stopRootMonitor();
           const hadBackgroundWork =
             this.activeBackgroundTasks.size > 0 || this.subagents.hasRunning();
@@ -1011,7 +1024,7 @@ export class Session {
       this.replayWindow = replay ? "replay" : "skip";
       this.resetTurnState();
       try {
-        return await driver.requestInit(
+        const loaded = await driver.requestInit(
           "session/load",
           {
             sessionId: this.conversationId,
@@ -1021,6 +1034,8 @@ export class Session {
           },
           acpSessionResultSchema,
         );
+        await this.drainSessionLoadUpdates(driver);
+        return loaded;
       } finally {
         this.replayWindow = null;
         this.resetTurnState();
@@ -1046,6 +1061,22 @@ export class Session {
     return sessionResult;
   }
 
+  private async drainSessionLoadUpdates(driver: DriverProcess): Promise<void> {
+    const deadline = Date.now() + SESSION_LOAD_MAX_DRAIN_MS;
+    while (!this.closed && this.driver === driver && driver.isAlive) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      const seqBefore = this.sessionUpdateSeq;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Math.min(SESSION_LOAD_QUIET_MS, remaining));
+        timer.unref?.();
+      });
+      if (this.sessionUpdateSeq === seqBefore) {
+        return;
+      }
+    }
+  }
+
   private bindRootTranscriptReader(): void {
     if (!this.conversationId) return;
     const expectedPath = resolveConversationTranscriptPath(this.dataDir, this.conversationId);
@@ -1057,6 +1088,9 @@ export class Session {
   }
 
   private async initializeRootTranscriptCursor(): Promise<void> {
+    if (this.rootTranscriptSyncPromise) {
+      await this.rootTranscriptSyncPromise;
+    }
     this.bindRootTranscriptReader();
     if (!this.rootTranscriptReader) return;
     const existingSteps = await this.rootTranscriptReader.readNewSteps({
@@ -1076,7 +1110,7 @@ export class Session {
   }
 
   private ensureRootMonitor(): void {
-    if (this.rootMonitorTimer || this.closed || !this.driver?.isAlive) return;
+    if (!this.opened || this.rootMonitorTimer || this.closed || !this.driver?.isAlive) return;
     this.rootMonitorTimer = setInterval(() => {
       void this.syncRootTranscript();
     }, ROOT_TRANSCRIPT_POLL_MS);
@@ -1165,6 +1199,9 @@ export class Session {
     }
 
     if (step.type === "PLANNER_RESPONSE") {
+      for (const pending of this.foregroundTranscriptTools.splice(0)) {
+        this.inspectToolSideEffects({ ...pending, status: "failed" }, "transcript");
+      }
       if (this.turn) {
         const usagePayload = this.buildTranscriptStepUsagePayload(step);
         if (Object.keys(usagePayload).length > 0) {
@@ -1233,6 +1270,7 @@ export class Session {
   }
 
   private applyAutonomousPlannerStep(auto: AutonomousTurn, step: TranscriptStep): void {
+    this.flushUnpairedAutonomousTranscriptTools(auto, step.createdAt);
     auto.lastPlannerStepIndex = Math.max(auto.lastPlannerStepIndex, step.stepIndex);
     auto.transcriptReportedWaiting = false;
     auto.waitingSince = null;
@@ -1262,6 +1300,27 @@ export class Session {
     }
 
     this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+  }
+
+  private flushUnpairedAutonomousTranscriptTools(auto: AutonomousTurn, timestamp?: string): void {
+    if (auto.pendingTranscriptTools.length === 0) return;
+    for (const pending of auto.pendingTranscriptTools.splice(0)) {
+      const settledPayload: AcpToolCallPayload = {
+        ...pending,
+        status: "failed",
+      };
+      if (!auto.receivedAcpUpdates) {
+        this.synthesizedWakeupToolIds.add(settledPayload.toolCallId);
+        this.options.emit({
+          type: "timeline.item",
+          sessionId: this.id,
+          item: mapAcpToolCall(settledPayload),
+          ...(timestamp ? { timestamp } : {}),
+        });
+      }
+      this.inspectToolSideEffects(settledPayload, "transcript");
+    }
+    this.syncAutonomousToolStallGuard(auto);
   }
 
   private emitAutonomousPlannerTextAndUsage(auto: AutonomousTurn, step: TranscriptStep): void {
@@ -1688,8 +1747,27 @@ export class Session {
     return undefined;
   }
 
+  private isPostTurnLive(): boolean {
+    return this.turn === null && this.replayWindow === null && this.driverHasStartedPrompt;
+  }
+
+  private shouldDropSessionUpdate(): boolean {
+    if (this.replayWindow === "skip") return true;
+    return this.replayWindow === null && this.turn === null && !this.driverHasStartedPrompt;
+  }
+
+  private markAutonomousAcpActivity(auto: AutonomousTurn): void {
+    auto.receivedAcpUpdates = true;
+    auto.waitingSince = null;
+    this.clearAutonomousToolStallTimeout(auto);
+    if (!auto.awaitingPlannerResponse) {
+      this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
+    }
+  }
+
   private handleNotification(driver: DriverProcess, method: string, params: unknown): void {
     if (this.driver !== driver || this.closed || method !== "session/update") return;
+    this.sessionUpdateSeq += 1;
     const parsed = acpSessionNotificationParamsSchema.safeParse(params);
     if (!parsed.success) return;
     if (this.conversationId && parsed.data.sessionId !== this.conversationId) return;
@@ -1712,22 +1790,16 @@ export class Session {
       return;
     }
 
-    if (this.replayWindow === "skip") return;
+    if (this.shouldDropSessionUpdate()) return;
     const filteredUpdate = this.filterPostTurnCatchupUpdate(update);
     if (!filteredUpdate) return;
     update = filteredUpdate;
 
-    const isPostTurnLive = this.turn === null && this.replayWindow === null;
+    const isPostTurnLive = this.isPostTurnLive();
 
     if (update.sessionUpdate === "usage_update") {
-      if (isPostTurnLive) {
-        const auto = this.ensureAutonomousTurn("acp");
-        auto.receivedAcpUpdates = true;
-        auto.waitingSince = null;
-        this.clearAutonomousToolStallTimeout(auto);
-        if (!auto.awaitingPlannerResponse) {
-          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
-        }
+      if (isPostTurnLive && this.autonomousTurn) {
+        this.markAutonomousAcpActivity(this.autonomousTurn);
       }
       this.emitUsageUpdate(update);
       return;
@@ -1739,13 +1811,7 @@ export class Session {
       update.sessionUpdate === "user_message_chunk"
     ) {
       if (isPostTurnLive && update.sessionUpdate !== "user_message_chunk") {
-        const auto = this.ensureAutonomousTurn("acp");
-        auto.receivedAcpUpdates = true;
-        auto.waitingSince = null;
-        this.clearAutonomousToolStallTimeout(auto);
-        if (!auto.awaitingPlannerResponse) {
-          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
-        }
+        this.markAutonomousAcpActivity(this.ensureAutonomousTurn("acp"));
       }
       this.applyChunkUpdate(update);
       return;
@@ -1753,13 +1819,7 @@ export class Session {
 
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
       if (isPostTurnLive) {
-        const auto = this.ensureAutonomousTurn("acp");
-        auto.receivedAcpUpdates = true;
-        auto.waitingSince = null;
-        this.clearAutonomousToolStallTimeout(auto);
-        if (!auto.awaitingPlannerResponse) {
-          this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
-        }
+        this.markAutonomousAcpActivity(this.ensureAutonomousTurn("acp"));
       }
       this.chunkIds.clear();
       this.chunkEpoch += 1;
@@ -1935,7 +1995,7 @@ export class Session {
       return;
     }
 
-    if (this.turn === null && this.replayWindow === null && isRootSession) {
+    if (this.isPostTurnLive() && isRootSession) {
       this.ensureAutonomousTurn("acp");
     }
 
@@ -1983,7 +2043,7 @@ export class Session {
     options: AcpPermissionOption[],
     questions: ParsedElicitationQuestion[],
   ): void {
-    if (this.turn === null && this.replayWindow === null && isRootSession) {
+    if (this.isPostTurnLive() && isRootSession) {
       this.ensureAutonomousTurn("acp");
     }
 
@@ -2011,7 +2071,7 @@ export class Session {
   private handleElicitationRequest(rpcId: string | number, params: AcpElicitationParams): void {
     const isRootSession =
       !this.conversationId || !params.sessionId || params.sessionId === this.conversationId;
-    if (this.turn === null && this.replayWindow === null && isRootSession) {
+    if (this.isPostTurnLive() && isRootSession) {
       this.ensureAutonomousTurn("acp");
     }
 
@@ -2296,6 +2356,7 @@ export class Session {
 
   private async retireDriver(): Promise<void> {
     this.stopRootMonitor();
+    this.driverHasStartedPrompt = false;
     this.clearPostTurnCatchupState();
     this.driverInitPromise = null;
     this.activeBackgroundTasks.clear();

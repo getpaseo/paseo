@@ -98,6 +98,7 @@ async function setupHarness(env: Record<string, string> = {}) {
     sessionId = "s",
     mode?: string,
     history: "replay" | "skip" = "replay",
+    model?: string,
   ) {
     await sendRequest({
       type: "session.open",
@@ -112,6 +113,7 @@ async function setupHarness(env: Record<string, string> = {}) {
         mcpServers: {},
         persist: true,
         ...(mode ? { mode } : {}),
+        ...(model ? { model } : {}),
       },
     });
   }
@@ -1061,5 +1063,111 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     ]);
     // Next poll must NOT rescan step 0 or step 1!
     expect(await reader.readNewSteps()).toEqual([]);
+  });
+
+  it("resumes existing sessions without phantom active turns when session/load streams trailing updates or session/set_model emits usage_update", async () => {
+    const h = await setupHarness({
+      AGY_TEST_ASYNC_SESSION_LOAD: "yes",
+      AGY_TEST_LATE_LOAD_STRAGGLER: "yes",
+      AGY_TEST_SET_MODEL_USAGE: "yes",
+    });
+    await h.open(undefined, "s-orig", "full-access");
+
+    // Populate real transcript.jsonl + transcript_full.jsonl with <SYSTEM_MESSAGE> wakeup history
+    await h.prompt("BG_RUN_COMMAND_WAKEUP", "s-orig");
+    await h.turnCompleted("wakeup-1", "s-orig");
+    const savedPersistence = h.rootPersistence("s-orig");
+    await h.sendRequest({
+      type: "session.close",
+      requestId: "close-orig",
+      sessionId: "s-orig",
+    });
+
+    // 1. Reopen with history: "replay" + non-default model (triggers session/load + session/set_model):
+    //    captures post-response replay chunks before session.ready, ignores late stragglers, and stays idle.
+    const replayStart = h.events.length;
+    await h.open(savedPersistence, "s-replay", "full-access", "replay", "gemini-3.8-flash-low");
+    const replayOpenEvents = h.events.slice(replayStart);
+    const readyIdx = replayOpenEvents.findIndex(
+      (e) => e.type === "session.ready" && e.sessionId === "s-replay",
+    );
+    const trailingMsgIdx = replayOpenEvents.findIndex(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "s-replay" &&
+        e.item.type === "assistant_message" &&
+        e.item.text === "POST_LOAD_TRAILING_ASSISTANT",
+    );
+    expect(trailingMsgIdx).toBeGreaterThanOrEqual(0);
+    expect(readyIdx).toBeGreaterThan(trailingMsgIdx);
+
+    // Wait past late straggler (110ms) and root transcript poll (180ms)
+    await new Promise((resolve) => setTimeout(resolve, 240));
+    expect(h.sessionTurnStates("s-replay")).toEqual([]);
+    expect(await h.canStopRuntime("s-replay")).toBe(true);
+    await h.prompt("HELLO", "s-replay");
+    await h.sendRequest({
+      type: "session.close",
+      requestId: "close-replay",
+      sessionId: "s-replay",
+    });
+
+    // 2. Resume from persistence with history: "skip" (exact Paseo daemon restart / idle runtime reopen path):
+    //    no timeline items leak, no phantom wakeup-* turn blocks subsequent prompts, and idle model/mode switches stay idle.
+    const skipStart = h.events.length;
+    await h.open(savedPersistence, "s-skip", "default", "skip", "gemini-3.8-flash-low");
+    await new Promise((resolve) => setTimeout(resolve, 240));
+
+    const skipIdleSlice = h.events.slice(skipStart);
+    expect(
+      skipIdleSlice.filter((e) => e.type === "timeline.item" && e.sessionId === "s-skip"),
+    ).toEqual([]);
+    expect(h.sessionTurnStates("s-skip")).toEqual([]);
+    expect(await h.canStopRuntime("s-skip")).toBe(true);
+
+    // Idle model switch emitting usage_update must not synthesize an autonomousTurn either
+    await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-idle-model",
+      sessionId: "s-skip",
+      changes: { model: "gemini-4-argon-medium" },
+    });
+    expect(h.sessionTurnStates("s-skip")).toEqual([]);
+    expect(await h.canStopRuntime("s-skip")).toBe(true);
+
+    // Switching to full-access retires driver; next prompt spawns fresh driver + session/load without leaking stale chunks
+    await h.sendRequest({
+      type: "session.configure",
+      requestId: "cfg-skip-full",
+      sessionId: "s-skip",
+      changes: { mode: "full-access" },
+    });
+    const resumedReply = await h.promptSlice("HELLO", "s-skip");
+    expect(resumedReply.assistantTexts).toEqual(["PHASE0_HELLO", "PHASE0_HELLO\n"]);
+    expect(resumedReply.toolIds).toEqual([]);
+  });
+
+  it("flushes unpaired pendingTranscriptTools when agy omits a CANCELED tool step before the next PLANNER_RESPONSE", async () => {
+    const h = await setupHarness();
+    await h.open(undefined, "s", "full-access");
+
+    await h.prompt("BG_WAKEUP_OMITTED_CANCELED_TOOL");
+    expect(await h.canStopRuntime()).toBe(false);
+
+    const failedTool = await h.failedToolCall("wakeup-canceled-cmd-1");
+    expect(failedTool.item).toMatchObject({
+      type: "tool_call",
+      id: "wakeup-canceled-cmd-1",
+      status: "failed",
+    });
+    expect(await h.assistantMessageContaining("RECOVERED_AFTER_CANCELED_WAKEUP_TOOL")).toBe(
+      "RECOVERED_AFTER_CANCELED_WAKEUP_TOOL",
+    );
+
+    await h.turnCompleted("wakeup-1");
+    expect(await h.canStopRuntime()).toBe(true);
+
+    // Session remains healthy for subsequent foreground prompts
+    await h.prompt("HELLO");
   });
 });
