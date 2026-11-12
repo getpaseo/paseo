@@ -307,6 +307,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isInitialHistoryLoading,
     revealInitialHistory,
     onNearBottomChange,
+    onUserScroll,
     onReadingPositionChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
@@ -1026,6 +1027,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const handleWheel = (event: WheelEvent) => {
       if (
         !event.ctrlKey &&
+        event.deltaY !== 0 &&
+        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+      ) {
+        onUserScroll?.();
+      }
+      if (
+        !event.ctrlKey &&
         event.deltaY < 0 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
@@ -1033,6 +1041,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        !isEditableEventTarget(event.target) &&
+        ["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "].includes(event.key) &&
+        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+      ) {
+        onUserScroll?.();
+      }
       if (!isUpwardViewportScrollKey(event)) {
         return;
       }
@@ -1053,6 +1068,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       if (event.button === 0) {
         if (isVerticalScrollbarGutterPress(event, scrollContainer)) {
+          onUserScroll?.();
           mouseScrollGestureRef.current = { kind: "scrollbar", pointerId: event.pointerId };
         }
         return;
@@ -1064,6 +1080,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         hasUpwardEvidence: false,
         evidenceExpiryFrame: null,
       };
+      onUserScroll?.();
     };
     const handlePointerMove = (event: PointerEvent) => {
       const gesture = mouseScrollGestureRef.current;
@@ -1109,10 +1126,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const previousTouchY = lastTouchClientYRef.current;
       if (
         previousTouchY !== null &&
-        touch.clientY > previousTouchY + 1 &&
+        Math.abs(touch.clientY - previousTouchY) > 1 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardViewportInput();
+        onUserScroll?.();
+        if (touch.clientY > previousTouchY) markUpwardViewportInput();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -1156,6 +1174,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     handleDomScroll,
     isActive,
     markUpwardInputEvidence,
+    onUserScroll,
     rearmHistoryStartFromUserIntent,
   ]);
 

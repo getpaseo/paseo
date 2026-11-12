@@ -60,6 +60,7 @@ import { usePluginButtonMenuOpen } from "./menu-open";
 import { pluginButtonStore } from "./store";
 import { resolvePluginPlatform } from "../platform";
 import { scrollAgentTimeline } from "@/agent-stream/timeline-navigation";
+import { TIMELINE_CONTROL_ICON_SIZE, timelineControlStyles } from "@/agent-stream/timeline-control";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
@@ -105,7 +106,14 @@ function placementButtonStyle(
   disabled: boolean,
   state: IconButtonChromeState,
 ) {
-  if (placement === "composer-toolbar" || placement === "timeline") {
+  if (placement === "timeline") {
+    return [
+      timelineControlStyles.button,
+      (state.hovered || state.pressed || state.open) && timelineControlStyles.active,
+      disabled && timelineControlStyles.disabled,
+    ];
+  }
+  if (placement === "composer-toolbar") {
     return iconButtonChromeStyle({ size: "small", compact, disabled, round: true, state });
   }
   if (placement === "vertical-bar") {
@@ -129,13 +137,13 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
 }
 
 function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
-  const color = view.props.theme.colors.foregroundMuted;
-  const size =
-    view.entry.placement === "header" ||
-    view.entry.placement === "timeline" ||
-    view.entry.placement === "vertical-bar"
-      ? 16
-      : 14;
+  const color =
+    view.entry.placement === "timeline"
+      ? view.props.theme.colors.foreground
+      : view.props.theme.colors.foregroundMuted;
+  let size = 14;
+  if (view.entry.placement === "timeline") size = TIMELINE_CONTROL_ICON_SIZE;
+  else if (view.entry.placement === "header" || view.entry.placement === "vertical-bar") size = 16;
   const Icon = pluginIconComponent(icon);
   return (
     <View
