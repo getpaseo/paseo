@@ -852,6 +852,7 @@ export const es: TranslationResources = {
         },
         viewPr: "VerPR",
         createPr: {
+          ...en.workspace.git.actions.createPr,
           label: "CrearPR",
           pending: "CreandoPR...",
           success: "PRcreado",

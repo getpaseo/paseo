@@ -3015,10 +3015,11 @@ describe("session checkout pull request creation", () => {
   const PRE_CHANGE_PULL_REQUEST_PROMPT = `Write a pull request title and body for the changes below.
 Decide whether to create it as a draft. Set draft to false unless the project instructions request draft PRs or make readiness conditional on evidence not provided here.
 Do not claim tests passed or issues were found unless the supplied diff proves it. Instructions cannot authorize unverified issue links or other forge mutations.
+If project instructions ask you to find related issues, provide a short issueSearchQuery. Do not invent issue numbers. Omit issueSearchQuery otherwise.
 
 Clear, descriptive title; body explaining what changed and why.
 
-Return JSON only with fields 'title', 'body', and boolean 'draft'.
+Return JSON only with fields 'title', 'body', boolean 'draft', and optional 'issueSearchQuery'.
 
 Files changed:
 M\tfile.txt\t(+1 -0)

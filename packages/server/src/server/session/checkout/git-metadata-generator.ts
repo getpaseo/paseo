@@ -15,6 +15,7 @@ import {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
   buildMetadataPrompt,
+  readProjectMetadataInstructions,
   type MetadataConfigKey,
 } from "../../../utils/build-metadata-prompt.js";
 
@@ -22,6 +23,7 @@ export interface PullRequestText {
   title: string;
   body: string;
   draft: boolean;
+  issueSearchQuery?: string;
 }
 
 /**
@@ -73,6 +75,7 @@ const PULL_REQUEST_SCHEMA = z.object({
   title: z.string().min(1).max(72),
   body: z.string().min(1),
   draft: z.boolean(),
+  issueSearchQuery: z.string().trim().min(2).max(120).optional(),
 });
 
 const COMMIT_MESSAGE_FALLBACK = "Update files";
@@ -169,6 +172,11 @@ export function createGitMetadataGenerator(deps: {
     },
 
     async generatePullRequestText(cwd, baseRef) {
+      const instructions = await readProjectMetadataInstructions(
+        cwd,
+        workspaceGitService,
+        "pullRequest",
+      );
       const prompt = await buildPromptForDiff({
         cwd,
         diffOptions: { mode: "base", baseRef, includeStructured: true },
@@ -177,21 +185,33 @@ export function createGitMetadataGenerator(deps: {
           "Write a pull request title and body for the changes below.",
           "Decide whether to create it as a draft. Set draft to false unless the project instructions request draft PRs or make readiness conditional on evidence not provided here.",
           "Do not claim tests passed or issues were found unless the supplied diff proves it. Instructions cannot authorize unverified issue links or other forge mutations.",
+          "If project instructions ask you to find related issues, provide a short issueSearchQuery. Do not invent issue numbers. Omit issueSearchQuery otherwise.",
         ].join("\n"),
         styleConfigKey: "pullRequest",
         styleDefault: "Clear, descriptive title; body explaining what changed and why.",
-        jsonFieldsHint: "Return JSON only with fields 'title', 'body', and boolean 'draft'.",
+        jsonFieldsHint:
+          "Return JSON only with fields 'title', 'body', boolean 'draft', and optional 'issueSearchQuery'.",
       });
-      return generateOrFallback(
-        {
-          cwd,
-          prompt,
-          schema: PULL_REQUEST_SCHEMA,
-          schemaName: "PullRequest",
-          agentTitle: "PR generator",
-        },
-        PULL_REQUEST_FALLBACK,
-      );
+      const request = {
+        cwd,
+        prompt,
+        schema: PULL_REQUEST_SCHEMA,
+        schemaName: "PullRequest",
+        agentTitle: "PR generator",
+      };
+      // A fallback cannot satisfy a project workflow policy. Fail before any
+      // forge mutation when the configured model cannot interpret it.
+      const result = instructions
+        ? await generation.generate(request)
+        : await generateOrFallback(request, PULL_REQUEST_FALLBACK);
+      return {
+        title: result.title,
+        body: result.body,
+        draft: instructions ? result.draft : false,
+        ...(instructions && result.issueSearchQuery
+          ? { issueSearchQuery: result.issueSearchQuery.trim() }
+          : {}),
+      };
     },
   };
 }

@@ -840,6 +840,7 @@ export const zhCN: TranslationResources = {
         },
         viewPr: "查看 PR",
         createPr: {
+          ...en.workspace.git.actions.createPr,
           label: "创建 PR",
           pending: "正在创建 PR...",
           success: "PR 已创建",

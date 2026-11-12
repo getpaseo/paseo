@@ -2542,6 +2542,16 @@ export const CheckoutPrCreateRequestSchema = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   draft: z.boolean().optional(),
+  previewOnly: z.boolean().optional(),
+  proposalId: z.string().optional(),
+  issueLinks: z
+    .array(
+      z.object({
+        number: z.number().int().positive(),
+        relation: z.enum(["reference", "close"]),
+      }),
+    )
+    .optional(),
   baseRef: z.string().optional(),
   requestId: z.string(),
 });
@@ -3936,6 +3946,7 @@ export const ServerInfoStatusPayloadSchema = z
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
+        checkoutPrPreview: z.boolean().optional(),
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75 and retained as
         // the fallback for checkoutForgeSetAutoMerge. Stop advertising and
         // consuming it after 2027-01-17 once supported floors are >= v0.2.0.
@@ -5989,6 +6000,21 @@ export const CheckoutPrCreateResponseSchema = z.object({
     cwd: z.string(),
     url: z.string().nullable(),
     number: z.number().nullable(),
+    proposal: z
+      .object({
+        id: z.string(),
+        title: z.string(),
+        body: z.string(),
+        draft: z.boolean(),
+        issues: z.array(
+          z.object({
+            number: z.number().int().positive(),
+            title: z.string(),
+            url: z.string(),
+          }),
+        ),
+      })
+      .optional(),
     error: CheckoutErrorSchema.nullable(),
     requestId: z.string(),
   }),

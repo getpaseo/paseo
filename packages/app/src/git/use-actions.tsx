@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { Info } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -33,11 +33,22 @@ import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warnin
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { readValidatedString } from "@/storage/validated-storage";
+import { confirmDialog } from "@/utils/confirm-dialog";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
 const forgeMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedInfo = withUnistyles(Info, (theme) => ({ color: theme.colors.foreground }));
+
+function visiblePrCreateStatus(
+  hasPullRequest: boolean,
+  isPreparingPr: boolean,
+  status: CheckoutGitActionStatus,
+): CheckoutGitActionStatus {
+  if (hasPullRequest) return "idle";
+  if (isPreparingPr) return "pending";
+  return status;
+}
 
 export function useGitActionRunner(): (action: GitAction) => void {
   const toast = useToast();
@@ -322,6 +333,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
+  const [isPreparingPr, setIsPreparingPr] = useState(false);
+  const preparingPrRef = useRef(false);
 
   const { status, isLoading: isStatusLoading } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
@@ -452,6 +465,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const runPush = useCheckoutGitActionsStore((s) => s.push);
   const runPullAndPush = useCheckoutGitActionsStore((s) => s.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((s) => s.createPr);
+  const preparePr = useCheckoutGitActionsStore((s) => s.preparePr);
+  const prPreviewSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutPrPreview === true,
+  );
   const runMergePr = useCheckoutGitActionsStore((s) => s.mergePr);
   const runEnablePrAutoMerge = useCheckoutGitActionsStore((s) => s.enablePrAutoMerge);
   const runDisablePrAutoMerge = useCheckoutGitActionsStore((s) => s.disablePrAutoMerge);
@@ -524,19 +541,67 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   }, [cwd, runPullAndPush, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleCreatePr = useCallback(() => {
+    if (preparingPrRef.current) return;
+    preparingPrRef.current = true;
     void persistShipDefault("pr");
-    void runCreatePr({ serverId, cwd })
-      .then(() => {
+    setIsPreparingPr(true);
+    void (async () => {
+      try {
+        // COMPAT(checkoutPrPreview): added in v0.16.0, remove after 2027-05-13
+        // once supported daemon floors advertise PR preview.
+        if (!prPreviewSupported) {
+          await runCreatePr({ serverId, cwd });
+          toastActionSuccess(t("workspace.git.actions.createPr.success", forgeVocabulary(forge)));
+          return;
+        }
+        const proposal = await preparePr({ serverId, cwd });
+        const issueLinks: Array<{ number: number; relation: "reference" | "close" }> = [];
+        for (const issue of proposal.issues) {
+          const link = await confirmDialog({
+            title: t("workspace.git.actions.createPr.relatedIssueTitle", {
+              number: issue.number,
+            }),
+            message: `${issue.title}\n${issue.url}`,
+            confirmLabel: t("workspace.git.actions.createPr.linkIssue"),
+            cancelLabel: t("workspace.git.actions.createPr.skipIssue"),
+          });
+          if (!link) continue;
+          const close = await confirmDialog({
+            title: t("workspace.git.actions.createPr.closeIssueTitle", {
+              number: issue.number,
+            }),
+            message: t("workspace.git.actions.createPr.closeIssueMessage"),
+            confirmLabel: t("workspace.git.actions.createPr.closeIssue"),
+            cancelLabel: t("workspace.git.actions.createPr.referenceOnly"),
+          });
+          issueLinks.push({ number: issue.number, relation: close ? "close" : "reference" });
+        }
+        const issueSummary = issueLinks
+          .map(
+            (issue) => `${issue.relation === "close" ? "Closes" : "Related to"} #${issue.number}`,
+          )
+          .join("\n");
+        const approved = await confirmDialog({
+          title: t("workspace.git.actions.createPr.previewTitle"),
+          message: `${proposal.title}\n\n${proposal.draft ? t("workspace.git.actions.createPr.draftState") : t("workspace.git.actions.createPr.readyState")}\n\n${proposal.body}${issueSummary ? `\n\n${issueSummary}` : ""}`,
+          confirmLabel: t("workspace.git.actions.createPr.confirmCreate"),
+        });
+        if (!approved) return;
+        await runCreatePr({ serverId, cwd, proposalId: proposal.id, issueLinks });
         toastActionSuccess(t("workspace.git.actions.createPr.success", forgeVocabulary(forge)));
-        return;
-      })
-      .catch((err) => {
+      } catch (err) {
         toastActionError(err, t("workspace.git.actions.toasts.failedCreatePr"));
-      });
+      } finally {
+        preparingPrRef.current = false;
+        setIsPreparingPr(false);
+      }
+    })();
   }, [
     cwd,
     forge,
     persistShipDefault,
+    preparePr,
+    prPreviewSupported,
     runCreatePr,
     serverId,
     t,
@@ -736,8 +801,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           handler: handlePullAndPush,
         },
         pr: {
-          disabled: isActionDisabled(actionsDisabled, prCreateStatus),
-          status: hasPullRequest ? "idle" : prCreateStatus,
+          disabled: isPreparingPr || isActionDisabled(actionsDisabled, prCreateStatus),
+          status: visiblePrCreateStatus(hasPullRequest, isPreparingPr, prCreateStatus),
           icon: prIcon,
           handler: handlePrAction,
         },
@@ -834,6 +899,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    isPreparingPr,
     mergePrStatuses.squash,
     mergePrStatuses.merge,
     mergePrStatuses.rebase,

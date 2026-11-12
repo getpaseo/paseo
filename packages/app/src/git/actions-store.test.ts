@@ -163,6 +163,44 @@ describe("checkout-git-actions-store", () => {
     ).toBe("success");
   });
 
+  it("previews a PR before submitting only approved issue links", async () => {
+    const proposal = {
+      id: "proposal-1",
+      title: "Fix retry failure",
+      body: "Retries transient errors.",
+      draft: true,
+      issues: [{ number: 7, title: "Retry failure", url: "https://example.com/issues/7" }],
+    };
+    const checkoutPrCreate = vi
+      .fn()
+      .mockResolvedValueOnce({ proposal, error: null })
+      .mockResolvedValueOnce({ url: "https://example.com/pull/1", number: 1, error: null });
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client: { checkoutPrCreate } } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+    const store = useCheckoutGitActionsStore.getState();
+
+    await expect(store.preparePr({ serverId, cwd })).resolves.toEqual(proposal);
+    expect(checkoutPrCreate).toHaveBeenNthCalledWith(1, cwd, { previewOnly: true });
+    expect(store.getStatus({ serverId, cwd, actionId: "create-pr" })).toBe("idle");
+
+    await store.createPr({
+      serverId,
+      cwd,
+      proposalId: proposal.id,
+      issueLinks: [{ number: 7, relation: "close" }],
+    });
+    expect(checkoutPrCreate).toHaveBeenNthCalledWith(2, cwd, {
+      proposalId: "proposal-1",
+      issueLinks: [{ number: 7, relation: "close" }],
+    });
+    expect(store.getStatus({ serverId, cwd, actionId: "create-pr" })).toBe("success");
+  });
+
   it("surfaces a refresh error and returns to idle", async () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),

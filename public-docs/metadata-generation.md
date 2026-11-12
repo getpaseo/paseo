@@ -34,7 +34,7 @@ In Automatic mode, Paseo builds an ordered list of candidates and tries each one
 
 Each default is a match on the model id or name, so the first enabled provider that ships a matching model wins. Defaults with no match are skipped. Duplicates are removed, then generation tries the list top to bottom. The default order prefers small, fast, cheap models for these short tasks before falling back to whatever you have selected.
 
-In Manual mode, Paseo tries only your configured models, in your order. It never adds the built-in defaults or the selected model, so your prompts and diffs only go to providers you chose. If every configured model fails, generation fails: workspace titles and branch names are not generated, and commits and pull requests get placeholder text. Pick a model that works for these tasks.
+In Manual mode, Paseo tries only your configured models, in your order. It never adds the built-in defaults or the selected model, so your prompts and diffs only go to providers you chose. If every configured model fails, generation fails: workspace titles and branch names are not generated, and commits get placeholder text. Pull requests get placeholder text only when no per-project PR instructions are configured; otherwise creation stops before any forge action. Pick a model that works for these tasks.
 
 Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by default) with the provider, the model and the error. Look there when a manual model doesn't produce titles, branch names, commit messages or pull request text.
 
@@ -78,7 +78,7 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
     "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
     "pullRequest": {
-      "instructions": "Include a Testing section in the body. Create as draft until verification is evidenced."
+      "instructions": "Include a Testing section. Create as draft until verification is evidenced. Search for related open issues before creating the PR."
     }
   }
 }
@@ -86,4 +86,4 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
 
 Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.
 
-Pull request instructions can also choose draft versus ready-to-review creation. If the instructions make readiness conditional on evidence the generator has not received, Paseo creates a draft. These instructions do not search for issues or make other forge changes yet.
+Pull request instructions can also choose draft versus ready-to-review creation and request a search for related open issues. Paseo shows the generated title, body, readiness state, and any issue candidates before creation. You choose whether to reference each issue or close it when the PR merges; nothing is linked or closed by the search alone. If the model cannot process configured instructions, PR creation stops instead of silently ignoring the policy. An older host without PR preview support keeps the previous create flow, but cannot apply issue-discovery instructions; update that host to use this workflow.

@@ -56,6 +56,16 @@ async function readProjectMetadataOverrides(
   }
 }
 
+export async function readProjectMetadataInstructions(
+  cwd: string,
+  workspaceGitService: RepoRootResolver,
+  configKey: MetadataConfigKey,
+): Promise<string | undefined> {
+  const overrides = await readProjectMetadataOverrides({ cwd, workspaceGitService });
+  const instructions = overrides?.[configKey]?.instructions;
+  return isNonEmptyString(instructions) ? instructions.trim() : undefined;
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
 }
