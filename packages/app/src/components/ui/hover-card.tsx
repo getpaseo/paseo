@@ -42,7 +42,7 @@ interface HoverCardContextValue {
   setTriggerRef: (node: View | null) => void;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
-  openNow: () => void;
+  pointerEntered: (event: ViewPointerEvent) => void;
   scheduleClose: () => void;
 }
 
@@ -62,21 +62,34 @@ const HoverCardContext = createContext<HoverCardContextValue | null>(null);
  */
 export function HoverCard({
   disabled = false,
+  ignoreTouch = false,
   children,
 }: {
   /** Closes the card and keeps it closed, e.g. while its trigger is dragged. */
   disabled?: boolean;
+  /**
+   * The trigger handles a tap itself, so a touch does not open the card: neither the touch's
+   * pointerenter nor the focus the tap leaves on the trigger. Opening during a tap changes the
+   * page under the finger, and iPad Safari then drops the tap.
+   */
+  ignoreTouch?: boolean;
   children: ReactNode;
 }): ReactNode {
   if (!isWeb) return children;
-  return <WebHoverCard disabled={disabled}>{children}</WebHoverCard>;
+  return (
+    <WebHoverCard disabled={disabled} ignoreTouch={ignoreTouch}>
+      {children}
+    </WebHoverCard>
+  );
 }
 
 function WebHoverCard({
   disabled,
+  ignoreTouch,
   children,
 }: {
   disabled: boolean;
+  ignoreTouch: boolean;
   children: ReactNode;
 }): ReactElement {
   const layer = useOverlayLayer("floating");
@@ -86,7 +99,7 @@ function WebHoverCard({
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Read when focus arrives: by focusout the element losing focus no longer matches :focus-visible.
   const keyboardFocusedRef = useRef(false);
-  // Whether the latest press was a touch, so the focus that tap leaves on the trigger is ignored.
+  // Whether the latest press was a touch, so with ignoreTouch the focus that tap leaves is ignored.
   const touchPressedRef = useRef(false);
 
   const clearGraceTimer = useCallback(() => {
@@ -133,6 +146,13 @@ function WebHoverCard({
     openCardCloseByLayer.set(layer, closeNow);
     setOpen(true);
   }, [clearGraceTimer, closeNow, disabled, layer]);
+
+  const pointerEntered = useCallback(
+    (event: ViewPointerEvent) => {
+      if (!(ignoreTouch && event.nativeEvent.pointerType === "touch")) openNow();
+    },
+    [ignoreTouch, openNow],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -200,8 +220,7 @@ function WebHoverCard({
       const target = event.target as Element;
       keyboardFocusedRef.current = target.matches(":focus-visible");
       if (trigger.contains(target)) {
-        // A tap focuses the trigger too. A touch is not a hover, so that focus does not open it.
-        if (!touchPressedRef.current) openNow();
+        if (!(ignoreTouch && touchPressedRef.current)) openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
         clearGraceTimer();
       }
@@ -253,7 +272,7 @@ function WebHoverCard({
       document.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", close);
     };
-  }, [clearGraceTimer, keyPressed, open, openNow, scheduleClose]);
+  }, [clearGraceTimer, ignoreTouch, keyPressed, open, openNow, scheduleClose]);
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering
@@ -276,8 +295,16 @@ function WebHoverCard({
   useEffect(() => clearGraceTimer, [clearGraceTimer]);
 
   const value = useMemo<HoverCardContextValue>(
-    () => ({ open, layer, setTriggerRef, triggerRef, contentRef, openNow, scheduleClose }),
-    [open, layer, setTriggerRef, openNow, scheduleClose],
+    () => ({
+      open,
+      layer,
+      setTriggerRef,
+      triggerRef,
+      contentRef,
+      pointerEntered,
+      scheduleClose,
+    }),
+    [open, layer, setTriggerRef, pointerEntered, scheduleClose],
   );
 
   return (
@@ -290,26 +317,13 @@ function WebHoverCard({
 export function HoverCardTrigger({
   children,
   focusable = false,
-  ignoreTouch = false,
   accessibilityLabel,
 }: {
   children: ReactNode;
   focusable?: boolean;
-  /**
-   * The trigger handles a tap itself, so a touch must not open the card. Opening on a touch's
-   * pointerenter changes the page under the finger, and iPad Safari then drops the tap.
-   */
-  ignoreTouch?: boolean;
   accessibilityLabel?: string;
 }): ReactNode {
   const ctx = useContext(HoverCardContext);
-  const openNow = ctx?.openNow;
-  const pointerEntered = useCallback(
-    (event: ViewPointerEvent) => {
-      if (!(ignoreTouch && event.nativeEvent.pointerType === "touch")) openNow?.();
-    },
-    [ignoreTouch, openNow],
-  );
   if (!ctx) return children;
   return (
     <View
@@ -318,7 +332,7 @@ export function HoverCardTrigger({
       accessibilityRole={focusable ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
       collapsable={false}
-      onPointerEnter={pointerEntered}
+      onPointerEnter={ctx.pointerEntered}
       onPointerLeave={ctx.scheduleClose}
     >
       {children}
