@@ -41,6 +41,14 @@ import type {
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
+import { isTextZoomSurface, type TextZoomSurface } from "@/text-zoom/model";
+import {
+  enablePinchTextZoom,
+  getTextZoom,
+  setTextZoom,
+  subscribeTextZoom,
+  useTextZoom,
+} from "@/text-zoom/store";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
@@ -120,6 +128,11 @@ export type PluginClientRuntime = Pick<
 // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
 // The 0.12 entry exposed the reveal hook as well as UI components.
 const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
+
+function requireTextZoomSurface(surface: unknown): TextZoomSurface {
+  if (isTextZoomSurface(surface)) return surface;
+  throw new Error(`Unknown text zoom surface: ${String(surface)}`);
+}
 
 export function runPluginClientBundle(
   id: string,
@@ -554,6 +567,33 @@ export function runPluginClientBundle(
       return trackButton(runtime.addHeaderButton(contribution));
     },
   };
+  // Text zoom is device state shared by every plugin. Pinch claims belong to this installation
+  // and end when it stops.
+  const textZoomRuntime = {
+    useTextZoom: (surface: unknown) => useTextZoom(requireTextZoomSurface(surface)),
+    getTextZoom: (surface: unknown) => getTextZoom(requireTextZoomSurface(surface)),
+    subscribeTextZoom,
+    setTextZoom: (surface: unknown, zoom: unknown) => {
+      if (typeof zoom !== "number" || !Number.isFinite(zoom)) {
+        throw new Error("Text zoom must be a finite number");
+      }
+      setTextZoom(requireTextZoomSurface(surface), zoom);
+    },
+    enablePinchTextZoom: (surface: unknown) => {
+      const target = requireTextZoomSurface(surface);
+      if (stopped) throw new Error("Plugin has stopped");
+      const release = enablePinchTextZoom(target);
+      let active = true;
+      const remove = () => {
+        if (!active) return;
+        active = false;
+        release();
+        removals.delete(remove);
+      };
+      removals.add(remove);
+      return remove;
+    },
+  };
   const runtimeRequire = (name: string): unknown => {
     // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
     if (name === "@getpaseo/plugin/client/react-native") return pluginReactNativeCompatRuntime;
@@ -575,6 +615,7 @@ export function runPluginClientBundle(
             runtime.hosts.getSnapshot,
             runtime.hosts.getSnapshot,
           ),
+        ...textZoomRuntime,
       };
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;

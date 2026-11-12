@@ -658,6 +658,18 @@ it.each(['""', "''", "()"])("preserves an authored empty link title: %s", (title
   expect(prepareMarkdownSource(source, "/repo").render()).toBe(source);
 });
 
+it("scales prose and code together with the surface's text zoom", () => {
+  const base = createMarkdownStyles(darkTheme, { blockGap: 16 }).markdownStyle;
+  const zoomed = createMarkdownStyles(darkTheme, { blockGap: 16, zoom: 1.5 }).markdownStyle;
+  const content = darkTheme.fontSize.content;
+  const code = darkTheme.fontSize.code;
+  expect(base.paragraph?.fontSize).toBe(content);
+  expect(zoomed.paragraph?.fontSize).toBe(Math.round(content * 1.5));
+  expect(zoomed.paragraph?.lineHeight).toBe(Math.round(Math.round(content * 1.5) * 1.4));
+  expect(zoomed.codeBlock?.fontSize).toBe(Math.round(code * 1.5));
+  expect(zoomed.code?.fontScale).toBe(Math.round(code * 1.5) / Math.round(content * 1.5));
+});
+
 describe("shared Markdown theme colours", () => {
   it.each([
     ["dark", darkTheme],

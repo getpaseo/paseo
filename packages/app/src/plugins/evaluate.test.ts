@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import { getTextZoom, isPinchTextZoomEnabled, resetTextZoomForTests } from "@/text-zoom/store";
 
 const runtime = {
   paseo: {},
@@ -946,5 +947,33 @@ describe("file panels", () => {
         bundle(`plugin.addFilePanel(${source}); plugin.addFilePanel(${source})`),
       ),
     ).toThrow("Duplicate file panel");
+  });
+
+  it("ends a plugin's pinch text zoom when it stops and keeps the size it set", async () => {
+    resetTextZoomForTests();
+    const plugin = evaluatePluginClientBundle(
+      "pinch-text-zoom",
+      bundle(`
+      const client = require("@getpaseo/plugin/client");
+      client.enablePinchTextZoom("chat");
+      client.setTextZoom("terminal", 1.3);
+    `),
+    );
+    expect(isPinchTextZoomEnabled("chat")).toBe(true);
+    expect(isPinchTextZoomEnabled("terminal")).toBe(false);
+    expect(getTextZoom("terminal")).toBe(1.3);
+    await plugin.cleanup();
+    expect(isPinchTextZoomEnabled("chat")).toBe(false);
+    expect(getTextZoom("terminal")).toBe(1.3);
+    resetTextZoomForTests();
+  });
+
+  it("rejects an unknown text zoom surface", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "pinch-unknown-surface",
+        bundle(`require("@getpaseo/plugin/client").enablePinchTextZoom("sidebar")`),
+      ),
+    ).toThrow("Unknown text zoom surface: sidebar");
   });
 });

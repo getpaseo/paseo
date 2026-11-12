@@ -92,6 +92,7 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { TextZoomArea, useTextZoom, zoomedFontSize } from "@/text-zoom";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -271,6 +272,7 @@ export function TerminalPane({
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
+  const terminalZoom = useTextZoom("terminal");
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
@@ -1174,7 +1176,7 @@ export function TerminalPane({
     <Animated.View style={containerStyle}>
       <FileDropZone style={styles.outputContainer}>
         <TerminalFileDropSink onFiles={handleDroppedFiles} />
-        <View style={styles.terminalGestureContainer}>
+        <TextZoomArea surface="terminal" style={styles.terminalGestureContainer}>
           <TerminalEmulator
             ref={emulatorRef}
             dom={TERMINAL_EMULATOR_DOM_PROPS}
@@ -1185,7 +1187,7 @@ export function TerminalPane({
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}
             fontFamily={terminalFontFamily}
-            fontSize={settings.codeFontSize}
+            fontSize={zoomedFontSize(settings.codeFontSize, terminalZoom)}
             keyboardInset={keyboardInset}
             isKeyboardVisible={isKeyboardVisible}
             swipeGesturesEnabled={swipeGesturesEnabled}
@@ -1208,7 +1210,7 @@ export function TerminalPane({
             focusRequestToken={focusRequestToken}
             resizeRequestToken={resizeRequestToken}
           />
-        </View>
+        </TextZoomArea>
 
         <TerminalFind
           key={terminalStreamKey}

@@ -2342,6 +2342,59 @@ an action already in progress.
 the plugin installation is disposed (see [Hosts and lifecycle](#hosts-and-lifecycle)). Return cleanup from the client entry for
 your subscriptions, timers, and other resources.
 
+## Text zoom
+
+The chat and the terminal each have a text zoom on this device: a multiplier on the sizes in
+**Settings → Appearance** (content size for the chat, code size for the terminal). `1` is the
+Appearance size. Paseo saves each zoom on the device, so it survives a relaunch, and clamps it to
+0.5–3 in 5% steps. The chat zoom scales message text, Markdown and its code blocks, and
+`StreamedText` inside the transcript; plugin panels and file views keep their size. The terminal
+zoom changes the terminal's font size, so its cells and the PTY size follow.
+
+Call `enablePinchTextZoom(surface)` to let a pinch change a surface's zoom: two fingers on iOS and
+Android, a trackpad pinch or ctrl+wheel in a browser or the desktop app. Paseo shows the new size
+while the pinch is in progress and applies it when the fingers lift, so a long transcript lays out
+once. One-finger scrolling, text selection and the chat's floating buttons are unaffected. The
+function returns the remover; Paseo also removes it when the plugin stops. Pinch stays on while
+any plugin has it on.
+
+```ts
+import {
+  enablePinchTextZoom,
+  setTextZoom,
+  type PluginClientContext,
+} from "@getpaseo/plugin/client";
+
+export default function contribute(client: PluginClientContext) {
+  const stopChat = enablePinchTextZoom("chat");
+  const stopTerminal = enablePinchTextZoom("terminal");
+  client.addCommandCenterItem({
+    id: "reset-chat-text-size",
+    title: "Reset chat text size",
+    icon: "RotateCcw",
+    context: "global",
+    onSelect: () => setTextZoom("chat", 1),
+  });
+  return () => {
+    stopChat();
+    stopTerminal();
+  };
+}
+```
+
+| Function                       | Meaning                                                               |
+| ------------------------------ | --------------------------------------------------------------------- |
+| `useTextZoom(surface)`         | The surface's zoom, live.                                             |
+| `getTextZoom(surface)`         | The surface's zoom now, for code outside components.                  |
+| `subscribeTextZoom(listener)`  | Calls `listener` when any zoom changes. Returns the remover.          |
+| `setTextZoom(surface, zoom)`   | Sets and saves a zoom. `1` resets the surface to its Appearance size. |
+| `enablePinchTextZoom(surface)` | Lets a pinch change the zoom until the returned remover runs.         |
+
+`surface` is `"chat"` or `"terminal"`; any other value throws. A zoom stays after the plugin that
+set it is removed, so reset it first if it should not outlive the plugin. Apps that predate text
+zoom do not supply these functions; check `typeof enablePinchTextZoom === "function"` before
+calling them.
+
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
