@@ -75,6 +75,7 @@ describe("opencode tool-call mapper", () => {
     expect(item.detail).toEqual({
       type: "plain_text",
       label: "charlotte.charlotte_tabs",
+      title: "charlotte.charlotte_tabs",
       icon: "wrench",
       text: 'const tabs = await tools["charlotte"].charlotte_tabs({});\n\ntab list',
     });
