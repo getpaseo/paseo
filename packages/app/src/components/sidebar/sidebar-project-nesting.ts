@@ -7,7 +7,8 @@ export interface NestedProject {
 
 function normalizedPath(path: string): string {
   const windows = /^[A-Za-z]:[/\\]/.test(path) || path.startsWith("\\\\");
-  const value = windows ? path.replaceAll("\\", "/") : path;
+  let value = path;
+  if (windows) value = value.replaceAll("\\", "/").toLowerCase();
   return value.replace(/\/+$/, "") || "/";
 }
 

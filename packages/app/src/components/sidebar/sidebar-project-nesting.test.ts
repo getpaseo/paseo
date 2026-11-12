@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { nestSidebarProjects } from "./sidebar-project-nesting";
 
-function makeProject(viewKey: string, path: string, serverId = "host"): SidebarProjectEntry {
+function makeProject(input: {
+  viewKey: string;
+  path: string;
+  serverId?: string;
+}): SidebarProjectEntry {
+  const { viewKey, path, serverId = "host" } = input;
   return {
     viewKey,
     projectName: viewKey,
@@ -16,11 +21,11 @@ function makeProject(viewKey: string, path: string, serverId = "host"): SidebarP
 describe("nestSidebarProjects", () => {
   it("places descendants after their nearest parent and keeps sibling order", () => {
     const projects = [
-      makeProject("api", "/app/api"),
-      makeProject("other", "/other"),
-      makeProject("app", "/app"),
-      makeProject("sdk", "/app/api/sdk"),
-      makeProject("web", "/app/web"),
+      makeProject({ viewKey: "api", path: "/app/api" }),
+      makeProject({ viewKey: "other", path: "/other" }),
+      makeProject({ viewKey: "app", path: "/app" }),
+      makeProject({ viewKey: "sdk", path: "/app/api/sdk" }),
+      makeProject({ viewKey: "web", path: "/app/web" }),
     ];
     expect(
       nestSidebarProjects(projects, new Set()).map(({ project, depth }) => [
@@ -39,14 +44,19 @@ describe("nestSidebarProjects", () => {
     ).toEqual(["other", "app", "api", "web"]);
   });
 
-  it("does not confuse path prefixes, equal paths, or hosts", () => {
+  it("keeps POSIX paths case-sensitive and matches mixed-case Windows paths", () => {
     const projects = [
-      makeProject("app", "/app"),
-      makeProject("same", "/app/"),
-      makeProject("application", "/application"),
-      makeProject("remote", "/app/api", "other-host"),
-      makeProject("windows", "C:\\src\\app", "windows-host"),
-      makeProject("windows-child", "C:/src/app/api", "windows-host"),
+      makeProject({ viewKey: "app", path: "/app" }),
+      makeProject({ viewKey: "same", path: "/app/" }),
+      makeProject({ viewKey: "application", path: "/application" }),
+      makeProject({ viewKey: "posix-mixed", path: "/App/api" }),
+      makeProject({ viewKey: "remote", path: "/app/api", serverId: "other-host" }),
+      makeProject({ viewKey: "windows", path: "C:\\Projects\\App", serverId: "windows-host" }),
+      makeProject({
+        viewKey: "windows-child",
+        path: "c:/projects/app/api",
+        serverId: "windows-host",
+      }),
     ];
     expect(
       nestSidebarProjects(projects, new Set()).map(({ project, depth }) => [
@@ -57,6 +67,7 @@ describe("nestSidebarProjects", () => {
       ["app", 0],
       ["same", 0],
       ["application", 0],
+      ["posix-mixed", 0],
       ["remote", 0],
       ["windows", 0],
       ["windows-child", 1],
@@ -64,7 +75,7 @@ describe("nestSidebarProjects", () => {
   });
 
   it("keeps an equivalence project flat when its hosts disagree on the parent", () => {
-    const shared = makeProject("shared", "/app/api");
+    const shared = makeProject({ viewKey: "shared", path: "/app/api" });
     shared.hosts.push({
       serverId: "other-host",
       projectId: "shared",
@@ -72,7 +83,7 @@ describe("nestSidebarProjects", () => {
       worktreeSupport: "supported",
     });
     expect(
-      nestSidebarProjects([makeProject("app", "/app"), shared], new Set()).map(
+      nestSidebarProjects([makeProject({ viewKey: "app", path: "/app" }), shared], new Set()).map(
         ({ project, depth }) => [project.viewKey, depth],
       ),
     ).toEqual([
