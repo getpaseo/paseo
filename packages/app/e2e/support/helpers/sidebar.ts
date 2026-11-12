@@ -132,6 +132,31 @@ export async function expectWorkspaceHoverCardClosed(page: Page): Promise<void> 
   await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
 }
 
+/**
+ * Records whether a workspace hover card mounts at any point from now on, including one that
+ * closes again before an assertion could see it.
+ */
+export async function watchWorkspaceHoverCard(
+  page: Page,
+): Promise<{ hasOpened: () => Promise<boolean> }> {
+  await page.evaluate(() => {
+    const target = window as unknown as { __workspaceHoverCardOpened?: boolean };
+    const isOpen = () => document.querySelector('[data-testid="workspace-hover-card"]') !== null;
+    target.__workspaceHoverCardOpened = isOpen();
+    new MutationObserver(() => {
+      if (isOpen()) target.__workspaceHoverCardOpened = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  return {
+    hasOpened: () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __workspaceHoverCardOpened?: boolean })
+            .__workspaceHoverCardOpened === true,
+      ),
+  };
+}
+
 export async function closeWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
   const workspaceKey = `${getServerId()}:${workspaceId}`;
   await page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}-backdrop`).click();
