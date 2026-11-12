@@ -37,6 +37,8 @@ export type LocalSpeechWorkerRequest =
       config: LocalSpeechWorkerConfig;
       sessionId: string;
       kind: LocalSpeechSessionKind;
+      /** Turn detection only: how long sound must last before speech is reported. */
+      confirmMs?: number;
     }
   | {
       type: "session.append";

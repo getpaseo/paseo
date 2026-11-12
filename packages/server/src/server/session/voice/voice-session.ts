@@ -596,6 +596,9 @@ export class VoiceSession {
       turnDetection,
       stt,
       sttLanguage: this.sttLanguage,
+      // A lone "Stop." is shorter than the detector's default confirmation. Reporting
+      // sound sooner is safe only where the transcript decides what it interrupts.
+      ...(this.host.supportsPlaybackHold() ? { speechConfirmMs: DEFERRED_SPEECH_CONFIRM_MS } : {}),
       callbacks: {
         onSpeechStarted: async () => {
           // Voice STT providers return final transcripts only. Use the detector's
@@ -1015,12 +1018,18 @@ export class VoiceSession {
     // ("Mm-hmm."). On a speakerphone the reply's own audio comes back as its words
     // ("A bicycle began a day."), which is echo too.
     let noise: string | null = null;
-    if (!hasSpokenWord(result.text)) {
+    if (!hasSpokenWord(result.text, this.sttLanguage)) {
       noise = "no words";
     } else if (this.isEchoOfSpokenReply(result.text)) {
       noise = "echo of the reply";
     } else if (this.bargeInDuringEchoWarmup && !hasInterruptWord(result.text)) {
       noise = "reply audio had just started";
+    } else if (isAcknowledgement(result.text)) {
+      noise = "acknowledgement";
+    } else if (spokenWordCount(result.text) === 1 && !hasInterruptWord(result.text)) {
+      // Speech-to-text answers a cough with one plausible word ("Hello"), and a lone
+      // "Yeah." is the user following along, not taking the turn.
+      noise = "single word that is not an interruption";
     }
     if (noise) {
       const hasAnotherSpeechSegment =
@@ -1546,6 +1555,7 @@ export class VoiceSession {
   }
 }
 
+const DEFERRED_SPEECH_CONFIRM_MS = 500;
 /** Longest stretch of unbroken sound during a reply before it is transcribed as it stands. */
 const BARGE_IN_MAX_CLIP_MS = 4000;
 /**
@@ -1576,6 +1586,17 @@ const INTERRUPT_WORDS = new Set([
   "nope",
   "actually",
   "sorry",
+  "skip",
+  "next",
+  "repeat",
+  "again",
+  "continue",
+  "louder",
+  "quieter",
+  "slower",
+  "faster",
+  "shorter",
+  "longer",
 ]);
 
 interface SpokenReply {
@@ -1583,6 +1604,38 @@ interface SpokenReply {
   /** When the reply's first audio went to the client; null until then. */
   audioStartedAt: number | null;
   endedAt: number | null;
+}
+
+/** Words of a listener following along ("Yeah, okay, got it."), who is not taking the turn. */
+const ACKNOWLEDGEMENT_WORDS = new Set([
+  "yeah",
+  "yep",
+  "ok",
+  "okay",
+  "alright",
+  "right",
+  "cool",
+  "nice",
+  "great",
+  "wow",
+  "got",
+  "it",
+  "see",
+  "uh",
+  "huh",
+  "mhm",
+  "mm",
+  "hmm",
+  "thanks",
+]);
+
+function isAcknowledgement(text: string): boolean {
+  const words = wordTokens(text).filter((word) => word !== "i");
+  return words.length > 0 && words.every((word) => ACKNOWLEDGEMENT_WORDS.has(word));
+}
+
+function spokenWordCount(text: string): number {
+  return wordTokens(text).filter((word) => word.length >= 2 && !FILLER_WORDS.has(word)).length;
 }
 
 function hasInterruptWord(text: string): boolean {
@@ -1639,17 +1692,22 @@ const FILLER_WORDS = new Set([
   "umm",
 ]);
 
+const LATIN_SCRIPT_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt", "nl"]);
+
 /**
  * True when a transcript holds at least one word: a Latin token of two or more letters
  * that is not a filler, or any token in another script (one Han character can be a word).
  * A token cut off with a trailing hyphen ("Sna-") is a fragment, not a word.
  */
-export function hasSpokenWord(text: string): boolean {
+export function hasSpokenWord(text: string, language?: string): boolean {
+  // Speech-to-text set to a Latin-script language still answers a cough with a word in
+  // another script ("咳嗽"). The user is not speaking that script, so it is not their word.
+  const latinOnly = LATIN_SCRIPT_LANGUAGES.has((language ?? "").toLowerCase().split("-")[0]);
   const withoutFragments = text.replace(/[\p{L}\p{N}']+-+(?=$|[\s\p{P}])/gu, " ");
   const tokens = withoutFragments.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
   return tokens.some((token) => {
     const bare = token.replace(/'/g, "");
-    if (/[^\p{Script=Latin}\p{N}]/u.test(bare)) return true;
+    if (/[^\p{Script=Latin}\p{N}]/u.test(bare)) return !latinOnly;
     return bare.length >= 2 && !FILLER_WORDS.has(bare);
   });
 }

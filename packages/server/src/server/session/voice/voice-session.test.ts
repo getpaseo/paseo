@@ -122,6 +122,7 @@ function createVoiceSession(tts: TextToSpeechProvider | null = null) {
   return {
     voiceSession,
     detector,
+    turnDetection,
     sttSession,
     host,
     speak: (args: Parameters<VoiceSpeakHandler>[0]) => {
@@ -319,6 +320,43 @@ describe("VoiceSession streaming transcription", () => {
     },
   );
 
+  test.each([
+    { transcript: "Hello", stops: false },
+    { transcript: "Yeah.", stops: false },
+    { transcript: "Yeah, okay, got it.", stops: false },
+    { transcript: "Okay, I see.", stops: false },
+    { transcript: "Okay, stop.", stops: true },
+    { transcript: "Louder.", stops: true },
+    { transcript: "Go on", stops: true },
+  ])(
+    "well into a reply, the lone transcript $transcript stops it: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsPlaybackHold = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "Here's the bicycle in six sentences." });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        detector.emit("speech_started");
+        await vi.advanceTimersByTimeAsync(0);
+        detector.emit("speech_stopped");
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitCommitted({ segmentId: "one", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "one", transcript, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
   test("once a reply's audio has played for a few seconds, unrelated words stop it", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
     host.supportsPlaybackHold = () => true;
@@ -439,6 +477,24 @@ describe("VoiceSession streaming transcription", () => {
       await voiceSession.cleanup();
     }
   });
+
+  test.each([
+    { capable: true, confirmMs: 500 },
+    { capable: false, confirmMs: undefined },
+  ])(
+    "asks the detector to report sound after $confirmMs ms when the client defers barge-in: $capable",
+    async ({ capable, confirmMs }) => {
+      const { voiceSession, turnDetection, host } = createVoiceSession();
+      host.supportsPlaybackHold = () => capable;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      try {
+        const [params] = vi.mocked(turnDetection.createSession).mock.calls[0];
+        expect(params.confirmMs).toBe(confirmMs);
+      } finally {
+        await voiceSession.cleanup();
+      }
+    },
+  );
 
   test("still defers the next sound after a transcription error", async () => {
     const { voiceSession, detector, host } = createVoiceSession();
@@ -741,6 +797,13 @@ describe("hasSpokenWord", () => {
       expect(hasSpokenWord(text)).toBe(true);
     },
   );
+
+  test("counts a word in another script as noise when the language is Latin-script", () => {
+    expect(hasSpokenWord("咳嗽", "en")).toBe(false);
+    expect(hasSpokenWord("咳嗽", "en-US")).toBe(false);
+    expect(hasSpokenWord("咳嗽", "zh")).toBe(true);
+    expect(hasSpokenWord("stop 咳", "en")).toBe(true);
+  });
 
   test.each(["", "S-", "Sna-", "Snarf-- uh", "Mm-hmm.", "uh, um", "...", "I"])(
     "counts %j as noise",

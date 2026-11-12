@@ -100,10 +100,13 @@ export function createVoiceTurnController(params: {
   turnDetection: TurnDetectionProvider;
   stt: SpeechToTextProvider;
   sttLanguage?: string;
+  /** How long sound must last before the detector reports speech; the provider's default if unset. */
+  speechConfirmMs?: number;
   callbacks: VoiceTurnControllerCallbacks;
 }): VoiceTurnController {
   const detector = params.turnDetection.createSession({
     logger: params.logger.child({ component: "turn-detection" }),
+    ...(params.speechConfirmMs === undefined ? {} : { confirmMs: params.speechConfirmMs }),
   });
 
   let state: VoiceInputState = { status: "idle" };
