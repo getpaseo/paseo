@@ -777,6 +777,26 @@ describe("assistant selection copy inside highlighted code", () => {
     );
   });
 
+  it("keeps indented code lines inside their list item", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      '<div><div data-paseo-markdown-tag="p"><span>Item text</span></div>',
+      highlightedCodeBlock("typescript"),
+      "</div></div></div></div>",
+    ].join("");
+    document.body.append(host);
+
+    const content = copyBetween([tokenText(host, "1."), 0], [tokenText(host, " (answer)"), 9]);
+
+    expect(content?.plainText).toBe(
+      "1. Item text\n\n    ```typescript\n    const answer = 1;\n      if (answer)\n    ```",
+    );
+  });
+
   it("keeps line breaks when a selection starts partway through code", () => {
     const message = mountHighlighted();
 
