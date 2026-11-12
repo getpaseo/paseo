@@ -4,14 +4,13 @@ import { StyleSheet } from "react-native-unistyles";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import type { ClassifiedCheckoutCommit } from "@/git/use-commits-query";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { formatTimeAgo } from "@/utils/time";
+import { useTimeAgo } from "@/hooks/use-time-ago";
 import { CommitGraphNode } from "./commit-graph-node";
 
 interface CommitRowProps {
   commit: ClassifiedCheckoutCommit;
   isFirst: boolean;
   isLast: boolean;
-  now: Date;
   onCommitPress: (sha: string) => void;
 }
 
@@ -26,7 +25,6 @@ export const CommitRow = memo(function CommitRow({
   commit,
   isFirst,
   isLast,
-  now,
   onCommitPress,
 }: CommitRowProps) {
   const handlePress = useCallback(() => {
@@ -49,13 +47,18 @@ export const CommitRow = memo(function CommitRow({
           {commit.subject}
         </Text>
       </View>
-      <Text style={styles.timestamp}>{formatTimeAgo(new Date(commit.authorDate), now)}</Text>
+      <CommitTimestamp authorDate={commit.authorDate} />
       <View style={styles.caret}>
         <ThemedChevron size={14} uniProps={chevronColorMapping} />
       </View>
     </Pressable>
   );
 });
+
+function CommitTimestamp({ authorDate }: { authorDate: string }) {
+  const label = useTimeAgo(new Date(authorDate));
+  return <Text style={styles.timestamp}>{label}</Text>;
+}
 
 const styles = StyleSheet.create((theme) => ({
   row: {

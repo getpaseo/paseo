@@ -13,8 +13,7 @@ import {
   type ProviderSnapshot,
   type ProviderSnapshotTransition,
 } from "../../agent/provider-snapshot-manager.js";
-import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
-import { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import type { AgentSessionConfig, ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 
 type SnapshotChangeHandler = (transition: ProviderSnapshotTransition) => void;
@@ -24,7 +23,6 @@ interface MakeOptions {
   supportsCustomModeIcons?: boolean;
   supportsCompactProviderSnapshots?: boolean;
   snapshot?: Partial<ProviderSnapshotManager>;
-  usage?: { [K in keyof ProviderUsageService]?: unknown };
   host?: Partial<ProviderCatalogSessionHost>;
 }
 
@@ -60,7 +58,7 @@ function makeSubsystem(options: MakeOptions = {}) {
     },
     supportsCompactProviderSnapshots: () => options.supportsCompactProviderSnapshots ?? false,
     listProviderAvailability: async () => [],
-    listDraftFeatures: async () => [],
+    listDraftControls: async () => ({ controls: [], options: {} }),
     ...options.host,
   };
   const providerSnapshotManager = createStub<ProviderSnapshotManager>({
@@ -73,7 +71,6 @@ function makeSubsystem(options: MakeOptions = {}) {
   const subsystem = new ProviderCatalogSession({
     host,
     providerSnapshotManager,
-    providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
     logger: pino({ level: "silent" }),
   });
   function pushSnapshotChange(
@@ -299,29 +296,100 @@ describe("ProviderCatalogSession", () => {
     });
   });
 
-  it("surfaces a usage-list failure as an rpc_error envelope", async () => {
+  it("lists controls and effective options for a draft config", async () => {
+    const drafts: AgentSessionConfig[] = [];
     const { subsystem, emitted } = makeSubsystem({
-      usage: {
-        listUsage: async () => {
-          throw new Error("quota service down");
+      host: {
+        listDraftControls: async (config) => {
+          drafts.push(config);
+          return {
+            controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+            options: { fast_mode: true },
+          };
         },
       },
     });
 
-    await subsystem.handleProviderUsageListRequest({
-      type: "provider.usage.list.request",
-      requestId: "u1",
+    await subsystem.handleProviderControlsListRequest({
+      type: "provider.controls.list.request",
+      requestId: "c1",
+      draftConfig: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        model: "claude-opus-4-8",
+        providerOptions: { fast_mode: true },
+      },
     });
 
-    const err = findByType(emitted, "rpc_error");
-    expect(err?.payload.code).toBe("provider_usage_list_failed");
-    expect(err?.payload.requestId).toBe("u1");
+    expect(drafts).toEqual([
+      {
+        provider: "claude",
+        cwd: "/tmp/project",
+        model: "claude-opus-4-8",
+        providerOptions: { fast_mode: true },
+      },
+    ]);
+    expect(findByType(emitted, "provider.controls.list.response")?.payload).toEqual({
+      provider: "claude",
+      controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+      options: { fast_mode: true },
+      error: null,
+      fetchedAt: expect.any(String),
+      requestId: "c1",
+    });
+  });
+
+  it("surfaces a controls failure inline, not as an rpc_error", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      host: {
+        listDraftControls: async () => {
+          throw new Error("controls probe failed");
+        },
+      },
+    });
+
+    await subsystem.handleProviderControlsListRequest({
+      type: "provider.controls.list.request",
+      requestId: "c2",
+      draftConfig: { provider: "codex", cwd: "/tmp/project" },
+    });
+
+    expect(findByType(emitted, "rpc_error")).toBeUndefined();
+    expect(findByType(emitted, "provider.controls.list.response")?.payload.error).toBe(
+      "controls probe failed",
+    );
+  });
+
+  it("answers list_provider_features_request from controls, folding legacy featureValues", async () => {
+    const drafts: AgentSessionConfig[] = [];
+    const { subsystem, emitted } = makeSubsystem({
+      host: {
+        listDraftControls: async (config) => {
+          drafts.push(config);
+          return {
+            controls: [{ type: "toggle", key: "fast_mode", label: "Fast" }],
+            options: { fast_mode: true },
+          };
+        },
+      },
+    });
+
+    await subsystem.handleListProviderFeaturesRequest({
+      type: "list_provider_features_request",
+      requestId: "f0",
+      draftConfig: { provider: "claude", cwd: "/tmp/project", featureValues: { fast_mode: true } },
+    });
+
+    expect(drafts[0]?.providerOptions).toEqual({ fast_mode: true });
+    expect(findByType(emitted, "list_provider_features_response")?.payload.features).toEqual([
+      { type: "toggle", id: "fast_mode", label: "Fast", value: true },
+    ]);
   });
 
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {
-        listDraftFeatures: async () => {
+        listDraftControls: async () => {
           throw new Error("feature probe failed");
         },
       },
@@ -388,10 +456,6 @@ it("announces shared content without retransmitting models or hashing discovery 
     new ProviderCatalogSession({
       providerSnapshotManager: manager,
       logger: pino({ level: "silent" }),
-      providerUsageService: new ProviderUsageService({
-        logger: pino({ level: "silent" }),
-        fetchers: [],
-      }),
       host: {
         emit(message) {
           emitted.push(message);
@@ -405,7 +469,7 @@ it("announces shared content without retransmitting models or hashing discovery 
         },
         supportsProviderSnapshotReferences: () => references,
         listProviderAvailability: async () => [],
-        listDraftFeatures: async () => [],
+        listDraftControls: async () => ({ controls: [], options: {} }),
       },
     });
   const emitted: SessionOutboundMessage[] = [];

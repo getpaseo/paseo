@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -268,12 +269,58 @@
   color: color-mix(in srgb, var(--color-foreground) 78%, var(--color-primary));
 }
 
-.changelog-release-notes code {
+.changelog-release-notes :not(pre) > code {
   border-radius: 0.25rem;
   background: var(--color-muted);
   padding: 0.125rem 0.375rem;
   color: var(--color-foreground);
   font-size: 0.875em;
+}
+
+.changelog-all-changes {
+  margin-top: 1rem;
+}
+
+.changelog-all-changes-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.changelog-all-changes-summary::-webkit-details-marker {
+  display: none;
+}
+
+.changelog-all-changes-summary::before {
+  content: "+";
+  color: rgba(255, 255, 255, 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.changelog-all-changes-summary:hover {
+  color: var(--color-foreground);
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary::before {
+  content: "−";
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary {
+  margin-bottom: 1.25rem;
+}
+
+.changelog-all-changes-hide,
+.changelog-all-changes[open] .changelog-all-changes-show {
+  display: none;
+}
+
+.changelog-all-changes[open] .changelog-all-changes-hide {
+  display: inline;
 }
 
 /* Docs page prose styles — mirrors the original docs/*.tsx components */
@@ -405,6 +452,12 @@
   font-weight: 400;
 }
 
+.docs-prose img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+}
+
 .docs-prose p {
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -497,6 +550,25 @@
   background-color: rgba(255, 255, 255, 0.02);
 }
 
+/* Comparison tables: the browser would size each column by its longest cell,
+   so the two product columns get equal width regardless of content. */
+.comparison-prose table {
+  display: table;
+  table-layout: fixed;
+}
+
+.comparison-prose th,
+.comparison-prose td {
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+.comparison-prose th:first-child,
+.comparison-prose td:first-child {
+  width: max(22%, 7.5rem);
+}
+
+.changelog-release-notes pre,
 .docs-prose pre {
   background-color: var(--color-card) !important;
   border: 1px solid var(--color-border);
@@ -515,6 +587,7 @@
   min-width: 100%;
 }
 
+.changelog-release-notes pre code,
 .docs-prose pre code {
   background: transparent;
   padding: 0;
@@ -534,23 +607,6 @@
   border-color: var(--color-border);
   margin-top: 2rem;
   margin-bottom: 2rem;
-}
-
-.docs-source-footer {
-  border-top: 1px solid var(--color-border);
-  margin-top: 3rem;
-  padding-top: 1.25rem;
-  font-size: 0.875rem;
-}
-
-.docs-source-footer a {
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.docs-source-footer a:hover {
-  color: var(--color-foreground);
 }
 
 /* Blog post prose styles — adapted from moboudra.com */
@@ -660,6 +716,8 @@
 }
 
 @theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+
   --color-background: #101615;
   --color-foreground: #fafafa;
   --color-muted: #1a1f1e;

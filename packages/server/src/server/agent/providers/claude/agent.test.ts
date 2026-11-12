@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
+import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -15,9 +18,14 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { AgentManager } from "../../agent-manager.js";
+import { ensureAgentLoaded } from "../../agent-loading.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
+  ImportableProviderSession,
   AgentPromptInput,
   AgentSession,
   AgentTimelineItem,
@@ -25,9 +33,11 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
+import { mergeProviderOptions } from "../../provider-options.js";
 
 interface TestClaudeSession {
-  translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+  translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
   close(): Promise<void>;
 }
 
@@ -48,7 +58,7 @@ afterEach(() => {
 });
 
 describe("convertClaudeHistoryEntry", () => {
-  test("maps user tool results to timeline items", () => {
+  test("maps user tool results to timeline items", async () => {
     const toolUseId = "toolu_test";
     const entry = {
       type: "user",
@@ -74,14 +84,14 @@ describe("convertClaudeHistoryEntry", () => {
     ];
 
     const mapBlocks = vi.fn().mockReturnValue(stubTimeline);
-    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual(stubTimeline);
     expect(mapBlocks).toHaveBeenCalledTimes(1);
     expect(Array.isArray(mapBlocks.mock.calls[0][0])).toBe(true);
   });
 
-  test("replays persisted Claude tool results as completed tool calls", () => {
+  test("replays persisted Claude tool results as completed tool calls", async () => {
     const entry = {
       type: "user",
       message: {
@@ -119,12 +129,12 @@ describe("convertClaudeHistoryEntry", () => {
 
     const mapPersistedToolResultBlocks = (): AgentTimelineItem[] => completedToolCall;
 
-    expect(convertClaudeHistoryEntry(entry, mapPersistedToolResultBlocks)).toEqual(
+    expect(await convertClaudeHistoryEntry(entry, mapPersistedToolResultBlocks)).toEqual(
       completedToolCall,
     );
   });
 
-  test("returns user messages when no tool blocks exist", () => {
+  test("returns user messages when no tool blocks exist", async () => {
     const entry = {
       type: "user",
       message: {
@@ -133,7 +143,7 @@ describe("convertClaudeHistoryEntry", () => {
       },
     };
 
-    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "user_message",
         text: "Run npm test",
@@ -141,7 +151,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("converts compact boundary metadata variants", () => {
+  test("converts compact boundary metadata variants", async () => {
     const fixtures = [
       {
         entry: {
@@ -170,7 +180,7 @@ describe("convertClaudeHistoryEntry", () => {
     ] as const;
 
     for (const fixture of fixtures) {
-      expect(convertClaudeHistoryEntry(fixture.entry, () => [])).toEqual([
+      expect(await convertClaudeHistoryEntry(fixture.entry, () => [])).toEqual([
         {
           type: "compaction",
           status: "completed",
@@ -181,7 +191,7 @@ describe("convertClaudeHistoryEntry", () => {
     }
   });
 
-  test("skips synthetic user entries", () => {
+  test("skips synthetic user entries", async () => {
     const entry = {
       type: "user",
       isSynthetic: true,
@@ -192,13 +202,13 @@ describe("convertClaudeHistoryEntry", () => {
     };
 
     const mapBlocks = vi.fn().mockReturnValue([]);
-    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual([]);
     expect(mapBlocks).not.toHaveBeenCalled();
   });
 
-  test("skips meta user entries from Claude skill loading", () => {
+  test("skips meta user entries from Claude skill loading", async () => {
     const entry = {
       type: "user",
       isMeta: true,
@@ -214,13 +224,13 @@ describe("convertClaudeHistoryEntry", () => {
     };
 
     const mapBlocks = vi.fn().mockReturnValue([]);
-    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+    const result = await convertClaudeHistoryEntry(entry, mapBlocks);
 
     expect(result).toEqual([]);
     expect(mapBlocks).not.toHaveBeenCalled();
   });
 
-  test("skips interrupt placeholder transcript noise", () => {
+  test("skips interrupt placeholder transcript noise", async () => {
     const interruptEntry = {
       type: "user",
       message: {
@@ -241,11 +251,11 @@ describe("convertClaudeHistoryEntry", () => {
       .fn()
       .mockReturnValue([{ type: "assistant_message", text: "No response requested." }]);
 
-    expect(convertClaudeHistoryEntry(interruptEntry, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(interruptEntry, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
   });
 
-  test("skips <local-command-stdout> messages (model switch, /context, etc.)", () => {
+  test("skips <local-command-stdout> messages (model switch, /context, etc.)", async () => {
     // Real entries from Claude Code JSONL history files
     const modelSwitch = {
       type: "user",
@@ -300,24 +310,24 @@ describe("convertClaudeHistoryEntry", () => {
 
     const mapBlocks = vi.fn().mockReturnValue([]);
 
-    expect(convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
-    expect(convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
+    expect(await convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
 
     // Real user messages must NOT be filtered
     const realMessage = {
       type: "user",
       message: { role: "user", content: "fix the bug in auth.ts" },
     };
-    expect(convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
+    expect(await convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
       { type: "user_message", text: "fix the bug in auth.ts" },
     ]);
   });
 
-  test("maps task notifications to synthetic tool calls", () => {
+  test("maps task notifications to synthetic tool calls", async () => {
     const entry = {
       type: "system",
       subtype: "task_notification",
@@ -328,7 +338,7 @@ describe("convertClaudeHistoryEntry", () => {
       output_file: "/tmp/bg-fail-1.txt",
     };
 
-    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "tool_call",
         callId: "task_notification_task-note-system-1",
@@ -352,7 +362,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("maps queue-operation task notifications to synthetic tool calls", () => {
+  test("maps queue-operation task notifications to synthetic tool calls", async () => {
     const entry = {
       type: "queue-operation",
       operation: "enqueue",
@@ -367,7 +377,7 @@ describe("convertClaudeHistoryEntry", () => {
       ].join("\n"),
     };
 
-    expect(convertClaudeHistoryEntry(entry, () => [])).toEqual([
+    expect(await convertClaudeHistoryEntry(entry, () => [])).toEqual([
       {
         type: "tool_call",
         callId: "task_notification_task-note-queue-1",
@@ -391,7 +401,7 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
-  test("passes assistant content blocks through to the mapper", () => {
+  test("passes assistant content blocks through to the mapper", async () => {
     const entry = {
       type: "assistant",
       message: {
@@ -409,7 +419,7 @@ describe("convertClaudeHistoryEntry", () => {
     ];
     const mapBlocks = vi.fn().mockReturnValue(mappedTimeline);
 
-    expect(convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
+    expect(await convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
     expect(mapBlocks).toHaveBeenCalledWith(entry.message.content);
   });
 });
@@ -426,9 +436,17 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveBinary: async () => "/test/claude/bin",
         resolveVersion: async () => "2.1.219",
-        configDir: emptyConfigDir,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -438,6 +456,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
       expect(models.map((m) => m.id)).toEqual([
         "claude-opus-5",
+        "claude-mythos-5-1",
         "claude-fable-5-1",
         "claude-fable-5",
         "claude-fable-5[1m]",
@@ -472,10 +491,18 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveVersion: async () => {
           throw new Error("unrecognized version output");
         },
-        configDir: emptyConfigDir,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -495,9 +522,17 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveBinary: async () => "/test/claude/bin",
-        resolveVersion: async () => "2.1.219",
-        configDir: emptyConfigDir,
+        resolveVersion: async () => "2.1.293",
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -509,12 +544,31 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       };
 
       expect(getThinkingIds("claude-opus-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-mythos-5-1")).toEqual([
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultracode",
+      ]);
       expect(getThinkingIds("claude-fable-5-1")).toContain("ultracode");
       expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-5")).toContain("xhigh");
       expect(getThinkingIds("claude-sonnet-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-haiku-5-5")).toEqual([
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultracode",
+      ]);
+      expect(getThinkingIds("claude-sonnet-5-5")).toContain("xhigh");
+      expect(getThinkingIds("claude-sonnet-5-5")).not.toContain("off");
       expect(getThinkingIds("claude-opus-4-7[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-7")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
@@ -529,6 +583,36 @@ describe("ClaudeAgentClient binary resolution", () => {
 
   test("resolves the installed Claude Code version", async () => {
     await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test("rejects a wrapper command's own version output instead of reading it as Claude Code's", async () => {
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-version-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("cux 0.4.1");\n');
+    try {
+      await expect(
+        resolveClaudeCodeVersion({
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+        }),
+      ).rejects.toThrow("Unable to parse Claude Code version from --version output");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves the version when the command forwards the Claude Code banner", async () => {
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-version-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("2.1.302 (Claude Code)");\n');
+    try {
+      await expect(
+        resolveClaudeCodeVersion({
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+        }),
+      ).resolves.toBe("2.1.302");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
   });
 
   test("loads user, project, and local Claude settings", async () => {
@@ -649,6 +733,196 @@ describe("ClaudeAgentSession features", () => {
     });
     return { queryFactory, queryMock, launches };
   }
+
+  function createStreamingQueryMock() {
+    const mock = createQueryMock();
+    const messages: SDKMessage[] = [];
+    let pending: ((result: IteratorResult<SDKMessage, void>) => void) | null = null;
+    let ended = false;
+    const finish = () => {
+      ended = true;
+      pending?.({ done: true, value: undefined });
+      pending = null;
+    };
+    mock.queryMock.close.mockImplementation(finish);
+    mock.queryMock.return.mockImplementation(async () => finish());
+    mock.queryMock[Symbol.asyncIterator] = () => ({
+      next: async () => {
+        const message = messages.shift();
+        if (message) return { done: false, value: message };
+        if (ended) return { done: true, value: undefined };
+        return new Promise<IteratorResult<SDKMessage, void>>((resolve) => {
+          pending = resolve;
+        });
+      },
+    });
+    return {
+      ...mock,
+      push(message: SDKMessage) {
+        if (pending) {
+          pending({ done: false, value: message });
+          pending = null;
+        } else {
+          messages.push(message);
+        }
+      },
+    };
+  }
+
+  async function startToolForClosure() {
+    const mock = createStreamingQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory: mock.queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    let toolStarted!: () => void;
+    const running = new Promise<void>((resolve) => {
+      toolStarted = resolve;
+    });
+    const unsubscribe = session.subscribe((event) => {
+      events.push(event);
+      if (
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "running"
+      )
+        toolStarted();
+    });
+    await session.startTurn("run the tool");
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000001",
+      parent_tool_use_id: null,
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "closure-tool", name: "Bash", input: {} },
+      },
+    });
+    mock.push({
+      type: "stream_event",
+      session_id: "closure-session",
+      uuid: "00000000-0000-4000-8000-000000000002",
+      parent_tool_use_id: null,
+      event: { type: "content_block_stop", index: 0 },
+    });
+    await running;
+    return { ...mock, session, events, unsubscribe };
+  }
+
+  test("runtime close publishes tool cleanup without reporting a user turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.close();
+      expect(fixture.queryMock.close).toHaveBeenCalledTimes(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "turn_canceled" ||
+            event.type === "turn_completed" ||
+            event.type === "turn_failed",
+        ),
+      ).toEqual([]);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("explicit interruption still publishes tool cleanup and one turn cancellation", async () => {
+    const fixture = await startToolForClosure();
+    try {
+      await fixture.session.interrupt();
+      expect(
+        fixture.events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.status === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(fixture.events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    } finally {
+      fixture.unsubscribe();
+      await fixture.session.close();
+    }
+  });
+
+  test("runtime close resolves permissions once without reporting a user turn cancellation", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    const abort = new AbortController();
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      const permission = canUseTool(
+        "Bash",
+        { command: "printf test" },
+        { signal: abort.signal, toolUseID: "tool-closed" },
+      );
+      const rejected = expect(permission).rejects.toThrow("Claude session closed");
+      await session.close();
+      abort.abort();
+      await rejected;
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(events.filter(isPermissionResolvedEvent)).toHaveLength(1);
+      expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("runtime close prevents a query from launching after pending options resolve", async () => {
+    const { queryFactory } = createQueryMock();
+    let optionsStarted!: () => void;
+    let allowOptions!: () => void;
+    const started = new Promise<void>((resolve) => {
+      optionsStarted = resolve;
+    });
+    const allowed = new Promise<void>((resolve) => {
+      allowOptions = resolve;
+    });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        optionsStarted();
+        await allowed;
+        return "/test/claude/bin";
+      },
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const turn = session.startTurn("must not run after closure");
+    try {
+      await started;
+      await session.close();
+      allowOptions();
+      await turn;
+      expect(queryFactory).not.toHaveBeenCalled();
+    } finally {
+      allowOptions();
+      await turn;
+      await session.close();
+    }
+  });
 
   test("publishes a resolution when the SDK aborts a permission callback", async () => {
     const { queryFactory } = createQueryMock();
@@ -808,64 +1082,157 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("keeps an extraArgs settings file when Paseo sets Claude flag settings", async () => {
+    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-settings-"));
+    const settingsPath = path.join(settingsDir, "settings.json");
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "false" }, permissions: { deny: ["Monitor"] } }),
+    );
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5-5",
+      providerOptions: {
+        extraArgs: { chrome: null, settings: settingsPath },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({ chrome: null });
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      permissions: { deny: ["Monitor"] },
+      fastMode: false,
+    });
+    await session.close();
+    await fs.rm(settingsDir, { recursive: true, force: true });
+  });
+
+  test("keeps inline extraArgs settings JSON for internal agents", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+      providerOptions: {
+        extraArgs: { settings: '{"env":{"ENABLE_TOOL_SEARCH":"false"}}' },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({});
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      disableAllHooks: true,
+    });
+    await session.close();
+  });
+
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8[1m]",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8-20260101",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-5",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-5",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-4-6",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ controls: [], options: {} });
+  });
+
+  test("opens with Fast off on a model that has none, so unrelated options still apply", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+      providerOptions: { fast_mode: true },
+    });
+
+    expect(session.openOptionsPatch).toEqual({ fast_mode: false });
+    await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
+    await session.close();
   });
 
   test("passes initial fast mode through Claude flag settings", async () => {
@@ -879,7 +1246,7 @@ describe("ClaudeAgentSession features", () => {
       provider: "claude",
       cwd: process.cwd(),
       model: "claude-opus-4-8",
-      featureValues: { fast_mode: true },
+      providerOptions: { fast_mode: true },
     });
 
     await expect(
@@ -1007,11 +1374,64 @@ describe("ClaudeAgentSession features", () => {
 
     expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
       effort: "xhigh",
-      thinking: { type: "adaptive" },
+      thinking: { type: "adaptive", display: "summarized" },
       settings: { ultracode: true },
     });
 
     await session.close();
+  });
+
+  test("keeps turn identities distinct across resumed session objects", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const handle = {
+      provider: "claude" as const,
+      sessionId: "saved-session",
+      metadata: { cwd: process.cwd() },
+    };
+    const first = await client.resumeSession(handle);
+    const firstTurn = await first.startTurn("first");
+    await first.close();
+    const resumed = await client.resumeSession(handle);
+    try {
+      const nextTurn = await resumed.startTurn("second");
+      expect(nextTurn.turnId).not.toBe(firstTurn.turnId);
+    } finally {
+      await resumed.close();
+    }
+  });
+
+  test("disables Claude hooks for internal agents only", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const internalSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+    });
+    const userSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    await internalSession.startTurn("hello");
+    await userSession.startTurn("hello");
+
+    expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
+      disableAllHooks: true,
+    });
+    expect(queryFactory.mock.calls[1]?.[0].options.settings).toBeUndefined();
+
+    await internalSession.close();
+    await userSession.close();
   });
 
   test("turns Claude thinking off without retaining an effort level", async () => {
@@ -1054,16 +1474,17 @@ describe("ClaudeAgentSession features", () => {
       const iterator = input[Symbol.asyncIterator]();
       await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
 
-      await expect(
-        session.steerActiveTurn?.("same turn follow-up", {
-          expectedTurnId: turnId,
-          clientMessageId: "steer-client-id",
-        }),
-      ).resolves.toEqual({ status: "accepted" });
+      const admission = await session.steerActiveTurn?.("same turn follow-up", {
+        expectedTurnId: turnId,
+        clientMessageId: "steer-client-id",
+      });
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      if (admission?.status !== "accepted") throw new Error("Expected steer admission");
       await expect(iterator.next()).resolves.toMatchObject({
         value: {
           type: "user",
           priority: "next",
+          uuid: admission.providerMessageId,
           message: { content: [{ type: "text", text: "same turn follow-up" }] },
         },
       });
@@ -1100,7 +1521,7 @@ describe("ClaudeAgentSession features", () => {
         input: Record<string, unknown>,
         options: Record<string, unknown>,
       ): Promise<PermissionResult>;
-      translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+      translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
     };
 
     try {
@@ -1121,7 +1542,7 @@ describe("ClaudeAgentSession features", () => {
           expectedTurnId: turnId,
           clearPendingPermissions: true,
         }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       await expect(firstPermission).resolves.toMatchObject({
         behavior: "deny",
         interrupt: undefined,
@@ -1140,7 +1561,7 @@ describe("ClaudeAgentSession features", () => {
         ),
       ).resolves.toMatchObject({ behavior: "deny", interrupt: undefined });
 
-      internal.translateMessageToEvents({
+      await internal.translateMessageToEvents({
         type: "command_lifecycle",
         command_uuid: steerUuid,
         state: "started",
@@ -1180,7 +1601,7 @@ describe("ClaudeAgentSession features", () => {
       const permission = internal.handlePermissionRequest("Write", {}, { toolUseID: "tool-1" });
       await expect(
         session.steerActiveTurn?.("system notification", { expectedTurnId: turnId }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       expect(session.getPendingPermissions()).toHaveLength(1);
       const requestId = session.getPendingPermissions()[0]!.id;
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
@@ -1192,7 +1613,11 @@ describe("ClaudeAgentSession features", () => {
 
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
-    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
+    ["Mythos 5.1", "claude-mythos-5-1", { type: "adaptive", display: "summarized" }, "high"],
+    ["Fable 5.2", "claude-fable-5-2", { type: "adaptive", display: "summarized" }, "medium"],
+    ["Mythos 5.2", "claude-mythos-5-2", { type: "adaptive", display: "summarized" }, "medium"],
+    ["Haiku 5.5", "claude-haiku-5-5", { type: "disabled" }, undefined],
+    ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
     ["provider default", null, undefined, undefined],
   ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {
@@ -1233,6 +1658,26 @@ describe("ClaudeAgentSession features", () => {
 
     await expect(session.setThinkingOption?.("off")).rejects.toThrow(
       "Thinking option 'off' is not available for model 'claude-fable-5'",
+    );
+
+    await session.close();
+  });
+
+  test("rejects disabled thinking on Sonnet 5.5, which only runs with adaptive thinking", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5-5",
+    });
+
+    await expect(session.setThinkingOption?.("off")).rejects.toThrow(
+      "Thinking option 'off' is not available for model 'claude-sonnet-5-5'",
     );
 
     await session.close();
@@ -1299,7 +1744,7 @@ describe("ClaudeAgentSession features", () => {
         ensureQuery(): Promise<unknown>;
       }
     ).ensureQuery();
-    await session.setFeature?.("fast_mode", true);
+    await session.applyOptions?.({ fast_mode: true });
 
     expect(queryFactory).toHaveBeenCalledTimes(1);
     expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
@@ -1307,6 +1752,242 @@ describe("ClaudeAgentSession features", () => {
     expect(queryMock.return).not.toHaveBeenCalled();
 
     await session.close();
+  });
+
+  test("rejects a change to a launch option while the first query is starting", async () => {
+    const { queryFactory } = createQueryMock();
+    let releaseBinary!: () => void;
+    const binaryLookup = new Promise<void>((resolve) => {
+      releaseBinary = resolve;
+    });
+    let lookupStarted!: () => void;
+    const lookupEntered = new Promise<void>((resolve) => {
+      lookupStarted = resolve;
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        lookupStarted();
+        await binaryLookup;
+        return "/test/claude/bin";
+      },
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { disallowedTools: ["Bash"] },
+    });
+
+    const turn = session.startTurn("hello");
+    await lookupEntered;
+    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
+      /disallowedTools.*cannot change on a running session/,
+    );
+    releaseBinary();
+    await turn;
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({ disallowedTools: ["Bash"] });
+    await session.close();
+  });
+
+  test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: {
+        disallowedTools: ["Bash"],
+        sandbox: { enabled: true, failIfUnavailable: true },
+      },
+    });
+
+    await session.applyOptions?.({ fast_mode: true });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      disallowedTools: ["Bash"],
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
+    await session.close();
+  });
+
+  test("an option Claude reads when it starts changes before the query exists and is rejected after", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { disallowedTools: ["Bash"] },
+    });
+
+    await session.applyOptions?.({ disallowedTools: ["Bash", "Write"] });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      disallowedTools: ["Bash", "Write"],
+    });
+
+    // The query now runs with these; replacing it would end its background work.
+    await expect(session.applyOptions?.({ disallowedTools: [] })).rejects.toThrow(
+      /disallowedTools.*cannot change on a running session/,
+    );
+    // The same value is not a change, and Fast still applies.
+    await expect(
+      session.applyOptions?.({ disallowedTools: ["Bash", "Write"], fast_mode: true }),
+    ).resolves.toBeUndefined();
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+    await session.close();
+  });
+
+  test("switching to a model without Fast turns it off, reports that, and later patches still apply", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      providerOptions: { fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.setModel?.("claude-fable-5");
+
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
+    const reported = events.filter((event) => event.type === "options_changed");
+    expect(reported).toEqual([
+      { type: "options_changed", provider: "claude", patch: { fast_mode: false } },
+    ]);
+    // With a `config.json` default of `fast_mode: true`, the agent's effective options must
+    // still read Fast as off: a removed key would let the default fill `true` back in.
+    const stored = applyProviderOptionsPatch({
+      options: { fast_mode: true },
+      patch: reported[0].patch,
+    });
+    expect(mergeProviderOptions({ fast_mode: true }, stored)).toEqual({ fast_mode: false });
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toBeUndefined();
+    await session.close();
+  });
+
+  test("removing fast_mode turns Fast off", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    await session.applyOptions?.({ fast_mode: true });
+
+    await session.applyOptions?.({ fast_mode: null });
+
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
+    await session.close();
+  });
+
+  test("retries a fast mode change the runtime rejected", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    queryMock.applyFlagSettings.mockClear();
+    queryMock.applyFlagSettings.mockRejectedValueOnce(new Error("runtime unavailable"));
+
+    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(
+      "runtime unavailable",
+    );
+    await session.applyOptions?.({ fast_mode: true });
+
+    expect(queryMock.applyFlagSettings).toHaveBeenCalledTimes(2);
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
+
+    await session.close();
+  });
+
+  test("fast mode survives a daemon restart through the stored providerOptions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-fast-restart-"));
+    const storagePath = path.join(root, "agents");
+    const makeClient = () => {
+      const mock = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory: mock.queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      return { ...mock, client };
+    };
+    const agentId = "00000000-0000-4000-8000-0000000000f1";
+    const before = makeClient();
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { claude: before.client },
+      registry: storage,
+      logger,
+    });
+    try {
+      await manager.createAgent(
+        { provider: "claude", cwd: root, model: "claude-opus-4-8" },
+        agentId,
+        { workspaceId: undefined },
+      );
+      await manager.setAgentOptions(agentId, { fast_mode: true });
+      await manager.closeAgent(agentId);
+      await manager.flush();
+      await storage.flush();
+
+      const after = makeClient();
+      const restartedStorage = new AgentStorage(storagePath, logger);
+      const restarted = new AgentManager({
+        clients: { claude: after.client },
+        registry: restartedStorage,
+        logger,
+      });
+      const agent = await ensureAgentLoaded(agentId, {
+        agentManager: restarted,
+        agentStorage: restartedStorage,
+        logger,
+      });
+      const session = (agent as unknown as { session: { ensureQuery(): Promise<unknown> } | null })
+        .session;
+      await session?.ensureQuery();
+
+      expect(restarted.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: true });
+      expect(after.queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
+        fastMode: true,
+      });
+      await restarted.closeAgent(agentId);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1615,6 +2296,404 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  async function descriptorFixture(count: number) {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-errors-"));
+    const projectDir = path.join(configDir, "projects", "errors");
+    await fs.mkdir(projectDir, { recursive: true });
+    const files: string[] = [];
+    const descriptors: ImportableProviderSession[] = [];
+    const logs: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const file = path.join(projectDir, `${index}.jsonl`);
+      const timestamp = new Date(Date.UTC(2026, 0, 1) + (count - index) * 1000);
+      await fs.writeFile(
+        file,
+        JSON.stringify({
+          type: "user",
+          sessionId: `session-${index}`,
+          cwd: "/errors",
+          message: { content: `Prompt ${index}` },
+        }),
+      );
+      await fs.utimes(file, timestamp, timestamp);
+      files.push(file);
+      descriptors.push({
+        providerHandleId: `session-${index}`,
+        cwd: "/errors",
+        title: `Prompt ${index}`,
+        firstPromptPreview: `Prompt ${index}`,
+        lastPromptPreview: `Prompt ${index}`,
+        lastActivityAt: timestamp,
+      });
+    }
+    const options = {
+      logger: pino({ level: "warn" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+    };
+    return {
+      files,
+      descriptors,
+      logs,
+      options,
+      cleanup: () => fs.rm(configDir, { recursive: true, force: true }),
+    };
+  }
+
+  const cannotEnforceFilePermissions = process.platform === "win32" || process.getuid?.() === 0;
+  const discoveryPermissionCases = [
+    { label: "project enumeration", mode: 0, deniedSuffix: "", existingSuffix: "" },
+    {
+      label: "candidate stat",
+      mode: 0o400,
+      deniedSuffix: "hidden.jsonl",
+      existingSuffix: "0.jsonl",
+    },
+  ];
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "logs denied $label while discovering a healthy project",
+    async ({ mode, deniedSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const projectsRoot = path.dirname(path.dirname(fixture.files[0]!));
+      const deniedProject = path.join(projectsRoot, "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual(
+          fixture.descriptors,
+        );
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: path.join(deniedProject, deniedSuffix),
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude session discovery path with denied access",
+          }),
+        ]);
+      } finally {
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "surfaces a provider error when $label denies discovery in every project",
+    async ({ mode, deniedSuffix, existingSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const existingProject = path.dirname(fixture.files[0]!);
+      const deniedProject = path.join(path.dirname(existingProject), "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(existingProject, mode);
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          message: expect.stringContaining("no transcripts could be discovered"),
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(existingProject, existingSuffix),
+            }),
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(deniedProject, deniedSuffix),
+            }),
+          ]),
+        });
+        expect(fixture.logs).toHaveLength(2);
+        expect(fixture.logs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: path.join(existingProject, existingSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+            expect.objectContaining({
+              path: path.join(deniedProject, deniedSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+          ]),
+        );
+      } finally {
+        await fs.chmod(existingProject, 0o700);
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "isolates an actual access-denied transcript while returning a healthy session",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await fs.chmod(fixture.files[0]!, 0);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "surfaces a provider error when every actual candidate is access denied",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await Promise.all(fixture.files.map((file) => fs.chmod(file, 0)));
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          errors: fixture.files.map((file) =>
+            expect.objectContaining({ code: "EACCES", path: file }),
+          ),
+          message: expect.stringContaining(
+            "all 2 candidate transcripts have unreadable import metadata",
+          ),
+        });
+        expect(fixture.logs).toHaveLength(2);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test("returns an empty listing for readable transcripts without import metadata", async () => {
+    const fixture = await descriptorFixture(2);
+    try {
+      await Promise.all(fixture.files.map((file) => fs.writeFile(file, '{"type":"assistant"}')));
+      const client = new ClaudeAgentClient(fixture.options);
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([]);
+      expect(fixture.logs).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "changing-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "changing.jsonl");
+      const initial = `${JSON.stringify({
+        type: "user",
+        sessionId: "changing-session",
+        cwd: "/changing-project",
+        message: { content: "First prompt" },
+      })}\n`;
+      function title(customTitle: string): string {
+        return `${JSON.stringify({ type: "custom-title", customTitle })}\n`;
+      }
+      await fs.writeFile(sessionFile, initial + title("First title"));
+      const timestamp = new Date("2026-06-01T12:00:00.000Z");
+      await fs.utimes(sessionFile, timestamp, timestamp);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      const first = await client.listImportableSessions({ limit: 1 });
+      expect(first.map((session) => session.title)).toEqual(["First title"]);
+      // Callers must not be able to mutate a cached descriptor, including its Date.
+      first[0]!.title = "Changed by caller";
+      first[0]!.lastActivityAt.setTime(0);
+      const repeated = await Promise.all([
+        client.listImportableSessions({ limit: 1 }),
+        client.listImportableSessions({ limit: 1 }),
+      ]);
+      expect(repeated.map((sessions) => [sessions[0]!.title, sessions[0]!.lastActivityAt])).toEqual(
+        [
+          ["First title", timestamp],
+          ["First title", timestamp],
+        ],
+      );
+
+      repeated[0]![0]!.title = "Changed by overlapping caller";
+      repeated[0]![0]!.lastActivityAt.setTime(0);
+      expect([repeated[1]![0]!.title, repeated[1]![0]!.lastActivityAt]).toEqual([
+        "First title",
+        timestamp,
+      ]);
+
+      await fs.appendFile(sessionFile, title("After append"));
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["After append"]);
+
+      // Same-length rewrites with a restored mtime still invalidate the descriptor.
+      await fs.writeFile(sessionFile, initial + title("Other title"));
+      await fs.utimes(sessionFile, timestamp, timestamp);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Other title"]);
+
+      const replacement = path.join(projectDir, "replacement.tmp");
+      await fs.writeFile(replacement, initial + title("Final title"));
+      await fs.utimes(replacement, timestamp, timestamp);
+      await fs.rename(replacement, sessionFile);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Final title"]);
+
+      await fs.unlink(sessionFile);
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { providers: 1, requestsPerProvider: 4 },
+    { providers: 5, requestsPerProvider: 3 },
+  ])(
+    "discovers large histories with $providers providers and $requestsPerProvider requests each",
+    async ({ providers, requestsPerProvider }) => {
+      const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
+      try {
+        const projectDir = path.join(configDir, "projects", "large-transcript");
+        await fs.mkdir(projectDir, { recursive: true });
+        const sessionFile = path.join(projectDir, "large.jsonl");
+        const transcript = await fs.open(sessionFile, "w");
+        try {
+          await transcript.writeFile(
+            `${JSON.stringify({
+              type: "user",
+              sessionId: "large-session",
+              cwd: "/large-project",
+              message: { content: "First prompt" },
+            })}\r\n`,
+          );
+          const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
+            1024,
+          );
+          for (let index = 0; index < 128; index += 1) {
+            await transcript.writeFile(block);
+          }
+          // A malformed record must not hide the final unterminated record.
+          await transcript.writeFile(
+            `incomplete json\n${JSON.stringify({
+              type: "user",
+              message: { content: "Last prompt 🐢" },
+            })}`,
+          );
+        } finally {
+          await transcript.close();
+        }
+
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            "--max-old-space-size=96",
+            "--import",
+            import.meta.resolve("tsx"),
+            "--input-type=module",
+            "--eval",
+            `
+            import { deepStrictEqual } from "node:assert";
+            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+            import { mkdir, symlink } from "node:fs/promises";
+            import path from "node:path";
+            const clients = [];
+            for (let index = 0; index < ${providers}; index++) {
+              const providerConfigDir = path.join(${JSON.stringify(configDir)}, "alias-" + index);
+              await mkdir(providerConfigDir);
+              await symlink(path.join(${JSON.stringify(configDir)}, "projects"), path.join(providerConfigDir, "projects"), "junction");
+              clients.push(new ClaudeAgentClient({
+                logger: pino({ level: "silent" }),
+                runtimeSettings: { env: { CLAUDE_CONFIG_DIR: providerConfigDir } },
+              }));
+            }
+            const listings = await Promise.all(clients.flatMap(client =>
+              Array.from({ length: ${requestsPerProvider} }, () => client.listImportableSessions({ limit: 1 }))
+            ));
+            const sessions = listings[0];
+            for (const listing of listings) deepStrictEqual(listing, sessions);
+            console.log(JSON.stringify(sessions));
+          `,
+          ],
+          { timeout: 20_000 },
+        );
+
+        expect(JSON.parse(stdout)).toEqual([
+          {
+            providerHandleId: "large-session",
+            cwd: "/large-project",
+            title: "First prompt",
+            firstPromptPreview: "First prompt",
+            lastPromptPreview: "Last prompt 🐢",
+            lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
+          },
+        ]);
+      } finally {
+        await fs.rm(configDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("keeps metadata and UTF-8 across read chunk boundaries", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-limit-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "boundary");
+      await fs.mkdir(projectDir, { recursive: true });
+      const prefix = '{"padding":"';
+      // Split the four-byte turtle across a 64 KiB input chunk boundary.
+      const padding = "x".repeat(64 * 1024 - Buffer.byteLength(prefix) - 1);
+      const suffix =
+        '","type":"user","sessionId":"boundary-session","cwd":"/boundary","message":{"content":"Hello 🐢"}}';
+      const remaining = 4 * 1024 * 1024 - Buffer.byteLength(prefix + padding + "🐢" + suffix);
+      await fs.writeFile(
+        path.join(projectDir, "boundary.jsonl"),
+        prefix + padding + "🐢" + "x".repeat(remaining) + suffix,
+      );
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => ({
+          providerHandleId: session.providerHandleId,
+          cwd: session.cwd,
+          title: session.title,
+          firstPromptPreview: session.firstPromptPreview,
+          lastPromptPreview: session.lastPromptPreview,
+        })),
+      ).toEqual([
+        {
+          providerHandleId: "boundary-session",
+          cwd: "/boundary",
+          title: "Hello 🐢",
+          firstPromptPreview: "Hello 🐢",
+          lastPromptPreview: "Hello 🐢",
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a cancelled listing before doing filesystem work", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Picker closed"));
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    await expect(client.listImportableSessions({ signal: controller.signal })).rejects.toThrow(
+      "Picker closed",
+    );
+  });
+
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1867,7 +2946,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("emits canonical task snapshots from Claude TaskCreate results", async () => {
     const session = await createSessionForTest();
     try {
-      session.translateMessageToEvents({
+      await session.translateMessageToEvents({
         type: "assistant",
         message: {
           content: [
@@ -1881,7 +2960,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       } as unknown as SDKMessage);
 
-      const events = session.translateMessageToEvents({
+      const events = await session.translateMessageToEvents({
         type: "user",
         message: {
           content: [{ type: "tool_result", tool_use_id: "task-create-1", content: "created" }],
@@ -2040,13 +3119,15 @@ describe("ClaudeAgentSession context window usage", () => {
   }
 
   function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+    return createMessageDeltaUsageEvent({ output_tokens: outputTokens });
+  }
+
+  function createMessageDeltaUsageEvent(usage: Record<string, unknown>): Record<string, unknown> {
     return {
       type: "stream_event",
       event: {
         type: "message_delta",
-        usage: {
-          output_tokens: outputTokens,
-        },
+        usage,
       },
       session_id: "session-1",
     };
@@ -2125,8 +3206,13 @@ describe("ClaudeAgentSession context window usage", () => {
     await session.startTurn("turn", { clientMessageId: "client-message-1" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
-    expect(events[1]).toMatchObject({
+    const started = events.findIndex((event) => event.type === "turn_started");
+    const userMessage = events.findIndex(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(userMessage).toBeGreaterThan(started);
+    expect(events[userMessage]).toMatchObject({
       type: "timeline",
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });
@@ -2197,7 +3283,7 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
-  test("classifies Claude root-only commands separately from inline skills", async () => {
+  test("classifies Claude root-only commands separately from inline skills and hides internal ones", async () => {
     const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       void prompt;
       return {
@@ -2228,6 +3314,11 @@ describe("ClaudeAgentSession context window usage", () => {
           {
             name: "clear",
             description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+          {
+            name: "__remote-workflow",
+            description: "Run a remote workflow (server-launched sessions only)",
             argumentHint: "",
           },
         ],
@@ -2708,6 +3799,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 150,
           },
         }),
@@ -2743,7 +3835,13 @@ describe("ClaudeAgentSession context window usage", () => {
 
   test("selected 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
-      [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
+      [
+        [
+          { ...createInitMessage(), model: "claude-sonnet-5[1m]" },
+          createMessageStartEvent(),
+          createSuccessResult(),
+        ],
+      ],
       { model: "claude-sonnet-5[1m]" },
     );
 
@@ -2783,10 +3881,126 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 175,
           },
         }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta input usage replaces an empty message_start count", async () => {
+    // Translating gateways (LiteLLM in front of an OpenAI-compatible backend) do not know the
+    // prompt size when message_start is emitted, so they report input_tokens: 0 there and send
+    // the cumulative counts on message_delta, as the Anthropic Messages API allows.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
+        createSuccessResult({
+          usage: {
+            input_tokens: 20_236,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 64,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 20_300,
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({
+            inputTokens: 20_236,
+            outputTokens: 64,
+            contextWindowUsedTokens: 20_300,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta without cache counters keeps the message_start cache usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 1_000,
+        }),
+        createMessageDeltaUsageEvent({ input_tokens: 5, output_tokens: 64 }),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 1_069,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta before this request's message_start does not seed usage", async () => {
+    // A canceled request can leave its terminal message_delta queued behind the next turn.
+    // Nothing is known about the new request until its message_start, so that straggler
+    // must not produce a usage_updated event or leak into the next request's counters.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
+        createMessageStartEvent({
+          input_tokens: 40,
+          cache_creation_input_tokens: 5,
+          cache_read_input_tokens: 10,
+        }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      const usedTokens = events
+        .filter((event) => event.type === "usage_updated")
+        .map((event) => event.usage.contextWindowUsedTokens);
+      expect(usedTokens).toEqual([55, 62]);
     } finally {
       await session.close();
     }
@@ -2816,6 +4030,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 55,
           },
         }),
@@ -2825,6 +4040,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 62,
           },
         }),
@@ -2862,6 +4078,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 704,
           },
         }),
@@ -2955,9 +4172,9 @@ describe("ClaudeAgentSession context window usage", () => {
     ]);
 
     try {
-      const compactEvents = (session as unknown as TestClaudeSession).translateMessageToEvents(
-        createCompactBoundary(),
-      );
+      const compactEvents = await (
+        session as unknown as TestClaudeSession
+      ).translateMessageToEvents(createCompactBoundary());
       expect(compactEvents).toContainEqual(
         expect.objectContaining({
           type: "usage_updated",
@@ -3018,6 +4235,44 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
+    // Claude Code announces a mode it switched to itself as a status message
+    // carrying the new permissionMode, right after the EnterPlanMode tool call.
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory: createQueryFactoryForTurns([
+        [
+          { ...createInitMessage(), permissionMode: "acceptEdits" },
+          {
+            type: "system",
+            subtype: "status",
+            status: null,
+            permissionMode: "plan",
+            session_id: "session-1",
+          },
+          createSuccessResult(),
+        ],
+      ]),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "acceptEdits",
+    });
+
+    try {
+      const events = await collectStreamEvents(session, "enter plan mode");
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "mode_changed", currentModeId: "plan" }),
+      );
+      expect(await session.getCurrentMode()).toBe("plan");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a compaction abandoned mid-turn does not suppress the next compaction marker", async () => {
     // The first turn starts compacting and then ends without ever reaching a
     // compact_boundary, so the marker it opened is never resolved.
@@ -3071,10 +4326,15 @@ describe("ClaudeAgentSession context window usage", () => {
   });
 
   test("a compaction abandoned in an autonomous turn does not suppress the next marker", async () => {
-    // Trailing output after the foreground result opens an autonomous turn, which starts
-    // compacting and is then ended by the next foreground turn, never reaching a boundary.
+    // Claude starts a turn of its own after the foreground result, which starts compacting and is
+    // then ended by the next foreground turn, never reaching a boundary.
     const session = await createSessionForTurns([
-      [createSuccessResult(), createMessageStartEvent(), createCompactingStatus()],
+      [
+        createSuccessResult(),
+        createInitMessage(),
+        createMessageStartEvent(),
+        createCompactingStatus(),
+      ],
       [createCompactingStatus(), createSuccessResult()],
     ]);
 
@@ -3100,7 +4360,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("result.result is surfaced as an assistant message when no model output was produced", async () => {
     const session = await createSessionForTest();
 
-    const events = session.translateMessageToEvents({
+    const events = await session.translateMessageToEvents({
       type: "result",
       subtype: "success",
       result: "Unknown command: /foo-doesnt-exist",
@@ -3135,7 +4395,7 @@ describe("ClaudeAgentSession context window usage", () => {
   test("result.result is not duplicated when the model produced output during the turn", async () => {
     const session = await createSessionForTest();
 
-    const events = session.translateMessageToEvents({
+    const events = await session.translateMessageToEvents({
       type: "result",
       subtype: "success",
       result: "Here is the answer.",
@@ -3397,5 +4657,186 @@ describe("Claude question permission notifications", () => {
 
     expect(request.title).toBeUndefined();
     expect(request.description).toBeUndefined();
+  });
+});
+
+describe("Claude import descriptor scheduling", () => {
+  function controlledReads() {
+    const started: string[] = [];
+    const reads = new Map<
+      string,
+      { resolve: (value: string) => void; reject: (reason: unknown) => void }
+    >();
+    const signals = new Map<string, AbortSignal>();
+    const sharedScheduler = createImportDescriptorScheduler(
+      (candidate: { cacheKey: string }, signal) => {
+        started.push(candidate.cacheKey);
+        signals.set(candidate.cacheKey, signal);
+        return new Promise<string>((resolve, reject) => {
+          reads.set(candidate.cacheKey, { resolve, reject });
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    function scheduler(candidates: string[], signal: AbortSignal): Promise<string[]> {
+      return sharedScheduler(
+        candidates.map((cacheKey) => ({ cacheKey })),
+        signal,
+      );
+    }
+    return { scheduler, started, reads, signals };
+  }
+
+  test("shares a cold read across overlapping listings and leaves capacity for unrelated work", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const signal = new AbortController().signal;
+    const overlapping = Array.from({ length: 4 }, () => scheduler(["shared"], signal));
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    const unrelated = scheduler(["unrelated"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated"]));
+    reads.get("unrelated")!.resolve("unrelated descriptor");
+    await expect(unrelated).resolves.toEqual(["unrelated descriptor"]);
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(Promise.all(overlapping)).resolves.toEqual(
+      Array.from({ length: 4 }, () => ["shared descriptor"]),
+    );
+    // A settled entry must not become an accidental second cache.
+    const later = scheduler(["shared"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated", "shared"]));
+    reads.get("shared")!.resolve("updated descriptor");
+    await expect(later).resolves.toEqual(["updated descriptor"]);
+  });
+
+  test("cancelling the initiating listing keeps its other subscriber alive", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const initiator = new AbortController();
+    const first = scheduler(["shared"], initiator.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const second = scheduler(["shared"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    initiator.abort(new Error("First picker closed"));
+    await firstRejected;
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(second).resolves.toEqual(["shared descriptor"]);
+    expect(started).toEqual(["shared"]);
+  });
+
+  test("the final subscriber cancellation aborts the read and allows a fresh subscription", async () => {
+    const { scheduler, started, signals } = controlledReads();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = scheduler(["shared"], firstController.signal);
+    const second = scheduler(["shared"], secondController.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const secondRejected = expect(second).rejects.toThrow("Final picker closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    firstController.abort(new Error("First picker closed"));
+    await firstRejected;
+    expect(signals.get("shared")!.aborted).toEqual(false);
+    secondController.abort(new Error("Final picker closed"));
+    await secondRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+    const retryController = new AbortController();
+    const retry = scheduler(["shared"], retryController.signal);
+    const retryRejected = expect(retry).rejects.toThrow("Retry closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared", "shared"]));
+    retryController.abort(new Error("Retry closed"));
+    await retryRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+  });
+
+  test("runs four reads per listing and gives a later small listing a bounded turn", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const controller = new AbortController();
+    const large = scheduler(
+      Array.from({ length: 500 }, (_, index) => `large-${index}`),
+      controller.signal,
+    );
+    const largeRejected = expect(large).rejects.toThrow("Fairness check complete");
+    await vi.waitFor(() => expect(started).toEqual(["large-0", "large-1", "large-2", "large-3"]));
+    const small = scheduler(["small"], new AbortController().signal);
+    reads.get("large-0")!.resolve("first descriptor");
+    await vi.waitFor(() =>
+      expect(started).toEqual(["large-0", "large-1", "large-2", "large-3", "small"]),
+    );
+    reads.get("small")!.resolve("small descriptor");
+    await expect(small).resolves.toEqual(["small descriptor"]);
+    controller.abort(new Error("Fairness check complete"));
+    await largeRejected;
+    expect(signals.get("large-1")!.aborted).toEqual(true);
+    expect(signals.get("large-2")!.aborted).toEqual(true);
+    expect(signals.get("large-3")!.aborted).toEqual(true);
+    expect(started.length).toBeLessThanOrEqual(6);
+  });
+
+  test("refills four workers while retaining candidate order after out-of-order completions", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("3")!.resolve("descriptor-3");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4"]));
+    reads.get("2")!.resolve("descriptor-2");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4", "5"]));
+    reads.get("5")!.resolve("descriptor-5");
+    reads.get("4")!.resolve("descriptor-4");
+    reads.get("1")!.resolve("descriptor-1");
+    reads.get("0")!.resolve("descriptor-0");
+    await expect(listing).resolves.toEqual([
+      "descriptor-0",
+      "descriptor-1",
+      "descriptor-2",
+      "descriptor-3",
+      "descriptor-4",
+      "descriptor-5",
+    ]);
+  });
+
+  test("an unexpected read failure cancels sibling workers without starting remaining candidates", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    const rejected = expect(listing).rejects.toThrow("Unexpected read failure");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("0")!.reject(new TypeError("Unexpected read failure"));
+    await rejected;
+    expect(signals.get("1")!.aborted).toEqual(true);
+    expect(signals.get("2")!.aborted).toEqual(true);
+    expect(signals.get("3")!.aborted).toEqual(true);
+    expect(started).toEqual(["0", "1", "2", "3"]);
+  });
+
+  test("bounds global reads and skips cancelled queued candidates", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const controllers = Array.from({ length: 5 }, () => new AbortController());
+    const listings = controllers.map((controller, index) =>
+      scheduler([`${index}-first`], controller.signal),
+    );
+    // Attach handlers before aborting any promises.
+    function errorMessage(error: Error): string {
+      return error.message;
+    }
+    const settled = listings.map((listing) => listing.catch(errorMessage));
+    await vi.waitFor(() => expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]));
+    controllers[4]!.abort(new Error("Queued picker closed"));
+    await expect(settled[4]).resolves.toEqual("Queued picker closed");
+    controllers[0]!.abort(new Error("Active picker closed"));
+    await expect(settled[0]).resolves.toEqual("Active picker closed");
+    reads.get("1-first")!.reject(new Error("Stop 1"));
+    reads.get("2-first")!.reject(new Error("Stop 2"));
+    reads.get("3-first")!.reject(new Error("Stop 3"));
+    await expect(Promise.all(settled)).resolves.toEqual([
+      "Active picker closed",
+      "Stop 1",
+      "Stop 2",
+      "Stop 3",
+      "Queued picker closed",
+    ]);
+    expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]);
+    // A cancelled queue entry must not consume a later listing's read slot.
+    const later = scheduler(["later"], new AbortController().signal);
+    await vi.waitFor(() =>
+      expect(started).toEqual(["0-first", "1-first", "2-first", "3-first", "later"]),
+    );
+    reads.get("later")!.resolve("later descriptor");
+    await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });

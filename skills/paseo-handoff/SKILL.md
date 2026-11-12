@@ -8,7 +8,7 @@ user-invocable: true
 
 Transfer the current task — context, decisions, failed attempts, constraints — to a fresh agent. The receiving agent starts with **zero context**, so the handoff prompt must be a self-contained briefing.
 
-**User's arguments:** $ARGUMENTS
+Use the user's request and current conversation as input, including any arguments supplied with the skill invocation.
 
 ## Prerequisites
 

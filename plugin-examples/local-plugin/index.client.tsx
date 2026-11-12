@@ -1,11 +1,12 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { counterIcon } from "./client/icons";
 import { contributeClient, ExamplePanel } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
   client.addWorkspacePanel({
     id: "counter",
     title: "Plugin counter",
-    icon: "Blocks",
+    icon: { svg: counterIcon },
     context: "workspace",
     locations: ["workspace", "explorer"],
     Component: ExamplePanel,

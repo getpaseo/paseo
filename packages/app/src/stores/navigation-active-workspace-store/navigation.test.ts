@@ -9,7 +9,7 @@ import {
   type NavigateToLastWorkspaceDeps,
   type NavigateToWorkspaceDeps,
 } from "./navigation";
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 interface RecordedTab {
   workspaceKey: string;
@@ -21,9 +21,20 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const navigations: string[] = [];
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
+  const deferredTabs: unknown[] = [];
+  const revealed: Array<string | null> = [];
   const deps: NavigateToWorkspaceDeps = {
+    revealTab: (_key, tabId) => {
+      revealed.push(tabId);
+    },
+    revealWorkspace: () => {
+      revealed.push(null);
+    },
+    deferOpenTab: (input) => {
+      deferredTabs.push(input);
+      return null;
+    },
     getSessionWorkspaces: () => null,
-    getSessionAgents: () => [] as Agent[],
     isWorkspaceLayoutHydrated: () => true,
     openTab: ({ workspaceKey, target, pin = false }) => {
       openedTabs.push({ workspaceKey, target, pin });
@@ -33,7 +44,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs };
+  return { deps, navigations, remembered, openedTabs, deferredTabs, revealed };
 }
 
 function createLastSelectionDeps(
@@ -60,6 +71,24 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("reveals even a current workspace without agents", () => {
+    const { deps, revealed } = createFakeDeps();
+    navigateToWorkspace({ serverId: "server", workspaceId: "workspace" }, deps);
+    expect(revealed).toEqual([null]);
+  });
+
+  it("reveals an explicit target after opening instead of forcing center", () => {
+    const workspace = { id: "workspace" } as WorkspaceDescriptor;
+    const { deps, revealed } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+    });
+    navigateToWorkspace(
+      { serverId: "server", workspaceId: "workspace", target: { kind: "agent", agentId: "root" } },
+      deps,
+    );
+    expect(revealed).toEqual(["root"]);
+  });
+
   it("reports when no last workspace is known", () => {
     const { deps } = createLastSelectionDeps(null);
 
@@ -75,49 +104,27 @@ describe("workspace navigation", () => {
     expect(remembered).toEqual([{ serverId: "server-1", workspaceId: "workspace-a" }]);
   });
 
-  it("focuses the attention agent's tab when a workspace has one", () => {
+  it("reveals the workspace without choosing a different tab", () => {
     const workspace = {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
     } as WorkspaceDescriptor;
-    const agent = {
-      id: "agent-1",
-      cwd: "/repo/workspace-a",
-      workspaceId: "workspace-a",
-      requiresAttention: true,
-      attentionReason: "permission",
-    } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
-      getSessionAgents: () => [agent],
     });
 
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
 
-    expect(openedTabs).toEqual([
-      {
-        workspaceKey: "server-1:workspace-a",
-        target: { kind: "agent", agentId: "agent-1" },
-        pin: false,
-      },
-    ]);
+    expect(openedTabs).toEqual([]);
   });
 
-  it("keeps an explicit tab authoritative over an attention agent", () => {
+  it("opens an explicitly requested tab", () => {
     const workspace = {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
     } as WorkspaceDescriptor;
-    const agent = {
-      id: "agent-1",
-      cwd: "/repo/workspace-a",
-      workspaceId: "workspace-a",
-      requiresAttention: true,
-      attentionReason: "permission",
-    } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
-      getSessionAgents: () => [agent],
     });
 
     navigateToWorkspace(
@@ -138,8 +145,24 @@ describe("workspace navigation", () => {
     ]);
   });
 
+  it("carries a request for a tab through a deferred open", () => {
+    const { deps, deferredTabs } = createFakeDeps({ getSessionWorkspaces: () => new Map() });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        asTab: true,
+      },
+      deps,
+    );
+
+    expect(deferredTabs[0]).toMatchObject({ asTab: true });
+  });
+
   it("defers an agent tab until a missing workspace is recovered", () => {
-    const { deps, navigations, openedTabs } = createFakeDeps({
+    const { deps, navigations, openedTabs, deferredTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map(),
     });
 
@@ -153,7 +176,8 @@ describe("workspace navigation", () => {
     );
 
     expect(openedTabs).toEqual([]);
-    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+    expect(deferredTabs).toHaveLength(1);
   });
 
   it("defers an agent tab until persisted workspace layout has hydrated", () => {
@@ -161,7 +185,7 @@ describe("workspace navigation", () => {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
     } as WorkspaceDescriptor;
-    const { deps, navigations, openedTabs } = createFakeDeps({
+    const { deps, navigations, openedTabs, deferredTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       isWorkspaceLayoutHydrated: () => false,
     });
@@ -177,7 +201,8 @@ describe("workspace navigation", () => {
     );
 
     expect(openedTabs).toEqual([]);
-    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+    expect(deferredTabs).toHaveLength(1);
   });
 
   it("reads the active workspace from the current route", () => {

@@ -1,8 +1,13 @@
+import { createHistoryStartPagination } from "@/agent-stream/history-start-pagination";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
+  loadOlderProviderSubagentTimeline,
   observeProviderSubagentTimeline,
   providerSubagentKey,
+  refreshProviderSubagents,
+  resyncProviderSubagents,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -15,6 +20,7 @@ afterEach(() => {
     descriptors: new Map(),
     timelines: new Map(),
     hiddenFromTrack: new Set(),
+    trackedParents: new Set(),
   });
 });
 
@@ -561,6 +567,95 @@ describe("projected child history", () => {
       .getState()
       .replaceTimeline(SERVER_ID, response(value, seqStart, seqEnd, direction));
   }
+  test("older child history completes only after the delayed page is applied", async () => {
+    const tail = { ...response("B", 2, 2), hasOlder: true };
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, tail);
+    let deliver!: (payload: Payload) => void;
+    const client = {
+      fetchProviderSubagentTimeline: () =>
+        new Promise<Payload>((resolve) => {
+          deliver = resolve;
+        }),
+    };
+    let completed = false;
+    const request = loadOlderProviderSubagentTimeline({
+      client,
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+    }).then((result) => {
+      completed = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    deliver({ ...response("A", 1, 1), direction: "before" });
+    expect(await request).toBe(true);
+    expect(current().cursor?.startSeq).toBe(1);
+  });
+  test("bounds an older child request so a timeout permits another attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      useProviderSubagentStore
+        .getState()
+        .replaceTimeline(SERVER_ID, { ...response("B", 2, 2), hasOlder: true });
+      const timeouts: Array<number | undefined> = [];
+      const client = {
+        fetchProviderSubagentTimeline: (
+          _parent: string,
+          _child: string,
+          options: { timeout?: number },
+        ) => {
+          timeouts.push(options.timeout);
+          return new Promise<Payload>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("timeout")), options.timeout ?? 60_000),
+          );
+        },
+      };
+      let loading = false;
+      const pagination = createHistoryStartPagination({
+        initiallyVisible: true,
+        read: () => ({
+          distanceFromHistoryStart: 0,
+          isUnderfilled: true,
+          hasOlderHistory: true,
+          isLoadingOlderHistory: loading,
+          isReady: true,
+          progressKey: "e:2",
+        }),
+        load: async () => {
+          loading = true;
+          try {
+            return await loadOlderProviderSubagentTimeline({
+              client,
+              serverId: SERVER_ID,
+              parentAgentId: PARENT_ID,
+              subagentId: SUBAGENT_ID,
+              limit: 100,
+            });
+          } catch {
+            return false;
+          } finally {
+            loading = false;
+          }
+        },
+        changed: () => {},
+        scheduleSettle: () => {},
+      });
+      pagination.update();
+      expect(timeouts).toEqual([10_000]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(pagination.state.status).toBe("failed");
+      pagination.rearm();
+      expect(timeouts).toEqual([10_000, 10_000]);
+      expect(pagination.state.status).toBe("loading");
+      pagination.dispose();
+      await vi.advanceTimersByTimeAsync(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   test("replaces overlapping fetched text and continues live streaming", () => {
     page("AB", 1, 2);
     stream(3, "C");
@@ -725,5 +820,98 @@ describe("projected child history", () => {
     expect([...current().tail, ...current().head]).toHaveLength(1);
     expect(JSON.stringify(current()).length).toBeLessThan(1_000_000);
     expect(current().lastSeq).toBe(2000);
+  });
+});
+
+describe("resyncing after the update feed resubscribes", () => {
+  function child(
+    id: string,
+    parentAgentId: string,
+    status: ProviderSubagentDescriptorPayload["status"],
+  ): ProviderSubagentDescriptorPayload {
+    return {
+      id,
+      parentAgentId,
+      provider: "claude",
+      title: "Explore",
+      description: null,
+      status,
+      createdAt: "2026-10-07T10:00:00.000Z",
+      updatedAt: "2026-10-07T10:00:00.000Z",
+      toolCallId: id,
+    };
+  }
+
+  function fakeDaemon(lists: Record<string, ProviderSubagentDescriptorPayload[]>) {
+    const requested: string[] = [];
+    return {
+      requested,
+      lists,
+      client: {
+        listProviderSubagents: async (parentAgentId: string) => {
+          requested.push(parentAgentId);
+          return {
+            requestId: "list",
+            parentAgentId,
+            subagents: lists[parentAgentId] ?? [],
+            error: null,
+          };
+        },
+      },
+    };
+  }
+
+  const status = (parentAgentId: string, subagentId: string) =>
+    useProviderSubagentStore
+      .getState()
+      .descriptors.get(providerSubagentKey(SERVER_ID, parentAgentId, subagentId))?.status;
+
+  test("catches up on children that finished or started while updates were not delivered", async () => {
+    const daemon = fakeDaemon({ [PARENT_ID]: [child("child-1", PARENT_ID, "running")] });
+    await refreshProviderSubagents(daemon.client, SERVER_ID, PARENT_ID);
+    expect(status(PARENT_ID, "child-1")).toBe("running");
+
+    // The connection dropped: the daemon finished child-1 and ran child-2 without telling us.
+    daemon.lists[PARENT_ID] = [
+      child("child-1", PARENT_ID, "completed"),
+      child("child-2", PARENT_ID, "completed"),
+    ];
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(status(PARENT_ID, "child-1")).toBe("completed");
+    expect(status(PARENT_ID, "child-2")).toBe("completed");
+  });
+
+  test("catches up on a parent whose first list failed while disconnected", async () => {
+    const daemon = fakeDaemon({});
+    const disconnected = {
+      listProviderSubagents: async () => {
+        throw new DaemonConnectionError("Transport not connected");
+      },
+    };
+    await expect(
+      refreshProviderSubagents(disconnected, SERVER_ID, PARENT_ID),
+    ).rejects.toBeInstanceOf(DaemonConnectionError);
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: child("child-1", PARENT_ID, "running"),
+    });
+
+    // The connection dropped again: the daemon finished child-1 without telling us.
+    daemon.lists[PARENT_ID] = [child("child-1", PARENT_ID, "completed")];
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(status(PARENT_ID, "child-1")).toBe("completed");
+  });
+
+  test("lists again only the parents this server was showing", async () => {
+    const daemon = fakeDaemon({});
+    await refreshProviderSubagents(daemon.client, SERVER_ID, PARENT_ID);
+    await refreshProviderSubagents(daemon.client, "server-2", "other-parent");
+    daemon.requested.length = 0;
+
+    await resyncProviderSubagents(daemon.client, SERVER_ID);
+
+    expect(daemon.requested).toEqual([PARENT_ID]);
   });
 });

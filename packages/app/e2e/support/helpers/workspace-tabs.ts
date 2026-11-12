@@ -61,6 +61,23 @@ function explorerSidebar(page: Page) {
   return visibleTestId(page, "workspace-explorer-sidebar").first();
 }
 
+export async function dragTabIntoExplorer(page: Page, tabId: string): Promise<void> {
+  const source = page.getByTestId("workspace-pane-main").getByTestId(`workspace-tab-${tabId}`);
+  const destination = explorerSidebar(page).getByTestId("workspace-tab-files");
+  const sourceBox = await source.boundingBox();
+  const destinationBox = await destination.boundingBox();
+  if (!sourceBox || !destinationBox)
+    throw new Error("Tab drag requires visible source and destination");
+  const start = { x: sourceBox.x + 12, y: sourceBox.y + sourceBox.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 12, start.y + 4);
+  await page.mouse.move(destinationBox.x + 12, destinationBox.y + destinationBox.height / 2, {
+    steps: 20,
+  });
+  await page.mouse.up();
+}
+
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
   if ((await tab.getAttribute("aria-selected")) !== "true") {
     // The close action overlays the chip's trailing edge on hover. Click the
@@ -89,7 +106,7 @@ async function openExplorerView(
 ): Promise<void> {
   const explorer = await ensureExplorerSidebar(page);
   const tab = explorer.getByTestId(view.tabTestId);
-  await tab.click();
+  await selectWorkspaceTab(tab);
   await expect(visibleTestId(page, view.contentTestId).first()).toBeVisible({
     timeout: view.timeout ?? 30_000,
   });
@@ -97,7 +114,7 @@ async function openExplorerView(
 
 export async function openChangesTreePanel(page: Page): Promise<void> {
   await openExplorerView(page, {
-    tabTestId: "explorer-sidebar-tab-changes_tree",
+    tabTestId: "workspace-tab-changes_tree",
     contentTestId: "changes-tree-panel",
   });
 }
@@ -117,7 +134,7 @@ export async function openChangesPanel(page: Page, timeout = 30_000): Promise<vo
 
 export async function openFilesPanel(page: Page): Promise<void> {
   await openExplorerView(page, {
-    tabTestId: "explorer-sidebar-tab-files",
+    tabTestId: "workspace-tab-files",
     contentTestId: "file-explorer-tree-scroll",
   });
 }

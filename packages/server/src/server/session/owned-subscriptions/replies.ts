@@ -31,6 +31,7 @@ const exceptions = {
   agent_deleted: ["delete_agent_request"],
   agent_permission_resolved: ["agent_permission_response"],
   terminals_changed: ["subscribe_terminals_request"],
+  "usage.list_reports.update": ["usage.list_reports.request"],
   "daemon.update.progress": ["daemon.update.request"],
   // Transcription belongs to the explicitly retained voice operation, not a request ID.
   transcription_result: [],

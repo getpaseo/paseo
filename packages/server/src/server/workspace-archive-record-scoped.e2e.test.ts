@@ -1,10 +1,14 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
+import { createWorktree } from "../utils/worktree.js";
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import {
   createDaemonTestContext,
   DaemonClient,
@@ -52,6 +56,32 @@ function createGitRepo(): string {
     stdio: "pipe",
   });
   return repoDir;
+}
+
+async function runCli(args: string[], cwd: string): Promise<string> {
+  const result = await promisify(execFile)(
+    process.execPath,
+    [
+      "--conditions=source",
+      "--import",
+      import.meta.resolve("tsx"),
+      fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url)),
+      "--host",
+      `127.0.0.1:${ctx.daemon.port}`,
+      ...args,
+    ],
+    {
+      cwd,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+        ),
+        PASEO_HOME: ctx.daemon.paseoHome,
+      },
+      timeout: 20000,
+    },
+  );
+  return result.stdout;
 }
 
 async function createLocalWorkspace(cwd: string, title: string): Promise<string> {
@@ -247,6 +277,190 @@ test("renaming a workspace updates every subscribed client", async () => {
     await observer.close();
   }
 });
+
+test("a local checkout rejects a base change without creating worktree metadata", async () => {
+  const repo = createGitRepo();
+  const id = await createLocalWorkspace(repo, "Local");
+  await expect(
+    ctx.client.setWorkspaceBaseBranch({ workspaceId: id, baseRef: "refs/heads/main" }),
+  ).rejects.toThrow("not a Paseo worktree");
+  expect(await readPaseoWorktreeMetadata(repo)).toBeNull();
+});
+
+test("changing a worktree base refreshes its diff and persists across restart", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["checkout", "-b", "release"], { cwd: repo });
+  writeFileSync(path.join(repo, "release.txt"), "release\n");
+  execFileSync("git", ["add", "release.txt"], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "base-refresh", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  const cwd = workspace.workspaceDirectory;
+  execFileSync("git", ["merge", "--ff-only", "release"], { cwd });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).toContain("release.txt");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).not.toContain("release.txt");
+  await expect(
+    ctx.client.setWorkspaceBaseBranch({ workspaceId: workspace.id, baseRef: "refs/heads/missing" }),
+  ).rejects.toThrow("Base branch not found");
+  execFileSync("git", ["update-ref", "refs/remotes/origin/vanished", "release"], { cwd });
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/remotes/origin/vanished",
+  });
+  execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/vanished"], { cwd });
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/main",
+  });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).toContain("release.txt");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  const previous = ctx;
+  const paseoHomeRoot = path.dirname(previous.daemon.paseoHome);
+  await previous.client.close();
+  await previous.daemon.daemon.stop();
+  tempRoots.push(previous.daemon.staticDir);
+  ctx = await createDaemonTestContext({ paseoHomeRoot });
+  expect((await ctx.client.getCheckoutStatus(cwd)).baseRefExact).toBe("refs/heads/release");
+}, 30_000);
+
+test("a managed workspace restores its changed base after archival removes the checkout", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "changed-base", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  const joinedId = await createLocalWorkspace(
+    workspace.workspaceDirectory,
+    "Joined after changing base",
+  );
+  expect((await ctx.client.archiveWorkspace(workspace.id)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(true);
+  expect((await ctx.client.archiveWorkspace(joinedId)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+  await ctx.client.restoreWorkspace(joinedId);
+  expect((await readPaseoWorktreeMetadata(workspace.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/release",
+  );
+  expect((await ctx.client.getCheckoutStatus(workspace.workspaceDirectory)).baseRefExact).toBe(
+    "refs/heads/release",
+  );
+});
+
+test("an archived workspace keeps its base when a later workspace reuses its path", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const source = { kind: "worktree", cwd: repo, worktreeSlug: "reused-path", baseBranch: "main" };
+  const first = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!first) throw new Error("Failed to create first workspace");
+  expect((await ctx.client.archiveWorkspace(first.id)).error).toBe(null);
+  expect(existsSync(first.workspaceDirectory)).toBe(false);
+  const second = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!second) throw new Error("Failed to create second workspace");
+  expect(second.workspaceDirectory).toBe(first.workspaceDirectory);
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: second.id,
+    baseRef: "refs/heads/release",
+  });
+  expect((await ctx.client.archiveWorkspace(second.id)).error).toBe(null);
+  await ctx.client.restoreWorkspace(first.id);
+  expect((await readPaseoWorktreeMetadata(first.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/main",
+  );
+});
+
+test.each(["worktree", "workspace"] as const)(
+  "%s archive immediately removes the deleted worktree from a warm CLI listing",
+  async (command) => {
+    const repoDir = createGitRepo();
+    const created = await ctx.client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        worktreeSlug: "cached-worktree",
+        baseBranch: "main",
+      },
+    });
+    const workspace = created.workspace;
+    if (!workspace?.workspaceDirectory) {
+      throw new Error(created.error ?? "Failed to create worktree workspace");
+    }
+    const worktreePath = workspace.workspaceDirectory;
+    const name = path.basename(worktreePath);
+    const before = JSON.parse(await runCli(["worktree", "ls", "--json"], repoDir));
+    expect(before).toEqual([expect.objectContaining({ name, cwd: worktreePath })]);
+
+    await runCli(
+      [command, "archive", command === "worktree" ? name : workspace.id, "--json"],
+      repoDir,
+    );
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(
+      execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoDir }).toString(),
+    ).not.toContain(worktreePath);
+    const after = JSON.parse(await runCli(["worktree", "ls", "--json"], repoDir));
+    console.log(
+      `${command} archive: warm listing=${JSON.stringify(before)}\nimmediate listing=${JSON.stringify(after)}`,
+    );
+    expect(after).toEqual([]);
+  },
+  60000,
+);
+
+test("archiving an unregistered worktree in a bare repo clears the main checkout listing", async () => {
+  const sourceRepo = createGitRepo();
+  const repoRoot = makeTempDir("workspace-archive-bare-");
+  const bareRepo = path.join(repoRoot, "repo.git");
+  const mainCheckout = path.join(repoRoot, "main");
+  execFileSync("git", ["clone", "--bare", sourceRepo, bareRepo], { stdio: "pipe" });
+  execFileSync("git", ["worktree", "add", mainCheckout, "main"], {
+    cwd: bareRepo,
+    stdio: "pipe",
+  });
+  const { worktreePath } = await createWorktree({
+    cwd: mainCheckout,
+    source: { kind: "branch-off", baseBranch: "main", branchName: "cached-bare-worktree" },
+    worktreeSlug: "cached-bare-worktree",
+
+    paseoHome: ctx.daemon.paseoHome,
+  });
+  expect(await activeWorkspaceIds()).toEqual(new Set());
+  const name = path.basename(worktreePath);
+  const before = JSON.parse(await runCli(["worktree", "ls", "--json"], mainCheckout));
+  expect(before).toEqual([expect.objectContaining({ name, cwd: worktreePath })]);
+
+  await runCli(["worktree", "archive", name, "--json"], mainCheckout);
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: mainCheckout }).toString(),
+  ).not.toContain(worktreePath);
+  const after = JSON.parse(await runCli(["worktree", "ls", "--json"], mainCheckout));
+  console.log(
+    `bare repo archive: warm listing=${JSON.stringify(before)}\nimmediate listing=${JSON.stringify(after)}`,
+  );
+  expect(after).toEqual([]);
+}, 60000);
 
 test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {
   const repoDir = createGitRepo();

@@ -20,6 +20,7 @@ import {
   toShellToolDetail,
   toWriteToolDetail,
   toolDetailBranchByToolName,
+  parseKnownToolDetail,
 } from "../tool-call-detail-primitives.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,21 +154,6 @@ const OpencodeGrepOutputSchema = z
   ])
   .nullable();
 
-function formatLogEntry(value: unknown): string | undefined {
-  const outputText = readOutputText(value);
-  if (outputText) {
-    return outputText;
-  }
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 function extractOpenCodeTaskSessionId(value: unknown): string | undefined {
   const text = readOutputText(value);
   if (text) {
@@ -195,7 +181,6 @@ function extractOpenCodeTaskSessionId(value: unknown): string | undefined {
 function deriveOpencodeTaskDetail(
   input: unknown,
   output: unknown,
-  error: unknown,
   metadata: Record<string, unknown> | undefined,
 ): ToolCallDetail | null {
   if (!isRecord(input)) {
@@ -208,7 +193,6 @@ function deriveOpencodeTaskDetail(
     return null;
   }
 
-  const log = [formatLogEntry(output), formatLogEntry(error)].filter((entry) => entry).join("\n");
   const childSessionId =
     normalizeSubAgentText(metadata?.sessionId) ?? extractOpenCodeTaskSessionId(output);
   return {
@@ -216,8 +200,18 @@ function deriveOpencodeTaskDetail(
     ...(subAgentType ? { subAgentType } : {}),
     ...(description ? { description } : {}),
     ...(childSessionId ? { childSessionId } : {}),
-    log,
+    // COMPAT(subagent-log): remove after 2027-04-30.
+    log: "",
     actions: [],
+  };
+}
+
+function toOpencodeEditInput(value: { filePath: string; oldString?: string; newString?: string }) {
+  return {
+    filePath: value.filePath,
+    oldString: nonEmptyString(value.oldString),
+    newString: nonEmptyString(value.newString),
+    unifiedDiff: undefined,
   };
 }
 
@@ -229,12 +223,12 @@ const OpencodeEditInputSchema = z.union([
       newString: z.string().optional(),
     })
     .passthrough()
-    .transform((value) => ({
-      filePath: value.filePath,
-      oldString: nonEmptyString(value.oldString),
-      newString: nonEmptyString(value.newString),
-      unifiedDiff: undefined,
-    })),
+    .transform(toOpencodeEditInput),
+  // OpenCode v2's edit tool names the file `path`.
+  z
+    .object({ path: z.string(), oldString: z.string(), newString: z.string() })
+    .passthrough()
+    .transform((value) => toOpencodeEditInput({ ...value, filePath: value.path })),
   ToolEditInputSchema,
 ]);
 
@@ -303,6 +297,10 @@ const OpencodeKnownToolDetailSchema = z.union([
     z.unknown(),
     (input) => toEditToolDetail(input, null),
   ),
+  // OpenCode v2 reports apply_patch as `patch`.
+  toolDetailBranchByToolName("patch", OpencodeApplyPatchTextInputSchema, z.unknown(), (input) =>
+    toEditToolDetail(input, null),
+  ),
   toolDetailBranchByToolName(
     "apply_diff",
     OpencodeEditInputSchema,
@@ -360,23 +358,22 @@ export function deriveOpencodeToolDetail(
   toolName: string,
   input: unknown,
   output: unknown,
-  error: unknown = null,
   metadata?: Record<string, unknown>,
 ): ToolCallDetail {
   if (toolName.trim().toLowerCase() === "task") {
-    const taskDetail = deriveOpencodeTaskDetail(input, output, error, metadata);
+    const taskDetail = deriveOpencodeTaskDetail(input, output, metadata);
     if (taskDetail) {
       return taskDetail;
     }
   }
 
-  const parsed = OpencodeKnownToolDetailSchema.safeParse({
+  const detail = parseKnownToolDetail(OpencodeKnownToolDetailSchema, {
     toolName,
-    input,
+    input: input ?? null,
     output,
   });
-  if (parsed.success && parsed.data) {
-    return parsed.data;
+  if (detail) {
+    return detail;
   }
   return {
     type: "unknown",

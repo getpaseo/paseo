@@ -1,3 +1,4 @@
+import { formatSystemNotificationPrompt } from "../agent/agent-messages/index.js";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,17 +8,14 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
-import {
-  formatSystemNotificationPrompt,
-  startAgentRun,
-  type AgentRunController,
-} from "../agent/agent-prompt.js";
+import { startAgentRun, type AgentRunController } from "../agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
+import { foldFeatureValues } from "../agent/option-controls.js";
 import type {
   CreateScheduleInput,
   ScheduleExecutionResult,
@@ -39,6 +37,32 @@ export class ScheduleTargetGoneError extends Error {
     super(message);
     this.name = "ScheduleTargetGoneError";
   }
+}
+
+export class ScheduleNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Schedule not found: ${id}`);
+    this.name = "ScheduleNotFoundError";
+  }
+}
+
+export class ScheduleStateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScheduleStateConflictError";
+  }
+}
+
+function advanceNextRunAtPast(
+  cadence: StoredSchedule["cadence"],
+  nextRunAt: Date,
+  now: Date,
+): Date {
+  let next = nextRunAt;
+  while (next.getTime() <= now.getTime()) {
+    next = computeNextRunAt(cadence, next);
+  }
+  return next;
 }
 
 function trimOptionalName(value: string | null | undefined): string | null {
@@ -149,7 +173,7 @@ function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
 
 function requireSchedule(schedule: StoredSchedule | null, id: string): StoredSchedule {
   if (!schedule) {
-    throw new Error(`Schedule not found: ${id}`);
+    throw new ScheduleNotFoundError(id);
   }
   return schedule;
 }
@@ -203,6 +227,7 @@ type ScheduleAgentManager = Pick<
   AgentRunController,
   | "getAgent"
   | "reloadAgentSession"
+  | "reloadStalePluginSession"
   | "tryRunOutOfBand"
   | "hasInFlightRun"
   | "replaceAgentRun"
@@ -211,7 +236,7 @@ type ScheduleAgentManager = Pick<
 > &
   Pick<
     AgentManager,
-    | "createAgent"
+    | "createAgentFromRecord"
     | "getRegisteredProviderIds"
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
@@ -383,10 +408,7 @@ export class ScheduleService {
 
   async inspect(id: string): Promise<StoredSchedule> {
     const schedule = await this.store.get(id);
-    if (!schedule) {
-      throw new Error(`Schedule not found: ${id}`);
-    }
-    return schedule;
+    return requireSchedule(schedule, id);
   }
 
   async logs(id: string): Promise<ScheduleRun[]> {
@@ -397,7 +419,7 @@ export class ScheduleService {
   async pause(id: string): Promise<StoredSchedule> {
     const paused = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
-        throw new Error(`Schedule ${id} is already completed`);
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
       }
       if (schedule.status === "paused") {
         return schedule;
@@ -417,7 +439,7 @@ export class ScheduleService {
   async resume(id: string): Promise<StoredSchedule> {
     const resumed = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
-        throw new Error(`Schedule ${id} is already completed`);
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
       }
       if (schedule.status === "active") {
         return schedule;
@@ -537,10 +559,10 @@ export class ScheduleService {
   async runOnce(id: string): Promise<StoredSchedule> {
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {
-      throw new Error(`Schedule ${id} is already completed`);
+      throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
     }
     if (this.runningScheduleIds.has(id)) {
-      throw new Error(`Schedule ${id} is already running`);
+      throw new ScheduleStateConflictError(`Schedule ${id} is already running`);
     }
     await this.runSchedule(schedule, this.now(), { manual: true });
     return this.inspect(id);
@@ -624,6 +646,9 @@ export class ScheduleService {
           error: "Daemon restarted before the scheduled run completed",
         };
         updated = { ...updated, runs };
+        if (shouldCompleteSchedule(updated, now)) {
+          updated = completeSchedule(updated, now);
+        }
         dirty = true;
       }
 
@@ -693,46 +718,111 @@ export class ScheduleService {
     options?: { manual?: boolean },
   ): Promise<void> {
     const manual = options?.manual === true;
+    // Reserve before store I/O; persisted history cannot prove a run is still alive.
     this.runningScheduleIds.add(schedule.id);
-    const runId = randomUUID();
-    const runningRun: ScheduleRun = {
-      id: runId,
-      scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
-      startedAt: now.toISOString(),
-      endedAt: null,
-      status: "running",
-      agentId: null,
-      output: null,
-      error: null,
-    };
-    const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
-
     try {
-      const result = await this.runner(scheduleWithRun, runId);
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "succeeded",
-        agentId: result.agentId,
-        output: result.output,
-        error: null,
-        targetGone: false,
-        manual,
-      });
-    } catch (error) {
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "failed",
-        agentId: null,
-        output: null,
-        error: error instanceof Error ? error.message : String(error),
-        targetGone: error instanceof ScheduleTargetGoneError,
-        manual,
-      });
+      let runId: string;
+      let scheduleWithRun: StoredSchedule;
+      if (manual) {
+        runId = randomUUID();
+        const runningRun: ScheduleRun = {
+          id: runId,
+          scheduledFor: now.toISOString(),
+          startedAt: now.toISOString(),
+          endedAt: null,
+          status: "running",
+          agentId: null,
+          output: null,
+          error: null,
+        };
+        scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+      } else {
+        const claimed = await this.claimDueRun(schedule.id, now);
+        if (!claimed) {
+          return;
+        }
+        ({ schedule: scheduleWithRun, runId } = claimed);
+      }
+
+      try {
+        const result = await this.runner(scheduleWithRun, runId);
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "succeeded",
+          agentId: result.agentId,
+          output: result.output,
+          error: null,
+          targetGone: false,
+          manual,
+        });
+      } catch (error) {
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "failed",
+          agentId: null,
+          output: null,
+          error: error instanceof Error ? error.message : String(error),
+          targetGone: error instanceof ScheduleTargetGoneError,
+          manual,
+        });
+      }
     } finally {
       this.runningScheduleIds.delete(schedule.id);
     }
+  }
+
+  private async claimDueRun(
+    scheduleId: string,
+    now: Date,
+  ): Promise<{ schedule: StoredSchedule; runId: string } | null> {
+    let claimed: { schedule: StoredSchedule; runId: string } | null = null;
+    const updatedSchedule = await this.store.update(scheduleId, (schedule) => {
+      if (
+        schedule.status !== "active" ||
+        !schedule.nextRunAt ||
+        shouldCompleteSchedule(schedule, now) ||
+        new Date(schedule.nextRunAt).getTime() > now.getTime()
+      ) {
+        return schedule;
+      }
+
+      const scheduledFor = schedule.nextRunAt;
+      const isFinalRun =
+        schedule.maxRuns !== null && countCompletedRuns(schedule) + 1 >= schedule.maxRuns;
+      const nextRunAt = isFinalRun
+        ? null
+        : advanceNextRunAtPast(
+            schedule.cadence,
+            computeNextRunAt(schedule.cadence, new Date(scheduledFor)),
+            now,
+          ).toISOString();
+
+      // Claim the due slot and advance its cursor in the same serialized update.
+      // A tick can hold a stale list while another tick finishes this schedule.
+      const runId = randomUUID();
+      const runningRun: ScheduleRun = {
+        id: runId,
+        scheduledFor,
+        startedAt: now.toISOString(),
+        endedAt: null,
+        status: "running",
+        agentId: null,
+        output: null,
+        error: null,
+      };
+      const updated: StoredSchedule = {
+        ...schedule,
+        nextRunAt,
+        updatedAt: now.toISOString(),
+        runs: [...schedule.runs, runningRun],
+      };
+      claimed = { schedule: updated, runId };
+      return updated;
+    });
+    requireSchedule(updatedSchedule, scheduleId);
+    return claimed;
   }
 
   private async appendRunningRun(
@@ -795,14 +885,16 @@ export class ScheduleService {
           nextRunAt: null,
         };
       } else {
-        const after = new Date(schedule.nextRunAt ?? now.toISOString());
-        let nextRunAt = computeNextRunAt(updated.cadence, after);
-        while (nextRunAt.getTime() <= now.getTime()) {
-          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
-        }
+        // A final slot has no successor until its run limit is raised or cleared.
+        // Every runner invocation has a recorded run with this id.
+        const finishedRun = completedRuns.find((run) => run.id === params.runId)!;
+        const nextRunAt = updated.nextRunAt
+          ? new Date(updated.nextRunAt)
+          : computeNextRunAt(updated.cadence, new Date(finishedRun.scheduledFor));
+        // Move an overdue cursor past a long run without advancing a future one twice.
         updated = {
           ...updated,
-          nextRunAt: nextRunAt.toISOString(),
+          nextRunAt: advanceNextRunAtPast(updated.cadence, nextRunAt, now).toISOString(),
         };
       }
 
@@ -907,10 +999,8 @@ export class ScheduleService {
         },
         mode: config.modeId,
         thinking: config.thinkingOptionId,
-        features: config.featureValues,
         unattended: true,
         promptFailure: "return-error",
-        background: true,
         notifyOnFinish: false,
       });
       const agent = created.snapshot;
@@ -1008,8 +1098,8 @@ function buildScheduleAgentConfig(
     model: config.model,
     thinkingOptionId: config.thinkingOptionId,
     title: config.title,
-    providerOptions: config.providerOptions,
-    featureValues: config.featureValues,
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+    providerOptions: foldFeatureValues(config).providerOptions,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };

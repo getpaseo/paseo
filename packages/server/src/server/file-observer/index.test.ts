@@ -47,6 +47,34 @@ test("observes nested files while pruning excluded directories", async () => {
   await subscription.unsubscribe();
 });
 
+// macOS FSEvents can replay writes made just before the stream starts, so the
+// startup contract is only exact on the Linux backend.
+test.skipIf(process.platform !== "linux")(
+  "subscribing to a populated tree reports only later changes",
+  async () => {
+    const root = await createRoot();
+    for (const directory of ["src", join("src", "nested"), "docs"]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          writeFile(join(root, directory, `existing-${index}.txt`), `${index}`),
+        ),
+      );
+    }
+    const events: FileChange[] = [];
+    const subscription = await subscribeToFileChanges(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    const laterPath = join(root, "src", "nested", "later.txt");
+    await writeFile(laterPath, "later");
+    await expect.poll(() => events.map((event) => event.path)).toContain(laterPath);
+    expect(new Set(events.map((event) => event.path))).toEqual(new Set([laterPath]));
+    await subscription.unsubscribe();
+  },
+);
+
 test("covers files populated immediately inside a newly created directory", async () => {
   const root = await createRoot();
   const events: FileChange[] = [];
@@ -165,7 +193,11 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
+  // Native recursive delivery can be coalesced before the backend's deletion audit.
+  // Assert eventual classification without imposing Vitest's one-second default.
+  await expect
+    .poll(() => events.find((event) => event.path === target)?.type, { timeout: 10_000 })
+    .toBe("delete");
   await subscription.unsubscribe();
 });
 
@@ -236,7 +268,8 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const deletions = expectFileChanges(removedPaths, "delete");
   const movedFiles = expectFileChanges(movedPaths);
   const recovery = expectFileChanges([sentinel]);
-  const subscription = await subscribeToFileChanges(root, (error, events) => {
+  const observer = createObserver();
+  const subscription = await observer.subscribe(root, (error, events) => {
     expect(error).toBeNull();
     for (const event of events) {
       population.record(event);
@@ -254,9 +287,18 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
   await writes.complete;
 
-  // A native watcher may recover coalesced paths through its safety audit.
-  // Completion comes from the delivered deletions, not an idle diagnostic or
-  // a deadline shorter than that recovery cycle.
+  // The first notice for each write can arrive before its remaining
+  // classifications. Drain those deliveries before starting a separate deletion
+  // phase, so a late create cannot coalesce with the expected delete as update.
+  await expect
+    .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
+    .toMatchObject({
+      pendingEventCount: 0,
+      pendingClassificationCount: 0,
+      reconciliationInFlightCount: 0,
+    });
+
+  // Completion still requires the delivered deletion notices.
   await Promise.all(removedPaths.map((path) => rm(path)));
   await deletions.complete;
 

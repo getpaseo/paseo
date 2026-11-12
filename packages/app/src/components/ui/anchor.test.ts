@@ -1,0 +1,169 @@
+import { describe, expect, it } from "vitest";
+import {
+  computePosition,
+  fitSurfaceWidth,
+  getTransformOrigin,
+  holdSurfaceEdge,
+  surfaceFrameStyles,
+  type Rect,
+} from "./anchor";
+
+const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
+const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
+const CONTENT = { width: 200, height: 100 };
+
+function position(overrides: Partial<Parameters<typeof computePosition>[0]> = {}) {
+  return computePosition({
+    triggerRect: TRIGGER,
+    contentSize: CONTENT,
+    displayArea: DISPLAY,
+    placement: "bottom",
+    alignment: "start",
+    offset: 4,
+    ...overrides,
+  });
+}
+
+describe("computePosition", () => {
+  it("sits below the trigger with room to spare", () => {
+    expect(position()).toEqual({ x: 100, y: 124, actualPlacement: "bottom" });
+  });
+
+  it("aligns to the trigger's start, center, and end edges", () => {
+    expect(position({ alignment: "start" }).x).toBe(100);
+    expect(position({ alignment: "center" }).x).toBe(20);
+    // 100 + 40 - 200 = -60, pulled back to the edge padding.
+    expect(position({ alignment: "end" }).x).toBe(8);
+  });
+
+  it("flips above the trigger when it does not fit below and there is more room above", () => {
+    const result = position({
+      triggerRect: { ...TRIGGER, y: 700 },
+      contentSize: { width: 200, height: 200 },
+    });
+    expect(result.actualPlacement).toBe("top");
+    expect(result.y).toBe(496);
+  });
+
+  it("stays put when flipping would be just as cramped", () => {
+    // Taller than the whole display area: neither side fits, so flipping buys nothing.
+    const result = position({
+      displayArea: { x: 0, y: 0, width: 1000, height: 300 },
+      contentSize: { width: 200, height: 400 },
+    });
+    expect(result.actualPlacement).toBe("bottom");
+  });
+
+  it("places side placements flush with the trigger top and ignores alignment", () => {
+    const left = position({ placement: "left", alignment: "end" });
+    expect(left).toEqual({ x: 8, y: 100, actualPlacement: "left" });
+
+    const right = position({ placement: "right", alignment: "end" });
+    expect(right).toEqual({ x: 144, y: 100, actualPlacement: "right" });
+  });
+
+  it("lets hover cards flip horizontally when the opposite side has room", () => {
+    const result = position({
+      triggerRect: { ...TRIGGER, x: 850 },
+      placement: "right",
+      flipHorizontal: true,
+    });
+    expect(result).toEqual({ x: 646, y: 100, actualPlacement: "left" });
+    expect(
+      position({ triggerRect: { ...TRIGGER, x: 850 }, placement: "right" }).actualPlacement,
+    ).toBe("right");
+  });
+
+  it("keeps the surface inside a display area that does not start at the origin", () => {
+    // Regression: the horizontal clamp used to ignore displayArea.x while the vertical one
+    // honoured displayArea.y, so an offset display area pushed the surface off its left edge.
+    const result = position({
+      displayArea: { x: 100, y: 0, width: 900, height: 800 },
+      alignment: "end",
+    });
+    expect(result.x).toBe(108);
+  });
+});
+
+/**
+ * Where a surface's edges land when its content has resized but it has not been placed again,
+ * the frame native paints before the next placement arrives. Resolves the frame styles the way
+ * layout does: a top-held surface grows down from its top, a bottom-held one up from the
+ * holder's bottom.
+ */
+function edgesBeforeReplacement(placedHeight: number, paintedHeight: number) {
+  const placed = position({ placement: "top", triggerRect: { ...TRIGGER, y: 400 } });
+  const { holder, surface } = surfaceFrameStyles(holdSurfaceEdge(placed, placedHeight));
+  const bottom =
+    typeof surface.bottom === "number"
+      ? Number(holder.height) - surface.bottom
+      : Number(surface.top) + paintedHeight;
+  return { top: bottom - paintedHeight, bottom };
+}
+
+describe("surfaceFrameStyles", () => {
+  it("keeps a surface above its trigger off the trigger when its content grows", () => {
+    // Trigger top 400, offset 4: the surface ends at 396 however tall it becomes.
+    expect(edgesBeforeReplacement(CONTENT.height, CONTENT.height)).toEqual({
+      top: 296,
+      bottom: 396,
+    });
+    expect(edgesBeforeReplacement(CONTENT.height, 260)).toEqual({ top: 136, bottom: 396 });
+  });
+
+  it("keeps a surface above its trigger against the trigger when its content shrinks", () => {
+    expect(edgesBeforeReplacement(CONTENT.height, 40)).toEqual({ top: 356, bottom: 396 });
+  });
+
+  it("holds a surface below its trigger by its top edge", () => {
+    const { surface } = surfaceFrameStyles(holdSurfaceEdge(position(), CONTENT.height));
+    expect(surface).toMatchObject({ position: "absolute", top: 124, left: 100 });
+  });
+
+  it("waits off-screen until it is placed", () => {
+    expect(surfaceFrameStyles(null).surface).toMatchObject({ top: -9999, left: -9999 });
+  });
+});
+
+describe("getTransformOrigin", () => {
+  it.each([
+    ["bottom", "start", [0, 0, 0]],
+    ["bottom", "center", ["50%", 0, 0]],
+    ["bottom", "end", ["100%", 0, 0]],
+    ["top", "start", [0, "100%", 0]],
+    ["top", "center", ["50%", "100%", 0]],
+    ["top", "end", ["100%", "100%", 0]],
+    ["left", "start", [0, "50%", 0]],
+    ["left", "center", ["50%", "50%", 0]],
+    ["left", "end", ["100%", "50%", 0]],
+    ["right", "start", [0, "50%", 0]],
+    ["right", "center", ["50%", "50%", 0]],
+    ["right", "end", ["100%", "50%", 0]],
+  ] as const)("emits a native-ready origin for %s/%s", (placement, alignment, expected) => {
+    // Theme updates may reach Fabric without React Native's JS string preprocessing.
+    expect(getTransformOrigin(placement, alignment)).toEqual(expected);
+  });
+});
+
+describe("fitSurfaceWidth", () => {
+  it("leaves a surface that fits the display alone, capped at the display", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180 }, 1000)).toEqual({
+      width: 240,
+      minWidth: 180,
+      maxWidth: 984,
+    });
+  });
+
+  it("shrinks a surface wider than a narrow display to the space inside its edge padding", () => {
+    expect(fitSurfaceWidth({ width: 240, minWidth: 180, maxWidth: 320 }, 220)).toEqual({
+      width: 204,
+      minWidth: 180,
+      maxWidth: 204,
+    });
+    expect(fitSurfaceWidth({ minWidth: 180 }, 150)).toEqual({
+      width: undefined,
+      minWidth: 134,
+      maxWidth: 134,
+    });
+  });
+});

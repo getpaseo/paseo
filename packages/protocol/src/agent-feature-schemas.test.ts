@@ -49,6 +49,22 @@ describe("agent feature schemas", () => {
     expect(parsed.value).toBe("flex");
   });
 
+  it.each(["icon", "label"])(
+    "preserves the %s desktop trigger for any select feature",
+    (desktopTrigger) => {
+      const feature = {
+        type: "select",
+        id: "custom-feature",
+        label: "Custom setting",
+        icon: "gauge",
+        value: "first",
+        options: [{ id: "first", label: "First" }],
+        desktopTrigger,
+      };
+      expect(AgentFeatureSchema.parse(feature)).toEqual(feature);
+    },
+  );
+
   it("rejects invalid features", () => {
     const invalidDiscriminator = AgentFeatureSchema.safeParse({
       type: "slider",

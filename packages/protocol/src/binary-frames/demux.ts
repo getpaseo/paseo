@@ -1,8 +1,11 @@
+import { decodeDiffFrame, DiffOpcode, type DiffFrame } from "./diff.js";
+import { HOST_ROUTE_OPCODE, decodeHostRouteFrame, type HostRouteFrame } from "./host-route.js";
 import {
   decodeFileTransferFrame,
   FileTransferOpcode,
   type FileTransferFrame,
 } from "./file-transfer.js";
+import { decodePluginFrame, PluginFrameOpcode, type PluginFrame } from "./plugin.js";
 import {
   decodeTerminalStreamFrame,
   TerminalStreamOpcode,
@@ -10,15 +13,32 @@ import {
 } from "./terminal.js";
 
 export type BinaryFrame =
+  | { kind: "diff"; frame: DiffFrame }
+  | { kind: "host_route"; frame: HostRouteFrame }
   | { kind: "terminal"; frame: TerminalStreamFrame }
-  | { kind: "file_transfer"; frame: FileTransferFrame };
+  | { kind: "file_transfer"; frame: FileTransferFrame }
+  | { kind: "plugin"; frame: PluginFrame };
 
 export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
+  if (Object.values(DiffOpcode).some((opcode) => opcode === bytes[0])) {
+    return { kind: "diff", frame: decodeDiffFrame(bytes) };
+  }
+  return decodeExistingBinaryFrame(bytes);
+}
+
+function decodeExistingBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   switch (bytes[0]) {
+    case HOST_ROUTE_OPCODE: {
+      const frame = decodeHostRouteFrame(bytes);
+      return frame ? { kind: "host_route", frame } : null;
+    }
     case TerminalStreamOpcode.Output:
     case TerminalStreamOpcode.Input:
     case TerminalStreamOpcode.Resize:
     case TerminalStreamOpcode.Snapshot:
+    case TerminalStreamOpcode.ReplayBegin:
+    case TerminalStreamOpcode.ReplayData:
+    case TerminalStreamOpcode.ReplayEnd:
     case TerminalStreamOpcode.Restore: {
       const frame = decodeTerminalStreamFrame(bytes);
       return frame ? { kind: "terminal", frame } : null;
@@ -28,6 +48,12 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
     case FileTransferOpcode.FileEnd: {
       const frame = decodeFileTransferFrame(bytes);
       return frame ? { kind: "file_transfer", frame } : null;
+    }
+    case PluginFrameOpcode.Event:
+    case PluginFrameOpcode.Output:
+    case PluginFrameOpcode.Input: {
+      const frame = decodePluginFrame(bytes);
+      return frame ? { kind: "plugin", frame } : null;
     }
     default:
       return null;

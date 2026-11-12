@@ -9,6 +9,8 @@ export interface NavigateToAgentInput {
   // (cold deep-links). Otherwise the workspace is read from the store.
   workspaceId?: string | null;
   pin?: boolean;
+  /** Opens the agent with its composer, where a compact layout would show a sheet without one. */
+  asTab?: boolean;
 }
 
 export interface AgentNavTarget {
@@ -26,8 +28,8 @@ export function resolveNavigateToAgent(
   deps: NavigateToAgentDeps,
 ): string {
   const agentWorkspaceId =
-    input.workspaceId ??
-    deps.readAgentNavTarget({ serverId: input.serverId, agentId: input.agentId }).agentWorkspaceId;
+    deps.readAgentNavTarget({ serverId: input.serverId, agentId: input.agentId })
+      .agentWorkspaceId ?? input.workspaceId;
   const workspaceId = normalizeWorkspaceOpaqueId(agentWorkspaceId);
 
   if (!workspaceId) {
@@ -41,5 +43,6 @@ export function resolveNavigateToAgent(
     workspaceId,
     target: { kind: "agent", agentId: input.agentId },
     pin: input.pin,
+    asTab: input.asTab,
   });
 }

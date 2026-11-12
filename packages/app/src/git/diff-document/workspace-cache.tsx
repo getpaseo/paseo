@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import invariant from "tiny-invariant";
 import { buildDiffDocumentModel, retainReusableModels, reviewGeometryKey } from "./model";
 import type {
@@ -128,7 +128,9 @@ function exactModelKey(input: Omit<BuildDiffDocumentModelInput, "reuseFrom">): s
   const materializationWindow = input.materializationWindow
     ? [input.materializationWindow.top, input.materializationWindow.height]
     : null;
-  return JSON.stringify([collapsedFilePaths, reviewGeometry, materializationWindow]);
+  const anchor = input.materializationAnchor;
+  const anchoredRow = anchor?.kind === "text" ? [anchor.path, anchor.sourceIdentity] : null;
+  return JSON.stringify([collapsedFilePaths, reviewGeometry, materializationWindow, anchoredRow]);
 }
 
 function typographyKey(typography: DiffTypography): string {
@@ -161,6 +163,16 @@ function paletteKey(palette: DiffPalette): string {
 }
 
 const WorkspaceCacheContext = createContext<DiffDocumentWorkspaceCache | null>(null);
+
+export function useDiffDocumentWorkspaceCacheBridge() {
+  const cache = useDiffDocumentWorkspaceCache();
+  return useCallback(
+    (children: ReactNode) => (
+      <WorkspaceCacheContext.Provider value={cache}>{children}</WorkspaceCacheContext.Provider>
+    ),
+    [cache],
+  );
+}
 
 export function DiffDocumentWorkspaceCacheProvider({ children }: { children: ReactNode }) {
   const [cache] = useState(createDiffDocumentWorkspaceCache);
