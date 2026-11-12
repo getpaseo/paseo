@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { Command } from "commander";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createStopCommandRunner, type StopCommandDeps } from "./stop.js";
 
 // The daemon the gate is checked against: a connection whose server_info may or may not
@@ -62,6 +62,12 @@ function homeWithRunningSupervisor(): { home: string; supervisor: ChildProcess }
 }
 
 describe("daemon stop --keep-terminals", () => {
+  // The capability check loads the daemon client on first use; loading it here keeps that import,
+  // which transforms the client and protocol sources, out of each test's timeout.
+  beforeAll(async () => {
+    await import("../../utils/daemon-client-runtime.js");
+  }, 60_000);
+
   test("refuses an endpoint daemon that does not advertise terminalsSurviveRestart", async () => {
     const daemon = createFakeDaemon();
     await expect(
