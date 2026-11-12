@@ -12,6 +12,9 @@ import type {
 import type { TurnDetectionProvider } from "../../speech/turn-detection-provider.js";
 
 const VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS = 10_000;
+// Audio kept from before the detector confirms speech, so the utterance's first words are
+// transcribed. The detector confirms about 0.8 s after the sound begins.
+const STT_PREROLL_MS = 1500;
 
 const FILLER_PARTIAL_WORDS = new Set([
   "uh",
@@ -113,6 +116,11 @@ export function createVoiceTurnController(params: {
   let activeTranscriptSegmentId: string | null = null;
   let partialTranscriptFired = false;
   let reconnectAttemptedForTurn = false;
+  // Speech-to-text gets an utterance, not the whole microphone stream: audio between
+  // utterances (a reply's echo, noise the detector passed over) would otherwise be
+  // transcribed along with the next sound and taken for the user's words.
+  let sttPreroll: Buffer[] = [];
+  let sttPrerollBytes = 0;
   const sealedTranscriptSegmentIds = new Set<string>();
   // Utterances that have stopped and are waiting for their final transcript, oldest first.
   // New sound can start before a transcript arrives (echo re-triggers the detector within
@@ -411,10 +419,38 @@ export function createVoiceTurnController(params: {
     return sttResampler.processChunk(pcm16);
   }
 
+  function keepSttPreroll(session: StreamingTranscriptionSession, pcm16: Buffer): void {
+    const maxBytes = Math.ceil((session.requiredSampleRate * 2 * STT_PREROLL_MS) / 1000);
+    sttPreroll.push(pcm16);
+    sttPrerollBytes += pcm16.length;
+    while (sttPreroll.length > 1 && sttPrerollBytes - sttPreroll[0].length >= maxBytes) {
+      sttPrerollBytes -= sttPreroll[0].length;
+      sttPreroll.shift();
+    }
+  }
+
+  function startSttUtterance(): void {
+    const preroll = sttPreroll;
+    sttPreroll = [];
+    sttPrerollBytes = 0;
+    if (!sttSession) {
+      return;
+    }
+    try {
+      sttSession.clear();
+      for (const chunk of preroll) {
+        sttSession.appendPcm16(chunk);
+      }
+    } catch (error) {
+      handleSttError(error);
+    }
+  }
+
   async function handleSpeechStarted(): Promise<void> {
     if (state.status === "capturing") {
       return;
     }
+    startSttUtterance();
 
     await params.callbacks.onSpeechStarted();
 
@@ -502,6 +538,8 @@ export function createVoiceTurnController(params: {
         sttResampler?.reset();
         resampler = null;
         sttResampler = null;
+        sttPreroll = [];
+        sttPrerollBytes = 0;
         sttSession = null;
         state = { status: "idle" };
       });
@@ -544,11 +582,15 @@ export function createVoiceTurnController(params: {
           detector.appendPcm16(detectorPcm16);
         }
 
-        if (sttPcm16 && sttPcm16.length > 0) {
-          try {
-            currentSttSession?.appendPcm16(sttPcm16);
-          } catch (error) {
-            handleSttError(error);
+        if (currentSttSession && sttPcm16 && sttPcm16.length > 0) {
+          if (state.status !== "capturing") {
+            keepSttPreroll(currentSttSession, sttPcm16);
+          } else {
+            try {
+              currentSttSession.appendPcm16(sttPcm16);
+            } catch (error) {
+              handleSttError(error);
+            }
           }
         }
       });

@@ -336,6 +336,28 @@ describe("voice turn controller", () => {
     expect(harness.sttSessions[0]?.commitCount).toBe(1);
   });
 
+  it("transcribes the utterance with a short lead-in, not the audio that came before it", async () => {
+    const harness = createControllerHarness();
+    const halfSecond = (fill: number) => ({
+      audioBase64: Buffer.alloc(16000, fill).toString("base64"),
+      format: "audio/pcm;rate=16000;bits=16",
+    });
+
+    await harness.controller.start();
+    // Three seconds of a reply's echo and room noise before the user speaks.
+    for (const fill of [1, 2, 3, 4, 5, 6]) {
+      await harness.controller.appendClientChunk(halfSecond(fill));
+    }
+    harness.detector.emit("speech_started");
+    await settleSerialQueue();
+    await harness.controller.appendClientChunk(halfSecond(7));
+
+    const sent = Buffer.concat(harness.sttSessions[0]?.appendedChunks ?? []);
+    // The last 1.5 s before the detector confirmed speech, then the utterance itself.
+    expect(sent.length).toBe(4 * 16000);
+    expect([sent[0], sent[16000], sent[32000], sent[48000]]).toEqual([4, 5, 6, 7]);
+  });
+
   it("ends the utterance being captured on request, without waiting for the detector", async () => {
     const harness = createControllerHarness();
 
