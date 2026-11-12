@@ -28,7 +28,9 @@ export interface SubagentListEntry {
 export interface BackgroundTaskInfo {
   taskId: string;
   persistent: boolean;
+  isSchedule?: boolean;
   prompt?: string;
+  scheduleSignature?: string;
 }
 
 export function mergeAcpToolCall(
@@ -587,44 +589,58 @@ export function extractBackgroundTaskLaunch(
   const rawInput = asRecord(tool.rawInput) ?? {};
   const rawOutput = asRecord(tool.rawOutput);
   const output = extractToolOutputText(tool);
-  const persistent =
-    rawInput.IsDaemon === true ||
-    rawInput.IsDaemon === "true" ||
-    (name === "schedule" &&
-      Boolean(stringField(rawInput, "CronExpression")) &&
-      rawInput.MaxIterations !== 1 &&
-      rawInput.MaxIterations !== "1");
+  const persistent = isPersistentBackgroundTask(name, rawInput);
+  const scheduleMeta = buildScheduleMetadata(name, rawInput);
 
   const bgMatch = output
     ? /Tool is running as a background task with task id:\s*([^\s"'<>]+)/i.exec(output)
     : null;
   if (bgMatch?.[1]) {
-    return { taskId: bgMatch[1], persistent };
+    return { taskId: bgMatch[1], persistent, ...scheduleMeta };
   }
 
   const explicitTaskId = stringField(rawOutput, "taskId") ?? stringField(rawOutput, "TaskId");
   if (explicitTaskId) {
-    return { taskId: explicitTaskId, persistent };
+    return { taskId: explicitTaskId, persistent, ...scheduleMeta };
   }
 
   if (name === "schedule" && (tool.status === "completed" || tool.status === "in_progress")) {
     const scheduleTaskMatch = output
       ? /\b([^\s"'<>]*task-\d+|schedule-[^\s"'<>]+)\b/i.exec(output)
       : null;
-    const prompt = stringField(rawInput, "Prompt");
     return {
-      taskId: scheduleTaskMatch?.[1] ?? canonicalScheduleTaskId(rawInput, tool.toolCallId),
+      taskId: scheduleTaskMatch?.[1] ?? `schedule:${tool.toolCallId}`,
       persistent,
-      ...(prompt ? { prompt } : {}),
+      ...scheduleMeta,
     };
   }
   return undefined;
 }
 
-function canonicalScheduleTaskId(
+function isPersistentBackgroundTask(name: string, rawInput: Record<string, unknown>): boolean {
+  if (rawInput.IsDaemon === true || rawInput.IsDaemon === "true") return true;
+  if (name !== "schedule") return false;
+  return (
+    Boolean(stringField(rawInput, "CronExpression")) &&
+    rawInput.MaxIterations !== 1 &&
+    rawInput.MaxIterations !== "1"
+  );
+}
+
+function buildScheduleMetadata(
+  name: string,
   rawInput: Record<string, unknown>,
-  fallbackToolCallId: string,
-): string {
+): Pick<BackgroundTaskInfo, "isSchedule" | "prompt" | "scheduleSignature"> {
+  if (name !== "schedule") return {};
+  const prompt = stringField(rawInput, "Prompt");
+  return {
+    isSchedule: true,
+    ...(prompt ? { prompt } : {}),
+    scheduleSignature: buildScheduleSignature(rawInput),
+  };
+}
+
+function buildScheduleSignature(rawInput: Record<string, unknown>): string {
   const prompt = stringField(rawInput, "Prompt") ?? "";
   const cron = stringField(rawInput, "CronExpression") ?? "";
   const duration =
@@ -632,10 +648,7 @@ function canonicalScheduleTaskId(
       ? String(rawInput.DurationSeconds).trim()
       : "";
   const condition = stringField(rawInput, "TimerCondition") ?? "";
-  if (!prompt && !cron && !duration && !condition) {
-    return `schedule:${fallbackToolCallId}`;
-  }
-  return `schedule:${JSON.stringify([prompt, cron, duration, condition])}`;
+  return JSON.stringify([prompt, cron, duration, condition]);
 }
 
 export function extractBackgroundTaskKill(tool: AcpToolCallPayload): string | undefined {

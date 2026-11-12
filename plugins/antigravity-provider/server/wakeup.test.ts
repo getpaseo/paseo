@@ -13,6 +13,7 @@ import {
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
 import { createAntigravityProvider } from "./provider.js";
+import { JsonlTranscriptReader } from "./internal/transcript.js";
 import { Usage } from "./usage.js";
 
 const fakeAgy = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
@@ -998,5 +999,67 @@ describe("antigravity wakeups, subagents, usage, and runtime safety", () => {
     await h.turnCompleted("wakeup-1", "s");
     expect(h.sessionTurnStates(STREAMING_QUESTION_SUBAGENT_C8)).toEqual(["started", "completed"]);
     expect(await h.canStopRuntime()).toBe(true);
+  });
+
+  it("keeps separate one-shot timers with identical arguments active until every timer has fired", async () => {
+    const h = await setupHarness();
+    await h.open(undefined, "s", "full-access");
+
+    await h.prompt("TWO_IDENTICAL_TIMERS");
+    expect(await h.canStopRuntime()).toBe(false);
+
+    expect(await h.assistantMessageContaining("FIRST_IDENTICAL_TIMER_DONE")).toBe(
+      "FIRST_IDENTICAL_TIMER_DONE",
+    );
+    await h.turnCompleted("wakeup-1");
+    // Second identical timer is still pending, so stopping the runtime must stay blocked!
+    expect(await h.canStopRuntime()).toBe(false);
+
+    expect(await h.assistantMessageContaining("SECOND_IDENTICAL_TIMER_DONE")).toBe(
+      "SECOND_IDENTICAL_TIMER_DONE",
+    );
+    await h.turnCompleted("wakeup-2");
+    expect(await h.canStopRuntime()).toBe(true);
+  });
+
+  it("advances the transcript cursor past older abandoned GENERATING steps once a subsequent step completes", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agy-transcript-cursor-"));
+    temporary.push(dir);
+    const transcriptPath = path.join(dir, "transcript.jsonl");
+    const reader = new JsonlTranscriptReader(transcriptPath);
+
+    await writeFile(
+      transcriptPath,
+      `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "GENERATING", content: "partial" })}\n`,
+      "utf8",
+    );
+    expect((await reader.readNewSteps()).map((s) => [s.stepIndex, s.status])).toEqual([
+      [0, "GENERATING"],
+    ]);
+
+    await writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          type: "PLANNER_RESPONSE",
+          status: "GENERATING",
+          content: "partial",
+        }),
+        JSON.stringify({
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          content: "complete",
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    expect((await reader.readNewSteps()).map((s) => [s.stepIndex, s.status])).toEqual([
+      [0, "GENERATING"],
+      [1, "DONE"],
+    ]);
+    // Next poll must NOT rescan step 0 or step 1!
+    expect(await reader.readNewSteps()).toEqual([]);
   });
 });

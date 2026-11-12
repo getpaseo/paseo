@@ -42,6 +42,7 @@ import {
   mapAcpToolCall,
   mapAcpToolDetail,
   mergeAcpToolCall,
+  type BackgroundTaskInfo,
 } from "./timeline.js";
 import {
   computeStepContextWindowTokens,
@@ -133,6 +134,16 @@ type PendingPermission =
       options: AcpPermissionOption[];
     };
 
+interface ActiveBackgroundTaskEntry {
+  persistent: boolean;
+  isSchedule?: boolean;
+  prompt?: string;
+  scheduleSignature?: string;
+  turnScope?: string;
+  acpToolId?: string;
+  transcriptToolId?: string;
+}
+
 export class Session {
   private readonly id: string;
   private readonly files = new PromptFiles();
@@ -140,10 +151,7 @@ export class Session {
   private readonly chunkIds = new Map<string, string>();
   private readonly chunkTexts = new Map<string, string>();
   private readonly turnTools = new Map<string, AcpToolCallPayload>();
-  private readonly activeBackgroundTasks = new Map<
-    string,
-    { persistent: boolean; prompt?: string }
-  >();
+  private readonly activeBackgroundTasks = new Map<string, ActiveBackgroundTaskEntry>();
   private readonly seenRootSteps = new Set<number>();
   private readonly synthesizedWakeupToolIds = new Set<string>();
   private readonly unstreamedWakeupThoughts: string[] = [];
@@ -180,6 +188,7 @@ export class Session {
   private filteringSlashPostTurnCatchup = false;
   private turnSeq = 0;
   private wakeupSeq = 0;
+  private lastActiveTurnScope = "initial";
   private chunkEpoch = 0;
   private itemSeq = 0;
   private permissionSeq = 0;
@@ -503,6 +512,7 @@ export class Session {
       clientMessageId: prompt.clientMessageId,
       result: { type: "turn", turnId },
     });
+    this.lastActiveTurnScope = turnId;
     this.options.emit({
       type: "session.turn",
       sessionId: this.id,
@@ -1175,7 +1185,7 @@ export class Session {
             rawInput: call.args,
           };
           this.foregroundTranscriptTools.push(payload);
-          this.inspectToolSideEffects(payload);
+          this.inspectToolSideEffects(payload, "transcript");
         });
       }
       return;
@@ -1189,7 +1199,7 @@ export class Session {
         status: step.status === "ERROR" ? "failed" : "completed",
         ...(output !== undefined ? { rawOutput: { output } } : {}),
       };
-      this.inspectToolSideEffects(completed);
+      this.inspectToolSideEffects(completed, "transcript");
     }
   }
 
@@ -1329,7 +1339,7 @@ export class Session {
           ...(step.createdAt ? { timestamp: step.createdAt } : {}),
         });
       }
-      this.inspectToolSideEffects(payload);
+      this.inspectToolSideEffects(payload, "transcript");
     });
     this.syncAutonomousToolStallGuard(auto);
   }
@@ -1371,7 +1381,7 @@ export class Session {
         ...(step.createdAt ? { timestamp: step.createdAt } : {}),
       });
     }
-    this.inspectToolSideEffects(updatedPayload);
+    this.inspectToolSideEffects(updatedPayload, "transcript");
     this.syncAutonomousToolStallGuard(auto);
     if (!auto.awaitingPlannerResponse) {
       this.scheduleAutonomousSettleCheck(AUTONOMOUS_TRANSCRIPT_SETTLE_MS);
@@ -1404,7 +1414,7 @@ export class Session {
   private clearScheduleWakeupTask(wakeupMessage: string): void {
     let fallbackTaskId: string | null = null;
     for (const [taskId, entry] of this.activeBackgroundTasks) {
-      if (!taskId.startsWith("schedule:") || entry.persistent) continue;
+      if ((!entry.isSchedule && !taskId.startsWith("schedule:")) || entry.persistent) continue;
       if (entry.prompt && wakeupMessage.includes(entry.prompt)) {
         this.activeBackgroundTasks.delete(taskId);
         return;
@@ -1420,6 +1430,7 @@ export class Session {
     if (this.autonomousTurn) return this.autonomousTurn;
     this.resetTurnState();
     const turnId = `wakeup-${++this.wakeupSeq}`;
+    this.lastActiveTurnScope = turnId;
     const auto: AutonomousTurn = {
       id: turnId,
       receivedAcpUpdates: source === "acp",
@@ -1584,7 +1595,7 @@ export class Session {
     });
   }
 
-  private inspectToolSideEffects(tool: AcpToolCallPayload): void {
+  private inspectToolSideEffects(tool: AcpToolCallPayload, source: "acp" | "transcript"): void {
     const launchInfo = extractSubagentLaunchInfo(tool, this.options.config.cwd);
     if (launchInfo) {
       this.subagents.registerLaunch(this.id, launchInfo);
@@ -1597,17 +1608,84 @@ export class Session {
     if (listSnapshot) {
       void this.subagents.reconcileActiveList(listSnapshot);
     }
+    this.recordBackgroundTaskSides(tool, source);
+  }
+
+  private recordBackgroundTaskSides(tool: AcpToolCallPayload, source: "acp" | "transcript"): void {
+    if (this.replayWindow !== null) return;
+    if (tool.status === "failed") {
+      this.removeFailedScheduleLaunch(tool.toolCallId, source);
+      return;
+    }
     const bgLaunch = extractBackgroundTaskLaunch(tool);
     if (bgLaunch) {
-      this.activeBackgroundTasks.set(bgLaunch.taskId, {
-        persistent: bgLaunch.persistent,
-        ...(bgLaunch.prompt ? { prompt: bgLaunch.prompt } : {}),
-      });
+      this.upsertBackgroundTaskLaunch(tool.toolCallId, bgLaunch, source);
     }
     const killedTask = extractBackgroundTaskKill(tool);
     if (killedTask) {
       this.activeBackgroundTasks.delete(killedTask);
     }
+  }
+
+  private removeFailedScheduleLaunch(toolCallId: string, source: "acp" | "transcript"): void {
+    for (const [key, entry] of this.activeBackgroundTasks) {
+      const matched =
+        source === "acp" ? entry.acpToolId === toolCallId : entry.transcriptToolId === toolCallId;
+      if (matched) {
+        this.activeBackgroundTasks.delete(key);
+        return;
+      }
+    }
+  }
+
+  private upsertBackgroundTaskLaunch(
+    toolCallId: string,
+    bgLaunch: BackgroundTaskInfo,
+    source: "acp" | "transcript",
+  ): void {
+    if (!bgLaunch.isSchedule) {
+      this.activeBackgroundTasks.set(bgLaunch.taskId, { persistent: bgLaunch.persistent });
+      return;
+    }
+    const matchedKey = this.findMatchingScheduleTaskKey(toolCallId, bgLaunch, source);
+    const existing = matchedKey ? this.activeBackgroundTasks.get(matchedKey) : undefined;
+    if (matchedKey && matchedKey !== bgLaunch.taskId && !bgLaunch.taskId.startsWith("schedule:")) {
+      this.activeBackgroundTasks.delete(matchedKey);
+    }
+    const targetKey =
+      matchedKey && bgLaunch.taskId.startsWith("schedule:") ? matchedKey : bgLaunch.taskId;
+    this.activeBackgroundTasks.set(targetKey, {
+      ...existing,
+      persistent: bgLaunch.persistent,
+      isSchedule: true,
+      ...(bgLaunch.prompt ? { prompt: bgLaunch.prompt } : {}),
+      ...(bgLaunch.scheduleSignature ? { scheduleSignature: bgLaunch.scheduleSignature } : {}),
+      turnScope: existing?.turnScope ?? this.lastActiveTurnScope,
+      ...(source === "acp" ? { acpToolId: toolCallId } : { transcriptToolId: toolCallId }),
+    });
+  }
+
+  private findMatchingScheduleTaskKey(
+    toolCallId: string,
+    bgLaunch: BackgroundTaskInfo,
+    source: "acp" | "transcript",
+  ): string | undefined {
+    for (const [key, entry] of this.activeBackgroundTasks) {
+      const sameTool =
+        source === "acp" ? entry.acpToolId === toolCallId : entry.transcriptToolId === toolCallId;
+      if (sameTool) return key;
+    }
+    if (this.activeBackgroundTasks.has(bgLaunch.taskId)) {
+      return bgLaunch.taskId;
+    }
+    for (const [key, entry] of this.activeBackgroundTasks) {
+      if (!entry.isSchedule) continue;
+      if (entry.turnScope !== this.lastActiveTurnScope) continue;
+      if (entry.scheduleSignature !== bgLaunch.scheduleSignature) continue;
+      const channelFree = source === "acp" ? !entry.acpToolId : !entry.transcriptToolId;
+      if (channelFree) return key;
+    }
+    return undefined;
   }
 
   private handleNotification(driver: DriverProcess, method: string, params: unknown): void {
@@ -1687,7 +1765,7 @@ export class Session {
       this.chunkEpoch += 1;
       const merged = mergeAcpToolCall(this.turnTools.get(update.toolCallId), update);
       this.turnTools.set(update.toolCallId, merged);
-      this.inspectToolSideEffects(merged);
+      this.inspectToolSideEffects(merged, "acp");
       this.options.emit({
         type: "timeline.item",
         sessionId: this.id,

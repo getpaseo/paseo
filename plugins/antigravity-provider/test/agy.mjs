@@ -319,6 +319,7 @@ function requestClient(method, params) {
 }
 
 const PROMPT_ROUTES = [
+  ["TWO_IDENTICAL_TIMERS", (id) => handleTwoIdenticalTimers(id)],
   ["SUBAGENT_STREAMING_AND_QUESTION", (id) => handleSubagentStreamingAndQuestion(id)],
   ["SUBAGENT_HANGING_CHILD", (id) => handleSubagentHangingChild(id)],
   ["TOOL_HANG", (id, text) => handleHangPrompt(id, text)],
@@ -1707,6 +1708,91 @@ function handleSubagentListReconcile(id) {
     },
   });
   respond(id, { stopReason: "end_turn" });
+}
+
+function handleTwoIdenticalTimers(id) {
+  appendTranscriptStep(sessionId, {
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    content: "<USER_REQUEST>\nTWO_IDENTICAL_TIMERS\n</USER_REQUEST>",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    tool_calls: [
+      {
+        name: "schedule",
+        args: { DurationSeconds: 5, Prompt: "IDENTICAL_PING" },
+      },
+      {
+        name: "schedule",
+        args: { DurationSeconds: 5, Prompt: "IDENTICAL_PING" },
+      },
+    ],
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    status: "RUNNING",
+    content: "Timer 1 running",
+  });
+  appendTranscriptStep(sessionId, {
+    source: "SYSTEM",
+    type: "GENERIC",
+    status: "RUNNING",
+    content: "Timer 2 running",
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_ident_sched_1",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 5, Prompt: "IDENTICAL_PING" },
+    rawOutput: { output: "Scheduled timer 1" },
+  });
+  notifyUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_ident_sched_2",
+    title: "schedule",
+    kind: "other",
+    status: "completed",
+    rawInput: { DurationSeconds: 5, Prompt: "IDENTICAL_PING" },
+    rawOutput: { output: "Scheduled timer 2" },
+  });
+  notifyUpdate({
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "Armed two identical timers." },
+  });
+  respond(id, { stopReason: "end_turn" });
+
+  setTimeout(() => {
+    appendTranscriptStep(sessionId, {
+      source: "SYSTEM",
+      type: "SYSTEM_MESSAGE",
+      content:
+        "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T06:00:01Z sender=scheduler priority=HIGH content=IDENTICAL_PING\n</SYSTEM_MESSAGE>",
+    });
+    appendTranscriptStep(sessionId, {
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      content: "FIRST_IDENTICAL_TIMER_DONE",
+    });
+
+    setTimeout(() => {
+      appendTranscriptStep(sessionId, {
+        source: "SYSTEM",
+        type: "SYSTEM_MESSAGE",
+        content:
+          "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T06:00:02Z sender=scheduler priority=HIGH content=IDENTICAL_PING\n</SYSTEM_MESSAGE>",
+      });
+      appendTranscriptStep(sessionId, {
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        content: "SECOND_IDENTICAL_TIMER_DONE",
+      });
+    }, 450);
+  }, 120);
 }
 
 function handleSubagentStreamingAndQuestion(id) {

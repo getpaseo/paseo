@@ -203,7 +203,7 @@ export class JsonlTranscriptReader {
 
     let cursor = 0;
     let safeConsumedBytes = 0;
-    let sawUnfinishedStep = false;
+    let hasTrailingUnfinished = false;
     let isFirstNonEmptyLine = true;
     const steps: TranscriptStep[] = [];
 
@@ -213,7 +213,7 @@ export class JsonlTranscriptReader {
       const lineText = slice.subarray(cursor, nlIdx + 1).toString("utf8");
       cursor = nlIdx + 1;
       if (!lineText.trim()) {
-        if (!sawUnfinishedStep) safeConsumedBytes = cursor;
+        if (!hasTrailingUnfinished) safeConsumedBytes = cursor;
         continue;
       }
       const step = parseStepLine(lineText, () => this.fallbackStepSeq++);
@@ -222,13 +222,13 @@ export class JsonlTranscriptReader {
           return { steps: [], corruptedAtOffset: true };
         }
         isFirstNonEmptyLine = false;
-        if (!sawUnfinishedStep) safeConsumedBytes = cursor;
+        if (!hasTrailingUnfinished) safeConsumedBytes = cursor;
         continue;
       }
       isFirstNonEmptyLine = false;
       steps.push(step);
-      sawUnfinishedStep ||= !advancePastUnfinished && isUnfinishedTranscriptStep(step);
-      if (!sawUnfinishedStep) safeConsumedBytes = cursor;
+      hasTrailingUnfinished = !advancePastUnfinished && isUnfinishedTranscriptStep(step);
+      if (!hasTrailingUnfinished) safeConsumedBytes = cursor;
     }
 
     safeConsumedBytes = this.consumeTrailingRemainder(
@@ -236,7 +236,6 @@ export class JsonlTranscriptReader {
       lastNewline,
       allowTrailingWithoutNewline,
       advancePastUnfinished,
-      sawUnfinishedStep,
       safeConsumedBytes,
       steps,
     );
@@ -268,7 +267,6 @@ export class JsonlTranscriptReader {
     lastNewline: number,
     allowTrailingWithoutNewline: boolean,
     advancePastUnfinished: boolean,
-    sawUnfinishedStep: boolean,
     safeConsumedBytes: number,
     steps: TranscriptStep[],
   ): number {
@@ -281,8 +279,7 @@ export class JsonlTranscriptReader {
       return safeConsumedBytes;
     }
     steps.push(trailingStep);
-    const unfinished =
-      sawUnfinishedStep || (!advancePastUnfinished && isUnfinishedTranscriptStep(trailingStep));
+    const unfinished = !advancePastUnfinished && isUnfinishedTranscriptStep(trailingStep);
     return unfinished ? safeConsumedBytes : slice.byteLength;
   }
 }
