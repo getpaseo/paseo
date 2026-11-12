@@ -2030,6 +2030,26 @@ describe("lifecycle, cancellation, and recovery edge cases", () => {
     const acpProcesses = (await h.records()).filter((entry) => entry.args?.includes("acp"));
     expect(acpProcesses.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("recovers from expired cloud trajectories by seamlessly allocating a new session", async () => {
+    const h = await harness({ AGY_TEST_EXPIRED_TRAJECTORY_ID: "expired-session-id" });
+    await h.open({
+      restored: {
+        data: { conversationId: "expired-session-id" },
+      },
+    });
+
+    const turn = await h.prompt("Hello on expired session");
+    await h.completed(turn);
+
+    const persistence = h.events.findLast(
+      (event): event is Extract<ProviderEvent, { type: "session.persistence" }> =>
+        event.type === "session.persistence",
+    );
+    expect(persistence?.persistence.data).toMatchObject({
+      conversationId: "recovered-session-id",
+    });
+  });
 });
 
 it.runIf(process.platform === "win32")(

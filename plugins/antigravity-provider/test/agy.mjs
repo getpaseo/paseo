@@ -145,6 +145,14 @@ async function handlePrompt(id, params) {
     .join("\n");
   record({ input: { message: { content: text }, model: currentModel } });
 
+  if (
+    sessionId === "expired-session-id" ||
+    (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID && sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
+  ) {
+    respondError(id, -32603, `not_found: trajectory not found: ${sessionId}: not found`);
+    return;
+  }
+
   if (text.includes("HANG") || text.includes("TOOL_HANG")) {
     handleHangPrompt(id, text);
     return;
@@ -995,7 +1003,11 @@ lines.on("line", async (line) => {
       handleSessionList(id, params);
       return;
     case "session/new":
-      sessionId = DEFAULT_SESSION_ID;
+      sessionId =
+        sessionId === "expired-session-id" ||
+        (process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID && sessionId === process.env.AGY_TEST_EXPIRED_TRAJECTORY_ID)
+          ? "recovered-session-id"
+          : DEFAULT_SESSION_ID;
       respond(id, {
         sessionId,
         models: { currentModelId: currentModel },

@@ -444,6 +444,11 @@ export class Session {
         this.modelDirty = false;
       }
     } catch (error) {
+      if (isTrajectoryNotFoundError(error) && this.conversationId) {
+        await this.recoverExpiredTrajectory(driver);
+        await this.setLiveModel(driver, targetModel, requestedModel, revision);
+        return;
+      }
       const isTimeout =
         error instanceof Error &&
         error.message.includes("Timed out waiting for Antigravity ACP response");
@@ -455,17 +460,63 @@ export class Session {
     }
   }
 
+  private async recoverExpiredTrajectory(driver: DriverProcess): Promise<string> {
+    const sessionResult = await driver.requestInit(
+      "session/new",
+      this.commonSessionParams(),
+      acpSessionResultSchema,
+    );
+    if (!sessionResult.sessionId) {
+      throw new AntigravityError(
+        "Antigravity ACP session/new did not return a sessionId",
+        "WIRE_PARSE_ERROR",
+      );
+    }
+    this.conversationId = sessionResult.sessionId;
+    const reportedModel = sessionResult.models?.currentModelId ?? null;
+    await this.syncInitialModel(driver, reportedModel);
+    this.emitPersistence();
+    return sessionResult.sessionId;
+  }
+
+  private commonSessionParams() {
+    const mcpServers = toAcpMcpServers(this.options.config.mcpServers);
+    const systemPrompt = this.options.config.systemPrompt?.trim();
+    const meta = systemPrompt
+      ? { antigravity: { systemPrompt: { append: systemPrompt } } }
+      : undefined;
+    return {
+      cwd: this.options.config.cwd,
+      mcpServers,
+      ...(meta ? { _meta: meta } : {}),
+    };
+  }
+
   private async executeTurn(
     driver: DriverProcess,
     turn: ActiveTurn,
     nativeText: string,
   ): Promise<void> {
     try {
-      const response = await driver.request(
-        "session/prompt",
-        { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
-        acpPromptResultSchema,
-      );
+      let response;
+      try {
+        response = await driver.request(
+          "session/prompt",
+          { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
+          acpPromptResultSchema,
+        );
+      } catch (promptError) {
+        if (isTrajectoryNotFoundError(promptError) && this.conversationId && !turn.interrupted) {
+          await this.recoverExpiredTrajectory(driver);
+          response = await driver.request(
+            "session/prompt",
+            { sessionId: this.conversationId, prompt: [{ type: "text", text: nativeText }] },
+            acpPromptResultSchema,
+          );
+        } else {
+          throw promptError;
+        }
+      }
       if (this.turn !== turn) return;
       this.turn = null;
       this.cancelAllPermissions();
@@ -635,16 +686,7 @@ export class Session {
   }
 
   private async openOrLoadAcpSession(driver: DriverProcess, history: "replay" | "skip") {
-    const mcpServers = toAcpMcpServers(this.options.config.mcpServers);
-    const systemPrompt = this.options.config.systemPrompt?.trim();
-    const meta = systemPrompt
-      ? { antigravity: { systemPrompt: { append: systemPrompt } } }
-      : undefined;
-    const commonParams = {
-      cwd: this.options.config.cwd,
-      mcpServers,
-      ...(meta ? { _meta: meta } : {}),
-    };
+    const commonParams = this.commonSessionParams();
 
     if (this.conversationId) {
       const buffered: ProviderEvent[] = [];
@@ -659,6 +701,23 @@ export class Session {
           acpSessionResultSchema,
         );
         return { sessionResult, replayEvents: buffered };
+      } catch (loadError) {
+        if (isTrajectoryNotFoundError(loadError)) {
+          const sessionResult = await driver.requestInit(
+            "session/new",
+            commonParams,
+            acpSessionResultSchema,
+          );
+          if (!sessionResult.sessionId) {
+            throw new AntigravityError(
+              "Antigravity ACP session/new did not return a sessionId",
+              "WIRE_PARSE_ERROR",
+            );
+          }
+          this.conversationId = sessionResult.sessionId;
+          return { sessionResult, replayEvents: [] as ProviderEvent[] };
+        }
+        throw loadError;
       } finally {
         this.replayMode = "live";
         this.replayBuffer = null;
@@ -1308,4 +1367,9 @@ export function toProviderError(error: unknown): ProviderError {
     message: error instanceof Error ? error.message : String(error),
     code: "ANTIGRAVITY_ERROR",
   };
+}
+
+function isTrajectoryNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /trajectory.*not found/i.test(message);
 }
