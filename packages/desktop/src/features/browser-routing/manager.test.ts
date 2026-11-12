@@ -413,7 +413,13 @@ describe("BrowserRoutingManager", () => {
     expect(manager.isReadyRoutedPartition(browserRoutingPartitionForServer("server-a"))).toBe(
       false,
     );
-    expect(events).toEqual([]);
+    expect(events).toEqual([
+      {
+        senderId: "broadcast",
+        event: BROWSER_ROUTING_CHANGED_EVENT,
+        payload: { serverId: "server-a", enabled: false },
+      },
+    ]);
     // The session already exists: it stays behind the proxy, which now denies everything.
     const session = sessions.get(browserRoutingPartitionForServer("server-a"))!;
     expect(await requestThroughProxy(manager, proxyPortOf(session))).toBe(503);

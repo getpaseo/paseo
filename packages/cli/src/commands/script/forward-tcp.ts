@@ -13,6 +13,7 @@ function bridge(socket: Socket, tunnel: NetworkTunnel, targetPort: number): void
   socket.pause();
   let stream: NetworkTunnelStream;
   let connected = false;
+  let localEnded = false;
   let closed = false;
   let credit = 0;
   let queuedBytes = 0;
@@ -35,12 +36,16 @@ function bridge(socket: Socket, tunnel: NetworkTunnel, targetPort: number): void
       if (size === chunk.length) queued.shift();
       else queued[0] = chunk.subarray(size);
     }
+    if (localEnded && queued.length === 0) {
+      close();
+      return;
+    }
     if (queuedBytes < tunnel.limits.initialWindowBytes) socket.resume();
   };
 
   try {
     stream = tunnel.openStream(
-      { host: LOOPBACK, port: targetPort },
+      { host: "localhost", port: targetPort },
       {
         onConnected: () => {
           connected = true;
@@ -87,6 +92,10 @@ function bridge(socket: Socket, tunnel: NetworkTunnel, targetPort: number): void
     socket.destroy();
     return;
   }
+  socket.once("end", () => {
+    localEnded = true;
+    drain();
+  });
   socket.on("error", close);
   socket.on("close", close);
 }

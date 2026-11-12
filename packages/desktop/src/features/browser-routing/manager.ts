@@ -160,7 +160,10 @@ export class BrowserRoutingManager {
         // A failed warm-up cannot roll back a newer choice or alter settings during shutdown.
         if (!this.shutDown && isCurrent()) {
           await this.persistHost(serverId, { enabled: false, partition });
-          if (isCurrent()) this.parkRoute(serverId);
+          if (isCurrent()) {
+            this.parkRoute(serverId);
+            this.deps.broadcast(BROWSER_ROUTING_CHANGED_EVENT, { serverId, enabled: false });
+          }
         }
         this.log("warn", "route.setup-failed", { serverId, error: String(error) });
         return {

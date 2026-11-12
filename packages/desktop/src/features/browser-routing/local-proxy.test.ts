@@ -442,6 +442,30 @@ describe("local browser proxy: CONNECT", () => {
     expect(second.toString()).toBe("echo:again");
   });
 
+  test("closes the local CONNECT socket on EOF while the upstream remains open", async () => {
+    let streamClosed = false;
+    const proxy = await startProxy((_target, sink) => {
+      queueMicrotask(sink.onConnected);
+      return {
+        write(_data, callback) {
+          callback?.();
+        },
+        close() {
+          streamClosed = true;
+        },
+      };
+    });
+    const { socket } = await connectThroughProxy({
+      proxyPort: proxy.port,
+      target: "upstream.invalid:443",
+    });
+    const closed = once(socket, "close");
+    socket.end();
+    socket.resume();
+    await closed;
+    expect(streamClosed).toBe(true);
+  });
+
   test("passes IPv6 literals and hostnames to the tunnel unresolved", async () => {
     const targets: ProxyTarget[] = [];
     const proxy = await startProxy(recordingHostNotFoundTunnel(targets));

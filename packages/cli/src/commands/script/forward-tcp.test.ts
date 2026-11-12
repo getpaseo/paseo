@@ -14,6 +14,7 @@ afterEach(async () => {
 function echoTunnel(closeAfterWrite = false) {
   const writes: Uint8Array[] = [];
   let target: { host: string; port: number } | undefined;
+  let closed = 0;
   const tunnel = {
     limits: { initialWindowBytes: 4, maxDataBytes: 2, maxStreams: 16, connectTimeoutMs: 1000 },
     openStream(destination: { host: string; port: number }, handlers: NetworkTunnelStreamHandlers) {
@@ -30,13 +31,18 @@ function echoTunnel(closeAfterWrite = false) {
           });
         },
         consume() {},
-        close() {},
+        close() {
+          closed += 1;
+        },
       };
     },
   } as unknown as NetworkTunnel;
   return {
     tunnel,
     writes,
+    get closed() {
+      return closed;
+    },
     get target() {
       return target;
     },
@@ -65,8 +71,23 @@ describe("workspace TCP forwarding", () => {
     const forward = await startTcpForward(fake.tunnel, 4173, 0);
     forwards.push(forward);
     expect(await exchange(forward.port, "abcdef")).toBe("abcdef");
-    expect(fake.target).toEqual({ host: "127.0.0.1", port: 4173 });
+    expect(fake.target).toEqual({ host: "localhost", port: 4173 });
     expect(fake.writes.map((part) => part.length)).toEqual([2, 2, 2]);
+  });
+
+  it("releases streams after local EOF even when the upstream stays open", async () => {
+    const fake = echoTunnel();
+    const forward = await startTcpForward(fake.tunnel, 4173, 0);
+    forwards.push(forward);
+    const socket = createConnection({ host: "127.0.0.1", port: forward.port });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("error", reject);
+      socket.once("connect", () => socket.end("abcdef"));
+      socket.resume();
+      socket.once("close", () => resolve());
+    });
+    expect(Buffer.concat(fake.writes).toString()).toBe("abcdef");
+    expect(fake.closed).toBe(1);
   });
 
   it("uses a free loopback port when the default port is occupied", async () => {

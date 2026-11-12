@@ -727,5 +727,6 @@ function handleConnect(
   });
   socket.once("end", () => {
     stream.close(TunnelCloseReason.Ok);
+    socket.end();
   });
 }
