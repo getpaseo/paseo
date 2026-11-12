@@ -183,7 +183,9 @@ export class VoiceSession {
   private bargeInPending = false;
   private bargeInClipTimer: ReturnType<typeof setTimeout> | null = null;
   /** Replies sent to speech: playing (endedAt null) or ended within ECHO_TAIL_MS. */
-  private spokenReplies: Array<{ text: string; endedAt: number | null }> = [];
+  private spokenReplies: SpokenReply[] = [];
+  /** The sound awaiting a verdict began while a reply's echo canceller was still adapting. */
+  private bargeInDuringEchoWarmup = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
   private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
@@ -1017,6 +1019,8 @@ export class VoiceSession {
       noise = "no words";
     } else if (this.isEchoOfSpokenReply(result.text)) {
       noise = "echo of the reply";
+    } else if (this.bargeInDuringEchoWarmup && !hasInterruptWord(result.text)) {
+      noise = "reply audio had just started";
     }
     if (noise) {
       const hasAnotherSpeechSegment =
@@ -1140,7 +1144,12 @@ export class VoiceSession {
       try {
         await this.ttsManager.generateAndWaitForPlayback(
           text,
-          (msg) => this.emit(msg),
+          (msg) => {
+            if (msg.type === "audio_output") {
+              spokenReply.audioStartedAt ??= Date.now();
+            }
+            this.emit(msg);
+          },
           abortSignal,
           true,
         );
@@ -1221,13 +1230,13 @@ export class VoiceSession {
     this.ttsManager.confirmAudioPlayed(id);
   }
 
-  private rememberSpokenReply(text: string): { text: string; endedAt: number | null } {
-    const reply = { text, endedAt: null };
+  private rememberSpokenReply(text: string): SpokenReply {
+    const reply: SpokenReply = { text, audioStartedAt: null, endedAt: null };
     this.spokenReplies = [...this.recentSpokenReplies(), reply].slice(-MAX_SPOKEN_REPLIES);
     return reply;
   }
 
-  private recentSpokenReplies(): Array<{ text: string; endedAt: number | null }> {
+  private recentSpokenReplies(): SpokenReply[] {
     const now = Date.now();
     return this.spokenReplies.filter(
       (reply) => reply.endedAt === null || now - reply.endedAt <= ECHO_TAIL_MS,
@@ -1276,6 +1285,13 @@ export class VoiceSession {
   private deferBargeIn(): void {
     this.speechInProgress = true;
     this.bargeInPending = true;
+    const now = Date.now();
+    this.bargeInDuringEchoWarmup = this.spokenReplies.some(
+      (reply) =>
+        reply.endedAt === null &&
+        reply.audioStartedAt !== null &&
+        now - reply.audioStartedAt < ECHO_WARMUP_MS,
+    );
     this.sessionLogger.info("Voice sound during a reply – waiting for the transcript");
     this.dropBufferedInput();
     // A detector that stays on (steady echo, a hum) never ends the utterance, and the
@@ -1523,6 +1539,14 @@ export class VoiceSession {
 
 /** Longest stretch of unbroken sound during a reply before it is transcribed as it stands. */
 const BARGE_IN_MAX_CLIP_MS = 4000;
+/**
+ * A client's echo canceller needs the first seconds of a reply's audio to adapt, and until
+ * then the reply reaches the microphone at full level. Speech-to-text garbles that leak
+ * beyond what the echo match recognises ("Is the baseball in season." for "Here's the
+ * bicycle in six sentences."), so sound reported this soon after a reply's audio starts
+ * interrupts only with an interrupt word. The detector reports sound 0.8 s after it begins.
+ */
+const ECHO_WARMUP_MS = 3500;
 /** How long after a reply's playback ends its echo can still reach the microphone. */
 const ECHO_TAIL_MS = 3000;
 const MAX_SPOKEN_REPLIES = 4;
@@ -1543,6 +1567,17 @@ const INTERRUPT_WORDS = new Set([
   "actually",
   "sorry",
 ]);
+
+interface SpokenReply {
+  text: string;
+  /** When the reply's first audio went to the client; null until then. */
+  audioStartedAt: number | null;
+  endedAt: number | null;
+}
+
+function hasInterruptWord(text: string): boolean {
+  return wordTokens(text).some((word) => INTERRUPT_WORDS.has(word));
+}
 
 function wordTokens(text: string): string[] {
   return (text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).map((token) =>

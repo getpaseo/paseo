@@ -253,9 +253,69 @@ describe("VoiceSession streaming transcription", () => {
   });
 
   test.each([
+    { transcript: "Is the baseball in season.", stops: false },
+    { transcript: "No, the short version.", stops: true },
+  ])(
+    "right after a reply's audio starts, $transcript stops the reply: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsPlaybackHold = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "Here's the bicycle in six sentences." });
+      try {
+        await waitForAudioOutput(host);
+        detector.emit("speech_started");
+        await settle();
+        detector.emit("speech_stopped");
+        await settle();
+        sttSession.emitCommitted({ segmentId: "leak", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "leak", transcript, isFinal: true });
+        await settle();
+
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("once a reply's audio has played for a few seconds, unrelated words stop it", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsPlaybackHold = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "Here's the bicycle in six sentences." });
+    try {
+      await waitForAudioOutput(host);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(3500);
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(0);
+      detector.emit("speech_stopped");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: null });
+      sttSession.emitTranscript({
+        segmentId: "words",
+        transcript: "Is the baseball in season.",
+        isFinal: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      vi.useRealTimers();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test.each([
     { transcript: "stop", reply: "A spoken response." },
     { transcript: "wait, stop", reply: "A spoken response." },
-    { transcript: "Explain that differently", reply: "A spoken response." },
     { transcript: "Wait, when did the bicycle begin?", reply: BICYCLE_REPLY },
   ])(
     "stops the reply only once the user's words $transcript are transcribed",
