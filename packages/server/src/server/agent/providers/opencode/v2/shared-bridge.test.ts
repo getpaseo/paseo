@@ -27,7 +27,8 @@ test("a shared plugin binds Paseo sessions without involving unrelated sessions"
   const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
   const tool = { name: "echo", description: "echo", inputSchema: { value: z.string() } };
   const tools = new Map([[tool.name, tool]]);
-  bridge.setManifestCatalog({ tools });
+  // Session-only tools must survive plugin reload without a global definition.
+  bridge.setManifestCatalog({ tools: new Map() });
   await bridge.start();
   const unbind = bridge.bindSession({
     sessionId: "paseo",
