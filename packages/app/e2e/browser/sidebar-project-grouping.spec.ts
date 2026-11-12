@@ -384,15 +384,27 @@ test.describe("Sidebar project grouping", () => {
     await captureProjectSidebar(page, testInfo.outputPath("flat-projects.png"));
 
     await enableProjectNesting(page);
-    await expectProjectNestedUnder(page, "Repository root project", "App package project");
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
     await captureProjectSidebar(page, testInfo.outputPath("nested-projects.png"));
 
     await toggleProjectCollapsed(page, "Repository root project");
     await expectProjectHidden(page, "App package project");
     await toggleProjectCollapsed(page, "Repository root project");
-    await expectProjectNestedUnder(page, "Repository root project", "App package project");
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
     await page.reload();
-    await expectProjectNestedUnder(page, "Repository root project", "App package project");
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
   });
 
   test("groups the same repository subdirectory across hosts", async ({
