@@ -1,3 +1,8 @@
+import type {
+  NativeBrowserFrameRequest,
+  NativeBrowserCommandRequest,
+  NativeBrowserEventsRequest,
+} from "@getpaseo/protocol/browser-native";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
@@ -115,6 +120,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    nativeBridgeVersion: 1,
+    captureNativeFrame: (input: NativeBrowserFrameRequest) =>
+      ipcRenderer.invoke("paseo:browser:native-frame", input),
+    sendNativeCommand: (input: NativeBrowserCommandRequest) =>
+      ipcRenderer.invoke("paseo:browser:native-command", input),
+    readNativeEvents: (input: NativeBrowserEventsRequest) =>
+      ipcRenderer.invoke("paseo:browser:native-events", input),
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
