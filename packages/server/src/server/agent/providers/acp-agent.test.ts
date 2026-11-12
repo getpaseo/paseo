@@ -13,6 +13,7 @@ import {
   RequestError,
   ndJsonStream,
   type Agent,
+  type Client,
   type CreateTerminalRequest,
   PermissionOption,
   PromptResponse,
@@ -2524,6 +2525,53 @@ describe("ACPAgentClient fetchCatalog", () => {
 });
 
 describe("ACPAgentClient listImportableSessions", () => {
+  test("omits hidden prompts from import previews", async () => {
+    class TestClient extends ACPAgentClient {
+      protected override async spawnProcess(
+        _env?: Record<string, string>,
+        options?: { client?: Client },
+      ): Promise<SpawnedACPProcess> {
+        const client = options!.client!;
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            listSessions: async () => ({
+              sessions: [{ sessionId: "s1", cwd: "/tmp", title: null, updatedAt: null }],
+              nextCursor: null,
+            }),
+            loadSession: async () => {
+              for (const update of [
+                { sessionUpdate: "user_message_chunk", content: { type: "text", text: "First" } },
+                {
+                  sessionUpdate: "user_message_chunk",
+                  content: { type: "text", text: "secret" },
+                  _meta: { hideFromScrollback: true },
+                },
+                { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Last" } },
+              ] as SessionUpdate[]) {
+                await client.sessionUpdate({ sessionId: "s1", update });
+              }
+              return {};
+            },
+          },
+          initialize: {
+            agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } },
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+      protected override async closeProbe(): Promise<void> {}
+    }
+    const client = new TestClient({
+      provider: "grok",
+      logger: createTestLogger(),
+      defaultCommand: ["grok"],
+      defaultModes: [],
+    });
+    const sessions = await client.listImportableSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ firstPromptPreview: "First", lastPromptPreview: "Last" });
+  });
+
   function makeClient(args: { listSessions: ReturnType<typeof vi.fn>; supportsList?: boolean }) {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
@@ -2864,6 +2912,35 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 
 describe("ACPAgentSession", () => {
+  test("hides provider-marked prompts while preserving adjacent user messages", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    for (const update of [
+      { sessionUpdate: "user_message_chunk", content: { type: "text", text: "First" } },
+      {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "hidden" },
+        _meta: { hideFromScrollback: true, syntheticPrompt: true },
+      },
+      {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "Last" },
+        _meta: { hideFromScrollback: false },
+      },
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Response" } },
+    ] as SessionUpdate[]) {
+      await session.sessionUpdate({ sessionId: "session-1", update });
+    }
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      expect.objectContaining({ item: { type: "user_message", text: "First" } }),
+      expect.objectContaining({ item: { type: "user_message", text: "Last" } }),
+    ]);
+  });
+
   test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
     const session = new ACPAgentSession(
       {
@@ -4589,6 +4666,41 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           text: "Hello",
           messageId: "assistant-replay-1",
         },
+      },
+    ]);
+  });
+
+  test("omits hidden provider prompts during loadSession replay", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      for (const update of [
+        { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Hello" } },
+        {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "reminder" },
+          _meta: { hideFromScrollback: true },
+        },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done" } },
+      ] as SessionUpdate[]) {
+        await session.sessionUpdate({ sessionId: "session-1", update });
+      }
+      return { sessionId: "session-1", modes: null, models: null, configOptions: [] };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "test-acp" },
+      loadSession,
+    }));
+    await session.initializeResumedSession();
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "Hello" },
       },
     ]);
   });
