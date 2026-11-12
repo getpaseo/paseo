@@ -270,7 +270,7 @@ class ProjectConfigOwner {
   async write(input: WritePaseoConfigForEditInput): Promise<WritePaseoConfigForEditResult> {
     const root = resolve(input.repoRoot);
     return this.serialized(root, "write", async () => {
-      const { edit: parsed } = await validateConfig(input.config);
+      const { edit: parsed, runtime } = await validateConfig(input.config);
       if (!parsed.success) return { ok: false, error: { code: "invalid_project_config" } };
       const content = `${JSON.stringify(parsed.data, null, 2)}\n`;
       if (Buffer.byteLength(content) > MAX_PASEO_CONFIG_BYTES) {
@@ -279,7 +279,8 @@ class ProjectConfigOwner {
       const tempPath = join(root, `.${PASEO_CONFIG_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`);
       try {
         await writeFile(tempPath, content, { flag: "wx" });
-        const savedRevision = revision(await stat(tempPath));
+        const savedStats = await stat(tempPath);
+        const savedRevision = revision(savedStats);
         const currentStats = await inspect(root);
         if (currentStats) admit(currentStats);
         const currentRevision = currentStats ? revision(currentStats) : null;
@@ -289,8 +290,13 @@ class ProjectConfigOwner {
         // Serialized against daemon edits. External writers still have the existing
         // optimistic stat/rename race; revision tokens remain mtime + size.
         await rename(tempPath, resolvePaseoConfigPath(root));
-        // Remember what was saved, so a late check right after the save still has a config to show.
-        await this.load(root).catch(() => this.snapshots.delete(root));
+        // Remember what was saved without another read, so a late check right after the save
+        // still has a config to show. A rename that changes ctime only costs the next check a reload.
+        this.remember(root, {
+          fingerprint: fingerprint(savedStats),
+          edit: { ok: true, config: parsed.data, revision: savedRevision },
+          runtime: { ok: true, config: runtime },
+        });
         return { ok: true, config: parsed.data, revision: savedRevision };
       } catch {
         return { ok: false, error: { code: "write_failed" } };
