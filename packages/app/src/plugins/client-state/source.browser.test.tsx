@@ -294,7 +294,14 @@ it("shows a restored child in the nested example while its cached parent remains
     theme: toPluginTheme(lightTheme),
     layout: { compact: false, platform: "web" as const },
     active: { workspace: null, agent: null },
-    navigation: { openWorkspace() {}, openAgent() {}, openProject() {}, openTerminal() {} },
+    navigation: {
+      openWorkspace() {},
+      openAgent() {},
+      openProject() {},
+      openTerminal() {},
+      openTab() {},
+      openSubagent() {},
+    },
     dismiss() {},
   };
   const source = mount(<Nested {...view} />);

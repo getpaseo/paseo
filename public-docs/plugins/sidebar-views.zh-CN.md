@@ -1,6 +1,6 @@
 # 构建侧边栏视图 {#build-a-sidebar-view}
 
-侧边栏视图替换 Paseo 页眉与页脚之间的内容。插件接收主题令牌、当前实体引用和导航方法，使用 React Native 绘制自己的界面。安装[侧边栏视图示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/sidebar-views)，体验项目列表、按任务分组的 Agent、嵌套 Agent 和标签文件夹。
+侧边栏视图替换 Paseo 页眉与页脚之间的内容。插件接收主题令牌、当前实体引用和导航方法，使用 React Native 绘制自己的界面。安装[侧边栏视图示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/sidebar-views)，体验项目列表、按任务分组的 Agent、嵌套 Agent、标签文件夹和已打开的标签页。
 
 ## 注册视图 {#register-a-view}
 
@@ -94,6 +94,32 @@ const selected = useWorkspace(ref, selector, equals);
 
 终端快照包含 `workspace`、`title`、`isScript` 和 `createdAt`。在时间戳跟踪引入前启动的 worker 所保留的终端，其 `createdAt` 为 null。脚本归属来自工作区脚本运行时条目。主机观察跟踪终端创建、关闭、标题变化和重新连接，并在最后一个终端读取订阅者离开时释放。
 
+## 显示已打开的标签页和子 Agent {#show-open-tabs-and-subagents}
+
+`useWorkspaceTabs(workspaceRef)` 返回此设备上该工作区已打开的标签页，按窗格及标签栏顺序排列，并返回 `activeTabId`，即打开工作区时显示的标签页。标签页是应用状态，其他设备各有自己的标签页。资源管理器中的“文件”和“更改”标签页不包含在内。每个标签页包含 `id`、`kind`，以及它显示的 `agent`、`terminalId`、`providerSubagent` 或 `path`。未变化的标签页保留同一对象，未变化的列表保留同一引用。
+
+```tsx
+function TabRow({ tab, view }: { tab: PluginWorkspaceTab; view: PluginSidebarViewProps }) {
+  return (
+    <WorkspaceTabPresentation tab={tab}>
+      {(presentation) => (
+        <Pressable onPress={() => view.navigation.openTab(tab)}>
+          <presentation.Icon size={14} color={view.theme.colors.foregroundMuted} />
+          <Text>{presentation.label}</Text>
+          <WorkspaceTabMenu tab={tab} label={presentation.label} />
+        </Pressable>
+      )}
+    </WorkspaceTabPresentation>
+  );
+}
+```
+
+`WorkspaceTabPresentation` 解析应用标签栏显示的标签、副标题、图标、未保存状态和状态 `indicator`。`navigation.openTab` 打开工作区并聚焦该标签页。`WorkspaceTabMenu` 是应用自带的标签页菜单：复制、重新加载、重命名和关闭，并使用应用的确认对话框和重命名对话框。SDK 不提供命令式关闭，因此有未保存内容的标签页总会先询问。
+
+`useSubagents(tab.agent)` 按创建时间从早到晚列出 Agent 的子 Agent：它启动的 Paseo Agent（`kind: "agent"`，用 `useAgent` 读取），以及提供方自己的子 Agent（`kind: "provider"`，包含 `title`、`description`、`status` 和 `requiresAttention`）。主机支持时，读取会获取提供方的列表。传入 `{ parentSubagentId }` 可读取提供方子 Agent 的子级。`useSubagentPresentation` 提供行的标签、图标、状态和信息行。`navigation.openSubagent(subagent, { parentTab })` 按子 Agent 轨道的方式打开它：在父标签页旁边，若子 Agent 有自己的工作区则在该工作区中打开。`SubagentMenu` 在标签页操作之外增加分离和归档。
+
+Hook 从 `@getpaseo/plugin/client` 导入，组件从 `@getpaseo/plugin/client/ui` 导入。示例中的 `tabs` 视图列出每个工作区的标签页及其子 Agent。
+
 ## 通过引用执行操作 {#act-on-a-ref}
 
 `usePaseo()` 将基于引用的操作发送到引用所属的主机：
@@ -117,7 +143,7 @@ await paseo.terminals.ref(terminalRef).kill();
 
 ## 匹配应用的信息密度 {#match-the-apps-density}
 
-使用 React Native 原语绘制界面。SDK 不导出侧边栏视图的行、分区、列表、徽标或拖拽辅助组件。现有页眉和页脚组件包属于独立界面。
+使用 React Native 原语绘制界面。除标签页呈现和菜单外，SDK 不导出侧边栏视图的行、分区、列表、徽标或拖拽辅助组件。现有页眉和页脚组件包属于独立界面。
 
 紧凑行的最小高度为 28，水平内边距为 12；主标签字号为 12、行高为 16，次标签字号为 11。使用以下主题令牌：
 

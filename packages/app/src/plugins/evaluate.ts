@@ -4,6 +4,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useSettings } from "./settings/use-settings";
+import { useSubagentPresentation, useSubagents, useWorkspaceTabs } from "./workspace-tabs/bridge";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginClientRuntime from "@getpaseo/plugin/client";
 import * as React from "react";
@@ -568,6 +569,9 @@ export function runPluginClientBundle(
         useSettings: (definition: import("@getpaseo/plugin").SettingsDefinition) =>
           useSettings(definition, id),
         openExternalUrl,
+        useWorkspaceTabs,
+        useSubagents,
+        useSubagentPresentation,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
         useHosts: () =>
           React.useSyncExternalStore(

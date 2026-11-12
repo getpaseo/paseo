@@ -82,6 +82,17 @@ export {
   useProjects,
   useTerminals,
 } from "./client-state.js";
+export type {
+  PluginProviderSubagentRef,
+  PluginSubagent,
+  PluginSubagentMenuProps,
+  PluginTabIconProps,
+  PluginTabMenuProps,
+  PluginTabPresentation,
+  PluginWorkspaceTab,
+  PluginWorkspaceTabKind,
+  PluginWorkspaceTabs,
+} from "./workspace-tabs.js";
 export { useComposer, useComposers } from "./composer.js";
 export type {
   PluginComposer,
@@ -106,6 +117,12 @@ export type {
 import type { SettingsDefinition } from "../settings.js";
 import type { SettingsState } from "./contracts.js";
 import type { ZodType } from "zod";
+import type { AgentRef, WorkspaceRef } from "../refs.js";
+import type {
+  PluginSubagent,
+  PluginTabPresentation,
+  PluginWorkspaceTabs,
+} from "./workspace-tabs.js";
 export declare function useSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
 ): SettingsState<Schema>;
@@ -118,6 +135,25 @@ export interface PluginHostSummary {
 }
 /** Live configured hosts. Supplied by the app's client bundle loader. */
 export declare function useHosts(): readonly PluginHostSummary[];
+
+/**
+ * A workspace's open tabs on this device, pane by pane in strip order, and the tab it opens on.
+ * Tabs are app state, not daemon state.
+ */
+export declare function useWorkspaceTabs(workspace: WorkspaceRef): PluginWorkspaceTabs;
+
+/**
+ * An agent's subagents, oldest first: Paseo agents it started and the provider's own subagents.
+ * Reading them fetches the provider's list when the host supports it. Pass `parentSubagentId`
+ * for the children of a provider subagent.
+ */
+export declare function useSubagents(
+  agent: AgentRef,
+  options?: { parentSubagentId?: string },
+): readonly PluginSubagent[];
+
+/** The label, icon, status and facts line the app shows for a subagent row. */
+export declare function useSubagentPresentation(subagent: PluginSubagent): PluginTabPresentation;
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
