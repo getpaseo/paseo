@@ -758,24 +758,46 @@ test.describe("on a touch-capable desktop browser", () => {
         30_000,
       );
       await openAgentRoute(page, agent);
+      await allowRichClipboard(page.context());
       const blocks = assistantMessageBlocks(page);
-      const first = await blocks.getByText("First paragraph.").boundingBox();
       const third = await blocks.getByText("Third paragraph.").boundingBox();
-      if (!first || !third) {
-        throw new Error("Expected rendered paragraphs");
+      if (!third) throw new Error("Expected rendered ending paragraph");
+
+      for (const startText of [
+        "First paragraph.",
+        "List item.",
+        "Quote text.",
+        "const answer = 1;",
+      ]) {
+        const start = await blocks.getByText(startText).evaluate((element, text) => {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          let node: Node | null = null;
+          while ((node = walker.nextNode())) {
+            if (node.textContent?.includes(text.slice(0, 4))) break;
+          }
+          if (!node?.textContent) throw new Error("Expected rendered text node");
+          const range = document.createRange();
+          range.setStart(node, 1);
+          range.setEnd(node, Math.min(2, node.textContent.length));
+          const rect = range.getBoundingClientRect();
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+        }, startText);
+        await page.mouse.move(start.x, start.y);
+        await page.mouse.down();
+        await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, {
+          steps: 20,
+        });
+        await page.mouse.up();
+        const selectedFromBlock = await page.evaluate(
+          () => window.getSelection()?.toString() ?? "",
+        );
+        expect(selectedFromBlock, `drag starting in ${startText}`).toContain(startText.slice(2));
+        expect(selectedFromBlock, `drag ending in third paragraph`).toContain("Third paragraph.");
+        await copySelection(page);
+        const copied = await readRichClipboard(page);
+        expect(copied.plainText, `copy starting in ${startText}`).toContain(startText.slice(2));
+        expect(copied.plainText).toContain("Third paragraph.");
       }
-
-      await page.mouse.move(first.x + 1, first.y + first.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, { steps: 20 });
-      await page.mouse.up();
-
-      const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
-      expect(selected).toContain("First paragraph.");
-      expect(selected).toContain("List item.");
-      expect(selected).toContain("Quote text.");
-      expect(selected).toContain("const answer = 1;");
-      expect(selected).toContain("Third paragraph.");
     } finally {
       await agent.cleanup();
     }
