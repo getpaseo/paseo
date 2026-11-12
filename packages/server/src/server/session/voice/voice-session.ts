@@ -1555,7 +1555,7 @@ export class VoiceSession {
   }
 }
 
-const DEFERRED_SPEECH_CONFIRM_MS = 500;
+const DEFERRED_SPEECH_CONFIRM_MS = 350;
 /** Longest stretch of unbroken sound during a reply before it is transcribed as it stands. */
 const BARGE_IN_MAX_CLIP_MS = 4000;
 /**
@@ -1581,11 +1581,9 @@ const INTERRUPT_WORDS = new Set([
   "cancel",
   "enough",
   "quiet",
-  "hey",
   "no",
   "nope",
   "actually",
-  "sorry",
   "skip",
   "next",
   "repeat",

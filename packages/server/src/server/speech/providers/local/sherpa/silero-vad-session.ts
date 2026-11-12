@@ -24,12 +24,18 @@ const DEFAULT_SILENCE_MS = 1000;
 // where a talker sits at -10 to -30 dBFS). Windows quieter than this reach it as silence.
 const DEFAULT_MIN_WINDOW_DBFS = -55;
 
-// Speech fills most of the windows while it is being confirmed; clicks and taps fill few.
-const MIN_LOUD_SHARE_TO_CONFIRM = 0.5;
+// The model reports speech about 160 ms after it starts and for a while after it ends, so
+// the sound behind a detection lies in the confirmation period plus this lead.
+const DETECTION_LAG_MS = 320;
+// A word as short as "Stop." fills about ten 32 ms windows. Key clicks and taps fill one
+// window each, a few per second.
+const MIN_LOUD_WINDOWS = 8;
+const MIN_LOUD_SHARE = 0.25;
 
-/** Whether enough of the windows heard while confirming speech were above the level gate. */
-export function isMostlySound(loudWindows: number, windows: number): boolean {
-  return windows > 0 && loudWindows >= windows * MIN_LOUD_SHARE_TO_CONFIRM;
+/** Whether the latest windows hold enough sound above the level gate to be speech. */
+export function hasEnoughSound(recentLoud: readonly boolean[]): boolean {
+  const loud = recentLoud.filter(Boolean).length;
+  return loud >= Math.max(MIN_LOUD_WINDOWS, recentLoud.length * MIN_LOUD_SHARE);
 }
 
 /** Root-mean-square level of float samples in dB relative to full scale. */
@@ -84,7 +90,7 @@ export interface SherpaSileroVadSessionConfig {
 
 type VadPhase =
   | { state: "idle" }
-  | { state: "confirming"; startedAt: number; windows: number; loudWindows: number }
+  | { state: "confirming"; startedAt: number }
   | { state: "speaking" }
   | { state: "ending"; startedAt: number };
 
@@ -99,6 +105,9 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
   private readonly silenceMs: number;
   private readonly minWindowDbfs: number;
   private readonly silentWindow: Float32Array;
+  /** Whether each of the latest windows was above the level gate, oldest first. */
+  private recentLoud: boolean[] = [];
+  private readonly recentLoudWindows: number;
   private connected = false;
   private phase: VadPhase = { state: "idle" };
   private windowTimestamp = 0;
@@ -118,6 +127,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
     this.silenceMs = config.silenceMs ?? DEFAULT_SILENCE_MS;
     this.minWindowDbfs = config.minWindowDbfs ?? DEFAULT_MIN_WINDOW_DBFS;
     this.silentWindow = new Float32Array(this.windowSize);
+    this.recentLoudWindows = Math.ceil((this.confirmMs + DETECTION_LAG_MS) / this.msPerWindow);
 
     const threshold = config.threshold ?? DEFAULT_SILERO_THRESHOLD;
 
@@ -228,6 +238,10 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
   }
 
   private stepStateMachine(loud = false): void {
+    this.recentLoud.push(loud);
+    if (this.recentLoud.length > this.recentLoudWindows) {
+      this.recentLoud.shift();
+    }
     const detected = this.vad.isDetected();
     const now = this.windowTimestamp;
 
@@ -235,12 +249,7 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
       case "idle": {
         if (detected) {
           this.logger.debug({ now }, "[VAD] idle → confirming (detection started)");
-          this.phase = {
-            state: "confirming",
-            startedAt: now,
-            windows: 1,
-            loudWindows: loud ? 1 : 0,
-          };
+          this.phase = { state: "confirming", startedAt: now };
         }
         break;
       }
@@ -255,16 +264,11 @@ export class SherpaSileroVadSession extends EventEmitter implements TurnDetectio
           this.phase = { state: "idle" };
           break;
         }
-        this.phase.windows += 1;
-        this.phase.loudWindows += loud ? 1 : 0;
         const elapsed = now - this.phase.startedAt;
-        if (
-          elapsed >= this.confirmMs &&
-          !isMostlySound(this.phase.loudWindows, this.phase.windows)
-        ) {
+        if (elapsed >= this.confirmMs && !hasEnoughSound(this.recentLoud)) {
           // Sparse bursts (key clicks, taps) keep the model on between them. Keep waiting
-          // for a stretch that is mostly sound.
-          this.phase = { state: "confirming", startedAt: now, windows: 0, loudWindows: 0 };
+          // until enough of the recent audio is sound.
+          this.phase = { state: "confirming", startedAt: now };
           break;
         }
         if (elapsed >= this.confirmMs) {

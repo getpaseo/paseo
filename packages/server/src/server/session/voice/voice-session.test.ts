@@ -479,7 +479,7 @@ describe("VoiceSession streaming transcription", () => {
   });
 
   test.each([
-    { capable: true, confirmMs: 500 },
+    { capable: true, confirmMs: 350 },
     { capable: false, confirmMs: undefined },
   ])(
     "asks the detector to report sound after $confirmMs ms when the client defers barge-in: $capable",
