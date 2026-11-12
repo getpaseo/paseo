@@ -630,6 +630,47 @@ describe("VoiceSession streaming transcription", () => {
     }
   });
 
+  test("after a transcription error, an earlier sound's late transcript does not use up the next one's checks", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      detector.emit("error", new Error("transcription unavailable"));
+      await settle();
+
+      // The user starts speaking before the earlier sound's transcript arrives.
+      detector.emit("speech_started");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "noise", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "noise", transcript: "", isFinal: true });
+      await settle();
+      expect(bargeInMessages(host)).toEqual([]);
+
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: "noise" });
+      sttSession.emitTranscript({
+        segmentId: "words",
+        transcript: "Wait, look at the other file instead.",
+        isFinal: true,
+      });
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
   test("repeated noise bursts leave the reply playing while their transcripts are pending", async () => {
     const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
     const interrupted: string[] = [];

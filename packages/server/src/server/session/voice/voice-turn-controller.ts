@@ -54,7 +54,7 @@ type VoiceInputState =
     };
 
 export interface VoiceTurnControllerCallbacks {
-  onSpeechStarted(): Promise<void>;
+  onSpeechStarted(input: { utteranceId: string }): Promise<void>;
   onSpeechStopped(): Promise<void>;
   onPartialTranscript(input: { segmentId: string; transcript: string }): Promise<void>;
   onFinalTranscript(input: VoiceFinalTranscript): Promise<void>;
@@ -76,6 +76,8 @@ interface TranscriptSegmentMeta {
 }
 
 interface VoiceFinalTranscript {
+  /** The utterance this transcript belongs to, as given to onSpeechStarted. */
+  utteranceId: string;
   segmentId: string;
   transcript: string;
   language?: string;
@@ -205,6 +207,7 @@ export function createVoiceTurnController(params: {
       orderedFinalMeta.every((meta) => meta.isLowConfidence === true);
 
     return {
+      utteranceId: turn.turnId,
       segmentId: turn.committedSegmentIds[0] ?? orderedFinalSegmentIds[0] ?? turn.turnId,
       transcript,
       ...(language ? { language } : {}),
@@ -464,7 +467,8 @@ export function createVoiceTurnController(params: {
     }
     startSttUtterance();
 
-    await params.callbacks.onSpeechStarted();
+    const utteranceId = uuidv4();
+    await params.callbacks.onSpeechStarted({ utteranceId });
 
     const startedAt = Date.now();
     activeTranscriptSegmentId = null;
@@ -472,7 +476,7 @@ export function createVoiceTurnController(params: {
     reconnectAttemptedForTurn = false;
     state = {
       status: "capturing",
-      utteranceId: uuidv4(),
+      utteranceId,
       startedAt,
     };
     params.logger.info(
