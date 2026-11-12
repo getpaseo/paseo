@@ -759,6 +759,36 @@ describe("assistant selection copy inside highlighted code", () => {
       "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
     );
   });
+
+  it("keeps line breaks when a quote selection ends partway through code", () => {
+    const message = mountHighlighted();
+    const quote = document.createElement("div");
+    quote.setAttribute("data-paseo-markdown-tag", "blockquote");
+    quote.textContent = "Quoted context";
+    message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(quote);
+
+    const content = copyBetween(
+      [tokenText(message, "Quoted context"), 0],
+      [tokenText(message, " (answer)"), 9],
+    );
+
+    expect(content?.plainText).toBe(
+      "> Quoted context\n\n```typescript\nconst answer = 1;\n  if (answer)\n```",
+    );
+  });
+
+  it("keeps line breaks when a selection starts partway through code", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween(
+      [tokenText(message, " answer"), 1],
+      [tokenText(message, "After the block."), "After the block.".length],
+    );
+
+    expect(content?.plainText).toBe(
+      "```typescript\nanswer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
+    );
+  });
 });
 
 describe("semantic library output", () => {
