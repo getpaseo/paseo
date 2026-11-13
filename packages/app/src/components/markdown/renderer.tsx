@@ -6,8 +6,10 @@ import {
   useAssistantFileLinkEnvironment,
 } from "@/assistant-file-links";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import { matchCommandLink, useAgentCommandHints, type CommandHints } from "@/agent-commands";
 import { useForgeShorthand } from "@/git/forge-shorthand";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
@@ -117,6 +119,11 @@ const MarkdownPart = memo(function MarkdownPart({
     const forgeUrl = sourceType === "text" ? forgeShorthand?.resolve(url) : null;
     if (forgeUrl) {
       void openExternalUrl(forgeUrl);
+      return;
+    }
+    const agentTarget = parseAgentDeepLink(url);
+    if (agentTarget) {
+      navigateToAgent(agentTarget);
       return;
     }
     const source = linkSource(url, sourceType);

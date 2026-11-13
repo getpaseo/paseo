@@ -9,11 +9,20 @@ import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
-import { useFileLink } from "./use-file-link";
+import { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 vi.mock("@/utils/open-external-url", () => ({
   openExternalUrl: vi.fn(async () => {}),
+}));
+
+vi.mock("@/utils/navigate-to-agent", () => ({
+  navigateToAgent: vi.fn(
+    (target: { serverId: string; agentId: string }) =>
+      `/h/${target.serverId}/agent/${target.agentId}`,
+  ),
 }));
 
 const SOURCE = {
@@ -328,6 +337,132 @@ describe("useFileLink", () => {
       expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
     });
     expect(openedFiles).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: "markdown link",
+      source: { href: "paseo://h/srv_1/agent/a_1", text: "跳转到 Agent", markup: "markdown" },
+      expected: { serverId: "srv_1", agentId: "a_1" },
+    },
+    {
+      label: "bare linkify link",
+      source: {
+        href: "paseo://h/srv_1/agent/a_1",
+        text: "paseo://h/srv_1/agent/a_1",
+        markup: "linkify",
+      },
+      expected: { serverId: "srv_1", agentId: "a_1" },
+    },
+    {
+      label: "inline code link with percent-encoding",
+      source: {
+        href: "paseo://h/srv%201/agent/a%3A2",
+        text: "paseo://h/srv%201/agent/a%3A2",
+        markup: "inline-code",
+      },
+      expected: { serverId: "srv 1", agentId: "a:2" },
+    },
+  ])("navigates valid paseo:// agent deep links in-app ($label)", async ({ source, expected }) => {
+    vi.mocked(navigateToAgent).mockClear();
+    vi.mocked(openExternalUrl).mockClear();
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const toast = createToast();
+
+    const { result } = renderHook(() => useFileLink(source), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        toast,
+      }),
+    });
+
+    expect(result.current.target).toBeNull();
+    expect(result.current.tooltipPath).toBeNull();
+
+    act(() => {
+      result.current.onHoverIn();
+      result.current.onPress();
+    });
+
+    await waitFor(() => {
+      expect(navigateToAgent).toHaveBeenCalledWith(expected);
+    });
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+    expect(openedFiles).toEqual([]);
+    expect(toast.show).not.toHaveBeenCalled();
+  });
+
+  it("navigates paseo:// agent deep links via useAssistantFileLinkActions.open", async () => {
+    vi.mocked(navigateToAgent).mockClear();
+    vi.mocked(openExternalUrl).mockClear();
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const toast = createToast();
+
+    const { result } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        toast,
+      }),
+    });
+
+    const source = {
+      href: "paseo://h/srv_2/agent/a_9",
+      text: "跳转到 Agent",
+      markup: "markdown",
+    };
+    expect(result.current.canResolveFile(source)).toBe(false);
+
+    act(() => {
+      result.current.open(source, "preferred");
+    });
+
+    await waitFor(() => {
+      expect(navigateToAgent).toHaveBeenCalledWith({ serverId: "srv_2", agentId: "a_9" });
+    });
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+    expect(openedFiles).toEqual([]);
+    expect(toast.show).not.toHaveBeenCalled();
+  });
+
+  it("does not trigger agent navigation or file lookups for invalid paseo:// URLs", async () => {
+    vi.mocked(navigateToAgent).mockClear();
+    vi.mocked(openExternalUrl).mockClear();
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const toast = createToast();
+
+    const { result } = renderHook(
+      () => useFileLink({ href: "paseo://invalid", text: "bad", markup: "markdown" }),
+      {
+        wrapper: createWrapper({
+          client: { getDirectorySuggestions },
+          openedFiles,
+          toast,
+        }),
+      },
+    );
+
+    expect(result.current.target).toBeNull();
+    expect(result.current.tooltipPath).toBeNull();
+
+    act(() => {
+      result.current.onHoverIn();
+      result.current.onPress();
+    });
+
+    await waitFor(() => {
+      expect(openExternalUrl).toHaveBeenCalledWith("paseo://invalid");
+    });
+    expect(navigateToAgent).not.toHaveBeenCalled();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+    expect(openedFiles).toEqual([]);
+    expect(toast.show).not.toHaveBeenCalled();
   });
 });
 

@@ -38,7 +38,14 @@ function createTextPattern(path: string, forgeReferencePattern?: string): RegExp
 // Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
 const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
 const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
-const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
+const HTTP_BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
+// Match strict `paseo://h/<serverId>/agent/<agentId>` links without swallowing adjacent CJK/sentence punctuation or longer paths/queries.
+const PASEO_SEGMENT_CHAR = String.raw`[a-zA-Z0-9._~%$+=@*:!-]`;
+const PASEO_SEGMENT_END = String.raw`[a-zA-Z0-9_~%$+=@*-]`;
+const PASEO_SEGMENT = String.raw`(?:${PASEO_SEGMENT_CHAR}*${PASEO_SEGMENT_END})`;
+const PASEO_AGENT_DEEP_LINK_URL = String.raw`paseo://h/${PASEO_SEGMENT}/agent/${PASEO_SEGMENT}`;
+const PASEO_AGENT_DEEP_LINK = String.raw`(?<![a-zA-Z0-9._~%$\x2b=@\x2a:/\\-])${PASEO_AGENT_DEEP_LINK_URL}(?![.:!]*${PASEO_SEGMENT_END}|[/?#\\][a-zA-Z0-9._~%$+=@*:/\\?#-])`;
+const BARE_URL = String.raw`(?:${HTTP_BARE_URL}|${PASEO_AGENT_DEEP_LINK})`;
 
 const TEXT_PATTERN = createTextPattern(PROSE_PATH);
 // One entry per distinct workspace forge remote; reuse keeps the engine's regex identity stable.
@@ -63,7 +70,7 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>, forgeReferencePatter
     linkRecognition: {
       text: textPattern(forgeReferencePattern),
       inlineCode: new RegExp(
-        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
+        String.raw`^(?:https?://[^\s<>]+|${PASEO_AGENT_DEEP_LINK_URL}${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,

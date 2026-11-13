@@ -1096,3 +1096,105 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("paseo agent deep-link recognition", () => {
+  it("recognizes valid paseo:// agent deep links in prose across Chinese and English punctuation boundaries", async () => {
+    const prose =
+      "见 paseo://h/srv_1/agent/a_1，以及 (paseo://h/srv%201/agent/a%3A2)。还有【paseo://h/srv-3/agent/a.3】！";
+    const prepared = prepareMarkdownSource(prose, "/repo");
+
+    expect([...prose.matchAll(prepared.linkRecognition.text)].map(([match]) => match)).toEqual([
+      "paseo://h/srv_1/agent/a_1",
+      "paseo://h/srv%201/agent/a%3A2",
+      "paseo://h/srv-3/agent/a.3",
+    ]);
+
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const recognized: Array<{ url: string; recognized: string | undefined }> = [];
+    const visit = (node: ASTNode) => {
+      if (node.type === "Link") {
+        recognized.push({
+          url: String(node.attributes?.url ?? ""),
+          recognized: node.attributes?.recognizedLink,
+        });
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+
+    expect(recognized).toEqual([
+      { url: "paseo://h/srv_1/agent/a_1", recognized: "true" },
+      { url: "paseo://h/srv%201/agent/a%3A2", recognized: "true" },
+      { url: "paseo://h/srv-3/agent/a.3", recognized: "true" },
+    ]);
+  });
+
+  it("recognizes valid paseo:// agent deep links in inline code", async () => {
+    const source =
+      "`paseo://h/srv_1/agent/a_1` 和 `paseo://h/srv%201/agent/a%3A2` 以及 [跳转](paseo://h/srv_2/agent/a_2)";
+    const prepared = prepareMarkdownSource(source, "/repo");
+
+    expect(prepared.linkRecognition.inlineCode.test("paseo://h/srv_1/agent/a_1")).toBe(true);
+    expect(prepared.linkRecognition.inlineCode.test("paseo://h/srv%201/agent/a%3A2")).toBe(true);
+
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const links: Array<{ url: string; recognized: boolean }> = [];
+    const visit = (node: ASTNode) => {
+      if (node.type === "Link") {
+        links.push({
+          url: String(node.attributes?.url ?? ""),
+          recognized: node.attributes?.recognizedLink === "true",
+        });
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+
+    expect(links).toEqual([
+      { url: "paseo://h/srv_1/agent/a_1", recognized: true },
+      { url: "paseo://h/srv%201/agent/a%3A2", recognized: true },
+      { url: "paseo://h/srv_2/agent/a_2", recognized: false },
+    ]);
+  });
+
+  it.each([
+    "paseo://invalid",
+    "paseo://foo/bar",
+    "paseo://h/srv/other/1",
+    "paseo://h/srv/agent/a_1/extra",
+    "paseo://h/srv/agent/a_1?message=hello",
+    "paseo://h/srv/agent/a_1#section",
+    "paseo://h/srv_1/agent/",
+    "paseo://h//agent/a_1",
+  ])("does not auto-recognize invalid paseo:// token in prose or inline code: %s", (token) => {
+    const { linkRecognition } = prepareMarkdownSource(`Check ${token} and \`${token}\`.`, "/repo");
+    expect([...`Check ${token} and continue.`.matchAll(linkRecognition.text)]).toEqual([]);
+    expect(linkRecognition.inlineCode.test(token)).toBe(false);
+  });
+
+  it("ignores paseo:// embedded in a longer token and stays valid under toNativeLinkRecognition", () => {
+    const prose = "prefix:paseo://h/srv_1/agent/a_1";
+    const { linkRecognition } = prepareMarkdownSource(prose, "/repo");
+    expect([...prose.matchAll(linkRecognition.text)]).toEqual([]);
+
+    const native = toNativeLinkRecognition(linkRecognition);
+    expect(native.text).toMatchObject({
+      pattern: linkRecognition.text.source,
+      isDisabled: false,
+      isDefault: false,
+    });
+    expect(native.inlineCode).toMatchObject({
+      pattern: linkRecognition.inlineCode.source,
+      isDisabled: false,
+      isDefault: false,
+    });
+  });
+});

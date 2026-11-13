@@ -2,7 +2,9 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
 import type { InlinePathTarget } from "./parse";
@@ -333,6 +335,11 @@ async function dispatchExternalUrl(input: {
     current.serverId !== input.capturedServerId ||
     current.workspaceRoot !== input.capturedWorkspaceRoot
   ) {
+    return;
+  }
+  const agentTarget = parseAgentDeepLink(input.url);
+  if (agentTarget) {
+    navigateToAgent(agentTarget);
     return;
   }
   await openExternalUrl(input.url);
