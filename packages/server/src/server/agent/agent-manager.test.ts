@@ -1529,6 +1529,110 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
   }
 });
 
+test("concurrent interrupting sends each start their own turn in order", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  try {
+    const prompts = ["first interrupt", "second interrupt", "third interrupt"];
+    await Promise.all(
+      prompts.map((prompt) =>
+        startAgentRun(manager, agentId, prompt, logger, {
+          replaceRunning: true,
+          activeTurnBehavior: "interrupt",
+          runOptions: { clientMessageId: prompt },
+        }),
+      ),
+    );
+    await manager.waitForAgentRunStart(agentId);
+    expect(session.startPrompts.slice(-3)).toEqual(prompts);
+    expect(manager.getAgent(agentId)?.activeForegroundTurnId).toBe(
+      `active-turn-${session.startCount}`,
+    );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop can cancel startup while an interrupting send waits behind it", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  class SlowStartSession extends SteeringTestSession {
+    starting = false;
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (prompt === "slow startup") {
+        this.starting = true;
+        entered.resolve();
+        await release.promise;
+        this.starting = false;
+      }
+      return super.startTurn(prompt);
+    }
+    override async interrupt(): Promise<void> {
+      if (this.starting) release.resolve();
+      await super.interrupt();
+    }
+  }
+  const session = new SlowStartSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  try {
+    await startAgentRun(manager, agentId, "slow startup", logger, { replaceRunning: true });
+    await entered.promise;
+    const replacement = startAgentRun(manager, agentId, "queued replacement", logger, {
+      replaceRunning: true,
+    });
+    void replacement.catch(() => undefined);
+    const stop = manager.cancelAgentRun(agentId);
+    await vi.waitFor(() => expect(session.interruptCount).toBe(3), { timeout: 1000 });
+    await stop;
+    await replacement;
+    await manager.waitForAgentRunStart(agentId);
+    expect(session.startPrompts.slice(-2)).toEqual(["slow startup", "queued replacement"]);
+  } finally {
+    release.resolve();
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an interrupting send replaces a turn whose start never finishes", async () => {
+  class StalledStartSession extends SteeringTestSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (prompt === "stalled start") {
+        this.startPrompts.push(prompt);
+        return new Promise(() => {});
+      }
+      return super.startTurn(prompt);
+    }
+  }
+  const session = new StalledStartSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stalled-start-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await startAgentRun(manager, agent.id, "stalled start", logger, { replaceRunning: true });
+    await startAgentRun(manager, agent.id, "recovery", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "interrupt",
+    });
+    expect(session.startPrompts).toEqual(["stalled start", "recovery"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("steers a tracked autonomous turn without creating a replacement run", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-steer-"));
