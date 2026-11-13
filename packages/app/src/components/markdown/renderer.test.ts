@@ -777,6 +777,158 @@ describe("GitHub comment HTML normalization", () => {
   ])("normalizes %s without changing code", (source, expected) => {
     expect(prepareMarkdownSource(source).render()).toBe(expected);
   });
+
+  it("keeps <br> line breaks inside GFM table headers and cells within a single row", async () => {
+    const source = [
+      "| Col<br>One | Col<br />Two |",
+      "| --- | --- |",
+      "| First<br>Second<br/>Third | Plain |",
+    ].join("\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const table = tree.children?.find((node) => node.type === "Table");
+    expect(table).toBeDefined();
+    const headRows = table?.children?.find((node) => node.type === "TableHead")?.children ?? [];
+    const bodyRows = table?.children?.find((node) => node.type === "TableBody")?.children ?? [];
+    expect(headRows).toHaveLength(1);
+    expect(bodyRows).toHaveLength(1);
+    const [headCells, bodyCells] = [headRows[0].children ?? [], bodyRows[0].children ?? []];
+    expect(headCells[0].children).toEqual([
+      { type: "Text", content: "Col" },
+      { type: "LineBreak" },
+      { type: "Text", content: "One" },
+    ]);
+    expect(headCells[1].children).toEqual([
+      { type: "Text", content: "Col" },
+      { type: "LineBreak" },
+      { type: "Text", content: "Two" },
+    ]);
+    expect(bodyCells[0].children).toEqual([
+      { type: "Text", content: "First" },
+      { type: "LineBreak" },
+      { type: "Text", content: "Second" },
+      { type: "LineBreak" },
+      { type: "Text", content: "Third" },
+    ]);
+  });
+
+  it.each([
+    "<details><summary>Results</summary>\n\n| A | B |\n| - | - |\n| 1<br>2 | 3 |\n</details>",
+    "<details><summary>Results</summary>| A | B |\n| - | - |\n| 1<br>2 | 3 |</details>",
+  ])("keeps table <br> inside wrapped table cells: %s", async (source) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const table = tree.children?.find((node) => node.type === "Table");
+    expect(table).toBeDefined();
+    const body = table?.children?.find((node) => node.type === "TableBody");
+    expect(body?.children).toHaveLength(1);
+    expect(body?.children?.[0]?.children?.[0]?.children).toEqual([
+      { type: "Text", content: "1" },
+      { type: "LineBreak" },
+      { type: "Text", content: "2" },
+    ]);
+  });
+
+  it("recognizes file paths and URLs separated by <br> inside table cells", async () => {
+    const source = [
+      "| Paths | Mixed | URLs |",
+      "| --- | --- | --- |",
+      "| src/first.ts<br>src/second.ts | https://example.com/first<br>src/second.ts | https://example.com/first<br>https://example.com/second |",
+    ].join("\n");
+    const prepared = prepareMarkdownSource(source);
+    const linked = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), {
+        hardSoftBreaks: true,
+        latexMath: false,
+      }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const table = linked.children?.find((node) => node.type === "Table");
+    const row = table?.children?.find((node) => node.type === "TableBody")?.children?.[0];
+    expect(row?.children?.[0]?.children).toEqual([
+      {
+        type: "Link",
+        attributes: { url: "src/first.ts", recognizedLink: "true" },
+        children: [{ type: "Text", content: "src/first.ts" }],
+      },
+      { type: "LineBreak" },
+      {
+        type: "Link",
+        attributes: { url: "src/second.ts", recognizedLink: "true" },
+        children: [{ type: "Text", content: "src/second.ts" }],
+      },
+    ]);
+    expect(row?.children?.[1]?.children).toEqual([
+      {
+        type: "Link",
+        attributes: { url: "https://example.com/first" },
+        children: [{ type: "Text", content: "https://example.com/first" }],
+      },
+      { type: "LineBreak" },
+      {
+        type: "Link",
+        attributes: { url: "src/second.ts", recognizedLink: "true" },
+        children: [{ type: "Text", content: "src/second.ts" }],
+      },
+    ]);
+    expect(row?.children?.[2]?.children).toEqual([
+      {
+        type: "Link",
+        attributes: { url: "https://example.com/first" },
+        children: [{ type: "Text", content: "https://example.com/first" }],
+      },
+      { type: "LineBreak" },
+      {
+        type: "Link",
+        attributes: { url: "https://example.com/second", recognizedLink: "true" },
+        children: [{ type: "Text", content: "https://example.com/second" }],
+      },
+    ]);
+  });
+
+  it("keeps literal U+2028 outside tables, inline code, and escaped <br> untouched", async () => {
+    const source = [
+      "before\u2028after `before\u2028after`",
+      "",
+      "| Inline | Escaped | Entity |",
+      "| --- | --- | --- |",
+      "| `before\u2028after` | \\<br> | &lt;br&gt; `<br>` |",
+    ].join("\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const collectLineBreaks = (node: ASTNode): number =>
+      (node.type === "LineBreak" ? 1 : 0) +
+      (node.children?.reduce((count, child) => count + collectLineBreaks(child), 0) ?? 0);
+    expect(collectLineBreaks(tree)).toBe(0);
+
+    const paragraph = tree.children?.find((node) => node.type === "Paragraph");
+    expect(paragraph?.children).toEqual([
+      { type: "Text", content: "before\u2028after " },
+      { type: "Code", children: [{ type: "Text", content: "before\u2028after" }] },
+    ]);
+
+    const row = tree.children
+      ?.find((node) => node.type === "Table")
+      ?.children?.find((node) => node.type === "TableBody")?.children?.[0];
+    expect(row?.children?.[0]?.children).toEqual([
+      { type: "Code", children: [{ type: "Text", content: "before\u2028after" }] },
+    ]);
+    expect(row?.children?.[1]?.children).toEqual([{ type: "Text", content: "<br>" }]);
+    expect(row?.children?.[2]?.children).toEqual([
+      { type: "Text", content: "<br> " },
+      { type: "Code", children: [{ type: "Text", content: "<br>" }] },
+    ]);
+    expect(prepareMarkdownSource("<table><tr><td>a<br>b</td></tr></table>").render()).toBe(
+      "a  \nb",
+    );
+  });
 });
 
 it("preserves backslashes and decodes entities inside HTML code", () => {

@@ -775,10 +775,45 @@ index 44d5134..5bc5529 100644
  
      /* Success, we are an autolink. */
 diff --git a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
-index c99a52d..c93aaf7 100644
+index c99a52d..a84ce41 100644
 --- a/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
 +++ b/node_modules/react-native-enriched-markdown/cpp/parser/MD4CParser.cpp
-@@ -307,6 +307,10 @@ public:
+@@ -22,6 +22,7 @@ public:
+   std::string currentText;
+   const char *inputText = nullptr;
+   bool inHtmlBlock = false;
++  bool inTableCell = false;
+   std::string htmlBlockContent;
+ 
+   static const std::string ATTR_LEVEL;
+@@ -46,6 +47,7 @@ public:
+     currentText.clear();
+     currentText.reserve(256);
+     inHtmlBlock = false;
++    inTableCell = false;
+     htmlBlockContent.clear();
+   }
+ 
+@@ -231,6 +233,7 @@ public:
+ 
+       case MD_BLOCK_TH:
+       case MD_BLOCK_TD: {
++        impl->inTableCell = true;
+         auto node =
+             std::make_shared<MarkdownASTNode>(type == MD_BLOCK_TH ? NodeType::TableHeaderCell : NodeType::TableCell);
+         if (detail) {
+@@ -286,6 +289,10 @@ public:
+       return 0;
+     }
+ 
++    if (type == MD_BLOCK_TH || type == MD_BLOCK_TD) {
++      impl->inTableCell = false;
++    }
++
+     if (type != MD_BLOCK_DOC && !impl->nodeStack.empty()) {
+       impl->popNode();
+     }
+@@ -307,6 +314,10 @@ public:
            if (!url.empty()) {
              node->setAttribute(ATTR_URL, url);
            }
@@ -789,6 +824,43 @@ index c99a52d..c93aaf7 100644
          }
          impl->pushNode(node);
          break;
+@@ -427,6 +438,36 @@ public:
+     }
+ 
+     // Handle text content (normal text, code text, LaTeX math, etc.)
++    if (type == MD_TEXT_NORMAL && impl->inTableCell) {
++      constexpr const char kLineSep[] = "\xE2\x80\xA8";
++      constexpr MD_SIZE kLineSepLen = 3;
++      MD_SIZE pos = 0;
++      while (pos + kLineSepLen <= size) {
++        MD_SIZE match = size;
++        for (MD_SIZE i = pos; i + kLineSepLen <= size; ++i) {
++          if (std::memcmp(text + i, kLineSep, kLineSepLen) == 0) {
++            match = i;
++            break;
++          }
++        }
++        if (match == size) {
++          break;
++        }
++        if (match > pos) {
++          impl->currentText.append(text + pos, match - pos);
++        }
++        if (!impl->currentText.empty() && impl->currentText.back() == ' ') {
++          impl->currentText.pop_back();
++        }
++        impl->addInlineNode(std::make_shared<MarkdownASTNode>(NodeType::LineBreak));
++        pos = match + kLineSepLen;
++      }
++      if (pos < size) {
++        impl->currentText.append(text + pos, size - pos);
++      }
++      return 0;
++    }
++
+     if (type == MD_TEXT_NORMAL || type == MD_TEXT_CODE || type == MD_TEXT_LATEXMATH) {
+       impl->currentText.append(text, size);
+     }
 diff --git a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
 index 5a0b7e3..be7b30a 100644
 --- a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
@@ -1364,6 +1436,7 @@ index 1c49b41..921a946 100644
 -{"version":3,"names":["useState","useEffect","useMemo","useRef","normalizeMarkdownStyle","zeroTrailingMargins","parseErrorFallbackStyle","buildStyles","parseMarkdown","recognizeTextLinks","RenderNode","indexTaskItems","markInlineImages","loadKaTeX","ENRM_TEXT_CLASS","ENRM_SELECTION_BG_VAR","filterNativeOnlyProps","jsx","_jsx","EnrichedMarkdownText","markdown","markdownStyle","md4cFlags","linkRecognition","onLinkPress","onLinkLongPress","onImagePress","onTaskListItemPress","onCodeBlockPress","enableTaskListItemToggle","allowTrailingMargin","containerStyle","selectable","dir","selectionColor","testID","rest","normalizedStyle","ast","setAst","katex","setKatex","parseError","setParseError","underline","latexMath","superscript","subscript","highlight","hardSoftBreaks","preserveBlankLines","admonitions","linkRecognitionRef","current","textLinkKey","text","toString","inlineCodeLinkKey","inlineCode","cancelled","katexPromise","Promise","resolve","all","then","result","katexInstance","catch","error","__DEV__","console","callbacks","capabilities","lastChildStyle","styles","lastChildStyles","wrapperStyle","display","flexDirection","undefined","userSelect","domProps","className","style","children","lastIdx","length","map","child","index","node","type"],"sourceRoot":"../../../src","sources":["web/EnrichedMarkdownText.tsx"],"mappings":"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","ignoreList":[]}
 +{"version":3,"names":["useState","useEffect","useMemo","useRef","normalizeMarkdownStyle","zeroTrailingMargins","parseErrorFallbackStyle","buildStyles","parseMarkdown","parseMarkdownSync","recognizeTextLinks","RenderNode","indexTaskItems","markInlineImages","loadKaTeX","ENRM_TEXT_CLASS","ENRM_SELECTION_BG_VAR","filterNativeOnlyProps","jsx","_jsx","EnrichedMarkdownText","markdown","markdownStyle","md4cFlags","linkRecognition","renderers","onLinkPress","onLinkLongPress","onImagePress","onTaskListItemPress","onCodeBlockPress","enableTaskListItemToggle","allowTrailingMargin","containerStyle","selectable","dir","selectionColor","testID","rest","normalizedStyle","parsed","setParsed","katex","setKatex","parseError","setParseError","underline","latexMath","superscript","subscript","highlight","hardSoftBreaks","preserveBlankLines","admonitions","linkRecognitionRef","current","textLinkKey","text","toString","inlineCodeLinkKey","inlineCode","immediate","result","ast","cancelled","katexPromise","Promise","resolve","all","then","katexInstance","catch","error","__DEV__","console","callbacks","capabilities","lastChildStyle","styles","lastChildStyles","wrapperStyle","display","flexDirection","undefined","userSelect","domProps","visibleParsed","className","style","children","lastIdx","length","map","child","index","node","type"],"sourceRoot":"../../../src","sources":["web/EnrichedMarkdownText.tsx"],"mappings":"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","ignoreList":[]}
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
+index 7052cba..f552f3c 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 @@ -1,14 +1,19 @@
@@ -1387,7 +1460,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMar
        parserPromise = null;
        throw error;
      });
-@@ -18,7 +23,7 @@
+@@ -18,7 +23,7 @@ function initializeParser() {
  function isASTNode(value) {
    return typeof value === 'object' && value !== null && 'type' in value && typeof value.type === 'string';
  }
@@ -1396,7 +1469,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMar
    underline = false,
    latexMath = true,
    superscript = false,
-@@ -28,11 +33,16 @@
+@@ -28,11 +33,51 @@ export async function parseMarkdown(markdown, {
    preserveBlankLines = false,
    admonitions = true
  } = {}) {
@@ -1407,8 +1480,43 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMar
    if (!isASTNode(result)) {
      throw new Error('WASM parser returned invalid AST');
    }
++  splitTableCellLineSeparators(result);
    return result;
  }
++function splitTableCellLineSeparators(node, inTableCell = false) {
++  if (!node.children || node.type === 'Code' || node.type === 'CodeBlock') return;
++  const nextInTableCell = inTableCell || node.type === 'TableCell' || node.type === 'TableHeaderCell';
++  if (!nextInTableCell) {
++    for (const child of node.children) {
++      splitTableCellLineSeparators(child, false);
++    }
++    return;
++  }
++  const nextChildren = [];
++  for (const child of node.children) {
++    if (child.type === 'Text' && typeof child.content === 'string' && child.content.includes('\u2028')) {
++      const parts = child.content.split(/ ?\u2028/);
++      for (let i = 0; i < parts.length; i++) {
++        const part = parts[i];
++        if (part !== undefined && part.length > 0) {
++          nextChildren.push({
++            type: 'Text',
++            content: part
++          });
++        }
++        if (i < parts.length - 1) {
++          nextChildren.push({
++            type: 'LineBreak'
++          });
++        }
++      }
++    } else {
++      splitTableCellLineSeparators(child, true);
++      nextChildren.push(child);
++    }
++  }
++  node.children = nextChildren;
++}
 +export async function parseMarkdown(markdown, flags = {}) {
 +  await initializeParser();
 +  return parseMarkdownSync(markdown, flags);
@@ -2424,6 +2532,7 @@ index 08dc7df..11fbd16 100644
        style={wrapperStyle}
        dir={dir}
 diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
+index b94c8d2..6140cbf 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 @@ -1,3 +1,4 @@
@@ -2431,7 +2540,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
  import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
  
-@@ -15,14 +16,15 @@
+@@ -15,14 +16,15 @@ type ParseFn = (
  
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
@@ -2449,7 +2558,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
        .then((wasmModule) =>
          wasmModule.cwrap('parseMarkdown', 'string', [
            'string',
-@@ -36,6 +38,10 @@
+@@ -36,6 +38,10 @@ function initializeParser(): Promise<ParseFn> {
            'number',
          ])
        )
@@ -2460,7 +2569,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
        .catch((error) => {
          parserPromise = null;
          throw error;
-@@ -53,7 +59,7 @@
+@@ -53,7 +59,7 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
  
@@ -2469,7 +2578,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
    markdown: string,
    {
      underline = false,
-@@ -65,8 +71,9 @@
+@@ -65,8 +71,9 @@ export async function parseMarkdown(
      preserveBlankLines = false,
      admonitions = true,
    }: Md4cFlags = {}
@@ -2481,10 +2590,49 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
  
    const result: unknown = JSON.parse(
      parse(
-@@ -88,3 +95,11 @@
+@@ -86,5 +93,50 @@ export async function parseMarkdown(
+     throw new Error('WASM parser returned invalid AST');
+   }
  
++  splitTableCellLineSeparators(result);
++
    return result;
  }
++
++function splitTableCellLineSeparators(node: ASTNode, inTableCell = false): void {
++  if (!node.children || node.type === 'Code' || node.type === 'CodeBlock') return;
++  const nextInTableCell =
++    inTableCell || node.type === 'TableCell' || node.type === 'TableHeaderCell';
++  if (!nextInTableCell) {
++    for (const child of node.children) {
++      splitTableCellLineSeparators(child, false);
++    }
++    return;
++  }
++  const nextChildren: ASTNode[] = [];
++  for (const child of node.children) {
++    if (
++      child.type === 'Text' &&
++      typeof child.content === 'string' &&
++      child.content.includes('\u2028')
++    ) {
++      const parts = child.content.split(/ ?\u2028/);
++      for (let i = 0; i < parts.length; i++) {
++        const part = parts[i];
++        if (part !== undefined && part.length > 0) {
++          nextChildren.push({ type: 'Text', content: part });
++        }
++        if (i < parts.length - 1) {
++          nextChildren.push({ type: 'LineBreak' });
++        }
++      }
++    } else {
++      splitTableCellLineSeparators(child, true);
++      nextChildren.push(child);
++    }
++  }
++  node.children = nextChildren;
++}
 +
 +export async function parseMarkdown(
 +  markdown: string,

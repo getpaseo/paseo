@@ -1,5 +1,7 @@
 import { Parser } from "htmlparser2";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTable } from "micromark-extension-gfm-table";
 import { decodeString } from "micromark-util-decode-string";
 import type { Nodes } from "mdast";
 
@@ -53,6 +55,38 @@ export function normalizeMarkdownHtml(source: string): string {
     } else if ("children" in node) node.children.forEach(protectCode);
   }
   protectCode(tree);
+  const tableRanges: { start: number; end: number }[] = [];
+  // Keep exact character offsets while breaking leading HTML wrappers (e.g. `<details><summary>...</summary>| A | B |`)
+  // onto their own line so GFM table detection matches the normalized Markdown output.
+  const tableSource = source.replace(HTML, (raw, offset: number) => {
+    if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
+    const match = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(raw);
+    const name = match?.[2].toLowerCase();
+    const isWrapper =
+      name === "summary" || name === "details" || (name !== undefined && BLOCK_TAGS.has(name));
+    if (!isWrapper) return raw;
+    const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
+    const linePrefix = source.slice(lineStart, offset);
+    const onlyTagsBefore = /^(?:\s|<[^>]*>)*$/.test(linePrefix);
+    const blanked = raw.replace(/[^\n]/g, " ");
+    if (onlyTagsBefore && blanked.length > 0 && !blanked.endsWith("\n")) {
+      return `${blanked.slice(0, -1)}\n`;
+    }
+    return blanked;
+  });
+  function findTables(node: Nodes) {
+    if (node.type === "table" && node.position) {
+      const start = node.position.start.offset;
+      const end = node.position.end.offset;
+      if (start !== undefined && end !== undefined) tableRanges.push({ start, end });
+    } else if ("children" in node) node.children.forEach(findTables);
+  }
+  findTables(
+    fromMarkdown(tableSource, {
+      extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }, gfmTable()],
+      mdastExtensions: [gfmTableFromMarkdown()],
+    }),
+  );
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number): string => {
@@ -84,7 +118,16 @@ export function normalizeMarkdownHtml(source: string): string {
       : /^\s*$/.test(source.slice(0, offset));
     previousTag = { name, end: offset + raw.length };
     if (EMPHASIS[name]) return EMPHASIS[name];
-    const boundary = layoutBoundary(name, source, raw, offset, closing, startsAfterBoundary);
+    const inTable = tableRanges.some(({ start, end }) => offset >= start && offset < end);
+    const boundary = layoutBoundary(
+      name,
+      source,
+      raw,
+      offset,
+      closing,
+      startsAfterBoundary,
+      inTable,
+    );
     if (boundary !== null) return boundary;
     if (name === "a") return markdownAnchor(raw, closing, links);
     if (name === "img" && !closing) {
@@ -167,8 +210,14 @@ function layoutBoundary(
   offset: number,
   closing: boolean,
   startsAfterBoundary: boolean,
+  inTable: boolean,
 ): string | null {
-  if (name === "br") return closing ? "" : "  \n";
+  // Inside GFM table cells, emit ` \u2028` so row boundaries stay intact while giving URLs/autolinks
+  // a whitespace terminator before the cell-scoped parser turns ` \u2028` back into a `LineBreak` node.
+  if (name === "br") {
+    if (closing) return "";
+    return inTable ? " \u2028" : "  \n";
+  }
   if (name === "summary") return closing ? "**\n\n" : "**";
   if (name === "details")
     return (closing ? offset + raw.length === source.length : offset === 0) ? "" : "\n\n";
