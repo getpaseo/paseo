@@ -1,9 +1,9 @@
 import { resolveDaemonVersion } from "./daemon-version.js";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import type { Query } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, Query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAgentClient } from "./agent/providers/claude/agent.js";
 import http from "node:http";
 import path from "node:path";
@@ -29,6 +29,7 @@ import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
+import * as spawnUtils from "../utils/spawn.js";
 import { findFreePort } from "./service-proxy.js";
 import {
   configureGitProcessPolicy,
@@ -1295,3 +1296,102 @@ test.each(["reject", "stall"] as const)(
   },
   30_000,
 );
+
+test("an idle Claude runtime killed by the same stop signal does not fail its agent", async () => {
+  // A stop signal sent to the daemon's process group also reaches the Claude child, which can
+  // exit while shutdown is still awaiting the steps before it closes agents.
+  const child = new EventEmitter() as ChildProcess;
+  child.stderr = new EventEmitter() as ChildProcess["stderr"];
+  child.kill = (() => {
+    child.emit("exit", null, "SIGTERM");
+    return true;
+  }) as ChildProcess["kill"];
+  const spawnSpy = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+  let spawnClaude: Options["spawnClaudeCodeProcess"];
+  const turnEvents: unknown[] = [
+    {
+      type: "system",
+      subtype: "init",
+      session_id: "shutdown-idle-session",
+      permissionMode: "default",
+      model: "opus",
+    },
+    { type: "assistant", message: { content: "done" } },
+    {
+      type: "result",
+      subtype: "success",
+      usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+      total_cost_usd: 0,
+    },
+  ];
+  const claude = new ClaudeAgentClient({
+    logger: pino({ level: "silent" }),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ options }) => {
+      spawnClaude = options.spawnClaudeCodeProcess;
+      let index = 0;
+      return {
+        async next() {
+          return index < turnEvents.length
+            ? { done: false, value: turnEvents[index++] }
+            : { done: true, value: undefined };
+        },
+        async return() {
+          return { done: true, value: undefined };
+        },
+        async interrupt() {},
+        close() {},
+        async supportedModels() {
+          return [];
+        },
+        async supportedCommands() {
+          return [];
+        },
+        async setPermissionMode() {},
+        async setModel() {},
+        async applyFlagSettings() {},
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      } as unknown as Query;
+    },
+  });
+  const handle = await createTestPaseoDaemon({ agentClients: { claude } });
+  let stopped = false;
+  try {
+    const { agentManager, agentStorage } = handle.daemon;
+    const agent = await agentManager.createAgent(
+      { provider: "claude", cwd: handle.paseoHome },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await agentManager.runAgent(agent.id, "finish a task");
+    spawnClaude!({
+      command: "node",
+      args: ["claude.js"],
+      cwd: handle.paseoHome,
+      env: {},
+      signal: new AbortController().signal,
+    });
+    expect(agentManager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    await agentManager.clearAgentAttention(agent.id);
+    await agentManager.flush();
+
+    const stopping = handle.daemon.stop();
+    child.emit("exit", null, "SIGTERM");
+    await stopping;
+    stopped = true;
+
+    expect(await agentStorage.get(agent.id)).toMatchObject({
+      lastStatus: "closed",
+      requiresAttention: false,
+      attentionReason: null,
+    });
+    expect((await agentStorage.get(agent.id))?.lastError ?? undefined).toBeUndefined();
+  } finally {
+    if (!stopped) await handle.daemon.stop().catch(() => undefined);
+    spawnSpy.mockRestore();
+    await rm(path.dirname(handle.paseoHome), { recursive: true, force: true });
+    await rm(handle.staticDir, { recursive: true, force: true });
+  }
+}, 30_000);

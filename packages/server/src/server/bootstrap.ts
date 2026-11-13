@@ -1980,6 +1980,8 @@ export async function createPaseoDaemon(
   };
 
   const stop = async (options?: { keepTerminals?: boolean }) => {
+    // Before the first await: provider runtimes can exit from the same stop signal meanwhile.
+    agentManager.beginShutdown();
     const keepTerminals = options?.keepTerminals === true;
     let terminalShutdownError: unknown = null;
     localCredential = null;
