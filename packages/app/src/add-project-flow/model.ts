@@ -86,11 +86,12 @@ function directorySearchPage(hostId: string): AddProjectPage {
  * opening directory search returns to it. Directory search is only offered to hosts that can
  * add projects, so other hosts keep the method page and its upgrade message.
  */
-function hostEntryPages(
-  host: AddProjectHost | undefined,
-  hostId: string,
-  startsOnDirectorySearch: boolean | undefined,
-): AddProjectPage[] {
+function hostEntryPages(input: {
+  host: AddProjectHost | undefined;
+  hostId: string;
+  startsOnDirectorySearch: boolean | undefined;
+}): AddProjectPage[] {
+  const { host, hostId, startsOnDirectorySearch } = input;
   const opensDirectorySearch = startsOnDirectorySearch === true && host?.canAddProject === true;
   return opensDirectorySearch
     ? [methodPage(hostId), directorySearchPage(hostId)]
@@ -111,7 +112,11 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
   return {
     hosts: input.hosts,
     pages: initialHost
-      ? hostEntryPages(initialHost, initialHost.serverId, input.startsOnDirectorySearch)
+      ? hostEntryPages({
+          host: initialHost,
+          hostId: initialHost.serverId,
+          startsOnDirectorySearch: input.startsOnDirectorySearch,
+        })
       : [searchPage("host")],
     newDirectoryNameDrafts: {},
     githubLocationDrafts: {},
@@ -131,7 +136,11 @@ export function applyAvailableAddProjectHosts(
     ...state,
     hosts: input.hosts,
     pages: initialHost
-      ? hostEntryPages(initialHost, initialHost.serverId, input.startsOnDirectorySearch)
+      ? hostEntryPages({
+          host: initialHost,
+          hostId: initialHost.serverId,
+          startsOnDirectorySearch: input.startsOnDirectorySearch,
+        })
       : state.pages,
   };
 }
@@ -174,7 +183,11 @@ export function chooseAddProjectHost(
   input: ChooseAddProjectHostInput,
 ): AddProjectFlowState {
   const host = state.hosts.find((candidate) => candidate.serverId === input.hostId);
-  const entryPages = hostEntryPages(host, input.hostId, input.startsOnDirectorySearch);
+  const entryPages = hostEntryPages({
+    host,
+    hostId: input.hostId,
+    startsOnDirectorySearch: input.startsOnDirectorySearch,
+  });
   return { ...state, pages: [...state.pages, ...entryPages] };
 }
 
