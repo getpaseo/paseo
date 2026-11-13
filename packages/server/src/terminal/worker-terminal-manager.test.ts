@@ -2,6 +2,7 @@ import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode
 import { encodeTerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 import { TerminalSessionController } from "./terminal-session-controller.js";
+import { createTerminalWorkerPool } from "./terminal-worker-pool.js";
 import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
 import {
   decodeTerminalStreamFrame,
@@ -1513,7 +1514,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
 
   manager.killTerminal("terminal-a");
   const request = worker.sentMessages.find(
-    (message) => message.type === "killTerminal" && message.terminalId === "terminal-a",
+    (message) => message.type === "killTerminalAndWait" && message.terminalId === "terminal-a",
   );
   if (!request) {
     throw new Error("killTerminal request not sent");
@@ -1539,6 +1540,82 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       workspaceId: "ws-test",
     },
   ]);
+});
+
+it("retains hidden block owners after exit and failed stop until a retry confirms closure", async () => {
+  const worker = new FakeTerminalWorker();
+  const ownedManager = createWorkerTerminalManager({ worker, requestTimeoutMs: 1000 });
+  const drained: number[] = [];
+  const pool = createTerminalWorkerPool({
+    current: null,
+    draining: [
+      {
+        manager: ownedManager,
+        workerPid: 1,
+        exited: new Promise<void>(() => {}),
+        ready: async () => true,
+        stopRecovery() {},
+      },
+    ],
+    incompatible: null,
+    closeAll: () => ownedManager.closeTerminals(),
+    onDrained: (member) => drained.push(member.workerPid),
+  });
+  manager = pool;
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "closing-script",
+      name: "Script",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+    },
+    state: {
+      ...createTerminalState(),
+      workspacePortBlock: { portBase: 42000, portCount: 4 },
+      workspaceScriptName: "dev",
+    },
+  });
+  const session = ownedManager.getTerminal("closing-script");
+  if (!session) throw new Error("Expected script terminal");
+  const closingAtRemoval: string[][] = [];
+  ownedManager.subscribeTerminalsChanged(() => {
+    closingAtRemoval.push((ownedManager.getClosingTerminals?.() ?? []).map((entry) => entry.id));
+  });
+  pool.killTerminal(session.id);
+  expect(closingAtRemoval).toEqual([[session.id]]);
+  expect(ownedManager.getTerminal(session.id)).toBeUndefined();
+  expect(ownedManager.listDirectories()).toEqual([]);
+  expect(pool.getClosingTerminals?.()).toEqual([session]);
+  expect(drained).toEqual([]);
+  expect(worker.connected).toBe(true);
+  const initialStop = worker.sentMessages.at(-1);
+  if (!initialStop || initialStop.type !== "killTerminalAndWait")
+    throw new Error("Expected confirmed stop request");
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: session.id,
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+  expect(ownedManager.getClosingTerminals?.()).toEqual([session]);
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: initialStop.requestId,
+    ok: false,
+    error: "Stop unconfirmed",
+  });
+  const retry = pool.killTerminalAndWait(session.id);
+  const retryRequest = worker.sentMessages.at(-1);
+  if (!retryRequest || retryRequest.type !== "killTerminalAndWait")
+    throw new Error("Expected stop retry");
+  expect(ownedManager.getClosingTerminals?.()).toEqual([session]);
+  worker.emitWorkerMessage({ type: "response", requestId: retryRequest.requestId, ok: true });
+  await retry;
+  expect(ownedManager.getClosingTerminals?.()).toEqual([]);
+  expect(closingAtRemoval).toEqual([[session.id], []]);
+  await ownedManager.detach({ afterPendingRequests: true });
+  expect(worker.connected).toBe(false);
 });
 
 it("keeps a retained worker terminal available after it exits", async () => {
@@ -1657,7 +1734,7 @@ it("removes a running retained worker terminal when explicitly killed", async ()
   expect(await manager.getTerminals("/workspace")).toEqual([]);
   expect(worker.sentMessages).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ type: "killTerminal", terminalId: "terminal-a" }),
+      expect.objectContaining({ type: "killTerminalAndWait", terminalId: "terminal-a" }),
     ]),
   );
 

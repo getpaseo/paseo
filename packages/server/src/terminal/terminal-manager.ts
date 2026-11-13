@@ -89,6 +89,8 @@ export interface TerminalManager {
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
   getTerminal(id: string): TerminalSession | undefined;
+  /** Hidden close requests still own their resources until the worker confirms termination. */
+  getClosingTerminals?(): readonly TerminalSession[];
   replayTerminal(
     id: string,
     options: TerminalReplayOptions | undefined,

@@ -563,6 +563,59 @@ describe("WorkspaceLaunchManager", () => {
     },
   );
 
+  it("waits for a hidden closing script before releasing its workspace block", async () => {
+    const closeStarted = createDeferred();
+    const finishClose = createDeferred();
+    const terminals = createTerminalManager({
+      beforeKill: async () => {
+        closeStarted.resolve();
+        await finishClose.promise;
+      },
+    });
+    const owner = await terminals.manager.createTerminal({
+      cwd: process.cwd(),
+      workspaceId: "hidden-block-owner",
+      workspacePortBlock: { portBase: 42000, portCount: 4 },
+      workspaceScriptName: "dev",
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminals.manager,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    await manager.initialize([]);
+    terminals.manager.killTerminal(owner.id);
+    expect(terminals.manager.listDirectories()).toEqual([]);
+    expect(terminals.manager.getTerminal(owner.id)).toBeUndefined();
+    const disposal = manager.disposeWorkspace(owner.workspaceId);
+    try {
+      await closeStarted.promise;
+      expect(environment.get(owner.workspaceId)).toMatchObject({ portBase: 42000, portCount: 4 });
+      await expect(
+        environment.ensure({
+          workspaceId: "waiting-for-hidden-owner",
+          cwd: process.cwd(),
+          branchName: null,
+          allocation: { range: "42000-42003", blockSize: 4 },
+        }),
+      ).rejects.toThrow("No available workspace port block");
+    } finally {
+      finishClose.resolve();
+      await disposal;
+    }
+    expect(environment.get(owner.workspaceId)).toBeNull();
+    expect(terminals.manager.getClosingTerminals?.()).toEqual([]);
+  });
+
   it("retains the block until every owning terminal closes, including after a failed close", async () => {
     const closeStarted = createDeferred();
     const finishClose = createDeferred();
@@ -2241,6 +2294,7 @@ function createTerminalManager(
   failNextCreate: () => void;
 } {
   const sessions = new Map<string, TerminalSession>();
+  const closingSessions = new Map<string, TerminalSession>();
   const created: Array<{
     env: Record<string, string> | undefined;
     name: string;
@@ -2324,15 +2378,23 @@ function createTerminalManager(
       return terminals;
     },
     getTerminal: (id: string) => sessions.get(id),
+    getClosingTerminals: () => Array.from(closingSessions.values()),
     killTerminal: (id: string) => {
+      const session = sessions.get(id);
+      if (session) closingSessions.set(id, session);
       sessions.delete(id);
     },
     killTerminalAndWait: async (id: string, options?: { preserveSession?: boolean }) => {
       killed.push(id);
       await managerOptions.beforeKill?.(id);
-      const terminal = sessions.get(id) as (TerminalSession & { __exit?: () => void }) | undefined;
+      const terminal = (sessions.get(id) ?? closingSessions.get(id)) as
+        | (TerminalSession & { __exit?: () => void })
+        | undefined;
       terminal?.__exit?.();
-      if (!options?.preserveSession) sessions.delete(id);
+      if (!options?.preserveSession) {
+        sessions.delete(id);
+        closingSessions.delete(id);
+      }
     },
   } as unknown as TerminalManager;
   return {

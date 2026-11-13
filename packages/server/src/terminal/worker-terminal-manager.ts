@@ -395,17 +395,13 @@ export function createWorkerTerminalManager(
         return record.exitInfo;
       },
       kill(): void {
-        sendBestEffortRequest({ type: "killTerminal", terminalId: record.info.id });
+        manager.killTerminal(record.info.id);
       },
       killAndWait(options?: {
         gracefulTimeoutMs?: number;
         forceTimeoutMs?: number;
       }): Promise<void> {
-        return sendRequest({
-          type: "killTerminalAndWait",
-          terminalId: record.info.id,
-          ...(options ? { options } : {}),
-        }).then(() => undefined);
+        return manager.killTerminalAndWait(record.info.id, options);
       },
     };
 
@@ -477,7 +473,7 @@ export function createWorkerTerminalManager(
     if (!record) {
       return;
     }
-    const wasExplicitlyClosed = closingRecordsById.delete(message.terminalId);
+    const wasExplicitlyClosed = closingRecordsById.has(message.terminalId);
     record.exitInfo = message.info;
     if (!wasExplicitlyClosed && record.info.retainOnExit) {
       handleTerminalActivityChangeEvent({
@@ -675,12 +671,20 @@ export function createWorkerTerminalManager(
         reconnecting = (async () => {
           const recovered = await reconnect();
           if (!recovered) {
-            for (const terminalId of Array.from(recordsById.keys())) {
+            const closingCwds = new Set(
+              Array.from(closingRecordsById.values(), (record) => record.info.cwd),
+            );
+            const terminalIds = new Set([...recordsById.keys(), ...closingRecordsById.keys()]);
+            for (const terminalId of terminalIds) {
               handleTerminalExitEvent({
                 type: "terminalExit",
                 terminalId,
                 info: { exitCode: null, signal: null, lastOutputLines: [] },
               });
+            }
+            closingRecordsById.clear();
+            for (const cwd of closingCwds) {
+              emitTerminalsChanged({ cwd, terminals: listTerminalItemsForCwd(cwd) });
             }
             return;
           }
@@ -809,6 +813,13 @@ export function createWorkerTerminalManager(
     }
     for (const item of listed) {
       const info = asRequiredWorkerTerminalInfo(item.terminal);
+      const closing = closingRecordsById.get(info.id);
+      if (closing) {
+        closing.info = info;
+        closing.state = item.state;
+        closing.replayPreamble = item.replayPreamble;
+        continue;
+      }
       registerRecord({ info, state: item.state });
       const record = recordsById.get(info.id);
       if (record) {
@@ -833,7 +844,7 @@ export function createWorkerTerminalManager(
     return listed.length;
   }
 
-  return {
+  const manager: DaemonTerminalManager = {
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -923,6 +934,10 @@ export function createWorkerTerminalManager(
       return recordsById.get(id)?.session;
     },
 
+    getClosingTerminals(): readonly TerminalSession[] {
+      return Array.from(closingRecordsById.values(), (record) => record.session);
+    },
+
     async replayTerminal(id, options, sink): Promise<TerminalReplayMetadata | null> {
       const metadata = (await sendRequest(
         { type: "replayTerminal", terminalId: id, options },
@@ -959,11 +974,12 @@ export function createWorkerTerminalManager(
     },
 
     killTerminal(id: string): void {
-      const record = removeRecordAndEmit(id);
-      if (record && !record.exitInfo) {
+      const record = recordsById.get(id);
+      if (record) {
         closingRecordsById.set(id, record);
       }
-      void sendRequest({ type: "killTerminal", terminalId: id }).catch(() => {
+      removeRecordAndEmit(id);
+      void manager.killTerminalAndWait(id).catch(() => {
         // no-op; kill is intentionally best-effort and synchronous in the public interface.
       });
     },
@@ -976,21 +992,16 @@ export function createWorkerTerminalManager(
         preserveSession?: boolean;
       },
     ): Promise<void> {
-      const record = recordsById.get(id);
+      const record = recordsById.get(id) ?? closingRecordsById.get(id);
+      const { preserveSession: requestedPreserveSession, ...killOptions } = options ?? {};
       // COMPAT(workspaceLaunchRetainedStop): added in v0.15.0-beta.1, remove after 2027-05-03 once protocol 6 workers drain.
       const preserveSession =
-        options?.preserveSession === true &&
+        requestedPreserveSession === true &&
+        !closingRecordsById.has(id) &&
         record?.info.retainOnExit === true &&
         (managerOptions.workerProtocolVersion ?? TERMINAL_WORKER_PROTOCOL_VERSION) ===
           TERMINAL_WORKER_PROTOCOL_VERSION;
-      const killOptions = {
-        ...(options?.gracefulTimeoutMs === undefined
-          ? {}
-          : { gracefulTimeoutMs: options.gracefulTimeoutMs }),
-        ...(options?.forceTimeoutMs === undefined
-          ? {}
-          : { forceTimeoutMs: options.forceTimeoutMs }),
-      };
+      if (record && !preserveSession) closingRecordsById.set(id, record);
       await sendRequest({
         type: "killTerminalAndWait",
         terminalId: id,
@@ -1003,10 +1014,16 @@ export function createWorkerTerminalManager(
             }
           : {}),
       });
-      // Remove only after the worker confirms the kill. A timeout or IPC error must leave a live
-      // terminal visible so callers can retry Stop instead of reporting a false success.
+      // Never discard an owner on timeout/IPC failure, including an explicitly hidden one.
       if (!preserveSession) {
-        removeRecordAndEmit(id);
+        const wasClosing = closingRecordsById.delete(id);
+        const removed = removeRecordAndEmit(id);
+        if (wasClosing && !removed && record) {
+          emitTerminalsChanged({
+            cwd: record.info.cwd,
+            terminals: listTerminalItemsForCwd(record.info.cwd),
+          });
+        }
       }
     },
 
@@ -1070,6 +1087,7 @@ export function createWorkerTerminalManager(
       };
     },
   };
+  return manager;
 }
 
 export interface StartWorkerTerminalManagerOptions {

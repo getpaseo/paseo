@@ -423,6 +423,18 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
   }
 
+  private async getWorkspaceTerminals(workspaceId: string): Promise<TerminalSession[]> {
+    const terminalManager = this.deps.terminalManager;
+    if (!terminalManager) return [];
+    const lists = await Promise.all(
+      terminalManager
+        .listDirectories()
+        .map((directory) => terminalManager.getTerminals(directory, { workspaceId })),
+    );
+    const closing = terminalManager.getClosingTerminals?.() ?? [];
+    return [...lists.flat(), ...closing].filter((terminal) => terminal.workspaceId === workspaceId);
+  }
+
   private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
     const runtimes = this.runtimes.get(workspaceId);
     const terminalManager = this.deps.terminalManager;
@@ -438,13 +450,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       for (const runtime of runtimes?.values() ?? []) {
         if (runtime.terminalId) terminalIds.add(runtime.terminalId);
       }
-      const terminalLists = await Promise.all(
-        terminalManager
-          .listDirectories()
-          .map((directory) => terminalManager.getTerminals(directory, { workspaceId })),
-      );
-      for (const terminal of terminalLists.flat()) {
-        if (terminal.workspaceId !== workspaceId) continue;
+      for (const terminal of await this.getWorkspaceTerminals(workspaceId)) {
         if (terminal.workspacePortBlock || terminal.workspaceLaunch) {
           terminalIds.add(terminal.id);
         }
@@ -795,17 +801,9 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       }
       // The daemon's runtime store is empty after restart. Recover script ownership
       // from the worker, never from a user terminal's name or its current directory.
-      for (const directory of terminalManager.listDirectories()) {
-        const terminals = await terminalManager.getTerminals(directory, {
-          workspaceId: context.workspaceId,
-        });
-        for (const terminal of terminals) {
-          if (
-            terminal.workspaceId === context.workspaceId &&
-            terminal.workspaceScriptName === launchName
-          ) {
-            terminalIds.add(terminal.id);
-          }
+      for (const terminal of await this.getWorkspaceTerminals(context.workspaceId)) {
+        if (terminal.workspaceScriptName === launchName) {
+          terminalIds.add(terminal.id);
         }
       }
       await Promise.all(
