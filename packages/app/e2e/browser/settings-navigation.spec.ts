@@ -20,6 +20,10 @@ import {
   scrollSettingsDetailDown,
   expectSettingsDetailScrollOffset,
   openSettingsSection,
+  changeSettingsSyntaxTheme,
+  revealSettingsSyntaxTheme,
+  expectSettingsSyntaxColorChanged,
+  changeSettingsTypography,
   expectSettingsHeader,
   openAddHostFlow,
   selectHostConnectionType,
@@ -82,6 +86,17 @@ test.describe("Settings sidebar scroll position", () => {
     await clickSettingsBackToWorkspace(page);
     await openSettings(page);
     await expectSettingsSidebarScrollOffset(page, 0);
+  });
+
+  test("updates appearance without losing the detail scroll or form edits", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    const { offset, keywordColor } = await revealSettingsSyntaxTheme(page);
+    await changeSettingsSyntaxTheme(page, "Dracula");
+    await expectSettingsDetailScrollOffset(page, offset);
+    await expectSettingsSyntaxColorChanged(page, keywordColor);
+    await changeSettingsTypography(page);
   });
 
   test("keeps the sidebar position through interface font changes", async ({ page }) => {

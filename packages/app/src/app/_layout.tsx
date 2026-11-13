@@ -864,6 +864,8 @@ const ROOT_STACK_SCREEN_OPTIONS = {
   animation: "none" as const,
 };
 const ROOT_STACK_NESTED_NAVIGATOR_SCREENS = ["h/[serverId]"] as const;
+// Settings owns reactive typography leaves; its scroll and form state survive appearance edits.
+const ROOT_STACK_SCREEN_OWNED_APPEARANCE = ["settings/[section]"] as const;
 
 function RootStack() {
   const storeReady = useStoreReady();
@@ -871,6 +873,7 @@ function RootStack() {
     <ThemedStack
       screenOptions={ROOT_STACK_SCREEN_OPTIONS}
       nestedNavigatorScreens={ROOT_STACK_NESTED_NAVIGATOR_SCREENS}
+      screenOwnedAppearance={ROOT_STACK_SCREEN_OWNED_APPEARANCE}
     >
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
