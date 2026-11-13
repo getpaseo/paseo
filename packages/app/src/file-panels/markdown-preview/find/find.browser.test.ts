@@ -152,3 +152,46 @@ it("highlights matches, scrolls offscreen occurrences into view, and flips corne
   expect(CSS.highlights.has("test-md-find-active")).toBe(false);
   model.dispose();
 });
+
+it("falls back to native DOM Selection when CSS Custom Highlights are unavailable", () => {
+  const originalHighlight = globalThis.Highlight;
+  Object.defineProperty(globalThis, "Highlight", {
+    value: undefined,
+    configurable: true,
+    writable: true,
+  });
+  try {
+    const { root } = createPreviewSurface("<p>first NEEDLE and second needle</p>");
+    const input = document.createElement("input");
+    root.append(input);
+    input.focus();
+
+    const model = new MarkdownPreviewFindModel({
+      all: "test-md-fallback-all",
+      active: "test-md-fallback-active",
+    });
+    model.setRootNode(root);
+    model.open();
+    model.setSearch("needle");
+
+    expect(window.getSelection()?.toString()).toBe("NEEDLE");
+    expect(document.activeElement).toBe(input);
+
+    // Re-opening find while fallback selection is active must preserve the lowercase query and index.
+    model.open();
+    expect(model.getSnapshot().query).toBe("needle");
+
+    model.next();
+    expect(window.getSelection()?.toString()).toBe("needle");
+
+    model.close();
+    expect(window.getSelection()?.rangeCount).toBe(0);
+    model.dispose();
+  } finally {
+    Object.defineProperty(globalThis, "Highlight", {
+      value: originalHighlight,
+      configurable: true,
+      writable: true,
+    });
+  }
+});

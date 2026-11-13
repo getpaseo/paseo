@@ -34,6 +34,7 @@ export class MarkdownPreviewFindModel {
   private widget: HTMLElement | null = null;
   private widgetResize: ResizeObserver | null = null;
   private ranges: Range[] = [];
+  private fallbackSelectedRange: Range | null = null;
   private limited = false;
   private activeIndex = -1;
   private snapshot: MarkdownPreviewFindSnapshot = {
@@ -91,7 +92,8 @@ export class MarkdownPreviewFindModel {
     const wasOpen = this.snapshot.open;
     const frame = this.frameElement();
     const seed =
-      this.widget && document.activeElement && this.widget.contains(document.activeElement)
+      (this.widget && document.activeElement && this.widget.contains(document.activeElement)) ||
+      this.isOwnFallbackSelection()
         ? null
         : selectedSingleLineText(frame);
     const nextQuery = seed ?? this.snapshot.query;
@@ -209,10 +211,37 @@ export class MarkdownPreviewFindModel {
     }
   }
 
+  private isOwnFallbackSelection(): boolean {
+    const own = this.fallbackSelectedRange;
+    if (!own || typeof window === "undefined") return false;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount !== 1) return false;
+    const current = selection.getRangeAt(0);
+    return (
+      current.startContainer === own.startContainer &&
+      current.startOffset === own.startOffset &&
+      current.endContainer === own.endContainer &&
+      current.endOffset === own.endOffset
+    );
+  }
+
   private applyHighlights() {
-    if (!supportsCssHighlights()) return;
     if (!this.snapshot.open || this.ranges.length === 0) {
       this.clearHighlights();
+      return;
+    }
+    if (!supportsCssHighlights()) {
+      const selection = typeof window !== "undefined" ? window.getSelection() : null;
+      if (!selection) return;
+      const active = this.ranges[this.activeIndex];
+      if (!active) {
+        this.clearHighlights();
+        return;
+      }
+      const range = active.cloneRange();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      this.fallbackSelectedRange = range;
       return;
     }
     CSS.highlights.set(this.highlightNames.all, new Highlight(...this.ranges));
@@ -225,9 +254,16 @@ export class MarkdownPreviewFindModel {
   }
 
   private clearHighlights() {
-    if (!supportsCssHighlights()) return;
-    CSS.highlights.delete(this.highlightNames.all);
-    CSS.highlights.delete(this.highlightNames.active);
+    if (supportsCssHighlights()) {
+      CSS.highlights.delete(this.highlightNames.all);
+      CSS.highlights.delete(this.highlightNames.active);
+    }
+    if (this.fallbackSelectedRange) {
+      if (this.isOwnFallbackSelection()) {
+        window.getSelection()?.removeAllRanges();
+      }
+      this.fallbackSelectedRange = null;
+    }
   }
 
   private widgetAllowance(scrollRect: DOMRect): number {
