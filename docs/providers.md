@@ -290,8 +290,8 @@ holds for an hour. `update` runs for minutes, streams output, and is aborted onl
 stops.
 
 The app shows **Update** only when a check answers `available` and the provider declares `update`.
-A provider with `update` and no check, such as Copilot or OpenCode, never shows the button, and
-users follow `updateUrl` instead.
+**Update** and **Update instructions** live in the Updates row, which needs a check. A provider
+with `update` or `updateUrl` and no check, such as Copilot or OpenCode, shows neither.
 
 Write the success message for the provider's process model. A CLI that Paseo starts once per agent
 uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,
