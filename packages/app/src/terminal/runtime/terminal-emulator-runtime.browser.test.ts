@@ -115,6 +115,15 @@ interface CreateTerminalHostInput {
   isMac?: boolean;
 }
 
+/** Text typed into xterm's textarea, as the browser reports a typed character. */
+function typeText(mounted: MountedTerminal, text: string): void {
+  mounted.host
+    .querySelector(".xterm-helper-textarea")
+    ?.dispatchEvent(
+      new InputEvent("input", { data: text, inputType: "insertText", bubbles: true }),
+    );
+}
+
 function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -822,6 +831,22 @@ describe("incremental replay lifecycle", () => {
     );
     expect(mounted.inputs).toHaveLength(1);
     expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
+  });
+
+  it("keeps what the user types while a replay is still parsing", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.runtime.replay({ type: "begin" });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07restored") });
+    mounted.runtime.replay({ type: "end" });
+
+    typeText(mounted, "a");
+    typeText(mounted, "f");
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
+    );
+
+    expect(mounted.inputs).toEqual(["a", "f"]);
   });
 
   it("measures emoji clusters with the daemon's grapheme widths and copies them intact", async () => {
