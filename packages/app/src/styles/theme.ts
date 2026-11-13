@@ -225,6 +225,10 @@ export interface LightThemeConfig {
   surface3: string;
   surface4: string;
   surfaceSidebar: string;
+  surfaceSidebarHover?: string;
+  surfaceSidebarSelected?: string;
+  foregroundSidebarHover?: string;
+  foregroundSidebarSelected?: string;
   foreground: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
@@ -267,8 +271,10 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surface3: tint.surface3,
     surface4: tint.surface4,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: sidebarStates.hover,
-    surfaceSidebarSelected: sidebarStates.selected,
+    surfaceSidebarHover: tint.surfaceSidebarHover ?? sidebarStates.hover,
+    surfaceSidebarSelected: tint.surfaceSidebarSelected ?? sidebarStates.selected,
+    foregroundSidebarHover: tint.foregroundSidebarHover ?? tint.foregroundExtraMuted,
+    foregroundSidebarSelected: tint.foregroundSidebarSelected ?? tint.foregroundExtraMuted,
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
@@ -347,6 +353,10 @@ export interface DarkThemeConfig {
   surface3: string;
   surface4: string;
   surfaceSidebar: string;
+  surfaceSidebarHover?: string;
+  surfaceSidebarSelected?: string;
+  foregroundSidebarHover?: string;
+  foregroundSidebarSelected?: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
   border: string;
@@ -389,8 +399,10 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surface3: tint.surface3,
     surface4: tint.surface4,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: sidebarStates.hover,
-    surfaceSidebarSelected: sidebarStates.selected,
+    surfaceSidebarHover: tint.surfaceSidebarHover ?? sidebarStates.hover,
+    surfaceSidebarSelected: tint.surfaceSidebarSelected ?? sidebarStates.selected,
+    foregroundSidebarHover: tint.foregroundSidebarHover ?? tint.foregroundExtraMuted,
+    foregroundSidebarSelected: tint.foregroundSidebarSelected ?? tint.foregroundExtraMuted,
     surfaceWorkspace: tint.surface1,
     interactionHighlight: "rgba(255, 255, 255, 0.08)",
 

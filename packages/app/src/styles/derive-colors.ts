@@ -78,3 +78,13 @@ export function deriveTertiaryText(mutedForeground: string, background: string):
   if (contrastRatio(background, faded) >= floor) return faded;
   return stepContrast(background, mutedForeground, floor);
 }
+
+/** Keep page tertiary text where it is readable; otherwise derive it against the row state. */
+export function deriveSidebarStateText(
+  tertiary: string,
+  surface: string,
+  foreground: string,
+): string {
+  if (contrastRatio(tertiary, surface) >= TERTIARY_TEXT_FLOOR) return tertiary;
+  return stepContrast(surface, foreground, TERTIARY_TEXT_FLOOR);
+}

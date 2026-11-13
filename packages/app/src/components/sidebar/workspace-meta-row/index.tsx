@@ -15,6 +15,7 @@ import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
+import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import {
   PluginWorkspaceRowBadgeItems,
@@ -75,6 +76,7 @@ export function WorkspaceMetaRow({
   serviceSummary,
   labels = EMPTY_LABELS,
   workspace = null,
+  backdrop,
 }: {
   currentBranch: string | null;
   projectName: string | null;
@@ -84,6 +86,7 @@ export function WorkspaceMetaRow({
   labels?: readonly WorkspaceLabelDefinition[];
   /** The real workspace behind the row; previews leave it out and get no plugin items. */
   workspace?: { serverId: string; workspaceId: string } | null;
+  backdrop: SidebarSurfaceBackdrop;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
@@ -104,7 +107,17 @@ export function WorkspaceMetaRow({
     <View style={styles.row}>
       {items.map((item, index) => (
         <Fragment key={item.kind}>
-          {index > 0 ? <Text style={styles.separator}>·</Text> : null}
+          {index > 0 ? (
+            <Text
+              style={[
+                styles.separator,
+                backdrop === "surfaceSidebarHover" && styles.separatorHovered,
+                backdrop === "surfaceSidebarSelected" && styles.separatorSelected,
+              ]}
+            >
+              ·
+            </Text>
+          ) : null}
           <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
         </Fragment>
       ))}
@@ -362,6 +375,8 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 16,
     flexShrink: 0,
   },
+  separatorHovered: { color: theme.colors.foregroundSidebarHover },
+  separatorSelected: { color: theme.colors.foregroundSidebarSelected },
   // Tighter than the line's own gap so a run of chips reads as one item — see `LabelsItem`.
   // Shrinks at the same weight as the service name: both are arbitrary text somebody chose, so
   // a crowded line takes from the two of them in proportion rather than emptying one of them.

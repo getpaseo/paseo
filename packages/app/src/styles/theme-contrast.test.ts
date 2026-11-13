@@ -96,6 +96,13 @@ const TERTIARY_TEXT_FLOOR = 2.5;
 // color that disappears.
 const TERMINAL_COLOR_FLOOR = 1.5;
 
+it("keeps Solarized Dark's selected workspace timestamp readable", () => {
+  const { colors } = buildPluginTheme(SOLARIZED_DARK);
+  expect(
+    contrastRatio(colors.foregroundSidebarSelected, colors.surfaceSidebarSelected),
+  ).toBeGreaterThanOrEqual(2.5);
+});
+
 describe.each(themes)("$name", ({ theme }) => {
   const colors = theme.colors;
 
@@ -159,6 +166,17 @@ describe.each(themes.filter(({ name }) => name.startsWith("plugin ")))(
       expect(
         contrastRatio(theme.colors.surface0, theme.colors.foregroundExtraMuted),
       ).toBeGreaterThanOrEqual(TERTIARY_TEXT_FLOOR);
+    });
+    it("keeps passive text readable on hovered and selected sidebar rows", () => {
+      expect(
+        contrastRatio(theme.colors.foregroundSidebarHover, theme.colors.surfaceSidebarHover),
+      ).toBeGreaterThanOrEqual(TERTIARY_TEXT_FLOOR);
+      expect(
+        contrastRatio(theme.colors.foregroundSidebarSelected, theme.colors.surfaceSidebarSelected),
+      ).toBeGreaterThanOrEqual(TERTIARY_TEXT_FLOOR);
+      expect(contrastRatio(theme.colors.surface0, theme.colors.foregroundExtraMuted)).toBeLessThan(
+        contrastRatio(theme.colors.surface0, theme.colors.foreground),
+      );
     });
   },
 );

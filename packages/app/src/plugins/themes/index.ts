@@ -13,7 +13,12 @@ import {
   lightTheme,
   type Theme,
 } from "@/styles/theme";
-import { deriveNeutralFills, deriveTertiaryText } from "@/styles/derive-colors";
+import {
+  deriveNeutralFills,
+  deriveTertiaryText,
+  deriveSurfaceStates,
+  deriveSidebarStateText,
+} from "@/styles/derive-colors";
 import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
@@ -39,6 +44,11 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
     mutedForeground: hexColorSchema,
     ring: hexColorSchema,
     sidebar: hexColorSchema.optional(),
+    sidebarHover: hexColorSchema.optional(),
+    sidebarSelected: hexColorSchema.optional(),
+    surface3: hexColorSchema.optional(),
+    surface4: hexColorSchema.optional(),
+    foregroundExtraMuted: hexColorSchema.optional(),
   }),
 });
 
@@ -64,17 +74,30 @@ function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
   const fills = deriveNeutralFills(colors.background, colors.foreground, "dark");
+  const sidebar = colors.sidebar ?? colors.background;
+  const states = deriveSurfaceStates(sidebar, colors.foreground, "dark");
+  const hover = colors.sidebarHover ?? states.hover;
+  const selected = colors.sidebarSelected ?? states.selected;
+  const tertiary =
+    colors.foregroundExtraMuted ?? deriveTertiaryText(colors.mutedForeground, colors.background);
   return buildDarkTheme(
     buildDarkSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: fills.surface3,
-      surface4: fills.surface4,
-      surfaceSidebar: colors.sidebar ?? colors.background,
+      surface3: colors.surface3 ?? fills.surface3,
+      surface4: colors.surface4 ?? fills.surface4,
+      surfaceSidebar: sidebar,
+      surfaceSidebarHover: hover,
+      surfaceSidebarSelected: selected,
+      foregroundSidebarHover:
+        colors.foregroundExtraMuted ?? deriveSidebarStateText(tertiary, hover, colors.foreground),
+      foregroundSidebarSelected:
+        colors.foregroundExtraMuted ??
+        deriveSidebarStateText(tertiary, selected, colors.foreground),
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: deriveTertiaryText(colors.mutedForeground, colors.background),
+      foregroundExtraMuted: tertiary,
       border: colors.border,
       borderAccent: colors.border,
       accent,
@@ -92,17 +115,30 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
   const fills = deriveNeutralFills(colors.background, colors.foreground, "light");
+  const sidebar = colors.sidebar ?? colors.control;
+  const states = deriveSurfaceStates(sidebar, colors.foreground, "light");
+  const hover = colors.sidebarHover ?? states.hover;
+  const selected = colors.sidebarSelected ?? states.selected;
+  const tertiary =
+    colors.foregroundExtraMuted ?? deriveTertiaryText(colors.mutedForeground, colors.background);
   return buildLightTheme(
     buildLightSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: fills.surface3,
-      surface4: fills.surface4,
-      surfaceSidebar: colors.sidebar ?? colors.control,
+      surface3: colors.surface3 ?? fills.surface3,
+      surface4: colors.surface4 ?? fills.surface4,
+      surfaceSidebar: sidebar,
+      surfaceSidebarHover: hover,
+      surfaceSidebarSelected: selected,
+      foregroundSidebarHover:
+        colors.foregroundExtraMuted ?? deriveSidebarStateText(tertiary, hover, colors.foreground),
+      foregroundSidebarSelected:
+        colors.foregroundExtraMuted ??
+        deriveSidebarStateText(tertiary, selected, colors.foreground),
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: deriveTertiaryText(colors.mutedForeground, colors.background),
+      foregroundExtraMuted: tertiary,
       border: colors.border,
       borderAccent: colors.border,
       accent,

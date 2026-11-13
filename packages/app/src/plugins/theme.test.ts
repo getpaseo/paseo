@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
+import { contrastRatio } from "@/utils/color";
 import {
   buildPluginTheme,
   collectPluginThemes,
@@ -184,6 +185,67 @@ function withColors(
 // the light selected row, and `border` once filled the neutral fill, so a theme tuning either for
 // its own purpose repainted unrelated surfaces.
 describe("plugin theme roles", () => {
+  it("derives selected text against an overridden selected surface", () => {
+    const colors = buildPluginTheme(withColors(MOCHA, { sidebarSelected: "#68687c" })).colors;
+    expect(colors.surfaceSidebarSelected).toBe("#68687c");
+    expect(
+      contrastRatio(colors.foregroundSidebarSelected, colors.surfaceSidebarSelected),
+    ).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it("uses an explicit tertiary color unchanged on sidebar states", () => {
+    const colors = buildPluginTheme(withColors(MOCHA, { foregroundExtraMuted: "#123456" })).colors;
+    expect(colors.foregroundSidebarHover).toBe("#123456");
+    expect(colors.foregroundSidebarSelected).toBe("#123456");
+  });
+
+  it("keeps explicit semantic colors independent of ring and border", () => {
+    const overrides = {
+      sidebarHover: "#111111",
+      sidebarSelected: "#222222",
+      surface3: "#333333",
+      surface4: "#444444",
+      foregroundExtraMuted: "#aaaaaa",
+    };
+    const before = buildPluginTheme(withColors(MOCHA, overrides)).colors;
+    const after = buildPluginTheme(
+      withColors(MOCHA, { ...overrides, ring: "#ff0000", border: "#00ff00" }),
+    ).colors;
+    for (const role of [
+      "surfaceSidebarHover",
+      "surfaceSidebarSelected",
+      "surface3",
+      "surface4",
+      "foregroundExtraMuted",
+      "foregroundSidebarHover",
+      "foregroundSidebarSelected",
+    ] as const) {
+      expect(after[role]).toBe(before[role]);
+    }
+  });
+  it.each([
+    ["sidebarHover", "surfaceSidebarHover"],
+    ["sidebarSelected", "surfaceSidebarSelected"],
+    ["surface3", "surface3"],
+    ["surface4", "surface4"],
+    ["foregroundExtraMuted", "foregroundExtraMuted"],
+  ] as const)("accepts and applies %s independently", (input, output) => {
+    const contribution = withColors(MOCHA, { [input]: "#123456" });
+    const parsed = parsePluginThemeContribution(contribution);
+    const colors = buildPluginTheme(parsed).colors;
+    expect(colors[output]).toBe("#123456");
+    expect(() => parsePluginThemeContribution(withColors(MOCHA, { [input]: "no" }))).toThrow();
+    const baseline = buildPluginTheme(MOCHA).colors;
+    for (const other of [
+      "surfaceSidebarHover",
+      "surfaceSidebarSelected",
+      "surface3",
+      "surface4",
+      "foregroundExtraMuted",
+    ] as const) {
+      if (other !== output) expect(colors[other]).toBe(baseline[other]);
+    }
+  });
   it.each([LATTE, MOCHA])("keeps `ring` out of surfaces and text in $name", (contribution) => {
     const base = buildPluginTheme(contribution).colors;
     const changed = buildPluginTheme(withColors(contribution, { ring: "#ff0000" })).colors;
@@ -194,6 +256,8 @@ describe("plugin theme roles", () => {
       "surface3",
       "surface4",
       "foregroundExtraMuted",
+      "foregroundSidebarHover",
+      "foregroundSidebarSelected",
       "surfaceSidebar",
       "surfaceSidebarHover",
       "surfaceSidebarSelected",
@@ -236,7 +300,7 @@ describe("plugin theme roles", () => {
     expect(buildPluginTheme(LATTE).colors.surfaceSidebar).toBe(LATTE.colors.control);
   });
 
-  it("accepts an optional hex `sidebar` and nothing else new", () => {
+  it("accepts an optional hex `sidebar` and rejects unknown colors", () => {
     expect(parsePluginThemeContribution(withColors(MOCHA, { sidebar: "#11111b" }))).toMatchObject({
       colors: { sidebar: "#11111b" },
     });
@@ -244,7 +308,7 @@ describe("plugin theme roles", () => {
     expect(() =>
       parsePluginThemeContribution({
         ...MOCHA,
-        colors: { ...MOCHA.colors, sidebarHover: "#000000" },
+        colors: { ...MOCHA.colors, unknownColor: "#000000" },
       }),
     ).toThrow();
   });
