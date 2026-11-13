@@ -7,6 +7,7 @@ import {
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveExactHostProjectCandidate,
   resolveEquivalentHostProjectCandidate,
   resolveInitialWorkspaceProject,
 } from "./host-project-model";
@@ -103,6 +104,39 @@ describe("host project lookups", () => {
         allowAllProjects: false,
       }),
     ).toBe(linkedProject);
+  });
+
+  test("prefers an exact selected-host placement over a regrouped source placement", () => {
+    const selected = project();
+    selected.projectKey = null;
+    const regrouped = {
+      ...project(),
+      viewKey: "local-project-link:a-b2",
+      projectKey: null,
+      hosts: [
+        selected.hosts[0]!,
+        {
+          serverId: "host-b",
+          projectId: "prj_b2",
+          iconWorkingDir: "/repo/b2",
+          worktreeSupport: "supported" as const,
+        },
+      ],
+    };
+    const exactPlacement = {
+      ...project(),
+      viewKey: "view:host-b:prj_b",
+      projectKey: null,
+      hosts: [selected.hosts[1]!],
+    };
+
+    expect(
+      resolveExactHostProjectCandidate({
+        candidate: selected,
+        projects: [regrouped, exactPlacement],
+        serverId: "host-b",
+      }),
+    ).toBe(exactPlacement);
   });
 
   test("returns host-local ids and roots without falling back to the grouping key", () => {
