@@ -64,8 +64,8 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * color on a tint instead (see `WorkspaceLabelChip`). It sits last so the reported facts are
  * read first, and it stays the same height as the rest of the line.
  *
- * Plugin items follow everything the row knows itself. They draw their own separators, since only
- * a plugin knows whether it has anything to say about this workspace.
+ * Plugin items follow everything the row knows itself. A plugin renders its slot as it likes:
+ * the row adds no separator, since only the plugin knows whether it has anything to say.
  */
 export function WorkspaceMetaRow({
   currentBranch,
@@ -109,11 +109,7 @@ export function WorkspaceMetaRow({
         </Fragment>
       ))}
       {workspace ? (
-        <PluginWorkspaceRowBadgeItems
-          targets={pluginItems}
-          workspaceId={workspace.workspaceId}
-          separated={items.length > 0}
-        />
+        <PluginWorkspaceRowBadgeItems targets={pluginItems} workspaceId={workspace.workspaceId} />
       ) : null}
     </View>
   );

@@ -8,7 +8,6 @@ import { pluginThemeMapping, renderNothing, usePluginItemHost } from "../item-ho
 import { PluginEnvironmentProvider } from "../popover";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
-import { WorkspaceRowBadgeItemFrameContext, type WorkspaceRowBadgeItemFrame } from "./frame";
 import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
 export { WorkspaceRowBadge } from "./kit";
@@ -51,19 +50,15 @@ export function usePluginWorkspaceRowBadgeItems(serverId: string | null): RowBad
 export function PluginWorkspaceRowBadgeItems({
   targets,
   workspaceId,
-  separated,
 }: {
   targets: readonly RowBadgeItemTarget[];
   workspaceId: string;
-  /** The row drew items of its own, so the first plugin item leads with a separator. */
-  separated: boolean;
 }) {
-  return targets.map((target, index) => (
+  return targets.map((target) => (
     <ThemedRowBadgeItemHost
       key={workspaceRowBadgeItemKey(target.plugin.id, target.item.id)}
       target={target}
       workspaceId={workspaceId}
-      separated={separated || index > 0}
       uniProps={pluginThemeMapping}
     />
   ));
@@ -72,24 +67,13 @@ export function PluginWorkspaceRowBadgeItems({
 function RowBadgeItemHost({
   target: { plugin, item },
   workspaceId,
-  separated,
   theme,
 }: {
   target: RowBadgeItemTarget;
   workspaceId: string;
-  separated: boolean;
   theme: PluginTheme;
 }) {
   const { environment, props: hostProps } = usePluginItemHost(plugin, theme);
-  const title = plugin.i18n.resolve(item.title, plugin.locale);
-  const frame = useMemo<WorkspaceRowBadgeItemFrame>(
-    () => ({
-      title,
-      testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`,
-      separated,
-    }),
-    [item.id, plugin.id, separated, title],
-  );
   const props = useMemo<PluginWorkspaceRowBadgeItemProps>(
     () => ({ ...hostProps, workspaceId }),
     [hostProps, workspaceId],
@@ -98,9 +82,7 @@ function RowBadgeItemHost({
   return (
     <SurfaceErrorBoundary installation={plugin} Surface={Item} renderError={renderNothing}>
       <PluginEnvironmentProvider environment={environment}>
-        <WorkspaceRowBadgeItemFrameContext.Provider value={frame}>
-          <Item {...props} />
-        </WorkspaceRowBadgeItemFrameContext.Provider>
+        <Item {...props} />
       </PluginEnvironmentProvider>
     </SurfaceErrorBoundary>
   );

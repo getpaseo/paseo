@@ -5,7 +5,6 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { Theme } from "@/styles/theme";
 import { parsePluginIcon, PluginIconView } from "../icons";
-import { useWorkspaceRowBadgeItemFrame } from "./frame";
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 
@@ -26,9 +25,9 @@ const TONE_MAPPINGS: Record<WorkspaceRowBadgeTone, (theme: Theme) => { color: st
 };
 
 /**
- * A plugin's item on the line under a workspace title, drawn like the row's own peers: one glyph at
- * the line's size and a short word, in the color of the state it reports. It draws its own
- * separator, so an item that renders nothing leaves no dot behind.
+ * A plugin's badge on the line under a workspace title, drawn like the row's own peers: one glyph
+ * at the line's size and a short word, in the color of the state it reports. The plugin owns the
+ * slot, so the badge draws no separator.
  */
 export function WorkspaceRowBadge({
   icon,
@@ -36,7 +35,6 @@ export function WorkspaceRowBadge({
   tone = "muted",
   accessibilityLabel,
 }: WorkspaceRowBadgeProps) {
-  const frame = useWorkspaceRowBadgeItemFrame("WorkspaceRowBadge");
   // Parsed at render, not registration, so an invalid icon throws to the item's boundary.
   const parsedIcon = useMemo(
     () => (icon === undefined ? null : parsePluginIcon("Workspace row badge", icon)),
@@ -44,27 +42,20 @@ export function WorkspaceRowBadge({
   );
   if (!parsedIcon && !label) return null;
   return (
-    <>
-      {frame.separated ? <Text style={styles.separator}>·</Text> : null}
-      <View
-        style={styles.item}
-        accessibilityLabel={accessibilityLabel ?? label ?? frame.title}
-        testID={frame.testID}
-      >
-        {parsedIcon ? (
-          <ThemedPluginIconView
-            icon={parsedIcon}
-            size={HOST_BADGE_ICON_SIZE}
-            uniProps={TONE_MAPPINGS[tone]}
-          />
-        ) : null}
-        {label ? (
-          <Text style={[styles.text, textToneStyle(tone)]} numberOfLines={1}>
-            {label}
-          </Text>
-        ) : null}
-      </View>
-    </>
+    <View style={styles.item} accessibilityLabel={accessibilityLabel ?? label}>
+      {parsedIcon ? (
+        <ThemedPluginIconView
+          icon={parsedIcon}
+          size={HOST_BADGE_ICON_SIZE}
+          uniProps={TONE_MAPPINGS[tone]}
+        />
+      ) : null}
+      {label ? (
+        <Text style={[styles.text, textToneStyle(tone)]} numberOfLines={1}>
+          {label}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -78,12 +69,6 @@ function textToneStyle(tone: WorkspaceRowBadgeTone) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  separator: {
-    color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 16,
-    flexShrink: 0,
-  },
   item: {
     flexDirection: "row",
     alignItems: "center",

@@ -632,8 +632,7 @@ items after its own.
 
 - Plugin items render with no wrapper view. The meta line spaces children with `gap`, so an empty
   wrapper would leave a gap on rows the plugin has nothing to say about. That is also why
-  `WorkspaceRowBadge` draws its own separator. The host marks every plugin item after the first, and
-  the first when the row drew items of its own, as separated; it does not track which items drew.
+  the row adds no separator around plugin items; a plugin renders its slot.
 - A row only renders items from plugins on its own host. The Show menu coalesces items across hosts
   by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting. A missing key is visible.
 - Previews (Settings > Host appearance) pass no `workspace` to `WorkspaceMetaRow`, so plugin items

@@ -44,12 +44,14 @@ export default function contribute(client) {
 `;
 
 // The meta line the badges draw on. Each item sits in one wrapper of its own, so the line is two up.
-function badgeLine(page: Page, itemId: string) {
+const LABELS = { review: "In review", docs: "Docs" } as const;
+
+function badgeLine(page: Page, itemId: keyof typeof LABELS) {
   return badge(page, itemId).locator("xpath=../..");
 }
 
-function badge(page: Page, itemId: string) {
-  return page.locator(`[data-testid="plugin-workspace-row-badge-${PLUGIN_ID}-${itemId}"]:visible`);
+function badge(page: Page, itemId: keyof typeof LABELS) {
+  return page.getByLabel(LABELS[itemId], { exact: true }).locator("visible=true");
 }
 
 async function toggleShowItem(page: Page, label: string, touch: boolean) {
@@ -87,11 +89,8 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
     await test.step("the badge draws on the row; a null item and a throwing item draw nothing", async () => {
       await expect(badge(page, "review")).toBeVisible();
       await expect(badge(page, "review")).toContainText("In review");
-      // The row has none of its own items, so the line starts with the badge, no leading "·", and
-      // the second badge is set off from it by one.
-      await expect(badgeLine(page, "review")).toHaveText("In review·Docs");
-      await expect(badge(page, "quiet")).toHaveCount(0);
-      await expect(badge(page, "broken")).toHaveCount(0);
+      // The null and throwing items after them draw nothing, and the line adds nothing of its own.
+      await expect(badgeLine(page, "review")).toHaveText("In reviewDocs");
       await expect(page.getByText(TITLE).first()).toBeVisible();
       await page.screenshot({ path: info.outputPath("wide.png") });
     });
