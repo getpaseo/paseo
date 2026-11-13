@@ -1,31 +1,28 @@
-import { useCallback, useEffect, useRef } from "react";
-import type { View } from "react-native";
+import { useCallback, useEffect } from "react";
+import { wasClaimedByFocusOwner } from "@/components/ui/focus-owner";
 import { blurEmbed, focusEmbed, useIsEmbedFocused } from "./focus-store";
 
 /**
- * Web: the embed is focused from a pointer press or a focus move inside it until one lands
- * outside it, the way a workspace pane takes focus from a click anywhere in it.
+ * Web: a pointer press or focus move in what the embed owns focuses it, until one lands outside
+ * every embed, the way a workspace pane takes focus from a click anywhere in it. "Owns" follows
+ * the React tree, not the DOM: the embed's `FocusOwnerScope` claims the event, including in its
+ * autocomplete, pickers, menus and sheets drawn at the app root. This listener runs after React
+ * (document, bubble phase) and blurs only on events no owner claimed.
  */
 export function useEmbedFocus(embedId: string) {
   const isFocused = useIsEmbedFocused(embedId);
-  const nodeRef = useRef<HTMLElement | null>(null);
-  const ref = useCallback((node: View | null) => {
-    // React Native Web hands a View's ref the DOM element.
-    nodeRef.current = node as unknown as HTMLElement | null;
-  }, []);
+  const owner = useCallback(() => focusEmbed(embedId), [embedId]);
   useEffect(() => {
     const follow = (event: Event) => {
-      const node = nodeRef.current;
-      if (node && event.target instanceof Node && node.contains(event.target)) focusEmbed(embedId);
-      else blurEmbed(embedId);
+      if (!wasClaimedByFocusOwner(event)) blurEmbed(embedId);
     };
-    document.addEventListener("pointerdown", follow, true);
-    document.addEventListener("focusin", follow, true);
+    document.addEventListener("pointerdown", follow);
+    document.addEventListener("focusin", follow);
     return () => {
-      document.removeEventListener("pointerdown", follow, true);
-      document.removeEventListener("focusin", follow, true);
+      document.removeEventListener("pointerdown", follow);
+      document.removeEventListener("focusin", follow);
       blurEmbed(embedId);
     };
   }, [embedId]);
-  return { isFocused, ref, onTouchStart: undefined };
+  return { isFocused, owner };
 }

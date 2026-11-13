@@ -249,3 +249,68 @@ test("a phone-width embed's control sheet shows only the items the plugin named"
     },
   );
 });
+
+/** Picks the embed's current mode again from its picker, which draws at the overlay root. */
+async function pickCurrentMode(page: Page, embed: ReturnType<Page["getByTestId"]>): Promise<void> {
+  const trigger = embed.getByRole("button", { name: /^Select agent mode \(/ });
+  const label = /^Select agent mode \((.+)\)$/.exec(
+    (await trigger.getAttribute("aria-label")) ?? "",
+  )?.[1];
+  expect(label).toBeTruthy();
+  await trigger.click();
+  const popup = page.getByTestId("combobox-desktop-container").last();
+  await expect(popup).toBeVisible({ timeout: 10_000 });
+  await popup.getByRole("button", { name: label, exact: true }).click();
+  await expect(page.getByTestId("combobox-desktop-container")).toHaveCount(0);
+}
+
+test("a full-composer embed applies a slash suggestion picked with the pointer", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await withEmbeds(
+    page,
+    {
+      agents: [{ title: "Suggestion agent", model: "e2e-fast-stream", prompt: "Say hello." }],
+      composer: {},
+    },
+    async ({ agents: [agent], embed }) => {
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      const box = embed(agent.agentId).getByRole("textbox", { name: "Message agent..." });
+      await box.click();
+      await box.pressSequentially("/sta");
+      // The list draws in the floating-panel portal, outside the embed's own nodes.
+      const suggestion = page
+        .getByTestId("composer-autocomplete-popover")
+        .getByText("/stamp", { exact: true });
+      await expect(suggestion).toBeVisible({ timeout: 30_000 });
+      await suggestion.click();
+      await expect(box).toHaveValue(/^\/stamp\s*$/);
+    },
+  );
+});
+
+test("a portaled mode picker keeps its embed focused for Escape", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await withEmbeds(
+    page,
+    {
+      agents: [
+        { title: "Left agent", model: "one-minute-stream", prompt: "Keep running left." },
+        { title: "Right agent", model: "one-minute-stream", prompt: "Keep running right." },
+      ],
+      composer: {},
+    },
+    async ({ agents: [left, right], embed }) => {
+      await expect.poll(() => agentStatus(left), { timeout: 15_000 }).toBe("running");
+      await expect.poll(() => agentStatus(right), { timeout: 15_000 }).toBe("running");
+
+      await pickCurrentMode(page, embed(left.agentId));
+      await page.keyboard.press("Escape");
+      await expect.poll(() => agentStatus(left), { timeout: 15_000 }).toBe("idle");
+      expect(await agentStatus(right)).toBe("running");
+    },
+  );
+});

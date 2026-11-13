@@ -11,6 +11,7 @@ import { createPaneFocusContextValue, PaneFocusProvider } from "@/panels/pane-co
 import { RetainedChatContent } from "@/panels/retained-chat-content";
 import { useSessionStore } from "@/stores/session-store";
 import { useViewedAgent } from "@/timeline/use-viewed-agent";
+import { FocusOwnerScope } from "@/components/ui/focus-owner";
 import { useEmbedFocus } from "./focus";
 
 export interface AgentEmbedComposer {
@@ -53,7 +54,7 @@ export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedPr
   );
   // Several embeds can share a screen, so focus is the embed's own, not the surface's: only the
   // embed the user is in runs the composer's key handlers. A preview without a composer has none.
-  const { isFocused, ref, onTouchStart } = useEmbedFocus(viewerId);
+  const { isFocused, owner } = useEmbedFocus(viewerId);
   const isPaneFocused = isInteractive && isFocused;
   const focus = useMemo(
     () => createPaneFocusContextValue({ isWorkspaceFocused: true, isPaneFocused }),
@@ -70,21 +71,25 @@ export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedPr
   });
 
   return (
-    <View style={styles.root} testID={testID} ref={ref} onTouchStart={onTouchStart}>
-      <PaneFocusProvider value={focus}>
-        <ComposerControlsScopeProvider value={composer?.controls ?? ALL_COMPOSER_CONTROLS}>
-          <RetainedChatContent>
-            <AgentPanelContent
-              serverId={serverId}
-              workspaceId={workspaceId}
-              target={target}
-              surface={surface}
-              isPaneFocused={isPaneFocused}
-            />
-          </RetainedChatContent>
-        </ComposerControlsScopeProvider>
-      </PaneFocusProvider>
-    </View>
+    // The scope claims presses along the React tree, so what the embed opens at the app root
+    // (autocomplete, pickers, menus, sheets) keeps it focused.
+    <FocusOwnerScope owner={owner} style={styles.root}>
+      <View style={styles.root} testID={testID}>
+        <PaneFocusProvider value={focus}>
+          <ComposerControlsScopeProvider value={composer?.controls ?? ALL_COMPOSER_CONTROLS}>
+            <RetainedChatContent>
+              <AgentPanelContent
+                serverId={serverId}
+                workspaceId={workspaceId}
+                target={target}
+                surface={surface}
+                isPaneFocused={isPaneFocused}
+              />
+            </RetainedChatContent>
+          </ComposerControlsScopeProvider>
+        </PaneFocusProvider>
+      </View>
+    </FocusOwnerScope>
   );
 }
 
