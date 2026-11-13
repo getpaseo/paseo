@@ -111,11 +111,8 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
-import {
-  AgentBackgroundWorkStore,
-  type AgentBackgroundWorkItem,
-  type AgentBackgroundWorkSummary,
-} from "./background-work/index.js";
+import type { AgentBackgroundWorkSummary } from "@getpaseo/protocol/messages";
+import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 

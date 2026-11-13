@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentBackgroundWorkSummary } from "@getpaseo/protocol/messages";
 
 export interface AgentBackgroundWorkInput {
   id: string;
@@ -12,11 +13,6 @@ export interface AgentBackgroundWorkInput {
 export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
   startedAt: string;
   stopToken?: string;
-}
-
-export interface AgentBackgroundWorkSummary {
-  count: number;
-  nextWakeAt?: string;
 }
 
 /**

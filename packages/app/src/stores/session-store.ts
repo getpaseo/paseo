@@ -36,6 +36,7 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentBackgroundWorkSummary,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -78,8 +79,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
-  /** `nextWakeAt`: when the provider will wake the idle agent on its own. */
-  backgroundWork?: { count: number; nextWakeAt?: string };
+  backgroundWork?: AgentBackgroundWorkSummary;
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;
