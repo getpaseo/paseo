@@ -245,12 +245,15 @@ export async function restoreUnchangedViewedTimeline(
 
 export interface StreamingReplyAgent extends MockAgentWorkspace {
   prompt: string;
-  reply: string;
 }
 
-/** A mock agent with no history whose reply streams one word every 100 ms. */
+/**
+ * A mock agent with no history whose reply streams one word every 100 ms. At 2,000 words the
+ * reply outlasts the test's timeout, so it is still streaming however long the app takes to
+ * reconnect. The test ends the turn with {@link stopStreamingReply}.
+ */
 export async function seedStreamingReplyAgent(): Promise<StreamingReplyAgent> {
-  const reply = Array.from({ length: 80 }, (_unused, index) => `word${index}`).join(" ");
+  const reply = Array.from({ length: 2_000 }, (_unused, index) => `word${index}`).join(" ");
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "reply-reconnect-",
     title: "Reply through reconnect",
@@ -259,7 +262,14 @@ export async function seedStreamingReplyAgent(): Promise<StreamingReplyAgent> {
       mockStreamingAssistantIntervalMs: 100,
     },
   });
-  return { ...agent, prompt: "stream through a reconnect", reply };
+  return {
+    ...agent,
+    prompt: "stream through a reconnect",
+    cleanup: async () => {
+      await agent.client.cancelAgent(agent.agentId).catch(() => undefined);
+      await agent.cleanup();
+    },
+  };
 }
 
 interface TimelineReader {
@@ -305,9 +315,19 @@ export async function restoreViewedTimelineWithLiveRowsFirst(
   gate.releaseHeldClientRequest();
 }
 
+/** Stops the turn and returns the reply as the daemon recorded it. */
+export async function stopStreamingReply(agent: StreamingReplyAgent): Promise<string> {
+  await agent.client.cancelAgent(agent.agentId);
+  await agent.client.waitForFinish(agent.agentId, 30_000);
+  const reply = (await readDaemonReply(agent)).trim();
+  expect(reply).toMatch(/^word0 word1 word2 .* word10 /);
+  return reply;
+}
+
 export async function expectPromptAndWholeReply(
   page: Page,
   agent: StreamingReplyAgent,
+  reply: string,
 ): Promise<void> {
   const chat = page.getByTestId("agent-chat-scroll").filter({ visible: true }).first();
   await expect(chat.getByText(agent.prompt, { exact: true })).toBeVisible({ timeout: 30_000 });
@@ -317,5 +337,5 @@ export async function expectPromptAndWholeReply(
         (await chat.getByTestId("assistant-message").allInnerTexts()).map((text) => text.trim()),
       { timeout: 30_000 },
     )
-    .toEqual([agent.reply]);
+    .toEqual([reply]);
 }

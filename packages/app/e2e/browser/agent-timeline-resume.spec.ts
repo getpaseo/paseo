@@ -28,6 +28,7 @@ import {
   reopenWithFreshnessCheckUnanswered,
   seedStreamingReplyAgent,
   sendPromptWhileDisconnected,
+  stopStreamingReply,
   waitForResumeAnswer,
   reopenAppWatchingForUpdatingToast,
   watchForUpdatingToast,
@@ -165,11 +166,11 @@ test.describe("Agent timeline resume", () => {
       await disconnectViewedTimeline(page, gate);
       await sendPromptWhileDisconnected(agent);
       await restoreViewedTimelineWithLiveRowsFirst(gate);
-      await agent.client.waitForFinish(agent.agentId, 30_000);
-      await expectPromptAndWholeReply(page, agent);
+      const reply = await stopStreamingReply(agent);
+      await expectPromptAndWholeReply(page, agent, reply);
 
       await page.reload();
-      await expectPromptAndWholeReply(page, agent);
+      await expectPromptAndWholeReply(page, agent, reply);
     } finally {
       gate.restore();
       await agent.cleanup();
