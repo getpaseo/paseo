@@ -118,6 +118,7 @@ import type {
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
   ProviderInstallationInspectResponseMessage,
+  ProviderInstallationCheckUpdatesResponseMessage,
   UsageReportEntry,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -631,6 +632,8 @@ type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type ProviderInstallationInspectPayload = ProviderInstallationInspectResponseMessage["payload"];
+type ProviderInstallationCheckUpdatesPayload =
+  ProviderInstallationCheckUpdatesResponseMessage["payload"];
 interface UsageListReportsPayload {
   requestId: string;
   reports: UsageReportEntry[];
@@ -6240,6 +6243,24 @@ export class DaemonClient {
       },
       timeout: 60_000,
     });
+  }
+
+  /** Whether the provider reports a newer version. Requires `features.providerInstallation`. */
+  async checkProviderUpdates(
+    provider: AgentProvider,
+    options?: { refresh?: boolean; requestId?: string },
+  ): Promise<ProviderInstallationCheckUpdatesPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.installation.check_updates.response">(
+      {
+        requestId: options?.requestId,
+        message: {
+          type: "provider.installation.check_updates.request",
+          provider,
+          ...(options?.refresh ? { refresh: true } : {}),
+        },
+        timeout: 60_000,
+      },
+    );
   }
 
   async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {

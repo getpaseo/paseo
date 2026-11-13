@@ -5,8 +5,10 @@ import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
   ProviderInspectionSchema,
+  ProviderUpdateCheckSchema,
   ProviderStatusSchema,
   type ProviderInspection,
+  type ProviderUpdateCheck,
   type ProviderInstallationContext,
   type ProviderStatus,
   type ProviderStatusRequest,
@@ -270,6 +272,13 @@ function jsonTransportValue<Value>(value: Value): Value {
   return JSON.parse(encoded) as Value;
 }
 
+function isInstallationRequest(message: PluginProcessRequest): boolean {
+  return (
+    message.type === "provider.installation.inspect" ||
+    message.type === "provider.installation.check_updates"
+  );
+}
+
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
   return new Promise((resolve, reject) => {
     child.send(message, (error) => {
@@ -453,6 +462,27 @@ export class PluginRuntime {
         loaded,
         {
           type: "provider.installation.inspect",
+          requestId: randomUUID(),
+          providerId,
+          request: { launch: context.launch },
+        },
+        context.signal,
+      ),
+    );
+  }
+
+  async checkProviderUpdates(
+    pluginId: string,
+    providerId: string,
+    context: ProviderInstallationContext,
+  ): Promise<ProviderUpdateCheck> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderUpdateCheckSchema.parse(
+      await this.request(
+        loaded,
+        {
+          type: "provider.installation.check_updates",
           requestId: randomUUID(),
           providerId,
           request: { launch: context.launch },
@@ -780,7 +810,7 @@ export class PluginRuntime {
         loaded.pending.delete(requestId);
         if (message.type === "tool.call")
           void send(child, { type: "tool.cancel", requestId }).catch(() => {});
-        if (message.type === "provider.installation.inspect")
+        if (isInstallationRequest(message))
           void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
         signal?.removeEventListener("abort", cancel);
         reject(signal?.reason ?? new Error("Tool call canceled"));
@@ -799,7 +829,7 @@ export class PluginRuntime {
             const { subscriptionId } = message;
             void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
           }
-          if (message.type === "provider.installation.inspect")
+          if (isInstallationRequest(message))
             void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
           reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
         },

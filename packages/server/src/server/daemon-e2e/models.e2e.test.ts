@@ -376,3 +376,55 @@ test("provider installation reaches the client: version unchanged, Install link 
     await daemon.close();
   }
 }, 60000);
+
+test("provider update checks reach the client: versions unchanged, failures inconclusive", async () => {
+  const versions = ["  0.300.0-beta+x\n", "nightly (unstable)"];
+  const message = "  Restart Codex to finish\n";
+  let codexChecks = 0;
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async checkForUpdates() {
+        codexChecks += 1;
+        return { status: "available" as const, versions, message };
+      },
+    },
+  });
+  const claude = Object.assign(createTestAgentClient("claude"), {
+    installation: {
+      async checkForUpdates(): Promise<never> {
+        throw new Error("release channel unreachable");
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex, claude },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await expect(client.checkProviderUpdates("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      updateCheck: { status: "available", versions, message },
+    });
+    await client.checkProviderUpdates("codex");
+    expect(codexChecks).toBe(1);
+    await client.checkProviderUpdates("codex", { refresh: true });
+    expect(codexChecks).toBe(2);
+
+    await expect(client.checkProviderUpdates("claude")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "error", message: "release channel unreachable" },
+    });
+    await expect(client.checkProviderUpdates("muse")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "unknown", message: "Muse Code is not installed" },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60000);

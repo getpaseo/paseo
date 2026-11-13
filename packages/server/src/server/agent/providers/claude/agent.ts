@@ -92,6 +92,14 @@ import {
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  compareWithLatestRelease,
+  fetchHomebrewCaskVersion,
+  fetchReleaseText,
+  homebrewCaskOf,
+  resolveExecutablePath,
+  type LatestReleaseLookup,
+} from "../release-check.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -477,6 +485,8 @@ interface ClaudeAgentClientOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
+  /** Where update checks learn the newest release; defaults to Claude Code's release channel. */
+  lookupLatestRelease?: LatestReleaseLookup;
   rewindSdk?: ClaudeRewindSdk;
 }
 
@@ -1619,6 +1629,18 @@ export class ClaudeAgentClient implements AgentClient {
         ? { status: "installed", version: probe.version }
         : { status: "installed" };
     },
+    checkForUpdates: async ({ signal }) => {
+      const probe = await readClaudeCodeVersion(this.runtimeSettings, signal);
+      if (probe.status === "not_installed")
+        return { status: "unknown", message: "Claude Code is not installed" };
+      if (!probe.version)
+        return { status: "unknown", message: "The configured command does not report its version" };
+      const latest = await this.lookupLatestRelease({
+        executablePath: probe.executablePath,
+        signal,
+      });
+      return compareWithLatestRelease({ installed: probe.version, latest });
+    },
   };
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
@@ -1627,6 +1649,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
+  private readonly lookupLatestRelease: LatestReleaseLookup;
   private readonly rewindSdk: ClaudeRewindSdk;
   private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
     (candidate: ClaudeSessionCandidate, signal) => this.readImportDescriptor(candidate, signal),
@@ -1648,6 +1671,13 @@ export class ClaudeAgentClient implements AgentClient {
     this.resolveVersion =
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
+    this.lookupLatestRelease =
+      options.lookupLatestRelease ??
+      ((input) =>
+        lookupLatestClaudeRelease({
+          ...input,
+          configDir: claudeConfigDir(this.buildProviderEnv()),
+        }));
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
   }
 
@@ -1941,7 +1971,43 @@ const CLAUDE_UPDATE_URL = "https://code.claude.com/docs/en/setup#update-claude-c
 type ClaudeCodeVersionRead =
   | { status: "not_installed" }
   /** `version` is null when the configured command is a wrapper that does not report Claude Code's version. */
-  | { status: "installed"; version: string | null };
+  | { status: "installed"; version: string | null; executablePath: string };
+
+const CLAUDE_UPDATE_CHANNELS = new Set(["latest", "stable", "rc"]);
+
+/** The `autoUpdatesChannel` Claude Code updates from, `latest` unless settings pick another. */
+async function readClaudeUpdateChannel(configDir: string): Promise<string> {
+  try {
+    const settings: unknown = JSON.parse(
+      await promises.readFile(path.join(configDir, "settings.json"), "utf8"),
+    );
+    const channel =
+      settings && typeof settings === "object"
+        ? (settings as Record<string, unknown>).autoUpdatesChannel
+        : undefined;
+    return typeof channel === "string" && CLAUDE_UPDATE_CHANNELS.has(channel) ? channel : "latest";
+  } catch {
+    return "latest";
+  }
+}
+
+/**
+ * The release Claude Code's own updater offers: the Homebrew cask for cask installs, otherwise
+ * the version published on the configured update channel.
+ */
+async function lookupLatestClaudeRelease(input: {
+  executablePath: string;
+  configDir: string;
+  signal: AbortSignal;
+}): Promise<string> {
+  const cask = homebrewCaskOf(input.executablePath);
+  if (cask) return fetchHomebrewCaskVersion(cask, input.signal);
+  const channel = await readClaudeUpdateChannel(input.configDir);
+  return fetchReleaseText(
+    `https://downloads.claude.ai/claude-code-releases/${channel}`,
+    input.signal,
+  );
+}
 
 export async function resolveClaudeCodeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
@@ -1980,7 +2046,11 @@ async function readClaudeCodeVersion(
   const version = /\d+\.\d+\.\d+\s+\(Claude Code\)/i.test(rawVersionOutput)
     ? parseClaudeCodeVersion(rawVersionOutput)
     : null;
-  return { status: "installed", version: version ? version.join(".") : null };
+  return {
+    status: "installed",
+    version: version ? version.join(".") : null,
+    executablePath: await resolveExecutablePath(executable),
+  };
 }
 
 async function resolveClaudeAuth(

@@ -32,6 +32,7 @@ export interface PluginProviderInstallationMetadata {
   installUrl?: string;
   updateUrl?: string;
   hasInspect: boolean;
+  hasCheckForUpdates: boolean;
 }
 
 export interface PluginUsageSourceMetadata {
@@ -51,7 +52,7 @@ export type PluginProcessRequest =
       request: ProviderStatusRequest;
     }
   | {
-      type: "provider.installation.inspect";
+      type: "provider.installation.inspect" | "provider.installation.check_updates";
       requestId: string;
       providerId: string;
       request: { launch?: ProviderInstallationLaunch };
@@ -152,6 +153,7 @@ const providerMetadataSchema = z
         installUrl: z.string().optional(),
         updateUrl: z.string().optional(),
         hasInspect: z.boolean(),
+        hasCheckForUpdates: z.boolean(),
       })
       .strict()
       .optional(),
@@ -212,7 +214,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
-        type: z.literal("provider.installation.inspect"),
+        type: z.enum(["provider.installation.inspect", "provider.installation.check_updates"]),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         request: z

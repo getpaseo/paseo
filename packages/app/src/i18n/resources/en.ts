@@ -3195,6 +3195,12 @@ export const en = {
         install: "Install",
         checking: "Checking…",
         failed: "Couldn't check this installation",
+        updates: "Updates",
+        upToDate: "Up to date",
+        updateAvailable: "Update available",
+        updateInstructions: "Update instructions",
+        updatesFailed: "Couldn't check for updates",
+        installInstructions: "Install instructions",
       },
       diagnostic: {
         title: "Diagnostic",

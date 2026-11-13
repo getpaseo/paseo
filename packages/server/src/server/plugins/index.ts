@@ -63,6 +63,7 @@ interface PluginRuntimePort {
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
   inspectProviderInstallation?: PluginRuntime["inspectProviderInstallation"];
+  checkProviderUpdates?: PluginRuntime["checkProviderUpdates"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -757,6 +758,13 @@ export class PluginService {
             if (!this.runtime.inspectProviderInstallation)
               throw new Error("Plugin runtime cannot inspect provider installations");
             return this.runtime.inspectProviderInstallation(pluginId, providerId, context);
+          }
+        : undefined,
+      checkForUpdates: metadata.hasCheckForUpdates
+        ? (context) => {
+            if (!this.runtime.checkProviderUpdates)
+              throw new Error("Plugin runtime cannot check provider updates");
+            return this.runtime.checkProviderUpdates(pluginId, providerId, context);
           }
         : undefined,
     };

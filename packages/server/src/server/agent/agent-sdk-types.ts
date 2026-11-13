@@ -10,7 +10,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { ProviderInspection } from "@getpaseo/plugin/server/provider";
+import type { ProviderInspection, ProviderUpdateCheck } from "@getpaseo/plugin/server/provider";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
@@ -814,6 +814,7 @@ export interface AgentClientInstallation {
   installUrl?: string;
   updateUrl?: string;
   inspect?(context: AgentClientInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: AgentClientInstallationContext): Promise<ProviderUpdateCheck>;
 }
 
 export interface AgentClient {

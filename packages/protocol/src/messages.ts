@@ -1966,6 +1966,14 @@ export const ProviderInstallationInspectRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProviderInstallationCheckUpdatesRequestMessageSchema = z.object({
+  type: z.literal("provider.installation.check_updates.request"),
+  provider: AgentProviderSchema,
+  /** Skip the daemon's update-check cache and ask the provider again. */
+  refresh: z.boolean().optional(),
+  requestId: z.string(),
+});
+
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
@@ -3601,6 +3609,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderInstallationInspectRequestMessageSchema,
+  ProviderInstallationCheckUpdatesRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
   UsageListReportsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
@@ -6778,6 +6787,32 @@ export const ProviderInstallationInspectResponseMessageSchema = z.object({
   }),
 });
 
+/**
+ * The provider's answer to "is a newer version available". `versions` and `message` are opaque
+ * strings the app shows as written. `error` means the check threw or missed its deadline.
+ */
+export const ProviderInstallationUpdateCheckSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("current") }),
+  z.object({
+    status: z.literal("available"),
+    versions: z.array(z.string()).optional(),
+    message: z.string().optional(),
+  }),
+  z.object({ status: z.literal("unknown"), message: z.string().optional() }),
+  z.object({ status: z.literal("error"), message: z.string() }),
+]);
+
+export const ProviderInstallationCheckUpdatesResponseMessageSchema = z.object({
+  type: z.literal("provider.installation.check_updates.response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    /** Null when the provider cannot check for updates. */
+    updateCheck: ProviderInstallationUpdateCheckSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
 export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
 
@@ -7632,6 +7667,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderInstallationInspectResponseMessageSchema,
+  ProviderInstallationCheckUpdatesResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
   UsageListReportsUpdateMessageSchema,
   UsageListReportsResponseMessageSchema,
@@ -7820,6 +7856,10 @@ export type ProviderInstallation = z.infer<typeof ProviderInstallationSchema>;
 export type ProviderInstallationInspection = z.infer<typeof ProviderInstallationInspectionSchema>;
 export type ProviderInstallationInspectResponseMessage = z.infer<
   typeof ProviderInstallationInspectResponseMessageSchema
+>;
+export type ProviderInstallationUpdateCheck = z.infer<typeof ProviderInstallationUpdateCheckSchema>;
+export type ProviderInstallationCheckUpdatesResponseMessage = z.infer<
+  typeof ProviderInstallationCheckUpdatesResponseMessageSchema
 >;
 export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
 export type UsageProblem = z.infer<typeof UsageProblemSchema>;

@@ -3083,6 +3083,12 @@ export const ko: TranslationResources = {
         install: "설치",
         checking: "확인 중…",
         failed: "설치를 확인할 수 없습니다",
+        updates: "업데이트",
+        upToDate: "최신 상태",
+        updateAvailable: "업데이트 가능",
+        updateInstructions: "업데이트 안내",
+        updatesFailed: "업데이트를 확인할 수 없습니다",
+        installInstructions: "설치 안내",
       },
       diagnostic: {
         title: "진단",

@@ -3110,6 +3110,12 @@ export const ptBR: TranslationResources = {
         install: "Instalar",
         checking: "Verificando…",
         failed: "Não foi possível verificar a instalação",
+        updates: "Atualizações",
+        upToDate: "Atualizado",
+        updateAvailable: "Atualização disponível",
+        updateInstructions: "Instruções de atualização",
+        updatesFailed: "Não foi possível verificar atualizações",
+        installInstructions: "Instruções de instalação",
       },
       diagnostic: {
         title: "Diagnóstico",

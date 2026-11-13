@@ -3129,6 +3129,12 @@ export const es: TranslationResources = {
         install: "Instalar",
         checking: "Comprobando…",
         failed: "No se pudo comprobar la instalación",
+        updates: "Actualizaciones",
+        upToDate: "Actualizado",
+        updateAvailable: "Actualización disponible",
+        updateInstructions: "Instrucciones de actualización",
+        updatesFailed: "No se pudo comprobar si hay actualizaciones",
+        installInstructions: "Instrucciones de instalación",
       },
       diagnostic: {
         title: "Diagnóstico",

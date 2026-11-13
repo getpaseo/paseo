@@ -3100,6 +3100,12 @@ export const ar: TranslationResources = {
         install: "تثبيت",
         checking: "جارٍ التحقق…",
         failed: "تعذّر التحقق من التثبيت",
+        updates: "التحديثات",
+        upToDate: "محدّث",
+        updateAvailable: "يتوفر تحديث",
+        updateInstructions: "تعليمات التحديث",
+        updatesFailed: "تعذّر التحقق من التحديثات",
+        installInstructions: "تعليمات التثبيت",
       },
       diagnostic: {
         title: "التشخيص",

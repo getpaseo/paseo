@@ -17,6 +17,11 @@ import { MuseError, actionableError } from "./errors.js";
 import { Sessions } from "./sessions.js";
 import { Session } from "./session.js";
 import { accountSchema } from "./wire.js";
+import {
+  checkMuseForUpdates,
+  readMuseChannelRelease,
+  type ReadMuseChannelRelease,
+} from "./updates.js";
 
 const capabilities = [
   "prompt.message",
@@ -29,7 +34,15 @@ const capabilities = [
   "session.list",
 ] as const;
 
-export function createMuseProvider(usage: Usage): ProviderRegistration {
+export interface MuseProviderOptions {
+  /** Reads a Muse update channel; defaults to the channel the `muse` launcher updates from. */
+  readChannelRelease?: ReadMuseChannelRelease;
+}
+
+export function createMuseProvider(
+  usage: Usage,
+  museOptions: MuseProviderOptions = {},
+): ProviderRegistration {
   return {
     id: "muse",
     label: "Muse Code",
@@ -41,6 +54,16 @@ export function createMuseProvider(usage: Usage): ProviderRegistration {
         if (!launch?.resolved) return { status: "not_installed" };
         const version = await readVersion(launch, signal);
         return version ? { status: "installed", version: version.text } : { status: "installed" };
+      },
+      async checkForUpdates({ launch, signal }) {
+        if (!launch?.resolved) return { status: "unknown", message: "Muse Code is not installed" };
+        const version = await readVersion(launch, signal);
+        return checkMuseForUpdates({
+          installedBuild: version?.build ?? null,
+          env: launch.env,
+          readChannelRelease: museOptions.readChannelRelease ?? readMuseChannelRelease,
+          signal,
+        });
       },
     },
     async getCatalogCacheKey(options) {
@@ -72,6 +95,8 @@ interface MuseVersion {
   text: string;
   major: number;
   minor: number;
+  /** The build in parentheses, as in `Muse Code 1.4.18 (1.4.18-R8587.1)`. */
+  build: string | null;
 }
 /** The `x.y.z` that `muse --version` prints, or null when the output has none. */
 async function readVersion(
@@ -85,7 +110,9 @@ async function readVersion(
     signal,
   });
   const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(stdout);
-  return match ? { text: match[0], major: Number(match[1]), minor: Number(match[2]) } : null;
+  if (!match) return null;
+  const build = /\(([^)\s]+)\)/.exec(stdout)?.[1] ?? null;
+  return { text: match[0], major: Number(match[1]), minor: Number(match[2]), build };
 }
 async function status(launch: ProviderLaunch): Promise<ProviderStatus> {
   let host: MspConnection | undefined;

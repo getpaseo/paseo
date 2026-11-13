@@ -13,6 +13,7 @@ import {
   ProviderStatusSchema,
   type ProviderStatus,
   type ProviderInspection,
+  type ProviderUpdateCheck,
   type ProviderInstallationLaunch,
   type ProviderLaunch,
   requireProviderCapabilities,
@@ -194,6 +195,14 @@ class ProviderRuntime {
     const launch = await this.resolveEffectiveLaunch();
     signal.throwIfAborted();
     return await inspect.call(this.registration.installation, { launch, signal });
+  }
+
+  async checkForUpdates(signal: AbortSignal): Promise<ProviderUpdateCheck> {
+    const checkForUpdates = this.registration.installation?.checkForUpdates;
+    if (!checkForUpdates) throw new Error("Provider does not check for updates");
+    const launch = await this.resolveEffectiveLaunch();
+    signal.throwIfAborted();
+    return await checkForUpdates.call(this.registration.installation, { launch, signal });
   }
 
   async status(): Promise<ProviderStatus> {
@@ -1000,6 +1009,9 @@ class PluginAgentClient implements AgentClient {
         updateUrl: installation.updateUrl,
         inspect: installation.inspect
           ? ({ signal }) => this.runtime.inspectInstallation(signal)
+          : undefined,
+        checkForUpdates: installation.checkForUpdates
+          ? ({ signal }) => this.runtime.checkForUpdates(signal)
           : undefined,
       };
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));

@@ -3097,6 +3097,12 @@ export const ja: TranslationResources = {
         install: "インストール",
         checking: "確認中…",
         failed: "インストールを確認できませんでした",
+        updates: "アップデート",
+        upToDate: "最新です",
+        updateAvailable: "アップデートがあります",
+        updateInstructions: "アップデート手順",
+        updatesFailed: "アップデートを確認できませんでした",
+        installInstructions: "インストール手順",
       },
       diagnostic: {
         title: "診断",

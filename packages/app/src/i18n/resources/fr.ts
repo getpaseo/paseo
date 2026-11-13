@@ -3137,6 +3137,12 @@ export const fr: TranslationResources = {
         install: "Installer",
         checking: "Vérification…",
         failed: "Impossible de vérifier l'installation",
+        updates: "Mises à jour",
+        upToDate: "À jour",
+        updateAvailable: "Mise à jour disponible",
+        updateInstructions: "Instructions de mise à jour",
+        updatesFailed: "Impossible de vérifier les mises à jour",
+        installInstructions: "Instructions d'installation",
       },
       diagnostic: {
         title: "Diagnostic",

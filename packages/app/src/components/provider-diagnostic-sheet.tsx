@@ -26,7 +26,8 @@ import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
-import { ProviderInstallationSection, useProviderInstallation } from "./provider-installation";
+import { ProviderInstallationSection } from "./provider-installation-section";
+import { useProviderInstallation } from "./provider-installation";
 import {
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
@@ -693,7 +694,7 @@ export function ProviderDiagnosticSheet({
         })}
         snapPoints={MAIN_SNAP_POINTS}
       >
-        <ProviderInstallationSection state={installation.state} />
+        <ProviderInstallationSection state={installation.state} updates={installation.updates} />
         <ProviderModalBody
           discoveredCount={discoveredModels.length}
           additionalCount={additionalModels.length}

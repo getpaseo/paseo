@@ -3029,6 +3029,12 @@ export const zhCN: TranslationResources = {
         install: "安装",
         checking: "正在检查…",
         failed: "无法检查安装状态",
+        updates: "更新",
+        upToDate: "已是最新",
+        updateAvailable: "有可用更新",
+        updateInstructions: "更新说明",
+        updatesFailed: "无法检查更新",
+        installInstructions: "安装说明",
       },
       diagnostic: {
         title: "诊断",
