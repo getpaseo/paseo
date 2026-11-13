@@ -13,6 +13,7 @@ import {
   lightTheme,
   type Theme,
 } from "@/styles/theme";
+import { deriveNeutralFills, deriveTertiaryText } from "@/styles/derive-colors";
 import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
@@ -37,6 +38,7 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
     accent: hexColorSchema.optional(),
     mutedForeground: hexColorSchema,
     ring: hexColorSchema,
+    sidebar: hexColorSchema.optional(),
   }),
 });
 
@@ -61,18 +63,18 @@ export function parsePluginThemeContribution(value: unknown): PluginThemeContrib
 function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
+  const fills = deriveNeutralFills(colors.background, colors.foreground, "dark");
   return buildDarkTheme(
     buildDarkSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.background,
+      surface3: fills.surface3,
+      surface4: fills.surface4,
+      surfaceSidebar: colors.sidebar ?? colors.background,
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
+      foregroundExtraMuted: deriveTertiaryText(colors.mutedForeground, colors.background),
       border: colors.border,
       borderAccent: colors.border,
       accent,
@@ -89,18 +91,18 @@ function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
 function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   const colors = contribution.colors;
   const accent = colors.accent ?? colors.foreground;
+  const fills = deriveNeutralFills(colors.background, colors.foreground, "light");
   return buildLightTheme(
     buildLightSemanticColors({
       surface0: colors.background,
       surface1: colors.raised,
       surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.control,
+      surface3: fills.surface3,
+      surface4: fills.surface4,
+      surfaceSidebar: colors.sidebar ?? colors.control,
       foreground: colors.foreground,
       foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
+      foregroundExtraMuted: deriveTertiaryText(colors.mutedForeground, colors.background),
       border: colors.border,
       borderAccent: colors.border,
       accent,
@@ -116,7 +118,7 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   );
 }
 
-function buildPluginTheme(contribution: PluginThemeContribution): Theme {
+export function buildPluginTheme(contribution: PluginThemeContribution): Theme {
   return contribution.appearance === "light"
     ? buildLightPluginTheme(contribution)
     : buildDarkPluginTheme(contribution);

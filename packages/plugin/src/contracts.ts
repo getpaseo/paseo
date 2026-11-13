@@ -90,6 +90,7 @@ export interface PluginThemeColors {
   accent?: string;
   mutedForeground: string;
   ring: string;
+  sidebar?: string;
 }
 
 export interface PluginThemeContribution<Text extends PluginText = string> {

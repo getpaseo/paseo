@@ -3,7 +3,12 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
+import {
+  buildPluginTheme,
+  collectPluginThemes,
+  parsePluginThemeContribution,
+  rememberPluginThemeHost,
+} from "./themes";
 import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
@@ -165,6 +170,71 @@ describe("plugin theme palettes", () => {
     });
     expect(theme.colors.statusDanger).toBe(lightTheme.colors.statusDanger);
     expect(theme.colors.syntax).toEqual(lightTheme.colors.syntax);
+  });
+});
+
+function withColors(
+  contribution: PluginThemeContribution,
+  colors: Partial<PluginThemeContribution["colors"]>,
+): PluginThemeContribution {
+  return { ...contribution, colors: { ...contribution.colors, ...colors } };
+}
+
+// A role only drives what it is named for. `ring` once filled the neutral fill, tertiary text and
+// the light selected row, and `border` once filled the neutral fill, so a theme tuning either for
+// its own purpose repainted unrelated surfaces.
+describe("plugin theme roles", () => {
+  it.each([LATTE, MOCHA])("keeps `ring` out of surfaces and text in $name", (contribution) => {
+    const base = buildPluginTheme(contribution).colors;
+    const changed = buildPluginTheme(withColors(contribution, { ring: "#ff0000" })).colors;
+
+    expect(changed.ring).toBe("#ff0000");
+    expect(changed.terminal.brightBlack).toBe("#ff0000");
+    for (const token of [
+      "surface3",
+      "surface4",
+      "foregroundExtraMuted",
+      "surfaceSidebar",
+      "surfaceSidebarHover",
+      "surfaceSidebarSelected",
+    ] as const) {
+      expect(changed[token], token).toBe(base[token]);
+    }
+  });
+
+  it.each([LATTE, MOCHA])("keeps `border` out of the neutral fill in $name", (contribution) => {
+    const base = buildPluginTheme(contribution).colors;
+    const changed = buildPluginTheme(withColors(contribution, { border: "#ff0000" })).colors;
+
+    expect(changed.border).toBe("#ff0000");
+    expect(changed.surface3).toBe(base.surface3);
+    expect(changed.surface4).toBe(base.surface4);
+  });
+
+  it("paints the sidebar with `sidebar` when the theme gives one", () => {
+    const withSidebar = buildPluginTheme(withColors(MOCHA, { sidebar: "#11111b" })).colors;
+
+    expect(withSidebar.surfaceSidebar).toBe("#11111b");
+    expect(withSidebar.surfaceSidebarHover).not.toBe("#11111b");
+    expect(withSidebar.surfaceSidebarSelected).not.toBe(withSidebar.surfaceSidebarHover);
+  });
+
+  it("leaves the sidebar where it was when the theme gives none", () => {
+    expect(buildPluginTheme(MOCHA).colors.surfaceSidebar).toBe(MOCHA.colors.background);
+    expect(buildPluginTheme(LATTE).colors.surfaceSidebar).toBe(LATTE.colors.control);
+  });
+
+  it("accepts an optional hex `sidebar` and nothing else new", () => {
+    expect(parsePluginThemeContribution(withColors(MOCHA, { sidebar: "#11111b" }))).toMatchObject({
+      colors: { sidebar: "#11111b" },
+    });
+    expect(() => parsePluginThemeContribution(withColors(MOCHA, { sidebar: "darker" }))).toThrow();
+    expect(() =>
+      parsePluginThemeContribution({
+        ...MOCHA,
+        colors: { ...MOCHA.colors, sidebarHover: "#000000" },
+      }),
+    ).toThrow();
   });
 });
 

@@ -1341,16 +1341,22 @@ Every color is a hex string; anything else fails to load. Paseo expands the pale
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Color             | Becomes                                                                        |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `background`      | App, workspace, and terminal background                                        |
+| `foreground`      | Primary text, terminal foreground and cursor                                   |
+| `raised`          | Cards and popovers                                                             |
+| `control`         | Inputs, secondary fills, and the light-theme sidebar unless `sidebar` is set   |
+| `border`          | Borders                                                                        |
+| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted.              |
+| `mutedForeground` | Secondary text                                                                 |
+| `ring`            | The keyboard focus outline on web, and terminal bright black                   |
+| `sidebar`         | Sidebar background. Optional; `background` in dark themes, `control` in light. |
+
+Paseo derives the rest from these colors, so a theme never lists them: the hovered and selected
+state of a row, the neutral fill behind chips, badges, secondary buttons, and your message bubble,
+tertiary text, and the terminal's ANSI white. Each is a fixed step from the color it sits on, toward
+`foreground`.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.

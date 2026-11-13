@@ -47,6 +47,7 @@ const PLUGIN_SOURCE = `export default function contribute(plugin) {
 // contributed palette reached the semantic tokens rather than just the swatch.
 const MOCHA_MUTED_FOREGROUND = "rgb(166, 173, 200)";
 const LATTE_MUTED_FOREGROUND = "rgb(108, 111, 133)";
+const LATTE_RING = "rgb(156, 160, 176)";
 
 test("applies a contributed theme and falls back when its plugin is gone", async ({
   page,
@@ -81,6 +82,13 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await latteItem.click();
       await expect(latteItem).toBeChecked();
       await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
+    });
+
+    await test.step("keyboard focus draws the outline in the theme's ring color", async () => {
+      await page.getByRole("radio", { name: "Catppuccin Latte", exact: true }).click();
+      await page.mouse.move(0, 0);
+      await page.keyboard.press("Tab");
+      await expect(page.locator(":focus-visible").first()).toHaveCSS("outline-color", LATTE_RING);
     });
 
     await mochaItem.click();

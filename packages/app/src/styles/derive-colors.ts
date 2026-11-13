@@ -1,0 +1,73 @@
+/**
+ * The relationships between theme colors, stated once.
+ *
+ * A theme supplies places (a background, a sidebar) and identity (foreground, accent). What sits
+ * on top of a place — its hover, its selected state, the neutral fill of a chip, the text one
+ * notch quieter than muted — is a relationship, and is derived here so that no theme has to pick
+ * it by eye and no plugin has to borrow another role's color to fill it.
+ *
+ * Every step is a WCAG contrast ratio from the color it starts at, moving toward the foreground.
+ * A ratio keeps the step equally visible on every base; a lightness delta disappears near black.
+ * The numbers come from the default themes: Paseo dark and Light.
+ */
+import { mixHexColors, stepContrast } from "@/utils/color";
+
+export type ColorScheme = "light" | "dark";
+
+const SURFACE_STATE_STEPS = {
+  dark: { hover: 1.11, selected: 1.245 },
+  light: { hover: 1.15, selected: 1.35 },
+} as const;
+
+// Fills for chips, bubbles, tracks and secondary buttons, as `surface3` and `surface4`.
+const NEUTRAL_FILL_STEPS = {
+  dark: { surface3: 1.8, surface4: 2.5 },
+  light: { surface3: 1.27, surface4: 1.48 },
+} as const;
+
+// Tertiary text: muted text, that fraction of the way toward the background.
+const TERTIARY_TEXT_FADE = 0.35;
+
+// ANSI white and bright white on a light terminal are text, so they are grays that read on the
+// background: white at the contrast of body text, bright white a notch softer.
+const LIGHT_TERMINAL_WHITE_STEPS = { white: 4.6, brightWhite: 3.2 } as const;
+
+/** Hover and selected fills for a row that sits on `surface`. */
+export function deriveSurfaceStates(
+  surface: string,
+  foreground: string,
+  scheme: ColorScheme,
+): { hover: string; selected: string } {
+  const steps = SURFACE_STATE_STEPS[scheme];
+  return {
+    hover: stepContrast(surface, foreground, steps.hover),
+    selected: stepContrast(surface, foreground, steps.selected),
+  };
+}
+
+/** The neutral fills that sit on the page background. */
+export function deriveNeutralFills(
+  background: string,
+  foreground: string,
+  scheme: ColorScheme,
+): { surface3: string; surface4: string } {
+  const steps = NEUTRAL_FILL_STEPS[scheme];
+  return {
+    surface3: stepContrast(background, foreground, steps.surface3),
+    surface4: stepContrast(background, foreground, steps.surface4),
+  };
+}
+
+export function deriveTertiaryText(mutedForeground: string, background: string): string {
+  return mixHexColors(mutedForeground, background, TERTIARY_TEXT_FADE);
+}
+
+export function deriveLightTerminalWhites(
+  background: string,
+  foreground: string,
+): { white: string; brightWhite: string } {
+  return {
+    white: stepContrast(background, foreground, LIGHT_TERMINAL_WHITE_STEPS.white),
+    brightWhite: stepContrast(background, foreground, LIGHT_TERMINAL_WHITE_STEPS.brightWhite),
+  };
+}
