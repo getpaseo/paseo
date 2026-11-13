@@ -22,6 +22,10 @@ function Review() {
   return <WorkspaceRowBadge icon="Eye" label="In review" tone="warning" />;
 }
 
+function Docs() {
+  return <WorkspaceRowBadge icon="BookOpen" label="Docs" />;
+}
+
 function Quiet() {
   return null;
 }
@@ -34,9 +38,15 @@ export default function contribute(client) {
   client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
   client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
   client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
+  client.addWorkspaceRowBadgeItem({ id: "docs", title: "Docs state", icon: "BookOpen", Component: Docs });
   return () => {};
 }
 `;
+
+// The meta line the badges draw on. Each item sits in one wrapper of its own, so the line is two up.
+function badgeLine(page: Page, itemId: string) {
+  return badge(page, itemId).locator("xpath=../..");
+}
 
 function badge(page: Page, itemId: string) {
   return page.locator(`[data-testid="plugin-workspace-row-badge-${PLUGIN_ID}-${itemId}"]:visible`);
@@ -79,7 +89,7 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
       await expect(badge(page, "review")).toContainText("In review");
       // The badge sits behind two items that drew nothing and the row has none of its own, so
       // the line starts with the badge and no stray "·".
-      await expect(badge(page, "review").locator("xpath=..")).toHaveText("In review");
+      await expect(badgeLine(page, "review")).toHaveText("In review·Docs");
       await expect(badge(page, "quiet")).toHaveCount(0);
       await expect(badge(page, "broken")).toHaveCount(0);
       await expect(page.getByText(TITLE).first()).toBeVisible();
@@ -88,13 +98,15 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
 
     await test.step("every item has a Show toggle, and switching one off removes only that badge", async () => {
       await openSidebarDisplayPage(page, "sidebar-display-show");
-      for (const label of ["Review state", "Quiet state", "Broken state"]) {
+      for (const label of ["Review state", "Quiet state", "Broken state", "Docs state"]) {
         await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
       }
       await page.screenshot({ path: info.outputPath("show-menu.png") });
       await page.getByRole("menuitem", { name: "Review state", exact: true }).click();
       await closeSidebarDisplayPreferences(page);
       await expect(badge(page, "review")).toHaveCount(0);
+      // The first drawn badge is gone, so the next one leads the line without a "·".
+      await expect(badgeLine(page, "docs")).toHaveText("Docs");
       await toggleShowItem(page, "Review state", false);
       await expect(badge(page, "review")).toBeVisible();
     });
