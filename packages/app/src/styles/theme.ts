@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
-import { deriveLightTerminalWhites, deriveSurfaceStates } from "./derive-colors";
+import { deriveSurfaceStates } from "./derive-colors";
 
 export const baseColors = {
   // Base colors
@@ -248,12 +248,14 @@ const lightTerminalAnsi = {
   blue: "#2563eb",
   magenta: "#9333ea",
   cyan: "#0891b2",
+  white: "#ffffff",
   brightRed: "#ef4444",
   brightGreen: "#22c55e",
   brightYellow: "#f59e0b",
   brightBlue: "#3b82f6",
   brightMagenta: "#a855f7",
   brightCyan: "#06b6d4",
+  brightWhite: "#fafafa",
 } as const;
 
 export function buildLightSemanticColors(tint: LightThemeConfig) {
@@ -307,7 +309,6 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
       selectionForeground: tint.foreground,
       black: tint.terminalBlack,
       ...lightTerminalAnsi,
-      ...deriveLightTerminalWhites(tint.surface0, tint.foreground),
       brightBlack: tint.terminalBrightBlack,
     },
   };

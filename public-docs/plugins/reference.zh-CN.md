@@ -1129,7 +1129,7 @@ export default function contribute(client: PluginClientContext) {
 | `ring`            | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
 | `sidebar`         | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
 
-其余颜色由 Paseo 根据这些颜色推导，主题无需列出：行的悬停和选中状态、芯片、徽章、次要按钮和你的消息气泡背后的中性填充、三级文字，以及浅色主题中终端的 ANSI 白色。每一种都是从它所在的颜色朝 `foreground` 方向偏移的固定一步。
+其余颜色由 Paseo 根据这些颜色推导，主题无需列出：行的悬停和选中状态、芯片、徽章、次要按钮和你的消息气泡背后的中性填充，以及三级文字。每一种都是从它所在的颜色朝 `foreground` 方向偏移的固定一步。
 
 `sidebar` 需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用它时请提高 `requirements.paseo`。
 

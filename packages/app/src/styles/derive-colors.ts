@@ -40,10 +40,6 @@ const NEUTRAL_FILL_MIN_STEP = 1.25;
 const TERTIARY_TEXT_FADE = 0.35;
 const TERTIARY_TEXT_FLOOR = 2.55;
 
-// ANSI white and bright white on a light terminal are text, so they are grays that read on the
-// background: white at the contrast of body text, bright white a notch softer.
-const LIGHT_TERMINAL_WHITE_STEPS = { white: 4.6, brightWhite: 3.2 } as const;
-
 /** Hover and selected fills for a row that sits on `surface`. */
 export function deriveSurfaceStates(
   surface: string,
@@ -81,14 +77,4 @@ export function deriveTertiaryText(mutedForeground: string, background: string):
   const floor = Math.min(TERTIARY_TEXT_FLOOR, contrastRatio(background, mutedForeground));
   if (contrastRatio(background, faded) >= floor) return faded;
   return stepContrast(background, mutedForeground, floor);
-}
-
-export function deriveLightTerminalWhites(
-  background: string,
-  foreground: string,
-): { white: string; brightWhite: string } {
-  return {
-    white: stepContrast(background, foreground, LIGHT_TERMINAL_WHITE_STEPS.white),
-    brightWhite: stepContrast(background, foreground, LIGHT_TERMINAL_WHITE_STEPS.brightWhite),
-  };
 }

@@ -92,7 +92,6 @@ const SELECTED_TEXT_FLOOR = 2.5;
 const NEUTRAL_FILL_STEP = 1.2;
 const NEUTRAL_FILL_TEXT_FLOOR = 3;
 const TERTIARY_TEXT_FLOOR = 2.5;
-const TERMINAL_WHITE_FLOOR = 3;
 // The bright hues are dim on a cream or white background by design; the floor only has to catch a
 // color that disappears.
 const TERMINAL_COLOR_FLOOR = 1.5;
@@ -131,12 +130,7 @@ describe.each(themes)("$name", ({ theme }) => {
   it("keeps terminal text readable on the terminal background", () => {
     const terminal = colors.terminal;
     const { background, ...palette } = terminal;
-    expect(contrastRatio(background, terminal.white)).toBeGreaterThanOrEqual(TERMINAL_WHITE_FLOOR);
-    expect(contrastRatio(background, terminal.brightWhite)).toBeGreaterThanOrEqual(
-      TERMINAL_WHITE_FLOOR,
-    );
-    // Black and bright black are fills as often as text on a dark terminal, so only the hues
-    // and the whites are held to a floor.
+    // The whites and black are fills as often as text, so only the hues are held to a floor.
     for (const key of [
       "red",
       "green",
