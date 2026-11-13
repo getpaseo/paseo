@@ -3172,6 +3172,12 @@ export const ru: TranslationResources = {
         install: "Установить",
         checking: "Проверка…",
         failed: "Не удалось проверить установку",
+        updates: "Обновления",
+        upToDate: "Актуальная версия",
+        updateAvailable: "Доступно обновление",
+        updateInstructions: "Инструкции по обновлению",
+        updatesFailed: "Не удалось проверить обновления",
+        installInstructions: "Инструкции по установке",
       },
       diagnostic: {
         title: "Диагностика",

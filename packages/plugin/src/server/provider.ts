@@ -51,6 +51,12 @@ export interface ProviderInstallation {
   updateUrl?: string;
   /** Report whether the provider is installed and which version. Runs only when a user asks. */
   inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  /**
+   * Report whether a newer version is available. The provider decides how to find out and what
+   * counts as newer; Paseo shows the result as written. Return `unknown` when it cannot tell.
+   * Runs only when a user asks, never before a session.
+   */
+  checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
 }
 
 export interface ProviderInstallationContext {
@@ -72,6 +78,21 @@ export const ProviderInspectionSchema = z.discriminatedUnion("status", [
 ]);
 
 export type ProviderInspection = z.infer<typeof ProviderInspectionSchema>;
+
+export const ProviderUpdateCheckSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("current") }).strip(),
+  /** `versions` and `message` are shown as written; Paseo does not parse, sort or compare them. */
+  z
+    .object({
+      status: z.literal("available"),
+      versions: z.array(z.string()).optional(),
+      message: z.string().optional(),
+    })
+    .strip(),
+  z.object({ status: z.literal("unknown"), message: z.string().optional() }).strip(),
+]);
+
+export type ProviderUpdateCheck = z.infer<typeof ProviderUpdateCheckSchema>;
 
 export type ProviderCatalogOptions =
   | { scope: "global"; force?: boolean; launch?: ProviderLaunch }

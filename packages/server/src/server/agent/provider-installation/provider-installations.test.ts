@@ -12,6 +12,8 @@ import { ProviderInstallations } from "./provider-installations.js";
 
 const OPAQUE_VERSION = "  v1.2.3-beta+weird (build 7)\n";
 const MISSING_COMMAND = "paseo-provider-installation-missing-binary";
+const OPAQUE_VERSIONS = ["v9-nightly+abc", "  2.0 (LTS)\n"];
+const OPAQUE_MESSAGE = "  Restart to finish updating\n";
 
 function pluginProvider(
   installation: ProviderInstallation | undefined,
@@ -207,6 +209,118 @@ describe("provider installation", () => {
       manager.destroy();
     }
   });
+
+  test.each([
+    {
+      name: "plugin",
+      manager: () =>
+        managerWith({
+          plugin: pluginProvider({
+            async checkForUpdates({ launch }) {
+              if (!launch?.resolved) throw new Error("Unexpected launch");
+              return { status: "available", versions: OPAQUE_VERSIONS, message: OPAQUE_MESSAGE };
+            },
+          }),
+        }),
+      provider: "installation-plugin",
+    },
+    {
+      name: "built-in",
+      manager: () =>
+        managerWith({
+          codex: builtinClient({
+            async checkForUpdates() {
+              return { status: "available", versions: OPAQUE_VERSIONS, message: OPAQUE_MESSAGE };
+            },
+          }),
+        }),
+      provider: "codex",
+    },
+  ])("returns a $name provider's available versions unchanged", async ({ manager, provider }) => {
+    const providers = manager();
+    try {
+      await expect(providers.installations.checkForUpdates(provider)).resolves.toEqual({
+        status: "available",
+        versions: OPAQUE_VERSIONS,
+        message: OPAQUE_MESSAGE,
+      });
+    } finally {
+      providers.destroy();
+    }
+  });
+
+  test.each([
+    {
+      name: "returns unknown",
+      checkForUpdates: async () => ({ status: "unknown" as const, message: "Offline" }),
+      expected: { status: "unknown", message: "Offline" },
+    },
+    {
+      name: "throws",
+      checkForUpdates: async (): Promise<never> => {
+        throw new Error("release feed exploded");
+      },
+      expected: { status: "error", message: "release feed exploded" },
+    },
+    {
+      name: "breaks the contract",
+      checkForUpdates: async () => ({ status: "up_to_date" }) as never,
+      expected: { status: "error", message: expect.stringContaining("status") },
+    },
+  ])("reports an inconclusive check when the provider $name", async (input) => {
+    const manager = managerWith({
+      plugin: pluginProvider({ checkForUpdates: input.checkForUpdates }),
+    });
+    try {
+      await expect(manager.installations.checkForUpdates("installation-plugin")).resolves.toEqual(
+        input.expected,
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("returns null when the provider cannot check for updates", async () => {
+    const manager = managerWith({
+      plugin: pluginProvider({ installUrl: "https://example.com/install" }),
+    });
+    try {
+      await expect(
+        manager.installations.checkForUpdates("installation-plugin"),
+      ).resolves.toBeNull();
+      await expect(manager.installations.checkForUpdates("not-a-provider")).rejects.toThrow(
+        "Provider not-a-provider is not configured",
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("availability, discovery and the installed version never wait on an update check", async () => {
+    let checks = 0;
+    const manager = managerWith({
+      plugin: pluginProvider({
+        async inspect() {
+          return { status: "installed", version: "1.0.0" };
+        },
+        checkForUpdates() {
+          checks += 1;
+          return new Promise(() => {});
+        },
+      }),
+    });
+    try {
+      void manager.installations.checkForUpdates("installation-plugin");
+      const entry = await manager.getProvider({ provider: "installation-plugin", wait: true });
+      expect(entry.status).toBe("ready");
+      await expect(manager.installations.inspect("installation-plugin")).resolves.toEqual({
+        inspection: { status: "installed", version: "1.0.0" },
+      });
+      expect(checks).toBe(1);
+    } finally {
+      manager.destroy();
+    }
+  });
 });
 
 describe("ProviderInstallations", () => {
@@ -256,6 +370,111 @@ describe("ProviderInstallations", () => {
     time = 1_000_000;
     await installations.inspect("codex");
     expect(calls()).toBe(3);
+  });
+
+  function countingUpdates(
+    checkForUpdates: NonNullable<AgentClientInstallation["checkForUpdates"]>,
+    options: { now?: () => number; updateCheckTimeoutMs?: number } = {},
+  ) {
+    let calls = 0;
+    const client = builtinClient({
+      checkForUpdates(context) {
+        calls += 1;
+        return checkForUpdates(context);
+      },
+    });
+    const installations = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: (provider) => (provider === "codex" ? client : null),
+      updateCheckCacheMs: 3_600_000,
+      inspectCacheMs: 30_000,
+      ...options,
+    });
+    return { installations, calls: () => calls };
+  }
+
+  test("shares concurrent update checks, holds an answer for the long cache, and refresh asks again", async () => {
+    let time = 0;
+    const { installations, calls } = countingUpdates(
+      async () => ({ status: "available", versions: [`v${time}`] }),
+      { now: () => time },
+    );
+    const [first, second] = await Promise.all([
+      installations.checkForUpdates("codex"),
+      installations.checkForUpdates("codex"),
+    ]);
+    expect(first).toEqual(second);
+    expect(calls()).toBe(1);
+
+    time = 3_000_000;
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({
+      status: "available",
+      versions: ["v0"],
+    });
+    expect(calls()).toBe(1);
+
+    await expect(installations.checkForUpdates("codex", { refresh: true })).resolves.toEqual({
+      status: "available",
+      versions: ["v3000000"],
+    });
+    expect(calls()).toBe(2);
+
+    time = 3_000_000 + 3_600_000;
+    await installations.checkForUpdates("codex");
+    expect(calls()).toBe(3);
+  });
+
+  test("retries an inconclusive update check after the short cache", async () => {
+    let time = 0;
+    const { installations, calls } = countingUpdates(async () => ({ status: "unknown" }), {
+      now: () => time,
+    });
+    await installations.checkForUpdates("codex");
+    time = 29_000;
+    await installations.checkForUpdates("codex");
+    expect(calls()).toBe(1);
+    time = 31_000;
+    await installations.checkForUpdates("codex");
+    expect(calls()).toBe(2);
+  });
+
+  test("keeps update checks and inspection in separate caches", async () => {
+    const client = builtinClient({
+      async inspect() {
+        return { status: "installed", version: "1.0.0" };
+      },
+      async checkForUpdates() {
+        return { status: "current" };
+      },
+    });
+    const installations = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: () => client,
+    });
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
+    await expect(installations.inspect("codex")).resolves.toEqual({
+      inspection: { status: "installed", version: "1.0.0" },
+    });
+  });
+
+  test("aborts a slow update check and reports it as an error", async () => {
+    let aborted = false;
+    function waitForAbort(signal: AbortSignal) {
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        });
+      });
+    }
+    const { installations } = countingUpdates(({ signal }) => waitForAbort(signal), {
+      updateCheckTimeoutMs: 10,
+    });
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({
+      status: "error",
+      message: "Timed out after 10ms",
+    });
+    expect(aborted).toBe(true);
   });
 
   test("aborts a slow inspect and reports it as an error", async () => {
