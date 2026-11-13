@@ -185,6 +185,7 @@ export const zhCN: TranslationResources = {
     errors: {
       failedToSend: "发送消息失败",
       failedToCreateAgent: "创建 Agent 失败",
+      creationOutcomeUnknown: "上一次启动可能仍在进行中。再次启动前，请检查工作区和智能体。",
       noHostSelected: "未选择 Host",
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",

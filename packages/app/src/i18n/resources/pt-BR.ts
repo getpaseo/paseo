@@ -186,6 +186,8 @@ export const ptBR: TranslationResources = {
     errors: {
       failedToSend: "Falha ao enviar mensagem",
       failedToCreateAgent: "Falha ao criar agente",
+      creationOutcomeUnknown:
+        "A inicialização anterior ainda pode estar em andamento. Verifique seus espaços de trabalho e agentes antes de iniciar outra.",
       noHostSelected: "Nenhum host selecionado",
       initialPromptRequired: "O prompt inicial é obrigatório",
       alreadyLoading: "Já está carregando",

@@ -186,6 +186,8 @@ export const ja: TranslationResources = {
     errors: {
       failedToSend: "メッセージの送信に失敗しました",
       failedToCreateAgent: "エージェントの作成に失敗しました",
+      creationOutcomeUnknown:
+        "前の起動処理がまだ実行中の可能性があります。もう一度起動する前に、ワークスペースとエージェントを確認してください。",
       noHostSelected: "ホストが選択されていません",
       initialPromptRequired: "初期プロンプトが必要です",
       alreadyLoading: "すでに読み込み中です",

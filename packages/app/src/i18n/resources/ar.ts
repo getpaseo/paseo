@@ -185,6 +185,8 @@ export const ar: TranslationResources = {
     errors: {
       failedToSend: "فشل في إرسال الرسالة",
       failedToCreateAgent: "فشل في إنشاء الوكيل",
+      creationOutcomeUnknown:
+        "قد تكون عملية البدء السابقة لا تزال جارية. تحقق من مساحات العمل والوكلاء قبل بدء عملية أخرى.",
       noHostSelected: "لم يتم تحديد مضيف",
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",

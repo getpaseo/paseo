@@ -181,6 +181,8 @@ export const en = {
     errors: {
       failedToSend: "Failed to send message",
       failedToCreateAgent: "Failed to create agent",
+      creationOutcomeUnknown:
+        "The previous start may still be running. Check your workspaces and agents before starting another.",
       noHostSelected: "No host selected",
       initialPromptRequired: "Initial prompt is required",
       alreadyLoading: "Already loading",
