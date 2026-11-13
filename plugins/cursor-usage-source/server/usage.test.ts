@@ -2,9 +2,25 @@ import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, discoverSession, fetchUsage } from "./usage.js";
+import {
+  discover,
+  discoverSession,
+  fetchUsage,
+  readCursorAgentKeychainToken,
+  type CursorKeychainReader,
+} from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
+
+type ExecFileCallback = (error: Error | null, result?: { stdout: string }) => void;
+
+// Keep discovery hermetic on macOS dev machines: the real Keychain is never queried.
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn((_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) =>
+    callback(new Error("security is unavailable in tests")),
+  ),
+}));
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
 const testRequire = createRequire(import.meta.url);
@@ -436,4 +452,141 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;
   }
+});
+
+describe("encrypted Cursor desktop tokens and the cursor-agent Keychain login", () => {
+  const encrypted = "cursor-safe-storage:v1:Y2lwaGVydGV4dA==";
+  let homeDir: string;
+  let originalEnv: Record<string, string | undefined>;
+  let authorizations: Array<string | null>;
+  const recordingFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    authorizations.push(
+      (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+    );
+    return jsonResponse({
+      planUsage: { totalPercentUsed: 20, autoPercentUsed: 19, apiPercentUsed: 42 },
+      billingCycleStart: null,
+      billingCycleEnd: null,
+    });
+  }) as unknown as typeof fetch;
+  const noKeychain: CursorKeychainReader = async () => null;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "usage-encrypted-home-"));
+    originalEnv = { ...process.env };
+    process.env["HOME"] = homeDir;
+    process.env["USERPROFILE"] = homeDir;
+    for (const key of ["APPDATA", "CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"]) delete process.env[key];
+    authorizations = [];
+    vi.mocked(execFile).mockClear();
+  });
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    for (const key in originalEnv) process.env[key] = originalEnv[key];
+  });
+
+  async function fetchDiscovered(options: Parameters<typeof discover>[0]) {
+    const [account] = await discover(options);
+    if (!account) throw new Error("No configured account");
+    return fetchUsage(
+      account.input as Parameters<typeof fetchUsage>[0],
+      recordingFetch,
+      options?.readKeychain,
+    );
+  }
+
+  it.each([
+    [
+      "the modern state.vscdb key",
+      () => writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted }),
+    ],
+    [
+      "the legacy cursorAuthStatus blob",
+      () =>
+        writeCursorStateDb(homeDir, {
+          cursorAuthStatus: JSON.stringify({ accessToken: encrypted }),
+        }),
+    ],
+    ["cursor-agent auth.json", () => writeCursorAuthJson(homeDir, encrypted)],
+    ["CURSOR_ACCESS_TOKEN", () => (process.env["CURSOR_ACCESS_TOKEN"] = encrypted)],
+  ])("discovers no account when the only token, in %s, is encrypted", async (_store, write) => {
+    write();
+    expect(await discover({ platform: "linux", readKeychain: noKeychain })).toEqual([]);
+  });
+
+  it("skips an encrypted desktop token and uses the cursor-agent auth.json login", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    writeCursorAuthJson(homeDir, "cursor_cli_jwt");
+
+    const report = await fetchDiscovered({ platform: "linux", readKeychain: noKeychain });
+
+    expect(authorizations).toEqual(["Bearer cursor_cli_jwt"]);
+    expect(report.status).toBe("available");
+  });
+
+  it("never sends an encrypted token from a previously discovered locator", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    const locator = join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+
+    await expect(fetchUsage({ store: "sqlite", locator }, recordingFetch)).rejects.toThrow(
+      "Cursor login store no longer exists",
+    );
+    expect(authorizations).toEqual([]);
+  });
+
+  it("uses the cursor-agent Keychain login on macOS when the desktop token is encrypted", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+    const services: string[] = [];
+    const readKeychain: CursorKeychainReader = async (service) => {
+      services.push(service);
+      return "cursor_keychain_jwt";
+    };
+
+    const report = await fetchDiscovered({ platform: "darwin", readKeychain });
+
+    expect(services).toEqual(["cursor-access-token", "cursor-access-token"]);
+    expect(authorizations).toEqual(["Bearer cursor_keychain_jwt"]);
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 20 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 19 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 42 }),
+      ],
+    });
+  });
+
+  it("keeps a plaintext desktop token ahead of the Keychain login", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_desktop_jwt" });
+    const readKeychain = vi.fn<CursorKeychainReader>(async () => "cursor_keychain_jwt");
+
+    await fetchDiscovered({ platform: "darwin", readKeychain });
+
+    expect(readKeychain).not.toHaveBeenCalled();
+    expect(authorizations).toEqual(["Bearer cursor_desktop_jwt"]);
+  });
+
+  it("only reads the Keychain on macOS", async () => {
+    const readKeychain = vi.fn<CursorKeychainReader>(async () => "cursor_keychain_jwt");
+
+    expect(await discover({ platform: "linux", readKeychain })).toEqual([]);
+    expect(readKeychain).not.toHaveBeenCalled();
+  });
+
+  it("reads cursor-agent's Keychain item with the security CLI", async () => {
+    vi.mocked(execFile).mockImplementationOnce(((
+      _file: string,
+      _args: string[],
+      _options: unknown,
+      callback: ExecFileCallback,
+    ) => callback(null, { stdout: "cursor_keychain_jwt\n" })) as unknown as typeof execFile);
+
+    expect(await readCursorAgentKeychainToken("cursor-access-token")).toBe("cursor_keychain_jwt");
+    expect(vi.mocked(execFile).mock.calls[0]?.slice(0, 2)).toEqual([
+      "security",
+      ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"],
+    ]);
+    expect(await readCursorAgentKeychainToken("cursor-access-token")).toBeNull();
+  });
 });
