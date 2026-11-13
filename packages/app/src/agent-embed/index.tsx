@@ -11,6 +11,7 @@ import { createPaneFocusContextValue, PaneFocusProvider } from "@/panels/pane-co
 import { RetainedChatContent } from "@/panels/retained-chat-content";
 import { useSessionStore } from "@/stores/session-store";
 import { useViewedAgent } from "@/timeline/use-viewed-agent";
+import { useEmbedFocus } from "./focus";
 
 export interface AgentEmbedComposer {
   controls: ComposerControlsScope;
@@ -50,9 +51,13 @@ export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedPr
     }),
     [isInteractive, placeholder, viewerId],
   );
+  // Several embeds can share a screen, so focus is the embed's own, not the surface's: only the
+  // embed the user is in runs the composer's key handlers. A preview without a composer has none.
+  const { isFocused, ref, onTouchStart } = useEmbedFocus(viewerId);
+  const isPaneFocused = isInteractive && isFocused;
   const focus = useMemo(
-    () => createPaneFocusContextValue({ isWorkspaceFocused: true, isPaneFocused: isInteractive }),
-    [isInteractive],
+    () => createPaneFocusContextValue({ isWorkspaceFocused: true, isPaneFocused }),
+    [isPaneFocused],
   );
   const target = useMemo(() => ({ kind: "agent" as const, agentId }), [agentId]);
   const workspaceId = useSessionStore((state) => {
@@ -65,7 +70,7 @@ export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedPr
   });
 
   return (
-    <View style={styles.root} testID={testID}>
+    <View style={styles.root} testID={testID} ref={ref} onTouchStart={onTouchStart}>
       <PaneFocusProvider value={focus}>
         <ComposerControlsScopeProvider value={composer?.controls ?? ALL_COMPOSER_CONTROLS}>
           <RetainedChatContent>
@@ -74,7 +79,7 @@ export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedPr
               workspaceId={workspaceId}
               target={target}
               surface={surface}
-              isPaneFocused={isInteractive}
+              isPaneFocused={isPaneFocused}
             />
           </RetainedChatContent>
         </ComposerControlsScopeProvider>

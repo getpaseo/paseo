@@ -132,6 +132,35 @@ async function withEmbeds(
   }
 }
 
+async function agentStatus(agent: MockAgentWorkspace): Promise<string | null> {
+  const fetched = await agent.client.fetchAgent({ agentId: agent.agentId });
+  return fetched?.agent.status ?? null;
+}
+
+/** Clicks land on text, not on a field, so Escape routes as the interrupt shortcut. */
+async function expectEscapeInterruptsOnlyTheFocusedEmbed(
+  page: Page,
+  input: { left: MockAgentWorkspace; right: MockAgentWorkspace; embed: Scenario["embed"] },
+): Promise<void> {
+  const { left, right, embed } = input;
+  await test.step("Escape after a click outside the embeds interrupts neither", async () => {
+    await page.getByTestId("plugin-header").click();
+    await page.keyboard.press("Escape");
+  });
+  await test.step("Escape after a click in the left embed interrupts only it", async () => {
+    await embed(left.agentId).getByTestId("user-message").first().click();
+    await page.keyboard.press("Escape");
+    await expect.poll(() => agentStatus(left), { timeout: 15_000 }).toBe("idle");
+    // Interrupts go out in order, so a stray one from the first Escape has landed by now.
+    expect(await agentStatus(right)).toBe("running");
+  });
+  await test.step("Escape after a click in the right embed interrupts it", async () => {
+    await embed(right.agentId).getByTestId("user-message").first().click();
+    await page.keyboard.press("Escape");
+    await expect.poll(() => agentStatus(right), { timeout: 15_000 }).toBe("idle");
+  });
+}
+
 test('controls: "none" sends a plugin slash command to the agent as typed', async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -149,6 +178,27 @@ test('controls: "none" sends a plugin slash command to the agent as typed', asyn
       await expect(embed(agent.agentId).getByTestId("user-message").last()).toContainText(
         "/stamp the invoices",
       );
+    },
+  );
+});
+
+test("Escape interrupts only the embed that has focus", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await withEmbeds(
+    page,
+    {
+      agents: [
+        { title: "Left agent", model: "one-minute-stream", prompt: "Keep running left." },
+        { title: "Right agent", model: "one-minute-stream", prompt: "Keep running right." },
+      ],
+      composer: { controls: "none" },
+    },
+    async ({ agents: [left, right], embed }) => {
+      await expect.poll(() => agentStatus(left), { timeout: 15_000 }).toBe("running");
+      await expect.poll(() => agentStatus(right), { timeout: 15_000 }).toBe("running");
+
+      await expectEscapeInterruptsOnlyTheFocusedEmbed(page, { left, right, embed });
     },
   );
 });

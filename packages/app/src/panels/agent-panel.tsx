@@ -353,6 +353,11 @@ export interface EmbeddedComposerOptions {
   placeholder: string | undefined;
 }
 
+/** An embed with a composer is where the user acts on the agent, with key focus or without. */
+function surfaceClearsAttention(surface: ConversationSurface, isPaneFocused: boolean): boolean {
+  return surface.kind === "embed" ? surface.composer !== null : isPaneFocused;
+}
+
 function surfaceShowsComposer(surface: ConversationSurface): boolean {
   // The workspace sheet is for looking; Open as tab brings the agent back with its composer.
   return surface.kind === "pane" ? surface.host !== "sheet" : surface.composer !== null;
@@ -807,7 +812,7 @@ function ChatAgentContent({
     isAgentDataReady: agentHistorySyncGeneration === historySyncGeneration,
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
-    isScreenFocused: isPaneFocused,
+    isScreenFocused: surfaceClearsAttention(surface, isPaneFocused),
     focusRequest,
     onError: reportAttentionError,
   });
@@ -1613,6 +1618,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
     return (
       <EmbeddedAgentComposer
         agentId={agentId}
+        isPaneFocused={isPaneFocused}
         placeholder={surface.composer?.placeholder}
         serverId={serverId}
         cwd={cwd}
@@ -1780,6 +1786,7 @@ function ActiveAgentComposer({
  */
 function EmbeddedAgentComposer({
   agentId,
+  isPaneFocused,
   placeholder,
   serverId,
   cwd,
@@ -1791,6 +1798,8 @@ function EmbeddedAgentComposer({
   onMessageSent,
 }: {
   agentId: string;
+  /** The embed has the user's focus, so its composer owns the key handlers. */
+  isPaneFocused: boolean;
   placeholder: string | undefined;
   serverId: string;
   cwd: string;
@@ -1838,7 +1847,7 @@ function EmbeddedAgentComposer({
         serverId={serverId}
         workspaceId={workspaceId}
         blurOnSubmit={isNative}
-        isPaneFocused
+        isPaneFocused={isPaneFocused}
         textSource={agentInputDraft.textSource}
         onChangeText={agentInputDraft.editText}
         textReplacement={agentInputDraft.textReplacement}
