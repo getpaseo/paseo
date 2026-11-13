@@ -196,10 +196,9 @@ function layoutBoundary(
   return null;
 }
 
-function hasNonWhitespaceAfterNewline(value: string, inCode: boolean): boolean {
+function hasNonWhitespaceAfterNewline(value: string): boolean {
   const lastNewline = value.lastIndexOf("\n");
-  if (lastNewline !== -1) return /[^\s]/.test(value.slice(lastNewline + 1));
-  return !inCode || /[^\s]/.test(value);
+  return /[^\s]/.test(lastNewline === -1 ? value : value.slice(lastNewline + 1));
 }
 
 function isTableWrapperTag(raw: string, inCode: boolean): boolean {
@@ -229,8 +228,12 @@ function collectTableRanges(
     while (codeIndex < codeRanges.length && codeRanges[codeIndex].end <= offset) codeIndex++;
     const inCode = codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].start;
     if (!isTableWrapperTag(raw, inCode)) {
-      if (hasNonWhitespaceAfterNewline(raw, inCode)) lineHasPrefixText = true;
-      else if (raw.includes("\n")) lineHasPrefixText = false;
+      if (inCode || /^<code\b/i.test(raw)) {
+        if (hasNonWhitespaceAfterNewline(raw)) lineHasPrefixText = true;
+        else if (raw.includes("\n")) lineHasPrefixText = false;
+      } else if (raw.includes("\n")) {
+        lineHasPrefixText = false;
+      }
       return raw;
     }
     const blanked = raw.replace(/[^\n]/g, " ");
