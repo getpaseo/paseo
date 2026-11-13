@@ -4,7 +4,6 @@ import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { extractNodeText } from "react-native-enriched-markdown/src/web/utils";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { hasUnescapedDollar } from "./math";
 import { prepareMarkdownSource } from "./source";
 import { createMarkdownStyles } from "./styles";
 
@@ -17,11 +16,12 @@ interface ParsedMathSpan {
 }
 
 async function parseWebMarkdown(source: string) {
-  const rendered = prepareMarkdownSource(source, undefined, {
+  const prepared = prepareMarkdownSource(source, undefined, {
     supportsSvg: true,
     latexMath: true,
-  }).render();
-  const flags = hasUnescapedDollar(rendered) ? WEB_MATH_FLAGS : BASE_FLAGS;
+  });
+  const rendered = prepared.render();
+  const flags = prepared.hasLatexMath ? WEB_MATH_FLAGS : BASE_FLAGS;
   const ast = await parseMarkdown(rendered, flags);
   const mathSpans: ParsedMathSpan[] = [];
   let plainText = "";
@@ -151,19 +151,18 @@ describe("Markdown LaTeX math adaptation and currency protection", () => {
 
   it("never alters dollars inside inline code, code fences, or URLs", async () => {
     const source = [
-      "Inline `$x + y$` and [API](https://example.com/$v1/$users) and https://example.com/$raw/$url.",
+      "Inline `$x + y$` and `echo $HOME` and [API](https://example.com/$v1/$users) and https://example.com/$raw$/path.",
       "",
       "```sh",
       "echo $HOME $1 $$",
       "```",
     ].join("\n");
 
-    const rendered = prepareMarkdownSource(source, undefined, {
-      supportsSvg: true,
-      latexMath: true,
-    }).render();
+    const result = await parseWebMarkdown(source);
 
-    expect(rendered).toBe(source);
+    expect(result.rendered).toBe(source);
+    expect(result.enabledLatexFlag).toBe(false);
+    expect(result.mathSpans).toEqual([]);
   });
 
   it("themes display and inline math colors for both dark and light modes", () => {

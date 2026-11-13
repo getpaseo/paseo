@@ -280,7 +280,7 @@ export function prepareMarkdownSource(
     ) &&
     !(workspaceRoot && source.includes("]("))
   ) {
-    return { images, ...metadata, render: () => source };
+    return { images, hasLatexMath: false, ...metadata, render: () => source };
   }
 
   let mathRanges: TextRange[] = [];
@@ -407,6 +407,7 @@ export function prepareMarkdownSource(
   visit(getTree());
   return {
     images,
+    hasLatexMath: mathRanges.length > 0,
     ...metadata,
     render(
       urls: ReadonlyMap<string, string> = new Map(),

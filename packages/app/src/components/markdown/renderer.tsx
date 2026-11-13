@@ -14,7 +14,6 @@ import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 import { density, resolveDensity } from "@/styles/density";
 import { MarkdownBlockStack } from "./block-stack";
-import { hasUnescapedDollar } from "./math";
 import { WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
@@ -99,7 +98,7 @@ const MarkdownPart = memo(function MarkdownPart({
     (environment.client?.readFile
       ? { readFile: environment.client.readFile.bind(environment.client) }
       : undefined);
-  const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(
+  const { markdown, hasLatexMath, imageSources, linkRecognition, linkSource } = useMarkdownSource(
     text,
     {
       workspaceRoot: environment.workspaceRoot,
@@ -147,9 +146,7 @@ const MarkdownPart = memo(function MarkdownPart({
               uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
               selectable={selectable}
-              md4cFlags={
-                isWeb && hasUnescapedDollar(segment.source) ? WEB_MATH_MD4C_FLAGS : MD4C_FLAGS
-              }
+              md4cFlags={isWeb && hasLatexMath ? WEB_MATH_MD4C_FLAGS : MD4C_FLAGS}
               linkRecognition={linkRecognition}
               enableTaskListItemToggle={false}
               enableLinkPreview={false}

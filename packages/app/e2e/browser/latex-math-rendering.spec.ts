@@ -79,6 +79,12 @@ test("renders inline and display LaTeX as MathML across chat and Markdown previe
     await expect(findQuery(page)).toBeVisible();
     await findQuery(page).fill("floorLevel");
     await expect(findStatus(page)).toHaveText("1 of 1");
+    await findQuery(page).fill("θ");
+    await expect(findStatus(page)).toHaveText("1 of 4");
+    await findQuery(page).press("Enter");
+    await expect(findStatus(page)).toHaveText("2 of 4");
+    await findQuery(page).fill("≤");
+    await expect(findStatus(page)).toHaveText("1 of 2");
     await page.keyboard.press("Escape");
     await expect(findQuery(page)).toBeHidden();
 
