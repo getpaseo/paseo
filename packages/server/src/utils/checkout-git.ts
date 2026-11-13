@@ -960,6 +960,9 @@ export interface CheckoutContext {
   logger?: Pick<Logger, "trace" | "warn">;
   facts?: CheckoutSnapshotFacts | null;
   runGitCommand?: RunGitCommand;
+  resolveDefaultBranchRef?: (
+    input: ResolveRepositoryDefaultBranchRefInput,
+  ) => Promise<string | null>;
 }
 
 export type CheckoutSnapshotFacts =
@@ -1706,25 +1709,49 @@ async function resolveBaseRef(repoRoot: string, context?: CheckoutContext): Prom
 
 // Workspace creation prefers the remote tip. Diff and merge bases keep their existing
 // local-branch policy in resolveRepositoryDefaultBranch.
-export async function resolveRepositoryDefaultBranchRef(
-  cwd: string,
-  context?: CheckoutContext,
-): Promise<string | null> {
-  const branch = await resolveRepositoryDefaultBranch(cwd, context);
-  if (!branch) return null;
-  const remoteBranch = branch.startsWith("origin/") ? branch : `origin/${branch}`;
-  const remoteRef = `refs/remotes/${remoteBranch}`;
-  const git = getRunGitCommand(context);
-  try {
-    await git(["show-ref", "--verify", "--quiet", remoteRef], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    return remoteRef;
-  } catch {
-    // Repositories without a remote default use the available local default branch.
-    return `refs/heads/${branch}`;
+export interface ResolveRepositoryDefaultBranchRefInput {
+  cwd: string;
+  context?: CheckoutContext;
+}
+
+export async function resolveRepositoryDefaultBranchRef({
+  cwd,
+  context,
+}: ResolveRepositoryDefaultBranchRefInput): Promise<string | null> {
+  const { stdout } = await getRunGitCommand(context)(
+    ["for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream)", "refs/heads", "refs/remotes"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const refs = new Map<string, string>();
+  const upstreams = new Map<string, string>();
+  for (const line of stdout.split("\n")) {
+    if (!line) continue;
+    const [ref, target = "", upstream = ""] = line.split("\0");
+    refs.set(ref, target);
+    upstreams.set(ref, upstream);
   }
+  const originDefault = refs.get("refs/remotes/origin/HEAD");
+  if (originDefault && refs.has(originDefault)) return originDefault;
+  const remoteDefaults: string[] = [];
+  const localBranches: string[] = [];
+  for (const [ref, target] of refs) {
+    if (ref.startsWith("refs/heads/")) localBranches.push(ref);
+    const isRemoteDefault = ref.startsWith("refs/remotes/") && ref.endsWith("/HEAD");
+    if (isRemoteDefault && refs.has(target)) remoteDefaults.push(target);
+  }
+  if (remoteDefaults.length === 1) return remoteDefaults[0];
+  if (remoteDefaults.length > 1) return null;
+  const conventionalDefaults = ["main", "master", "trunk", "develop"];
+  const conventionalRefs = conventionalDefaults.map((branch) => `refs/heads/${branch}`);
+  let localDefault = conventionalRefs.find((ref) => refs.has(ref));
+  if (!localDefault && localBranches.length === 1) localDefault = localBranches[0];
+  if (!localDefault) return null;
+  const branch = localDefault.slice("refs/heads/".length);
+  const originRef = `refs/remotes/origin/${branch}`;
+  if (refs.has(originRef)) return originRef;
+  const upstream = upstreams.get(localDefault);
+  if (upstream && refs.has(upstream)) return upstream;
+  return localDefault;
 }
 
 interface ComparisonBaseRefName {
@@ -2448,7 +2475,9 @@ export async function getCheckoutStatus(
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : null;
   const upstreamStatus = facts.upstreamStatus;
-  const defaultBranchRef = await resolveRepositoryDefaultBranchRef(cwd, context);
+  const resolveDefaultBranchRef =
+    context?.resolveDefaultBranchRef ?? resolveRepositoryDefaultBranchRef;
+  const defaultBranchRef = await resolveDefaultBranchRef({ cwd, context: factsContext });
   // The wire carries the display name: clients label the base with it and send it back to
   // request diffs and merges. The exact ref stays in worktree.json and in facts, where the
   // comparisons and actions read it.

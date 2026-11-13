@@ -1123,8 +1123,8 @@ export function NewWorkspaceScreen({
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem) : t("newWorkspace.tooltips.startingRef");
+  }, [itemById, selectedOptionId, t]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       setup.chooseBase(item);
@@ -1269,6 +1269,9 @@ export function NewWorkspaceScreen({
               defaultBasePickerItem(checkoutStatusForCreate, { forkFromCurrentBranch }),
           )
         : undefined;
+      const requiresStartingRef =
+        createsWorktree && checkoutStatusForCreate?.defaultBranchRef === null && !checkoutRequest;
+      if (requiresStartingRef) throw new Error(t("newWorkspace.tooltips.startingRef"));
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
         worktreeSlug: creationIdentity.worktreeSlug,
@@ -1620,7 +1623,11 @@ export function NewWorkspaceScreen({
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text testID="new-workspace-error" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        ) : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>

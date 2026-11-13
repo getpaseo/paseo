@@ -796,6 +796,80 @@ test.describe("New workspace flow", () => {
       };
     }
 
+    for (const branch of ["develop", "trunk"]) {
+      test(`creates an untouched workspace from the sole local ${branch} branch`, async ({
+        page,
+      }) => {
+        const tempRepo = await createTempGitRepo("ref-default-local-");
+        try {
+          execFileSync("git", ["branch", "-m", branch], { cwd: tempRepo.path });
+          const sourceHead = readRepoRef(tempRepo.path, "HEAD");
+          const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+          await expectPickerSelected(page, branch);
+          const created = await createWorktreeAndRead(page, openedProject);
+          expect(created.branchInfo.hasAncestor(sourceHead)).toBe(true);
+          expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+            baseRefName: branch,
+            baseRef: `refs/heads/${branch}`,
+          });
+        } finally {
+          await tempRepo.cleanup();
+        }
+      });
+    }
+
+    test("requires an explicit branch when the repository default is ambiguous", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-default-ambiguous-");
+      try {
+        execFileSync("git", ["branch", "-m", "integration"], { cwd: tempRepo.path });
+        execFileSync("git", ["branch", "feature/other"], { cwd: tempRepo.path });
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "Choose where to start from");
+        const before = await client.fetchWorkspaces();
+        await submitNewWorkspaceEmpty(page);
+        await expect(page.getByTestId("new-workspace-error")).toHaveText(
+          "Choose where to start from",
+        );
+        expect((await client.fetchWorkspaces()).entries.length).toBe(before.entries.length);
+        await openStartingRefPicker(page);
+        await startingRefRow(page, "integration, local branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "integration",
+          baseRef: "refs/heads/integration",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("excludes unpushed commits when the default remote is named company", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-default-company-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/main"],
+          { cwd: tempRepo.path },
+        );
+        const remoteHead = readRepoRef(tempRepo.path, "refs/remotes/company/main");
+        const localHead = commitLocalOnly(tempRepo.path, "local-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "main");
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(remoteHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "main",
+          baseRef: "refs/remotes/company/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     test("starts from the repository default when the source checkout is on an unrelated branch", async ({
       page,
     }, testInfo) => {
@@ -877,6 +951,11 @@ test.describe("New workspace flow", () => {
       const tempRepo = await createTempGitRepo("ref-default-fork-", { withRemote: true });
 
       try {
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+          { cwd: tempRepo.path },
+        );
         const upstreamHead = await trackForkUpstream(tempRepo.path);
         const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
 

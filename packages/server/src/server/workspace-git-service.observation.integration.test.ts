@@ -1019,3 +1019,122 @@ test("a branch switch made before the Git metadata watcher starts still reaches 
     )
     .toBe("feature");
 }, 30_000);
+
+test.each([false, true])(
+  "default branch ref lookup is shared across worktrees and caches null (ambiguous: %s)",
+  async (ambiguous) => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-cache-")));
+    const repo = path.join(root, "repo");
+    const worktree = path.join(root, "worktree");
+    mkdirSync(repo);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+    git("init", "-b", ambiguous ? "integration" : "main");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "base",
+    );
+    git("worktree", "add", "-b", "feature/agent", worktree);
+    let nowMs = Date.now();
+    const service = new WorkspaceGitServiceImpl({
+      logger: pino({ enabled: false }),
+      paseoHome: path.join(root, "home"),
+      deps: { now: () => new Date(nowMs) },
+    });
+    cleanup.push(async () => {
+      await service.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+    startGitCommandMetrics();
+    try {
+      const snapshots = await Promise.all(
+        [repo, worktree].map((cwd) => service.getSnapshot(cwd, { includeForge: false })),
+      );
+      const expected = ambiguous ? null : "refs/heads/main";
+      expect(snapshots.map((snapshot) => snapshot.git.defaultBranchRef)).toEqual([
+        expected,
+        expected,
+      ]);
+      await service.getSnapshot(worktree, {
+        force: true,
+        reason: "cache-proof",
+        includeForge: false,
+      });
+      await service.getCheckout(repo);
+      const initial = stopGitCommandMetrics();
+      const lookups = initial.commands.filter((command) =>
+        command.args.includes("--format=%(refname)%00%(symref)%00%(upstream)"),
+      );
+      expect(lookups).toHaveLength(1);
+
+      git("update-ref", "refs/remotes/company/trunk", "HEAD");
+      git("symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/trunk");
+      nowMs += 16_000;
+      const updated = await service.getSnapshot(repo, {
+        force: true,
+        reason: "cache-expired",
+        includeForge: false,
+      });
+      expect(updated.git.defaultBranchRef).toBe("refs/remotes/company/trunk");
+    } finally {
+      stopGitCommandMetrics();
+    }
+  },
+  30_000,
+);
+
+test("default branch ref cache invalidates when observed remote HEAD changes", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-watch-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  );
+  git("update-ref", "refs/remotes/company/main", "HEAD");
+  git("update-ref", "refs/remotes/company/trunk", "HEAD");
+  git("symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/main");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    deps: { now: () => new Date(0) },
+  });
+  const subscription = service.registerWorkspace({ cwd: repo }, () => {});
+  cleanup.push(async () => {
+    subscription.unsubscribe();
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  startGitCommandMetrics();
+  try {
+    expect((await service.getSnapshot(repo, { includeForge: false })).git.defaultBranchRef).toBe(
+      "refs/remotes/company/main",
+    );
+    await expect.poll(() => service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    await waitForGitCommandMetricsIdle({ quietMs: 300, timeoutMs: 10_000 });
+    git("symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/trunk");
+    await expect
+      .poll(
+        async () => (await service.getSnapshot(repo, { includeForge: false })).git.defaultBranchRef,
+        { timeout: 10_000 },
+      )
+      .toBe("refs/remotes/company/trunk");
+  } finally {
+    stopGitCommandMetrics();
+  }
+}, 30_000);
