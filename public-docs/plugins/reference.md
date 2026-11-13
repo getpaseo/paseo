@@ -858,7 +858,8 @@ function hideAlerts() {
 
 `addWorkspaceRowBadgeItem({ id, title, icon, Component })` adds an item to the line under each workspace
 title in the sidebar, after the row's own items (host, pull request, checks, services, labels).
-`title` and `icon` label the item's toggle in the sidebar's **Show** menu. Items start visible.
+`title` and `icon` label the item's toggle in the sidebar's **Show** menu, in a separate plugin group
+below a separator. Items start visible.
 
 `Component` renders once per workspace row on the plugin's host and receives
 `PluginWorkspaceRowBadgeItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render

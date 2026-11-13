@@ -30,6 +30,10 @@ function IconOnly() {
   return <WorkspaceRowBadge icon="Star" />;
 }
 
+function EmptyLabel() {
+  return <WorkspaceRowBadge icon="Circle" label="" />;
+}
+
 function Quiet() {
   return null;
 }
@@ -42,6 +46,7 @@ export default function contribute(client) {
   client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
   client.addWorkspaceRowBadgeItem({ id: "docs", title: "Docs state", icon: "BookOpen", Component: Docs });
   client.addWorkspaceRowBadgeItem({ id: "icon", title: "Icon state", icon: "Star", Component: IconOnly });
+  client.addWorkspaceRowBadgeItem({ id: "empty", title: "Empty label state", icon: "Circle", Component: EmptyLabel });
   client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
   client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
   return () => {};
@@ -100,6 +105,9 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
       await expect(
         page.getByLabel("Icon state", { exact: true }).locator("visible=true"),
       ).toBeVisible();
+      await expect(
+        page.getByLabel("Empty label state", { exact: true }).locator("visible=true"),
+      ).toBeVisible();
       await expect(page.getByText(TITLE).first()).toBeVisible();
       await page.screenshot({ path: info.outputPath("wide.png") });
     });
@@ -109,6 +117,7 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
       for (const label of ["Review state", "Quiet state", "Broken state", "Docs state"]) {
         await expect(page.getByRole("menuitem", { name: label, exact: true })).toBeVisible();
       }
+      await expect(page.getByTestId("sidebar-plugin-row-badge-items-separator")).toBeVisible();
       await page.screenshot({ path: info.outputPath("show-menu.png") });
       await page.getByRole("menuitem", { name: "Review state", exact: true }).click();
       await closeSidebarDisplayPreferences(page);

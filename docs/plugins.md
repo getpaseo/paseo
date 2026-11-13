@@ -634,7 +634,8 @@ items after its own.
   wrapper would leave a gap on rows the plugin has nothing to say about. That is also why
   the row adds no separator around plugin items; a plugin renders its slot.
 - A row only renders items from plugins on its own host. The Show menu coalesces items across hosts
-  by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting. A missing key is visible.
+  by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting, and places them in
+  their own group below a separator. A missing key is visible.
 - Previews (Settings > Host appearance) pass no `workspace` to `WorkspaceMetaRow`, so plugin items
   stay off them.
 

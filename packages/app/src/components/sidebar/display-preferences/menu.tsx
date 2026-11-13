@@ -610,9 +610,9 @@ function OptionList<Value extends string>({
 }
 
 /**
- * Two groups, split by the separator. Above it, what a row may say about a workspace — each one
- * independent. Below it, the one thing the slot to the right of the title holds, so picking the
- * one already showing empties the slot and gives the width back to the title.
+ * Three groups: Paseo's own row items, plugin badge items, then the one thing the slot to the
+ * right of the title holds. Picking the trailing choice already showing empties the slot and
+ * gives the width back to the title.
  *
  * CI is the one item above the separator with three answers rather than two, so it opens a page
  * instead of ticking, and it goes last: a row that navigates does not belong in the middle of a
@@ -634,10 +634,13 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           testID={`sidebar-row-item-${item}`}
         />
       ))}
+      <ChecksSubTrigger />
+      {preferences.pluginRowBadgeItems.length > 0 ? (
+        <MenuSeparator testID="sidebar-plugin-row-badge-items-separator" />
+      ) : null}
       {preferences.pluginRowBadgeItems.map((item) => (
         <PluginRowBadgeItemOption key={item.key} item={item} preferences={preferences} />
       ))}
-      <ChecksSubTrigger />
       <MenuSeparator />
       {TRAILING_CHOICES.map((choice) => (
         <OptionItem

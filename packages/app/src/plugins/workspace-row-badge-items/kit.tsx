@@ -46,7 +46,7 @@ export function WorkspaceRowBadge({
   );
   if (!parsedIcon && !label) return null;
   return (
-    <View style={styles.item} accessibilityLabel={accessibilityLabel ?? label ?? itemTitle}>
+    <View style={styles.item} accessibilityLabel={accessibilityLabel ?? (label || itemTitle)}>
       {parsedIcon ? (
         <ThemedPluginIconView
           icon={parsedIcon}

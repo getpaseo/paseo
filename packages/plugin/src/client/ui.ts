@@ -180,7 +180,7 @@ export interface WorkspaceRowBadgeProps {
   label?: string;
   /** Default "muted". */
   tone?: WorkspaceRowBadgeTone;
-  /** Defaults to `label`. */
+  /** Defaults to `label`, then the item's `title`. */
   accessibilityLabel?: string;
 }
 /** One item on a sidebar workspace row's meta line. Render it from a workspace row badge item's `Component`. */
