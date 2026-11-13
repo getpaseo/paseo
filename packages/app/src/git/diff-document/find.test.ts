@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import * as findModule from "./find";
 import {
   diffFindHeaderMatchesForFile,
   diffFindRectanglesForRowRange,
@@ -245,21 +244,24 @@ describe("diff-document find", () => {
     });
   });
 
-  it("skips rescanning diff text on scroll/materialization model rebuilds until content or collapse state changes", () => {
+  it("preserves active match state across scroll/materialization rebuilds and updates when collapse state changes", () => {
     const files: BuildDiffDocumentModelInput["files"] = [
       {
         path: "src/example.ts",
         isNew: false,
         isDeleted: false,
-        additions: 1,
+        additions: 2,
         deletions: 0,
         hunks: [
           {
             oldStart: 1,
             oldCount: 0,
             newStart: 1,
-            newCount: 1,
-            lines: [{ type: "add", content: "const needle = 1;" }],
+            newCount: 2,
+            lines: [
+              { type: "add", content: "const needle = 1;" },
+              { type: "add", content: "const secondNeedle = needle + 1;" },
+            ],
           },
         ],
       },
@@ -268,7 +270,7 @@ describe("diff-document find", () => {
       files,
       materializationWindow: { top: 0, height: 10 },
     });
-    const spy = vi.spyOn(findModule, "findDiffMatches");
+    let paintRequests = 0;
     const findModel = new DiffFindModel({
       getModel: () => currentDoc,
       getSelection: () => null,
@@ -277,13 +279,17 @@ describe("diff-document find", () => {
       setScrollTop: () => undefined,
       getHorizontalOffset: () => 0,
       setHorizontalOffset: () => undefined,
-      requestPaint: () => undefined,
+      requestPaint: () => {
+        paintRequests += 1;
+      },
     });
 
     findModel.open();
     findModel.setSearch("needle");
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(findModel.getSnapshot()).toMatchObject({ current: 1, total: 1 });
+    findModel.next();
+    expect(findModel.getSnapshot()).toMatchObject({ current: 2, total: 3 });
+    const initialMatches = findModel.getHighlightState()?.matches;
+    const paintsBeforeScroll = paintRequests;
 
     // Rebuild with a different materializationWindow (simulating scroll) — same file refs & collapse state
     currentDoc = createModel({
@@ -291,17 +297,17 @@ describe("diff-document find", () => {
       materializationWindow: { top: 0, height: 400 },
     });
     findModel.onModelUpdated();
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(findModel.getSnapshot()).toMatchObject({ current: 2, total: 3 });
+    expect(findModel.getHighlightState()?.matches).toBe(initialMatches);
+    expect(paintRequests).toBe(paintsBeforeScroll + 1);
 
-    // Collapsing the file changes searchable content -> triggers rescan
+    // Collapsing the file changes searchable content -> updates match state
     currentDoc = createModel({
       files,
       collapsedFilePaths: new Set(["src/example.ts"]),
     });
     findModel.onModelUpdated();
-    expect(spy).toHaveBeenCalledTimes(2);
     expect(findModel.getSnapshot()).toMatchObject({ current: 0, total: 0 });
-
-    spy.mockRestore();
+    expect(findModel.getHighlightState()).toBeNull();
   });
 });
