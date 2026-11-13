@@ -140,13 +140,14 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 const BARE_URL_GLOBAL = new RegExp(BARE_URL, "g");
 const PROSE_TEXT_TOKEN = /(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);|(?<!\\)\|\|/g;
 
-function recordProtectedNode(
-  node: Nodes,
-  source: string,
-  start: number,
-  end: number,
-  protectedRanges: ProtectedTextRange[],
-): boolean {
+function recordProtectedNode(options: {
+  node: Nodes;
+  source: string;
+  start: number;
+  end: number;
+  protectedRanges: ProtectedTextRange[];
+}): boolean {
+  const { node, source, start, end, protectedRanges } = options;
   if (node.type === "code" || node.type === "inlineCode" || node.type === "html") {
     protectedRanges.push({ start, end, hardBoundary: true });
     return true;
@@ -193,7 +194,7 @@ function collectMathContext(tree: Root, source: string) {
     if (
       start !== undefined &&
       end !== undefined &&
-      recordProtectedNode(node, source, start, end, protectedRanges)
+      recordProtectedNode({ node, source, start, end, protectedRanges })
     ) {
       return;
     }
@@ -202,39 +203,41 @@ function collectMathContext(tree: Root, source: string) {
     }
   }
   scan(tree, false);
-  return prepareMarkdownMath(source, blocks, protectedRanges);
+  return prepareMarkdownMath({ source, blocks, protectedRanges });
 }
 
-function appendEmptyCellEdits(
-  source: string,
-  start: number,
-  end: number,
-  mathRanges: readonly TextRange[],
-  edits: { start: number; end: number; text: string }[],
-) {
+function appendEmptyCellEdits(options: {
+  source: string;
+  start: number;
+  end: number;
+  mathRanges: readonly TextRange[];
+  edits: { start: number; end: number; text: string }[];
+}) {
+  const { source, start, end, mathRanges, edits } = options;
   // MD4C's always-enabled spoiler extension otherwise consumes adjacent cell
   // delimiters. Spaces keep empty GFM cells empty without producing spoilers.
   const row = source.slice(start, end);
   for (const match of row.matchAll(/(?<!\\)\|(?=\|)/g)) {
     const insertAt = start + match.index + 1;
-    if (!isRangeOverlapping(mathRanges, insertAt, insertAt + 1)) {
+    if (!isRangeOverlapping(mathRanges, { start: insertAt, end: insertAt + 1 })) {
       edits.push({ start: insertAt, end: insertAt, text: " " });
     }
   }
 }
 
-function appendTextEdits(
-  source: string,
-  start: number,
-  end: number,
-  mathRanges: readonly TextRange[],
-  edits: { start: number; end: number; text: string }[],
-) {
+function appendTextEdits(options: {
+  source: string;
+  start: number;
+  end: number;
+  mathRanges: readonly TextRange[];
+  edits: { start: number; end: number; text: string }[];
+}) {
+  const { source, start, end, mathRanges, edits } = options;
   const slice = source.slice(start, end);
   for (const match of slice.matchAll(PROSE_TEXT_TOKEN)) {
     const matchStart = start + match.index;
     const matchEnd = matchStart + match[0].length;
-    if (isRangeOverlapping(mathRanges, matchStart, matchEnd)) continue;
+    if (isRangeOverlapping(mathRanges, { start: matchStart, end: matchEnd })) continue;
     const replacement =
       match[0] === "||" ? "\\|\\|" : decodeString(match[0]).replace(/[!-/:-@[-`{-~]/g, "\\$&");
     if (replacement !== match[0]) {
@@ -341,7 +344,7 @@ export function prepareMarkdownSource(
         childStart === undefined ||
         childEnd === undefined ||
         !isImageLike(child) ||
-        isRangeOverlapping(mathRanges, childStart, childEnd)
+        isRangeOverlapping(mathRanges, { start: childStart, end: childEnd })
       ) {
         continue;
       }
@@ -385,20 +388,20 @@ export function prepareMarkdownSource(
         const boundary = lineStart - newline.length;
         edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
       }
-      if (node.type === "link" && !isRangeOverlapping(mathRanges, start, end)) {
+      if (node.type === "link" && !isRangeOverlapping(mathRanges, { start, end })) {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
           edits.push({ start: end - 1, end: end - 1, text: ` ${JSON.stringify(title)}` });
       }
       if (node.type === "tableRow") {
-        appendEmptyCellEdits(source, start, end, mathRanges, edits);
+        appendEmptyCellEdits({ source, start, end, mathRanges, edits });
       }
       if (node.type === "image" || node.type === "imageReference") {
-        if (!isRangeOverlapping(mathRanges, start, end)) collectImage(node, start, end);
+        if (!isRangeOverlapping(mathRanges, { start, end })) collectImage(node, start, end);
         return;
       }
       if (node.type === "text") {
-        appendTextEdits(source, start, end, mathRanges, edits);
+        appendTextEdits({ source, start, end, mathRanges, edits });
       }
     }
     if ("children" in node)
