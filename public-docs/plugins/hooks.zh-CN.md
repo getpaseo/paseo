@@ -514,7 +514,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after {#agentturnafter}
 
-实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。只保留 `turnId` 等于 `event.turnId` 的条目：如果在读取前已有新一轮开始（例如另一个插件发送的后续消息），最近一轮就不再是本轮。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
+实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。只保留 `turnId` 等于 `event.turnId` 的条目：如果在读取前已有新一轮开始（例如另一个插件发送的后续消息），最近一轮就不再是本轮。此时过滤后的列表为空；`event.turnId` 为 `null` 时也为空。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
 
 ### 在轮次结束时发送后续消息 {#send-a-follow-up-when-a-turn-ends}
 

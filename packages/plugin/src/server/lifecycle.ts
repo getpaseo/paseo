@@ -106,8 +106,8 @@ export interface PluginHookEvents {
     /**
      * The payload carries no history. Read the turn with
      * `paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true })`
-     * and keep the entries whose `turnId` equals this `turnId`; a turn that starts before the read is
-     * the latest instead.
+     * and keep the entries whose `turnId` equals this `turnId`. The result is empty when a newer turn
+     * started before the read, or when `turnId` is `null`.
      */
     outcome: PluginTurnOutcome;
   };

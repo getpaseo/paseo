@@ -219,7 +219,7 @@ const turn = await context.paseo.agents
 const items = turn.entries.filter((entry) => entry.turnId === event.turnId).map(({ item }) => item);
 ```
 
-The filter drops entries from a turn that started after this one ended, such as a follow-up another plugin sent.
+The filter drops entries from a turn that started after this one ended, such as a follow-up another plugin sent. The list is empty when such a turn has already started, or when `event.turnId` is `null`.
 
 Plugins built against an older SDK keep receiving `timeline: []` until removal after 2027-05-31.
 
