@@ -180,7 +180,8 @@ test("legacy All subscribers are not re-sent the snapshot when a commit only mov
   await withCheckout(async ({ cwd, manager, git }) => {
     git("checkout", "-b", "feature");
     await writeFile(join(cwd, "x.ts"), "const value = 1;\n");
-    const heads: string[] = [];
+    const endedHeads: string[] = [];
+    let beganHead = "";
     const modern = await manager.streams.subscribe(
       {
         cwd,
@@ -190,7 +191,8 @@ test("legacy All subscribers are not re-sent the snapshot when a commit only mov
         mergeBase: true,
       },
       async (frame) => {
-        if (frame.opcode === DiffOpcode.Begin) heads.push(frame.headSha);
+        if (frame.opcode === DiffOpcode.Begin) beganHead = frame.headSha;
+        if (frame.opcode === DiffOpcode.End) endedHeads.push(beganHead);
       },
     );
     await modern.start();
@@ -205,7 +207,7 @@ test("legacy All subscribers are not re-sent the snapshot when a commit only mov
       git("add", ".");
       git("-c", "commit.gpgsign=false", "commit", "-m", "feature");
       const head = git("rev-parse", "HEAD");
-      await expect.poll(() => heads.at(-1), { timeout: 10_000 }).toBe(head);
+      await expect.poll(() => endedHeads.at(-1), { timeout: 10_000 }).toBe(head);
       expect(updates).toHaveLength(0);
     } finally {
       await legacy.unsubscribe();
