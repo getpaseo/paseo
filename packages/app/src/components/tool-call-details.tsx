@@ -729,6 +729,7 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.foregroundMuted,
       fontSize: theme.fontSize.base,
       fontStyle: "italic",
+      paddingHorizontal: theme.spacing[4],
     },
     loadingContainer: {
       gap: theme.spacing[2],
