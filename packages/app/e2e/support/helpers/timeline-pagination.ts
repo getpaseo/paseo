@@ -427,7 +427,11 @@ export async function holdOlderHistoryPages(
   const loader = page.getByTestId("load-older-history-spinner");
   return {
     async expectRequestedPages(count) {
-      await gate.waitForRequestCount(count);
+      await expect
+        .poll(() => gate.getRequestCount(), {
+          message: `older history requests ${count} page(s)`,
+        })
+        .toBeGreaterThanOrEqual(count);
       expect(gate.getRequestCount()).toBe(count);
     },
     async expectSettledWithRequestedPages(count) {

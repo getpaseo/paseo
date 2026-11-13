@@ -21,7 +21,6 @@ export interface OlderTimelinePagesGate {
   getRepeatedEntryCount(): number;
   getOwnedEntryCountContaining(text: string): number;
   releasePage(pageNumber: number): void;
-  waitForRequestCount(count: number): Promise<void>;
 }
 
 export interface DaemonHydrationGate {
@@ -371,15 +370,6 @@ export async function holdAgentOlderTimelinePages(
   const ownedEntries = new Map<string, string>();
   const releasedPages = new Set<number>();
   const delayedForwards = new Map<number, Array<() => void>>();
-  const requestWaiters = new Map<number, Array<() => void>>();
-
-  const resolveRequestWaiters = () => {
-    for (const [count, resolvers] of requestWaiters) {
-      if (requestCount < count) continue;
-      requestWaiters.delete(count);
-      for (const resolve of resolvers) resolve();
-    }
-  };
 
   const routePattern =
     daemonPort === undefined ? daemonWsRoutePattern() : wsRoutePatternForPort(String(daemonPort));
@@ -393,7 +383,6 @@ export async function holdAgentOlderTimelinePages(
         sessionMessage.direction === "before"
       ) {
         requestCount += 1;
-        resolveRequestWaiters();
       }
       server.send(message);
     });
@@ -438,14 +427,6 @@ export async function holdAgentOlderTimelinePages(
       releasedPages.add(pageNumber);
       for (const forward of delayedForwards.get(pageNumber) ?? []) forward();
       delayedForwards.delete(pageNumber);
-    },
-    waitForRequestCount(count) {
-      if (requestCount >= count) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        const resolvers = requestWaiters.get(count) ?? [];
-        resolvers.push(resolve);
-        requestWaiters.set(count, resolvers);
-      });
     },
   };
 }
