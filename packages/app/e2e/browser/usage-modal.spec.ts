@@ -25,6 +25,7 @@ import {
 } from "../support/helpers/usage-login";
 import {
   claudeAndCodexReports,
+  closeUsage,
   expectPinnedUsage,
   openCompactSidebar,
   openUsageFromIcon,
@@ -79,12 +80,17 @@ function twoHoursAgo(): string {
 }
 
 /** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
-async function qaScreenshot(page: Page, name: string) {
+async function qaScreenshot(page: Page, name: string, target: "page" | "summary" = "page") {
   const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
   if (!directory) return;
   await page.waitForTimeout(600);
   await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
-  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+  const file = path.join(directory, `${name}.png`);
+  if (target === "summary") {
+    await usageItem(page).screenshot({ path: file });
+    return;
+  }
+  await page.screenshot({ path: file });
 }
 
 function hostFilter(page: Page) {
@@ -628,6 +634,15 @@ for (const compact of [false, true]) {
       await refreshLoginUsage(page);
       await expectRetainedLoginUsage(page, "Claude: Rate limited");
       await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
+      await expectPinnedUsage(page, ["42% Weekly"]);
+      await expect(usageItem(page).getByTestId("sidebar-usage-error")).toBeVisible();
+      await expect(usageItem(page)).toHaveAccessibleName(/Unable to refresh usage/);
+      await qaScreenshot(page, `usage-error-detail-${compact ? "compact" : "desktop"}`);
+      await closeUsage(page);
+      await qaScreenshot(page, `usage-error-summary-${compact ? "compact" : "desktop"}`, "summary");
+      await openUsageFromItem(page);
+      await expectRetainedLoginUsage(page, "Claude: Rate limited");
+
       await refreshLoginUsage(page);
       await expectRetainedLoginUsage(page, "Claude: Rate limited");
       await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
@@ -639,6 +654,8 @@ for (const compact of [false, true]) {
       await refreshLoginUsage(page);
       await expectRetainedLoginUsage(page, "Claude: No active quota");
       await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
+      await expectPinnedUsage(page, ["42% Weekly"]);
+      await expect(usageItem(page).getByTestId("sidebar-usage-error")).toHaveCount(0);
 
       await fixture.setReport({
         status: "available",
@@ -647,6 +664,9 @@ for (const compact of [false, true]) {
       await page.clock.setFixedTime(new Date(Date.now() + 150_000));
       await refreshLoginUsage(page);
       await expectLoginUsageOnly(page, "43% used");
+      await expectPinnedUsage(page, ["43% Weekly"]);
+      await expect(usageItem(page).getByTestId("sidebar-usage-error")).toHaveCount(0);
+      await expect(usageItem(page)).not.toHaveAccessibleName(/Unable to refresh usage/);
       await advanceUsageClock(page, 60_000);
       await expect(page.getByText("42% used", { exact: true })).toHaveCount(0);
       await expectLoginUsageFreshness(page, "Updated 2m ago", compact);
