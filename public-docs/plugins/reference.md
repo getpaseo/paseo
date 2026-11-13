@@ -854,6 +854,60 @@ function hideAlerts() {
 }
 ```
 
+### Workspace row badge items
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` adds an item to the line under each workspace
+title in the sidebar, after the row's own items (host, pull request, checks, services, labels).
+`title` and `icon` label the item's toggle in the sidebar's **Show** menu, in a separate plugin group
+below a separator. Items start visible.
+
+`Component` renders once per workspace row on the plugin's host and receives
+`PluginWorkspaceRowBadgeItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render
+`WorkspaceRowBadge` from `@getpaseo/plugin/client/ui`, or `null` when there is nothing to say about
+the workspace:
+
+| Prop                 | Meaning                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `icon`               | Optional. Any [icon](#icons) form, drawn at the line's glyph size.             |
+| `label`              | Optional. A short word. A badge with neither `icon` nor `label` draws nothing. |
+| `tone`               | `"muted"` (default), `"success"`, `"warning"`, `"danger"`, or `"info"`.        |
+| `accessibilityLabel` | Defaults to `label`, then the item's `title`.                                  |
+
+The line adds no separator around your badges, and returning `null` leaves no gap. Render as many
+badges as you like. Every row
+renders the component, so share one query across rows instead of fetching per workspace: the
+plugin's React Query client is shared by all of its components on a host.
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+Apps older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
+
+See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
+
 ## Host UI
 
 Import Paseo-owned UI from `@getpaseo/plugin/client/ui` in client code. This example

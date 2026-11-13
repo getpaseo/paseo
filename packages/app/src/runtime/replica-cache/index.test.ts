@@ -354,6 +354,21 @@ describe("ReplicaCache", () => {
     );
   });
 
+  it("preserves where the workspace's forge is on the web across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const forgeWeb = { host: "github.com", referenceRepository: "main-owner/repo" };
+    const workspace = normalizeWorkspaceDescriptor({ ...workspacePayload(), forgeWeb });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.get(workspace.id)?.forgeWeb).toEqual(forgeWeb);
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

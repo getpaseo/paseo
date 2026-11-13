@@ -260,6 +260,38 @@ const DISCUSSIONS = [
   },
 ];
 
+describe("createGitLabService getReferenceRepository", () => {
+  it("names the project a fork was forked from, asking about the origin project explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          path_with_namespace: "example-group/example-project",
+          forked_from_project: { path_with_namespace: "upstream-group/sub/example-project" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-group/sub/example-project",
+    );
+    expect(calls).toEqual([["api", "projects/example-group%2Fexample-project"]]);
+  });
+
+  it("rejects when glab api answers with an error body", async () => {
+    const { service } = makeService(() => ok(JSON.stringify({ message: "404 Project Not Found" })));
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a project that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ path_with_namespace: "example-group/example-project" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGitLabService", () => {
   it("maps a glab merge request view to the neutral current PR status", async () => {
     const { service, calls } = makeService((args) =>

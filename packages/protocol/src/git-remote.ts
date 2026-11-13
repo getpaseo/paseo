@@ -108,6 +108,26 @@ export function normalizeHost(host: string): string {
   return host.trim().replace(/\.+$/u, "").toLowerCase();
 }
 
+/** Whether `host` is one of the forge's public cloud hosts, SSH aliases included. */
+export function isForgeCloudHost(forge: string, host: string): boolean {
+  const cloudHosts = (getForgeDefinition(forge)?.cloudHosts ?? []).map(normalizeHost);
+  return cloudHosts.includes(normalizeHost(host));
+}
+
+/**
+ * Web host for a remote host of `forge`. A cloud SSH alias (a non-first entry
+ * in the forge's `cloudHosts`, e.g. ssh.github.com) maps to the forge's web
+ * host (`cloudHosts[0]`); any other host, self-hosted included, is returned
+ * as is.
+ */
+export function forgeWebHost(forge: string, host: string): string {
+  const normalized = normalizeHost(host);
+  if (!isForgeCloudHost(forge, normalized)) {
+    return normalized;
+  }
+  return normalizeHost(getForgeDefinition(forge)?.cloudHosts?.[0] ?? normalized);
+}
+
 function normalizeRemotePath(path: string): string | null {
   let normalized = path.trim().replace(/^\/+|\/+$/gu, "");
   if (normalized.endsWith(".git")) normalized = normalized.slice(0, -4);
