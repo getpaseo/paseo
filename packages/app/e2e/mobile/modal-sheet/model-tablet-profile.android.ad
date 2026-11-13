@@ -1,0 +1,22 @@
+# Connected host with MODEL_LABEL selected and no agent profiles, 1600x2560 at density 320. See README.md.
+# FORM_URL=paseo://new?serverId=<serverId>; PROFILE_MODEL_ID is another catalog model with no profile.
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+env PROVIDER_ID=codex
+
+open "${APP_ID}" "${FORM_URL}"
+wait "label=\"Workspace project\"" 20000
+press "id=\"combined-model-selector\""
+wait "id=\"combobox-desktop-container\"" 10000
+# A remembered model opens its provider's list. Return to the provider page first.
+press "label=\"Back\""
+wait "id=\"model-provider-${PROVIDER_ID}\"" 10000
+press "id=\"model-provider-${PROVIDER_ID}\""
+wait "id=\"compact-model-list\"" 3000
+# The row's profile action sits inside Android's independent scroll viewport.
+press "id=\"model-create-profile-${PROVIDER_ID}-${PROFILE_MODEL_ID}\""
+wait "text=\"Add agent profile\"" 5000
+# Closing the form keeps the remembered model: the tap did not also select the row.
+back
+wait "id=\"combined-model-selector\" label=\"Select model (${MODEL_LABEL})\"" 3000
+close

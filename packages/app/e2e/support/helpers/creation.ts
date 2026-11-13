@@ -142,6 +142,8 @@ export async function createCreationScenario(page: Page) {
   const requests = await observeCreationRequests(page);
   const project = await seedWorkspace({ repoPrefix: "creation-idempotency-" });
   let workspaceId = project.workspaceId;
+  // Workspaces the scenario opens itself to evict the deck; they are not creations under test.
+  const evictionWorkspaceIds = new Set<string>();
   return {
     cleanup: project.cleanup,
     async openWorkspaceForm(isolation: "local" | "worktree") {
@@ -232,7 +234,9 @@ export async function createCreationScenario(page: Page) {
       await requests.settled();
       const workspaces = (await project.client.fetchWorkspaces()).entries.filter(
         (workspace) =>
-          workspace.projectId === project.projectId && workspace.id !== project.workspaceId,
+          workspace.projectId === project.projectId &&
+          workspace.id !== project.workspaceId &&
+          !evictionWorkspaceIds.has(workspace.id),
       );
       expect(workspaces).toHaveLength(1);
       workspaceId = workspaces[0]!.id;
@@ -276,6 +280,7 @@ export async function createCreationScenario(page: Page) {
           source: { kind: "directory", path: project.repoPath },
         });
         if (!result.workspace) throw new Error(result.error ?? "Failed to seed eviction workspace");
+        evictionWorkspaceIds.add(result.workspace.id);
         await switchWorkspaceViaSidebar({
           page,
           serverId: getServerId(),
