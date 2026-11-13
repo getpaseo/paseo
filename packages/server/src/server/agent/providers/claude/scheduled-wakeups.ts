@@ -1,16 +1,27 @@
-import { computeNextRunAt } from "../../../schedule/cron.js";
+import { computeNextRunAt, listCronRuns } from "../../../schedule/cron.js";
 
 const MINUTE_MS = 60_000;
 /** Claude clamps ScheduleWakeup delays to this range. */
 const MIN_WAKEUP_DELAY_S = 60;
 const MAX_WAKEUP_DELAY_S = 3600;
 /**
- * Claude moves every run of a recurring job by the same per-job jitter, early or late: a `*\/5`
- * job ran 26 s before its slots, a `*\/2` job 56 s after them. Never more than this.
+ * How far Claude moves a cron run from its slot. Its scheduled-tasks docs: a recurring run starts
+ * late by up to half its period and at most 30 minutes, a one-shot due at :00 or :30 up to 90 s
+ * early. Runs of one job kept the same jitter, early or late: a `*\/5` job ran 26 s before its
+ * slots, a `*\/2` job 56 s after them.
  */
-const MAX_CRON_JITTER_MS = 15 * MINUTE_MS;
-/** Session crons expire seven days after creation. */
+const MAX_CRON_JITTER_MS = 30 * MINUTE_MS;
+/**
+ * Claude deletes a recurring session cron after its first run once the job is seven days old. It
+ * removes nothing before a run.
+ */
 const CRON_LIFETIME_MS = 7 * 24 * 60 * MINUTE_MS;
+/**
+ * Claude runs a due wake as soon as it is idle, so one still unfired this long after its time is
+ * gone: for example a job that a subagent deleted, since subagent calls are not followed here.
+ * It no longer keeps the process alive or shows.
+ */
+const LOST_AFTER_MS = MAX_CRON_JITTER_MS;
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -22,10 +33,12 @@ type PendingCall =
 interface CronWake {
   expression: string;
   recurring: boolean;
+  createdAt: number;
   dueAt: number;
   /** Claude's per-job jitter (negative when early), so later runs land where Claude fires them. */
   offsetMs: number;
-  expiresAt: number;
+  /** The last fire may have been another job's, so the next one does not measure the jitter. */
+  unsure: boolean;
 }
 
 /**
@@ -52,7 +65,7 @@ export class ClaudeScheduledWakeups {
   }
 
   hasPending(): boolean {
-    return this.loopDueAt !== null || this.crons.size > 0;
+    return this.pendingTimes().length > 0;
   }
 
   /** Returns the earliest wake time when it changes; `null` means nothing is scheduled. */
@@ -132,9 +145,10 @@ export class ClaudeScheduledWakeups {
     this.crons.set(id, {
       expression: call.expression,
       recurring: call.recurring,
+      createdAt: now,
       dueAt,
       offsetMs: this.jitter(call.expression, dueAt) ?? 0,
-      expiresAt: now + CRON_LIFETIME_MS,
+      unsure: false,
     });
   }
 
@@ -145,27 +159,43 @@ export class ClaudeScheduledWakeups {
     }
     if (source !== "schedule_wakeup") return;
     // The frame does not name the job; the earliest one is the one that came due.
-    const [id, cron] =
-      [...this.crons].sort((left, right) => left[1].dueAt - right[1].dueAt)[0] ?? [];
-    if (!id || !cron) return;
-    // The fire shows the jitter to the second. An early fire precedes its own slot, so the next
-    // run is counted from that slot rather than from now.
+    const [first, ...others] = [...this.crons].sort(
+      (left, right) => left[1].dueAt - right[1].dueAt,
+    );
+    if (!first) return;
+    const [id, cron] = first;
+    // Claude's "Next run" is rounded to the minute, so jobs due within a minute of each other cannot
+    // be told apart by their fires: this one may be another's. It still advances the earliest job
+    // but measures nothing, and neither does the next fire of the others.
+    const twins = others.filter(([, other]) => other.dueAt - cron.dueAt < MINUTE_MS);
+    for (const [twinId, twin] of twins) this.crons.set(twinId, { ...twin, unsure: true });
     const firedAt = this.now();
-    const offsetMs = this.jitter(cron.expression, firedAt) ?? cron.offsetMs;
-    const nominal = cron.recurring ? this.nextRun(cron.expression, firedAt - offsetMs) : null;
-    const dueAt = nominal === null ? null : nominal + offsetMs;
-    if (dueAt === null || dueAt > cron.expiresAt) this.crons.delete(id);
-    else this.crons.set(id, { ...cron, dueAt, offsetMs });
+    if (!cron.recurring || firedAt - cron.createdAt >= CRON_LIFETIME_MS) {
+      this.crons.delete(id);
+      return;
+    }
+    // A fire within a minute of the expected time shows the job's jitter to the second. A later one
+    // waited for a busy turn to end, so it shows none.
+    const measurable =
+      Math.abs(firedAt - cron.dueAt) < MINUTE_MS && twins.length === 0 && !cron.unsure;
+    const offsetMs = (measurable ? this.jitter(cron.expression, firedAt) : null) ?? cron.offsetMs;
+    // An early fire precedes the slot it was due for, and a late one may follow several slots: the
+    // next run comes after both.
+    const slot = Math.max(cron.dueAt - cron.offsetMs, firedAt - offsetMs);
+    const nominal = this.nextRun(cron.expression, slot);
+    if (nominal === null) this.crons.delete(id);
+    else this.crons.set(id, { ...cron, dueAt: nominal + offsetMs, offsetMs, unsure: false });
   }
 
   /** How far `time` is from the expression's nearest slot, or null when no slot is close. */
   private jitter(expression: string, time: number): number | null {
     let nearest: number | null = null;
-    let run = this.nextRun(expression, time - MAX_CRON_JITTER_MS);
-    while (run !== null && run <= time + MAX_CRON_JITTER_MS) {
-      if (nearest === null || Math.abs(run - time) < Math.abs(nearest - time)) nearest = run;
-      if (run >= time) break;
-      run = this.nextRun(expression, run);
+    for (const slot of this.slots(
+      expression,
+      time - MAX_CRON_JITTER_MS,
+      time + MAX_CRON_JITTER_MS,
+    )) {
+      if (nearest === null || Math.abs(slot - time) < Math.abs(nearest - time)) nearest = slot;
     }
     return nearest === null ? null : time - nearest;
   }
@@ -174,18 +204,37 @@ export class ClaudeScheduledWakeups {
     // The expression is whatever Claude was asked to schedule; computeNextRunAt throws when it does
     // not parse or has no run within a year. Then there is no time to show.
     try {
-      return computeNextRunAt(
-        { type: "cron", expression, timezone: this.timeZone },
-        new Date(after),
-      ).getTime();
+      return computeNextRunAt(this.cadence(expression), new Date(after)).getTime();
     } catch {
       return null;
     }
   }
 
-  private earliest(): string | null {
+  private slots(expression: string, from: number, to: number): number[] {
+    // As in nextRun, the expression may not parse.
+    try {
+      return listCronRuns(this.cadence(expression), new Date(from), new Date(to)).map((run) =>
+        run.getTime(),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  private cadence(expression: string) {
+    return { type: "cron" as const, expression, timezone: this.timeZone };
+  }
+
+  /** Due times of the wakes Claude still holds. See LOST_AFTER_MS. */
+  private pendingTimes(): number[] {
     const times = [...this.crons.values()].map((cron) => cron.dueAt);
     if (this.loopDueAt !== null) times.push(this.loopDueAt);
+    const lostBefore = this.now() - LOST_AFTER_MS;
+    return times.filter((time) => time >= lostBefore);
+  }
+
+  private earliest(): string | null {
+    const times = this.pendingTimes();
     return times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
   }
 }
@@ -212,10 +261,20 @@ function parseNextRun(text: string, now: number, timeZone: string): number | nul
   const year = new Date(now).getUTCFullYear();
   for (const candidate of [year - 1, year, year + 1]) {
     const wall = Date.UTC(candidate, month, Number(match[2]), hour, Number(match[4]));
-    const time = wall - zoneOffset(wall, timeZone);
-    if (time >= now - MINUTE_MS) return time;
+    const time = zonedInstant(wall, timeZone);
+    if (time !== null && time >= now - MINUTE_MS) return time;
   }
   return null;
+}
+
+/** The instant a wall-clock time (given as if it were UTC) names in the zone, or null if none. */
+function zonedInstant(wall: number, timeZone: string): number | null {
+  // The offset depends on the instant being solved for. The offset at the wall time read as UTC is
+  // a first guess, which is off by the change when a daylight-saving switch lies in between.
+  const guess = wall - zoneOffset(wall, timeZone);
+  const time = wall - zoneOffset(guess, timeZone);
+  // A wall time that a switch skips maps back to another one.
+  return time + zoneOffset(time, timeZone) === wall ? time : null;
 }
 
 /** Milliseconds the zone's wall clock is ahead of UTC around `instant`. */
