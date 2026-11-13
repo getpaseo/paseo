@@ -427,6 +427,123 @@ export default function contribute(client: PluginClientContext) {
 The same renderer can display items emitted by a provider, a client timeline transformer, or a
 daemon timeline append. A renderer does not require a provider implementation.
 
+## Report installation and updates
+
+Add `installation` to your registration and the provider's settings show an **Installation**
+section. Users see whether your CLI is installed and which version, whether an update is
+available, and an **Update** button that runs your updater and shows its output. Every member is
+optional, so declare only what your CLI supports:
+
+| Member            | Users see                                                               | Declare it when                                        |
+| ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| `installUrl`      | **Install instructions**, and **Install** while not installed           | Users install a CLI                                    |
+| `updateUrl`       | **Update instructions**                                                 | Your docs say how to update                            |
+| `inspect`         | **Version**, or **Not installed**                                       | The CLI reports its version                            |
+| `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
+| `update`          | **Update** while an update is available, then the updater's output      | The CLI updates itself with a command                  |
+
+This `example-agent` prints its version, checks for a release with
+`self-update --check --json`, and updates with `self-update`:
+
+```ts
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import type {
+  ProviderInstallation,
+  ProviderInstallationLaunch,
+} from "@getpaseo/plugin/server/provider";
+
+async function run(launch: ProviderInstallationLaunch, args: string[], signal: AbortSignal) {
+  const { stdout } = await execCommand(launch.command, [...launch.args, ...args], {
+    env: launch.env,
+    timeout: 20_000,
+    signal,
+  });
+  return stdout.trim();
+}
+
+export const installation: ProviderInstallation = {
+  installUrl: "https://example.com/docs/install",
+  updateUrl: "https://example.com/docs/update",
+
+  async inspect({ launch, signal }) {
+    if (!launch?.resolved) return { status: "not_installed" };
+    // `example-agent --version` prints `1.4.2`.
+    return { status: "installed", version: await run(launch, ["--version"], signal) };
+  },
+
+  async checkForUpdates({ launch, signal }) {
+    if (!launch?.resolved) return { status: "unknown", message: "example-agent is not installed" };
+    // Asks the release source `example-agent self-update` installs from.
+    const answer = JSON.parse(await run(launch, ["self-update", "--check", "--json"], signal)) as {
+      latest: string;
+      updateAvailable: boolean;
+    };
+    return answer.updateAvailable
+      ? { status: "available", versions: [answer.latest] }
+      : { status: "current" };
+  },
+
+  async update({ launch, signal, report }) {
+    if (!launch?.resolved) return { status: "failed", message: "example-agent is not installed" };
+    const child = spawnProcess(launch.command, [...launch.args, "self-update"], {
+      env: launch.env,
+      stdio: "pipe",
+    });
+    child.stdin.end();
+    child.stdout.on("data", (chunk: Buffer) => report({ type: "stdout", text: chunk.toString() }));
+    child.stderr.on("data", (chunk: Buffer) => report({ type: "stderr", text: chunk.toString() }));
+    const stop = () => void terminateProcess(child);
+    signal.addEventListener("abort", stop, { once: true });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => signal.removeEventListener("abort", stop));
+    if (code !== 0) return { status: "failed", message: `self-update exited with code ${code}` };
+    return { status: "succeeded", message: "New sessions use the new version." };
+  },
+};
+```
+
+Add it to the registration next to `command`:
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    installation,
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+Each callback receives the launch a session would use. When `launch.resolved` is `false`, Paseo did
+not find the executable and `command` is the configured name, so report `not_installed` without
+running it. `launch` is absent when the registration declares no `command`. For an ACP provider,
+spread `runAcpProvider()` into the registration and add `installation` beside it. Run version and
+update probes with the launch's arguments before your session subcommand, such as `hoplite
+--version` for a provider that runs `hoplite acp`.
+
+Paseo treats versions as text. It shows `version` and `versions` as written and never compares
+them, so your check decides what counts as newer. Ask the source your CLI's own updater asks, and
+leave `checkForUpdates` out when you cannot. A check that returns `unknown`, throws, or misses its
+deadline shows **Couldn't check for updates** with your message and never shows **Up to date**.
+
+`update` runs only when a user selects **Update**, and Paseo runs one update per provider at a
+time. Pass the updater's output to `report` unchanged; Paseo keeps the last 65,536 characters. Paseo adds no
+verification of its own, so the update does what your command does in a terminal. Return
+`succeeded` with a message that says when the new version takes effect, or `failed` with the reason.
+Without `update`, an available update shows **Update instructions** when you declare `updateUrl`.
+
+Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It calls
+`checkForUpdates` after `inspect` reports the CLI installed and keeps a `current` or `available`
+answer for an hour. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
+`update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
+See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
+
 ## Adapt an ACP agent
 
 Use the ACP shim when the agent already speaks ACP:
