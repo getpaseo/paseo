@@ -313,8 +313,8 @@ test("rejects a pending turn if its generation exits during MCP setup", async ()
     const turn = session.startTurn("pending during exit");
     await eventually(() => expect(upstream.mcpRequests()).toBe(1));
     processes[0]?.exit();
-    // Let the process-exit event reach the session before releasing the held MCP response.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The exit handler resolves processExit before the held MCP response can complete on the
+    // event loop, so the session observes server-exited before startTurn resumes.
     releaseMcp();
 
     await expect(turn).rejects.toThrow("before the turn was dispatched");
