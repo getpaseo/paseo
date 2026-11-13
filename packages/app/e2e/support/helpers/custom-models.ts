@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
 import { openSettingsHostSection } from "./settings";
 import { getServerId } from "./server-id";
@@ -25,23 +25,28 @@ export async function addCustomModel(page: Page, id: string): Promise<void> {
 }
 
 export async function removeCustomModel(page: Page, id: string): Promise<void> {
-  await page.getByRole("textbox", { name: "Search models" }).fill(id);
+  await searchModels(page, id);
   const remove = page.getByRole("button", { name: `Remove ${id}`, exact: true });
-  await expectFullyVisible(remove);
+  await expect(remove).toBeInViewport({ ratio: 1 });
   await remove.click();
   await expect(remove).toHaveCount(0);
 }
 
 export async function expectCustomModelRetained(page: Page, id: string): Promise<void> {
-  await page.getByRole("textbox", { name: "Search models" }).fill(id);
-  await expectFullyVisible(page.getByRole("button", { name: `Remove ${id}`, exact: true }));
+  await searchModels(page, id);
+  await expect(page.getByRole("button", { name: `Remove ${id}`, exact: true })).toBeInViewport({
+    ratio: 1,
+  });
 }
 
 /**
- * The model list scrolls under the sheet's other sections, so bring the row into view first. A
- * long model id must still leave its Remove button entirely on screen.
+ * Filters the model list and scrolls the sheet down to the custom models, since other sections push
+ * them below the fold at phone width. Only the section heading is scrolled into view: scrolling the
+ * row itself would also slide its card sideways and hide a Remove button pushed past the right edge.
  */
-async function expectFullyVisible(button: Locator): Promise<void> {
-  await button.scrollIntoViewIfNeeded();
-  await expect(button).toBeInViewport({ ratio: 1 });
+async function searchModels(page: Page, id: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Search models" }).fill(id);
+  await page
+    .getByText("Custom models", { exact: true })
+    .evaluate((heading) => heading.scrollIntoView({ block: "start" }));
 }
