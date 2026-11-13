@@ -11,21 +11,40 @@ export type LatestReleaseLookup = (input: {
   signal: AbortSignal;
 }) => Promise<string>;
 
-type ReleaseVersion = [number, number, number];
+interface ReleaseVersion {
+  /** The version as written, such as `0.200.0-alpha.1`. */
+  text: string;
+  numbers: [number, number, number];
+  /** True for a prerelease such as `-alpha.1`, which comes before the release itself. */
+  prerelease: boolean;
+}
 
 function parseReleaseVersion(value: string): ReleaseVersion | null {
-  const match = value.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  const match = value.match(/\b(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?/);
+  if (!match) return null;
+  return {
+    text: match[0],
+    numbers: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] !== undefined,
+  };
 }
 
-function isNewer(latest: ReleaseVersion, installed: ReleaseVersion): boolean {
+/** Newer, older or the same release; `null` between two prereleases of one release. */
+function compareReleases(latest: ReleaseVersion, installed: ReleaseVersion): number | null {
   for (let index = 0; index < 3; index += 1) {
-    if (latest[index] !== installed[index]) return latest[index] > installed[index];
+    const difference = latest.numbers[index] - installed.numbers[index];
+    if (difference !== 0) return difference;
   }
-  return false;
+  if (latest.prerelease && installed.prerelease) return latest.text === installed.text ? 0 : null;
+  if (installed.prerelease) return 1;
+  if (latest.prerelease) return -1;
+  return 0;
 }
 
-/** Compares `major.minor.patch` releases, the scheme Claude Code, Codex and Pi publish. */
+/**
+ * Compares `major.minor.patch` releases, the scheme Claude Code, Codex and Pi publish. A
+ * prerelease comes before the release with the same numbers.
+ */
 export function compareWithLatestRelease(input: {
   installed: string | null | undefined;
   latest: string;
@@ -34,7 +53,10 @@ export function compareWithLatestRelease(input: {
   const latest = parseReleaseVersion(input.latest);
   if (!installed) return { status: "unknown", message: "The installed version is not readable" };
   if (!latest) return { status: "unknown", message: `Unrecognized release ${input.latest}` };
-  return isNewer(latest, installed)
+  const order = compareReleases(latest, installed);
+  if (order === null)
+    return { status: "unknown", message: `Cannot compare ${installed.text} with ${latest.text}` };
+  return order > 0
     ? { status: "available", versions: [input.latest.trim()] }
     : { status: "current" };
 }
