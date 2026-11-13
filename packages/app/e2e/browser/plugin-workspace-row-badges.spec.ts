@@ -31,9 +31,9 @@ function Broken() {
 }
 
 export default function contribute(client) {
-  client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
   client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
   client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
+  client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
   return () => {};
 }
 `;

@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
@@ -15,6 +15,7 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
 import { WorkspaceRowBadgeItemFrameContext, type WorkspaceRowBadgeItemFrame } from "./frame";
+import { createRowBadgeLine, type RowBadgeLine } from "./line";
 import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
 export { WorkspaceRowBadge } from "./kit";
@@ -70,12 +71,15 @@ export function PluginWorkspaceRowBadgeItems({
   /** The row drew items of its own, so the first plugin item leads with a separator. */
   separated: boolean;
 }) {
-  return targets.map((target, index) => (
+  const [line] = useState(createRowBadgeLine);
+  return targets.map((target, position) => (
     <ThemedRowBadgeItemHost
       key={workspaceRowBadgeItemKey(target.plugin.id, target.item.id)}
       target={target}
       workspaceId={workspaceId}
-      separated={separated || index > 0}
+      leading={separated}
+      position={position}
+      line={line}
       uniProps={pluginThemeMapping}
     />
   ));
@@ -84,12 +88,16 @@ export function PluginWorkspaceRowBadgeItems({
 function RowBadgeItemHost({
   target: { plugin, item },
   workspaceId,
-  separated,
+  leading,
+  position,
+  line,
   theme,
 }: {
   target: RowBadgeItemTarget;
   workspaceId: string;
-  separated: boolean;
+  leading: boolean;
+  position: number;
+  line: RowBadgeLine;
   theme: PluginTheme;
 }) {
   const toast = useToast();
@@ -107,8 +115,14 @@ function RowBadgeItemHost({
   );
   const title = plugin.i18n.resolve(item.title, plugin.locale);
   const frame = useMemo<WorkspaceRowBadgeItemFrame>(
-    () => ({ title, testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`, separated }),
-    [item.id, plugin.id, separated, title],
+    () => ({
+      title,
+      testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`,
+      leading,
+      position,
+      line,
+    }),
+    [item.id, plugin.id, leading, position, line, title],
   );
   const props = useMemo<PluginWorkspaceRowBadgeItemProps>(
     () => ({

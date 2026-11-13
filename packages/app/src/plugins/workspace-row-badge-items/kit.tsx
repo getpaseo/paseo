@@ -1,11 +1,12 @@
 import type { WorkspaceRowBadgeProps, WorkspaceRowBadgeTone } from "@getpaseo/plugin/client/ui";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { Theme } from "@/styles/theme";
 import { parsePluginIcon, PluginIconView } from "../icons";
 import { useWorkspaceRowBadgeItemFrame } from "./frame";
+import { needsSeparator } from "./line";
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 
@@ -42,10 +43,16 @@ export function WorkspaceRowBadge({
     () => (icon === undefined ? null : parsePluginIcon("Workspace row badge", icon)),
     [icon],
   );
-  if (!parsedIcon && !label) return null;
+  const draws = Boolean(parsedIcon || label);
+  const { line, position } = frame;
+  useLayoutEffect(() => (draws ? line.markDrawn(position) : undefined), [draws, line, position]);
+  const drawn = useSyncExternalStore(line.subscribe, line.getDrawn);
+  if (!draws) return null;
   return (
     <>
-      {frame.separated ? <Text style={styles.separator}>·</Text> : null}
+      {needsSeparator({ leading: frame.leading, position, drawn }) ? (
+        <Text style={styles.separator}>·</Text>
+      ) : null}
       <View
         style={styles.item}
         accessibilityLabel={accessibilityLabel ?? label ?? frame.title}
