@@ -99,20 +99,33 @@ export function useProviderInstallation(input: {
   useEffect(() => {
     if (!enabled || !client) return;
     const subscription = client.observeProviderUpdates(provider);
+    // The update this view saw running. Its success arrives as live progress, or as the snapshot
+    // a reconnect delivers when the progress was missed; either way the host dropped its cached
+    // answers, so read the new version and update state.
+    let runningId: string | null = null;
+    const follow = (operation: ProviderInstallationUpdate["operation"] | undefined) => {
+      if (!operation) return;
+      if (operation.status === "running") {
+        runningId = operation.id;
+        return;
+      }
+      if (operation.id !== runningId) return;
+      runningId = null;
+      if (operation.status !== "succeeded") return;
+      void queryClient.invalidateQueries({
+        queryKey: ["provider-installation", serverId, provider],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["provider-updates", serverId, provider] });
+    };
     const detach = subscription.subscribe({
-      snapshot: (response) => setCurrentUpdate(response.update),
+      snapshot: (response) => {
+        setCurrentUpdate(response.update);
+        follow(response.update?.operation);
+      },
       update: (message) => {
         if (message.type !== "provider.installation.update.progress") return;
         setCurrentUpdate((current) => applyProviderUpdateProgress(current, message.payload));
-        // The host dropped its cached answers; read the new version and update state.
-        if (message.payload.operation.status === "succeeded") {
-          void queryClient.invalidateQueries({
-            queryKey: ["provider-installation", serverId, provider],
-          });
-          void queryClient.invalidateQueries({
-            queryKey: ["provider-updates", serverId, provider],
-          });
-        }
+        follow(message.payload.operation);
       },
       error: (failure) => console.warn("Failed to observe provider updates", failure),
     });
