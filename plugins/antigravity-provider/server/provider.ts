@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import { getCatalog, getStatus } from "./internal/catalog.js";
 import { Session } from "./internal/session.js";
+import { CredentialMonitor } from "./internal/credentials.js";
 import { AntigravityError } from "./internal/wire.js";
 import type { Usage } from "./usage.js";
 
@@ -25,7 +26,10 @@ const capabilities = [
   "permission",
 ] as const;
 
-export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
+export function createAntigravityProvider(
+  usage?: Usage,
+  credentials = new CredentialMonitor(),
+): ProviderRegistration {
   return {
     id: "antigravity",
     label: "Antigravity",
@@ -44,8 +48,9 @@ export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
     async getCatalogCacheKey({ launch }) {
       if (!launch) return undefined;
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
+      const credential = await credentials.read(launch.env);
       return createHash("sha256")
-        .update(JSON.stringify([launch.command, launch.args, env]))
+        .update(JSON.stringify([launch.command, launch.args, env, credential]))
         .digest("hex");
     },
     async connect(request) {
@@ -61,7 +66,7 @@ export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
         );
       usage?.rememberLaunch(request.launch);
       const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
-      return createConnection(request.launch, negotiated, usage);
+      return createConnection(request.launch, negotiated, credentials, usage);
     },
   };
 }
@@ -69,6 +74,7 @@ export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
 function createConnection(
   launch: ProviderLaunch,
   negotiated: readonly string[],
+  credentials: CredentialMonitor,
   usage?: Usage,
 ): ProviderConnection {
   const sessions = new Map<string, Session>();
@@ -78,6 +84,7 @@ function createConnection(
   const listeners = new Set<(event: ProviderEvent) => void>();
   let discovered: ProviderCatalog | null = null;
   let catalogPromise: Promise<ProviderCatalog> | null = null;
+  let catalogStale = false;
   let closed = false;
 
   function emit(event: ProviderEvent): void {
@@ -90,10 +97,11 @@ function createConnection(
     return discovered;
   }
   async function ensureCatalog(cwd?: string, forceRefresh = false): Promise<ProviderCatalog> {
-    if (!forceRefresh && discovered !== null) return discovered;
+    if (!forceRefresh && !catalogStale && discovered !== null) return discovered;
     if (!forceRefresh && catalogPromise) return catalogPromise;
     const request = getCatalog(launch, cwd).then((next) => {
       discovered = next;
+      catalogStale = false;
       return next;
     });
     catalogPromise = request;
@@ -121,16 +129,34 @@ function createConnection(
     await ensureCatalog(input.config.cwd);
     if (sessions.has(input.sessionId))
       throw new AntigravityError(`Session already exists: ${input.sessionId}`, "DUPLICATE_SESSION");
-    const opened = new Session({
-      id: input.sessionId,
-      config: input.config,
-      persistence: input.persistence,
-      history: input.history,
-      catalog,
-      launch,
-      emit,
-      usage,
+    let opened: Session;
+    const credentialWatch = credentials.watch({ ...launch.env, ...input.config.env }, (state) => {
+      // Stop the observed old owner immediately, even while open/configure is awaiting an RPC.
+      // Only starting the replacement belongs in the session lane; a later read cannot undo this change.
+      const retirement = opened.invalidateCredentials(state);
+      void retirement.catch(() => {});
+      enqueueSessionTask(input.sessionId, async () => {
+        await retirement;
+      });
+      catalogStale = true;
     });
+    try {
+      opened = new Session({
+        id: input.sessionId,
+        config: input.config,
+        persistence: input.persistence,
+        history: input.history,
+        catalog,
+        launch,
+        emit,
+        usage,
+        credentials: credentialWatch,
+        refreshCatalog: () => ensureCatalog(input.config.cwd),
+      });
+    } catch (error) {
+      credentialWatch.dispose();
+      throw error;
+    }
     sessions.set(input.sessionId, opened);
     try {
       await opened.open(input.requestId, negotiated);
@@ -160,9 +186,11 @@ function createConnection(
       case "session.open":
         await openSession(input);
         return;
-      case "session.prompt":
-        await (await resolveSession(input.sessionId, false)).prompt(input.prompt);
+      case "session.prompt": {
+        const target = await resolveSession(input.sessionId, false);
+        await target.prompt(input.prompt);
         return;
+      }
       case "session.permission":
         (await resolveSession(input.sessionId)).respondToPermission(
           input.permissionId,
@@ -209,6 +237,32 @@ function createConnection(
     void task.finally(() => {
       inFlight.delete(task);
     });
+  }
+  function enqueueSessionTask(id: string, action: () => Promise<void>): void {
+    const previous = sessionQueues.get(id) ?? Promise.resolve();
+    const next = previous
+      .then(async () => {
+        if (!closed) await action();
+        return undefined;
+      })
+      .catch(() => {
+        if (!closed)
+          emit({
+            type: "session.runtime_failed",
+            sessionId: id,
+            error: {
+              code: "CREDENTIAL_SYNC_FAILED",
+              message:
+                "Could not reload Antigravity after an account change. Reload the agent to retry.",
+            },
+          });
+      });
+    sessionQueues.set(id, next);
+    trackTask(
+      next.finally(() => {
+        if (sessionQueues.get(id) === next) sessionQueues.delete(id);
+      }),
+    );
   }
   function scheduleInput(input: ProviderInput): void {
     const serializedForSession =

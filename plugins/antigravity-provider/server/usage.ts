@@ -108,6 +108,10 @@ export class Usage {
     }
   }
 
+  forgetTier(locatorId: string): void {
+    this.tiers.delete(locatorId);
+  }
+
   registration(): UsageSourceRegistration {
     return {
       id: "antigravity",

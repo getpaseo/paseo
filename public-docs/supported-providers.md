@@ -33,6 +33,13 @@ Interactive `ask_question` prompts are surfaced as question cards in Paseo.
 
 This integration uses your installed CLI and sign-in. It is not endorsed by Google.
 
+Switch accounts in `agy`; Paseo checks the shared sign-in store once a second and again before
+starting a turn. It stops old-account runtimes and loads the same conversation with the current
+credentials on your next message. An account switch interrupts an active turn or background work;
+send the message again after signing in. Ordinary token renewal keeps the runtime running.
+Local Linux keyring monitoring requires `python3` with the `dbus` module (`python3-dbus` on
+Debian/Ubuntu). SSH and file-backed sign-ins use the CLI's credential file instead.
+
 Mid-turn steering is unavailable. Configured MCP servers and system prompts are forwarded to the
 ACP session, and attached images are passed as file references for the agent to read. Paseo also
 surfaces Antigravity account quota windows and AI Credits in the usage panel, streams native

@@ -27,6 +27,7 @@ import {
   resolveConversationTranscriptPath,
 } from "./data-dir.js";
 import { DriverProcess } from "./process.js";
+import type { CredentialState, CredentialWatch } from "./credentials.js";
 import { PromptFiles } from "./prompt.js";
 import { SubagentManager } from "./subagents.js";
 import {
@@ -166,6 +167,8 @@ export class Session {
   private readonly autonomousToolStallTimeoutMs: number;
 
   private driver: DriverProcess | null = null;
+  private driverCredential: CredentialState | null = null;
+  private driverRetirement: Promise<void> | null = null;
   private driverInitPromise: Promise<DriverProcess> | null = null;
   private startingPrompt: PendingPromptStart | null = null;
   private rootTranscriptReader: JsonlTranscriptReader | null = null;
@@ -209,6 +212,8 @@ export class Session {
       launch: ProviderLaunch;
       emit: (event: ProviderEvent) => void;
       usage?: Usage;
+      credentials: CredentialWatch;
+      refreshCatalog: () => Promise<ProviderCatalog>;
     },
   ) {
     this.id = options.id;
@@ -652,6 +657,7 @@ export class Session {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.options.credentials.dispose();
     this.stopRootMonitor();
     this.clearPostTurnCatchupState();
     if (this.startingPrompt) {
@@ -817,7 +823,51 @@ export class Session {
     return true;
   }
 
+  async syncCredentials(): Promise<CredentialState> {
+    const current = await this.options.credentials.read();
+    await this.invalidateCredentials(current);
+    await this.driverRetirement;
+    return current;
+  }
+
+  async invalidateCredentials(current: CredentialState): Promise<void> {
+    if (this.closed || current.status === "unavailable" || !this.driver) return;
+    if (this.driverCredential?.status === "unavailable" && current.status === "available") {
+      this.driverCredential = current;
+      return;
+    }
+    if (JSON.stringify(current) === JSON.stringify(this.driverCredential)) return;
+
+    const failure = new AntigravityError(
+      "Antigravity account changed. The old runtime was stopped; send your message again to continue with the current account.",
+      "ACCOUNT_CHANGED",
+    );
+    if (this.conversationId)
+      this.driver.notify("session/cancel", { sessionId: this.conversationId });
+    if (this.turn) this.handleForegroundTurnFailure(this.turn, failure);
+    if (this.autonomousTurn) this.settleAutonomousTurn("failed", toProviderError(failure));
+    else if (this.activeBackgroundTasks.size > 0 || this.subagents.hasRunning()) {
+      this.options.emit({
+        type: "session.runtime_failed",
+        sessionId: this.id,
+        error: toProviderError(failure),
+      });
+    }
+    this.cancelAllPermissions();
+    this.options.usage?.forgetTier(this.locatorId);
+    await this.retireDriver();
+  }
+
   private async ensureDriver(): Promise<DriverProcess> {
+    await this.driverRetirement;
+    const credential = await this.syncCredentials();
+    if (credential.status === "signed-out") {
+      throw new AntigravityError(
+        "Antigravity is signed out. Run `agy` and sign in, then retry.",
+        "AUTH_REQUIRED",
+      );
+    }
+    await this.options.refreshCatalog();
     if (this.driverInitPromise) {
       const warmed = await this.driverInitPromise;
       if (
@@ -843,7 +893,7 @@ export class Session {
       return this.driver;
     }
 
-    const initTask = this.startFreshDriver();
+    const initTask = this.startFreshDriver(credential);
     this.driverInitPromise = initTask;
     try {
       return await initTask;
@@ -854,9 +904,10 @@ export class Session {
     }
   }
 
-  private async startFreshDriver(): Promise<DriverProcess> {
+  private async startFreshDriver(credential: CredentialState): Promise<DriverProcess> {
     const driver = this.spawnDriver();
     this.driver = driver;
+    this.driverCredential = credential;
 
     try {
       await this.initializeAcpSession(driver);
@@ -2355,6 +2406,7 @@ export class Session {
   }
 
   private async retireDriver(): Promise<void> {
+    if (this.driverRetirement) await this.driverRetirement;
     this.stopRootMonitor();
     this.driverHasStartedPrompt = false;
     this.clearPostTurnCatchupState();
@@ -2363,7 +2415,12 @@ export class Session {
     this.subagents.settleAllRunning("canceled");
     const driver = this.driver;
     this.driver = null;
-    if (driver) await driver.stop();
+    this.driverCredential = null;
+    if (!driver) return;
+    const retirement = driver.stop();
+    this.driverRetirement = retirement;
+    await retirement;
+    if (this.driverRetirement === retirement) this.driverRetirement = null;
   }
 }
 

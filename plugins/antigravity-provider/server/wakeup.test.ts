@@ -15,6 +15,7 @@ import {
 import { createAntigravityProvider } from "./provider.js";
 import { JsonlTranscriptReader } from "./internal/transcript.js";
 import { Usage } from "./usage.js";
+import { CredentialMonitor, readCredentialFile } from "./internal/credentials.js";
 
 const fakeAgy = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
 const LIVE_SUBAGENT_C1 = "11111111-2222-4333-8444-555555555555";
@@ -40,8 +41,15 @@ async function setupHarness(env: Record<string, string> = {}) {
   const dataDir = path.join(cwd, "agy-data");
   const logFile = path.join(cwd, "agy-log.ndjson");
   await mkdir(dataDir, { recursive: true });
+  await writeFile(
+    path.join(dataDir, "antigravity-oauth-token"),
+    JSON.stringify({ id_token_email: "fixture@example.com", token: { refresh_token: "fixture" } }),
+  );
   const usage = new Usage();
-  const provider = createAntigravityProvider(usage);
+  const provider = createAntigravityProvider(
+    usage,
+    new CredentialMonitor({ read: readCredentialFile }),
+  );
 
   const launch: ProviderLaunch = {
     command: process.execPath,

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,11 +15,13 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import { signalPlan } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
+import { CredentialMonitor, readCredentialFile } from "./internal/credentials.js";
 
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
 const fake = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
-const provider = createAntigravityProvider();
+const credentials = new CredentialMonitor({ read: readCredentialFile, intervalMs: 20 });
+const provider = createAntigravityProvider(undefined, credentials);
 
 it("publishes a monochrome, theme-aware provider icon", async () => {
   const icon = await readFile(new URL("../icon.svg", import.meta.url), "utf8");
@@ -44,6 +46,16 @@ async function harness(env: Record<string, string> = {}) {
   temporary.push(cwd);
   const log = path.join(cwd, "argv.ndjson");
   const dataDir = path.join(cwd, "agy-data");
+  await mkdir(dataDir);
+  const credentialPath = path.join(dataDir, "antigravity-oauth-token");
+  await writeFile(
+    credentialPath,
+    JSON.stringify({
+      auth_method: "consumer",
+      id_token_email: "first@example.com",
+      token: { refresh_token: "first-fixture" },
+    }),
+  );
   const launch: ProviderLaunch = {
     command: process.execPath,
     args: [fake, "--launch-prefix"],
@@ -221,6 +233,7 @@ async function harness(env: Record<string, string> = {}) {
     )?.config.mode;
   }
   return {
+    credentialPath,
     connection,
     events,
     launch,
@@ -246,6 +259,186 @@ async function harness(env: Record<string, string> = {}) {
     latestMode,
   };
 }
+
+it("retires an idle old-account process before its refresh can overwrite a switched login, then loads the same conversation", async () => {
+  const h = await harness({ AGY_TEST_REFRESH_DELAY_MS: "4000" });
+  await h.open();
+  const saved = h.persistence();
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      auth_method: "consumer",
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  await expect
+    .poll(async () => (await h.records()).some((r) => r.signal === "SIGTERM"), {
+      timeout: 2000,
+      interval: 10,
+    })
+    .toBe(true);
+  const next = await h.prompt("HELLO");
+  expect(await h.completed(next)).toMatchObject({ state: "completed" });
+  expect((await h.acpLaunches()).map((r) => r.credentialEmail)).toEqual([
+    "first@example.com",
+    "second@example.com",
+  ]);
+  expect(
+    (await h.records())
+      .filter((r) => r.rpc?.method === "session/load")
+      .map((r) => r.rpc.params.sessionId),
+  ).toEqual([saved.data.conversationId]);
+  expect((await h.records()).some((r) => r.credentialRefresh)).toBe(false);
+  const [old] = await h.acpLaunches();
+  expect(() => process.kill(old.pid, 0)).toThrow();
+  expect(JSON.parse(await readFile(h.credentialPath, "utf8")).id_token_email).toBe(
+    "second@example.com",
+  );
+});
+
+it("stops all idle sessions sharing a login and restores each with the new account", async () => {
+  const h = await harness();
+  await h.open();
+  await h.open(undefined, "s2");
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  await expect
+    .poll(async () => (await h.records()).filter((r) => r.signal === "SIGTERM").length, {
+      timeout: 2000,
+    })
+    .toBe(2);
+  expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+  expect(await h.completed(await h.message([{ type: "text", text: "HELLO" }], "s2"))).toMatchObject(
+    { state: "completed" },
+  );
+  expect((await h.acpLaunches()).map((r) => r.credentialEmail)).toEqual([
+    "first@example.com",
+    "first@example.com",
+    "second@example.com",
+    "second@example.com",
+  ]);
+});
+
+it("ends an active old-account turn with an actionable error and accepts the next prompt", async () => {
+  const h = await harness();
+  await h.open();
+  await h.prompt("HANG");
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  await h.wait(
+    (e) => e.type === "session.turn" && e.state === "failed" && e.error?.code === "ACCOUNT_CHANGED",
+  );
+  expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+  expect(await h.acpLaunches()).toHaveLength(2);
+});
+
+it("retires on logout without relaunching a login flow, then resumes after sign-in", async () => {
+  const h = await harness();
+  await h.open();
+  await rm(h.credentialPath);
+  await expect.poll(async () => (await h.records()).some((r) => r.signal === "SIGTERM")).toBe(true);
+  const rejected = await h.failedPrompt(await h.prompt("HELLO"));
+  expect(rejected).toMatchObject({ result: { type: "failed", error: { code: "AUTH_REQUIRED" } } });
+  expect(await h.acpLaunches()).toHaveLength(1);
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+});
+
+it("keeps the runtime through ordinary token renewal and a temporarily unreadable store", async () => {
+  const h = await harness();
+  await h.open();
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "first@example.com",
+      token: {
+        access_token: "renewed-fixture",
+        refresh_token: "rotated-fixture",
+        expiry: "2099-01-01T00:00:00Z",
+      },
+    }),
+  );
+  expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+  await writeFile(h.credentialPath, "{incomplete write");
+  expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
+  expect(await h.acpLaunches()).toHaveLength(1);
+  expect((await h.records()).some((r) => r.signal === "SIGTERM")).toBe(false);
+});
+
+it("does not acknowledge close until a retiring account's process has exited", async () => {
+  const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+  await h.open();
+  await h.prompt("HANG");
+  const [old] = await h.acpLaunches();
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  await h.wait((e) => e.type === "session.turn" && e.state === "failed");
+  await h.request({ type: "session.close", sessionId: "s", requestId: "close-during-retirement" });
+  expect(() => process.kill(old.pid, 0)).toThrow();
+});
+
+it("stops the old owner as soon as a switch is observed while configure is awaiting an RPC", async () => {
+  const h = await harness({
+    AGY_TEST_SET_MODE_DELAY_MS: "1200",
+    AGY_TEST_REFRESH_DELAY_MS: "1000",
+  });
+  await h.open();
+  const [old] = await h.acpLaunches();
+  await h.connection.send({
+    type: "session.configure",
+    requestId: "slow-configure",
+    sessionId: "s",
+    changes: { mode: "accept-edits" },
+  });
+  await expect.poll(() => h.hasRpcMethod("session/set_mode")).toBe(true);
+  await writeFile(
+    h.credentialPath,
+    JSON.stringify({
+      id_token_email: "second@example.com",
+      token: { refresh_token: "second-fixture" },
+    }),
+  );
+  await expect
+    .poll(
+      () => {
+        try {
+          process.kill(old.pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      },
+      { timeout: 800 },
+    )
+    .toBe(true);
+  await h.failedRequest("slow-configure");
+  expect(JSON.parse(await readFile(h.credentialPath, "utf8")).id_token_email).toBe(
+    "second@example.com",
+  );
+  expect((await h.records()).some((r) => r.credentialRefresh)).toBe(false);
+});
 
 it("starts via agy acp --stdio without full-access warnings, passes systemPrompt in _meta, and exposes slash commands", async () => {
   const h = await harness();

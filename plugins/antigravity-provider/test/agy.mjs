@@ -7,7 +7,31 @@ const log = process.env.AGY_TEST_LOG;
 function record(value) {
   if (log) appendFileSync(log, `${JSON.stringify(value)}\n`);
 }
-record({ args, pid: process.pid, env: process.env.AGY_SESSION_VALUE });
+
+async function delaySetMode() {
+  const delay = Number(process.env.AGY_TEST_SET_MODE_DELAY_MS || "0");
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+}
+const credentialPath = path.join(
+  process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR || "",
+  "antigravity-oauth-token",
+);
+let credentialSnapshot;
+try {
+  credentialSnapshot = readFileSync(credentialPath, "utf8");
+} catch {}
+record({
+  args,
+  pid: process.pid,
+  env: process.env.AGY_SESSION_VALUE,
+  ...(credentialSnapshot ? { credentialEmail: JSON.parse(credentialSnapshot).id_token_email } : {}),
+});
+if (args.includes("acp") && process.env.AGY_TEST_REFRESH_DELAY_MS) {
+  setTimeout(() => {
+    writeFileSync(credentialPath, credentialSnapshot);
+    record({ credentialRefresh: true });
+  }, Number(process.env.AGY_TEST_REFRESH_DELAY_MS));
+}
 
 function fixture(name, stream = "stdout") {
   return readFileSync(new URL(`./fixtures/${name}.${stream}.ndjson`, import.meta.url), "utf8")
@@ -2183,6 +2207,7 @@ lines.on("line", async (line) => {
   }
 
   if (method === "session/set_mode") {
+    await delaySetMode();
     if (process.env.AGY_TEST_SET_MODE === "unsupported") {
       send({
         jsonrpc: "2.0",
