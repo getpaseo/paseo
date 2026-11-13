@@ -20,6 +20,8 @@ interface HighlightedCodeBlockProps {
   language: string | null | undefined;
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
+  /** Injectable host clipboard writer; production uses Expo. */
+  writeToClipboard?: (text: string) => Promise<boolean>;
 }
 
 // Fence info strings ("```ts", "```typescript", "```ts {1,3}") map to the
@@ -58,6 +60,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   language,
   inheritedStyles,
   textStyle,
+  writeToClipboard = Clipboard.setStringAsync,
 }: HighlightedCodeBlockProps) {
   // Box styles (bg / padding / border / radius / margin) go on the wrapper View
   // so the absolute copy button positions relative to the visible code area,
@@ -89,10 +92,10 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   const copyCode = useCallback(async () => {
     const content = code.replace(TRAILING_CODE_LINE_BREAKS, "");
     if (!content) return false;
-    const written = await Clipboard.setStringAsync(content);
+    const written = await writeToClipboard(content);
     if (!written) throw new Error("Clipboard write failed");
     return true;
-  }, [code]);
+  }, [code, writeToClipboard]);
 
   return (
     <View

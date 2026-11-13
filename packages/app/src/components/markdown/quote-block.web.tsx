@@ -5,16 +5,24 @@ import { useTranslation } from "react-i18next";
 import { smallIconButtonChromeFrameSize } from "@/components/ui/icon-button-chrome";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { markdownFromElementContents } from "@/assistant-selection-copy/content.web";
+import type { MarkdownClipboardEnvironment } from "@/utils/rich-clipboard";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { BlockCopyButton } from "./block-copy-button";
 
 interface WebBlockquoteProps extends BlockquoteRendererProps {
   copyInset?: number;
+  /** Injectable host clipboard adapter; production uses the default platform environment. */
+  clipboardEnvironment?: MarkdownClipboardEnvironment;
 }
 
 export const WebBlockquote = withUnistyles(
-  function WebBlockquote({ blockquoteProps, children, copyInset = 0 }: WebBlockquoteProps) {
+  function WebBlockquote({
+    blockquoteProps,
+    children,
+    copyInset = 0,
+    clipboardEnvironment,
+  }: WebBlockquoteProps) {
     const { t } = useTranslation();
     const body = useRef<HTMLQuoteElement>(null);
     const [hovered, setHovered] = useState(false);
@@ -36,11 +44,11 @@ export const WebBlockquote = withUnistyles(
       if (!markdown) return false;
       const written = await writeMarkdownToRichClipboard(
         markdown,
-        getDefaultMarkdownClipboardEnvironment(),
+        clipboardEnvironment ?? getDefaultMarkdownClipboardEnvironment(),
       );
       if (!written) throw new Error("Clipboard write failed");
       return true;
-    }, []);
+    }, [clipboardEnvironment]);
     return (
       <blockquote
         {...blockquoteProps}
