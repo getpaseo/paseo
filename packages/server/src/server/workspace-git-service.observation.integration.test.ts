@@ -1134,6 +1134,14 @@ test("default branch ref cache invalidates when observed remote HEAD changes", a
         { timeout: 10_000 },
       )
       .toBe("refs/remotes/company/trunk");
+    await waitForGitCommandMetricsIdle({ quietMs: 300, timeoutMs: 10_000 });
+    git("update-ref", "-d", "refs/remotes/company/trunk");
+    await expect
+      .poll(
+        async () => (await service.getSnapshot(repo, { includeForge: false })).git.defaultBranchRef,
+        { timeout: 10_000 },
+      )
+      .toBe("refs/heads/main");
   } finally {
     stopGitCommandMetrics();
   }

@@ -2676,7 +2676,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (isTopologyChange) defaultRefTopologyChanged = true;
     }
     if (defaultRefsChanged) this.defaultBranchRefCache.delete(target.repoGitRoot);
-    if (defaultRefTopologyChanged) return null;
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
     const matchesRepoGitRoot = target.paths.matches;
 
@@ -2684,7 +2683,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (!this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes)) return null;
     }
 
-    return refreshes;
+    return defaultRefTopologyChanged ? null : refreshes;
   }
 
   private refreshWorkingTreeIgnoresFromRepoMetadataEvents(
