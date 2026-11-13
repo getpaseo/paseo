@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
 import { registerNativeBrowserBridgeIpc } from "./native-bridge.js";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
@@ -451,7 +451,11 @@ function createRegistry(hostWebContentsId: number): BrowserRegistry {
 
 export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistry }): void {
   const ipc = options?.ipc ?? ipcMain;
-  registerNativeBrowserBridgeIpc(ipc);
+  registerNativeBrowserBridgeIpc(ipc, {
+    getGuest: getPaseoBrowserWebContentsForHostWindow,
+    getWorkspaceId: getPaseoBrowserWorkspaceId,
+    images: nativeImage,
+  });
 
   ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
     const hostContents = (event as { sender?: HostWebContents }).sender;

@@ -1,21 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { registerNativeBrowserBridgeIpc } from "./native-bridge.js";
-
-// Electron's IPC transport and WebContents live outside the Node test runner.
-// Invoke the registered handlers against an instrumented guest to control CDP timing.
-const registration = vi.hoisted(() => ({
-  guests: new Map<string, { hostId: number; workspaceId: string; contents: unknown }>(),
-}));
-vi.mock("electron", () => ({ ipcMain: {}, nativeImage: {} }));
-vi.mock("../browser-webviews/index.js", () => ({
-  getPaseoBrowserWebContentsForHostWindow: (browserId: string, hostId: number) => {
-    const guest = registration.guests.get(browserId);
-    return guest?.hostId === hostId ? guest.contents : null;
-  },
-  getPaseoBrowserWorkspaceId: (browserId: string) =>
-    registration.guests.get(browserId)?.workspaceId ?? null,
-}));
+import { registerNativeBrowserBridgeIpc, type NativeBrowserContents } from "./native-bridge.js";
 
 class GuestDebugger extends EventEmitter {
   private attached = false;
@@ -28,7 +13,9 @@ class GuestDebugger extends EventEmitter {
   public sendCommand = vi.fn(
     async (method: string, _params: Record<string, unknown>): Promise<unknown> => {
       if (method === "Page.getLayoutMetrics")
-        return { cssVisualViewport: { clientWidth: 1600, clientHeight: 1200 } };
+        return {
+          cssVisualViewport: { pageX: 320, pageY: 1800, clientWidth: 1600, clientHeight: 1200 },
+        };
       if (method === "Page.captureScreenshot")
         return { data: Buffer.from("fresh jpeg").toString("base64") };
       if (method === "Target.getTargetInfo")
@@ -37,7 +24,7 @@ class GuestDebugger extends EventEmitter {
     },
   );
 }
-class Guest extends EventEmitter {
+class Guest extends EventEmitter implements NativeBrowserContents {
   public readonly debugger = new GuestDebugger();
   public destroyed = false;
   public throttled = true;
@@ -58,17 +45,28 @@ const identity = { browserId: "browser", workspaceId: "workspace" };
 function fixture() {
   const host = new Guest(1);
   const guest = new Guest(2);
-  registration.guests.set(identity.browserId, {
-    hostId: host.id,
-    workspaceId: identity.workspaceId,
-    contents: guest,
-  });
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
-  registerNativeBrowserBridgeIpc({
-    handle: (channel, handler) => {
-      handlers.set(channel, handler);
+  registerNativeBrowserBridgeIpc(
+    {
+      handle: (channel, handler) => {
+        handlers.set(channel, handler);
+      },
     },
-  });
+    {
+      getGuest: (browserId, hostId) =>
+        browserId === identity.browserId && hostId === host.id ? guest : null,
+      getWorkspaceId: (browserId) =>
+        browserId === identity.browserId ? identity.workspaceId : null,
+      images: {
+        createFromBuffer() {
+          throw new Error("Unexpected screencast decoding");
+        },
+        createFromBitmap() {
+          throw new Error("Unexpected screencast encoding");
+        },
+      },
+    },
+  );
   const call = async (channel: string, input: Record<string, unknown> = {}, sender = host) => {
     const handler = handlers.get(`paseo:browser:native-${channel}`);
     if (!handler) throw Error("Missing native IPC handler");
@@ -81,7 +79,6 @@ beforeEach(() => {
   vi.setSystemTime(10000);
 });
 afterEach(() => {
-  registration.guests.clear();
   vi.useRealTimers();
 });
 
@@ -124,6 +121,13 @@ describe("native browser IPC", () => {
       width: 1280,
       height: 960,
       capturedAt: 10000,
+    });
+    expect(guest.debugger.sendCommand).toHaveBeenLastCalledWith("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 65,
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: { x: 320, y: 1800, width: 1600, height: 1200, scale: 0.8 },
     });
     await vi.advanceTimersByTimeAsync(1600);
     const next = await call("frame", { notBefore: 11000 });
@@ -259,7 +263,7 @@ describe("native browser IPC", () => {
     const started = Promise.withResolvers<void>();
     guest.debugger.sendCommand.mockImplementation(async (method) => {
       if (method === "Page.getLayoutMetrics")
-        return { cssVisualViewport: { clientWidth: 800, clientHeight: 600 } };
+        return { cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 800, clientHeight: 600 } };
       if (method === "Page.captureScreenshot") {
         started.resolve();
         return screenshot.promise;

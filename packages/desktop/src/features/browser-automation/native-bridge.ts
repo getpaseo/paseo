@@ -3,12 +3,21 @@ import {
   NativeBrowserCommandRequestSchema,
   NativeBrowserEventsRequestSchema,
 } from "@getpaseo/protocol/browser-native";
-import { ipcMain, nativeImage, type WebContents } from "electron";
+import type { WebContents, nativeImage } from "electron";
 import type { NativeBrowserEvent, NativeBrowserFrame } from "@getpaseo/protocol/browser-native";
-import {
-  getPaseoBrowserWebContentsForHostWindow,
-  getPaseoBrowserWorkspaceId,
-} from "../browser-webviews/index.js";
+
+export interface NativeBrowserContents extends Pick<
+  WebContents,
+  "id" | "isDestroyed" | "getBackgroundThrottling" | "setBackgroundThrottling" | "on" | "once"
+> {
+  debugger: Pick<WebContents["debugger"], "on" | "attach" | "isAttached" | "sendCommand">;
+}
+
+export interface NativeBrowserBridgeDependencies {
+  getGuest(browserId: string, hostId: number): NativeBrowserContents | null;
+  getWorkspaceId(browserId: string): string | null;
+  images: Pick<typeof nativeImage, "createFromBuffer" | "createFromBitmap">;
+}
 
 interface Capture {
   tail: Promise<unknown>;
@@ -24,14 +33,49 @@ interface Capture {
   lastStillAttemptAt: number;
   notBefore: number;
   previousThrottling: boolean | null;
-  host: WebContents | null;
+  host: NativeBrowserContents | null;
   stopTimer: ReturnType<typeof setTimeout> | null;
 }
 const MAX_EVENTS = 256;
 const MAX_EVENT_BYTES = 2 * 1024 * 1024;
-const captures = new WeakMap<WebContents, Capture>();
-const hostDemand = new WeakMap<WebContents, { guests: Set<WebContents>; previous: boolean }>();
-function keepHostActive(host: WebContents, guest: WebContents) {
+const contextMethods = new Set([
+  "Browser.grantPermissions",
+  "Browser.resetPermissions",
+  "Browser.setPermission",
+  "Browser.setDownloadBehavior",
+]);
+const cookies: Record<string, string> = {
+  "Storage.getCookies": "Network.getAllCookies",
+  "Storage.setCookies": "Network.setCookies",
+  "Storage.clearCookies": "Network.clearBrowserCookies",
+};
+// A pending Runtime command can wait for a dialog reply or debugger resume.
+// Queueing its unblocker behind it would leave the guest permanently paused.
+const unblockers = new Set([
+  "Page.handleJavaScriptDialog",
+  "Debugger.evaluateOnCallFrame",
+  "Debugger.getScriptSource",
+  "Runtime.getProperties",
+  "Debugger.resume",
+  "Debugger.stepInto",
+  "Debugger.stepOut",
+  "Debugger.stepOver",
+  "Debugger.disable",
+  "Runtime.terminateExecution",
+  "Runtime.runIfWaitingForDebugger",
+  "Fetch.continueRequest",
+  "Fetch.continueResponse",
+  "Fetch.fulfillRequest",
+  "Fetch.failRequest",
+  "Fetch.continueWithAuth",
+  "Fetch.disable",
+]);
+const captures = new WeakMap<NativeBrowserContents, Capture>();
+const hostDemand = new WeakMap<
+  NativeBrowserContents,
+  { guests: Set<NativeBrowserContents>; previous: boolean }
+>();
+function keepHostActive(host: NativeBrowserContents, guest: NativeBrowserContents) {
   let demand = hostDemand.get(host);
   if (!demand) {
     demand = { guests: new Set(), previous: host.getBackgroundThrottling() };
@@ -40,7 +84,7 @@ function keepHostActive(host: WebContents, guest: WebContents) {
   }
   demand.guests.add(guest);
 }
-function releaseHost(capture: Capture, guest: WebContents) {
+function releaseHost(capture: Capture, guest: NativeBrowserContents) {
   const host = capture.host;
   if (!host) return;
   capture.host = null;
@@ -53,7 +97,7 @@ function releaseHost(capture: Capture, guest: WebContents) {
   }
 }
 
-function observe(contents: WebContents): Capture {
+function observe(contents: NativeBrowserContents): Capture {
   const existing = captures.get(contents);
   if (existing) return existing;
   const capture: Capture = {
@@ -145,27 +189,20 @@ function observe(contents: WebContents): Capture {
   return capture;
 }
 
-function resolveGuest(sender: WebContents, input: Record<string, unknown>): WebContents {
-  if (typeof input.browserId !== "string" || typeof input.workspaceId !== "string") {
-    throw new Error("Native browser and workspace IDs are required");
-  }
-  const contents = getPaseoBrowserWebContentsForHostWindow(input.browserId, sender.id);
-  if (!contents || getPaseoBrowserWorkspaceId(input.browserId) !== input.workspaceId) {
-    throw new Error("Native browser does not belong to this host window and workspace");
-  }
-  return contents;
-}
-
 interface NativeIpcRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
-function hostSender(event: unknown): WebContents {
-  const contents = (event as { sender?: WebContents })?.sender;
+function hostSender(event: unknown): NativeBrowserContents {
+  const contents = (event as { sender?: NativeBrowserContents })?.sender;
   if (!contents || typeof contents.id !== "number")
     throw new Error("Native CDP requires a host window");
   return contents;
 }
-function consumeNativeFrame(contents: WebContents, capture: Capture): void {
+function consumeNativeFrame(
+  contents: NativeBrowserContents,
+  capture: Capture,
+  images: NativeBrowserBridgeDependencies["images"],
+): void {
   const rawFrame = capture.rawFrame;
   capture.rawFrame = null;
   for (const sessionId of capture.acknowledgements)
@@ -176,7 +213,7 @@ function consumeNativeFrame(contents: WebContents, capture: Capture): void {
     typeof rawFrame.metadata.timestamp === "number" &&
     rawFrame.metadata.timestamp * 1000 > capture.notBefore
   ) {
-    const image = nativeImage.createFromBuffer(Buffer.from(rawFrame.data, "base64"));
+    const image = images.createFromBuffer(Buffer.from(rawFrame.data, "base64"));
     const dimensions = image.getSize();
     if (
       dimensions.width > 0 &&
@@ -196,7 +233,7 @@ function consumeNativeFrame(contents: WebContents, capture: Capture): void {
         pixels[index + 2] = Math.min(255, pixels[index + 2]! + white);
         pixels[index + 3] = 255;
       }
-      const data = nativeImage.createFromBitmap(pixels, dimensions).toJPEG(65).toString("base64");
+      const data = images.createFromBitmap(pixels, dimensions).toJPEG(65).toString("base64");
       if (data.length <= 1_099_900)
         capture.frame = {
           data: "data:image/jpeg;base64," + data,
@@ -207,14 +244,17 @@ function consumeNativeFrame(contents: WebContents, capture: Capture): void {
   }
 }
 
-async function captureStillFrame(contents: WebContents, capture: Capture): Promise<void> {
+async function captureStillFrame(contents: NativeBrowserContents, capture: Capture): Promise<void> {
   const generation = capture.generation;
   const capturedAt = Date.now();
   const metrics = await contents.debugger.sendCommand("Page.getLayoutMetrics");
-  const viewport = metrics.cssVisualViewport;
-  const width = viewport.clientWidth;
-  const height = viewport.clientHeight;
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0)
+  const {
+    pageX: x,
+    pageY: y,
+    clientWidth: width,
+    clientHeight: height,
+  } = metrics.cssVisualViewport;
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0)
     throw new Error("Native guest viewport is unavailable");
   const scale = Math.min(1, 1280 / width, 960 / height);
   const result = await contents.debugger.sendCommand("Page.captureScreenshot", {
@@ -222,7 +262,7 @@ async function captureStillFrame(contents: WebContents, capture: Capture): Promi
     quality: 65,
     fromSurface: true,
     captureBeyondViewport: false,
-    clip: { x: 0, y: 0, width, height, scale },
+    clip: { x, y, width, height, scale },
   });
   if (contents.isDestroyed() || capture.generation !== generation) return;
   if (
@@ -239,7 +279,21 @@ async function captureStillFrame(contents: WebContents, capture: Capture): Promi
   };
 }
 
-export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain): void {
+export function registerNativeBrowserBridgeIpc(
+  ipc: NativeIpcRegistry,
+  dependencies: NativeBrowserBridgeDependencies,
+): void {
+  function resolveGuest(
+    sender: NativeBrowserContents,
+    input: { browserId: string; workspaceId: string },
+  ): NativeBrowserContents {
+    const contents = dependencies.getGuest(input.browserId, sender.id);
+    if (!contents || dependencies.getWorkspaceId(input.browserId) !== input.workspaceId) {
+      throw new Error("Native browser does not belong to this host window and workspace");
+    }
+    return contents;
+  }
+
   ipc.handle("paseo:browser:native-frame", async (event, raw: unknown) => {
     const input = NativeBrowserFrameRequestSchema.parse(raw);
     const contents = resolveGuest(hostSender(event), input);
@@ -271,7 +325,7 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
         throw error;
       }
     }
-    consumeNativeFrame(contents, capture);
+    consumeNativeFrame(contents, capture, dependencies.images);
     if (capture.stopTimer) clearTimeout(capture.stopTimer);
     capture.stopTimer = setTimeout(() => {
       if (!contents.isDestroyed())
@@ -310,12 +364,6 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
     const input = NativeBrowserCommandRequestSchema.parse(raw);
     const contents = resolveGuest(hostSender(event), input);
     const method = input.method;
-    const contextMethods = new Set([
-      "Browser.grantPermissions",
-      "Browser.resetPermissions",
-      "Browser.setPermission",
-      "Browser.setDownloadBehavior",
-    ]);
     if (
       method.startsWith("Browser.") &&
       method !== "Browser.getVersion" &&
@@ -345,11 +393,6 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
         return method === "Target.getTargets" ? { targetInfos: [own.targetInfo] } : own;
       }
 
-      const cookies: Record<string, string> = {
-        "Storage.getCookies": "Network.getAllCookies",
-        "Storage.setCookies": "Network.setCookies",
-        "Storage.clearCookies": "Network.clearBrowserCookies",
-      };
       if (cookies[method]) return contents.debugger.sendCommand(cookies[method], params);
       if (contextMethods.has(method)) {
         const own = await contents.debugger.sendCommand("Target.getTargetInfo");
@@ -362,27 +405,6 @@ export function registerNativeBrowserBridgeIpc(ipc: NativeIpcRegistry = ipcMain)
       }
       return contents.debugger.sendCommand(method, params);
     };
-    // A pending Runtime command can wait for a dialog reply or debugger resume.
-    // Queueing its unblocker behind it would leave the guest permanently paused.
-    const unblockers = new Set([
-      "Page.handleJavaScriptDialog",
-      "Debugger.evaluateOnCallFrame",
-      "Debugger.getScriptSource",
-      "Runtime.getProperties",
-      "Debugger.resume",
-      "Debugger.stepInto",
-      "Debugger.stepOut",
-      "Debugger.stepOver",
-      "Debugger.disable",
-      "Runtime.terminateExecution",
-      "Runtime.runIfWaitingForDebugger",
-      "Fetch.continueRequest",
-      "Fetch.continueResponse",
-      "Fetch.fulfillRequest",
-      "Fetch.failRequest",
-      "Fetch.continueWithAuth",
-      "Fetch.disable",
-    ]);
     if (unblockers.has(method)) return execute();
     const pending = capture.tail.then(execute);
     capture.tail = pending.catch(() => undefined);
