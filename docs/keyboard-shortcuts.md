@@ -20,9 +20,16 @@ settings the native composer does not implement.
 
 ## Native sources
 
-Use the iOS window press stream for hardware keys. `UIKeyCommand` only takes keys
-that must bypass the focused text control: composer Return and the top overlay's
-Enter and arrows. Keep the stream as the sole shortcut emitter: a command-owned
+Use the iOS window press stream for hardware keys. The stream reaches JavaScript
+after the focused text control has already handled the press, so the pipeline's
+`preventDefault` cannot stop a key from typing. A key the text control would type
+must be claimed up front. `UIKeyCommand` takes only those keys: composer Return, the
+top overlay's Enter and arrows, and the Shift or Option shortcuts whose binding is
+active in the current focus scope, such as Shift+Tab in the composer.
+`sources/native.ts` computes the claims from the published bindings and recomputes
+them when the focus scope changes. Cmd and Ctrl combos are never claimed, because
+text controls do not type them. Android takes no claims: a focused `EditText`
+types nothing for these combos. Keep the stream as the sole shortcut emitter: a command-owned
 press is still observed by the window.
 
 The source spike used an iPad Pro 11-inch (M4) simulator on iOS 18.6 with a
