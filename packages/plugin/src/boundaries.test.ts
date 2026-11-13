@@ -96,7 +96,6 @@ describe("plugin SDK import boundaries", () => {
     expect(Object.keys(server).sort()).toEqual([
       "defineAgentTool",
       "execCommand",
-      "latestTurn",
       "spawnProcess",
       "terminateProcess",
     ]);
@@ -394,6 +393,7 @@ describe("lifecycle hook SDK types", () => {
     expect(
       typeErrors(`
       import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
           if (request.kind === "checkout-branch") {
@@ -430,8 +430,12 @@ describe("lifecycle hook SDK types", () => {
         server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
           const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
-          // @ts-expect-error Turn payloads carry no history; read it with latestTurn().
+          // @ts-expect-error Turn payloads carry no history; read it from the agent's timeline.
           event.timeline;
+          const turn = await paseo.agents
+            .ref(agent.id)
+            .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+          const items: readonly AgentTimelineItem[] = turn.entries.map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });

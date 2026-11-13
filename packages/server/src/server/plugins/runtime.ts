@@ -1483,7 +1483,7 @@ function readConnectionId(value: unknown): string | null {
   return typeof connectionId === "string" ? connectionId : null;
 }
 
-// COMPAT(pluginTurnTimeline): plugins built before the field left the SDK type read `timeline`; remove after 2027-05-31
+// COMPAT(pluginTurnTimeline): added in v0.16.0-beta.3; plugins built before the field left the SDK type read `timeline`; remove after 2027-05-31
 function wireEvent<Name extends keyof PluginHookEvents>(
   name: Name,
   event: PluginHookEvents[Name],

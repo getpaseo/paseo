@@ -525,7 +525,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history: read the turn with `latestTurn()` from `@getpaseo/plugin/server`, which returns the last user message and everything after it. Older plugins that read `event.timeline` get an empty array, so they never see a reply.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Plugins built against an older SDK that read `event.timeline` get an empty array.
 
 ### Send a follow-up when a turn ends
 
@@ -535,7 +535,7 @@ into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`
 and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
 
 ```ts
-import { latestTurn, type PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -545,7 +545,8 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const text = latestOutputText(await latestTurn(agent.timeline));
+    const turn = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const text = latestOutputText(turn.entries.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -560,9 +561,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-The handler fetches only the last 20 timeline items. Output before that page is not inspected.
-Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.

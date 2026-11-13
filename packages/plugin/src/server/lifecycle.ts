@@ -103,7 +103,10 @@ export interface PluginHookEvents {
   "agent.turn.after": {
     agent: PluginHookAgent;
     turnId: string | null;
-    /** The payload carries no history; read the turn with `latestTurn()`. */
+    /**
+     * The payload carries no history. Read the turn with
+     * `paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true })`.
+     */
     outcome: PluginTurnOutcome;
   };
   "agent.permission.before": { agent: PluginHookAgent; request: AgentPermissionRequest };

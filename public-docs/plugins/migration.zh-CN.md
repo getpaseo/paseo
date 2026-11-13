@@ -170,6 +170,19 @@ Provider 插件只有一个配置记录 `providerOptions`，并用控件描述�
 | `ProviderSetting` 类型                            | `ProviderOptionControl`                                         |
 | `agent.create.before` 的 `config.featureValues`   | `config.providerOptions`；返回的 `featureValues` 修改仍会被应用 |
 
+### v0.16 中的轮次历史 {#turn-history-in-v016}
+
+自 v0.13 起，`agent.turn.after` 发送的 `timeline` 始终为空，SDK 类型也不再声明它。读取 `event.timeline` 的插件现在无法通过类型检查。请改为从 Agent 读取本轮：
+
+```ts
+const turn = await context.paseo.agents
+  .ref(event.agent.id)
+  .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+const items = turn.entries.map(({ item }) => item);
+```
+
+基于旧版 SDK 构建的插件在 2027-05-31 之后移除兼容层之前仍会收到 `timeline: []`。
+
 ## 5. 识别只迁移了一半的错误 {#5-recognize-half-migration-errors}
 
 | 编译器或加载错误                                                                                                           | 含义与修复方法                                                                                     |

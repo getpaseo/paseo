@@ -514,14 +514,14 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after {#agentturnafter}
 
-实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史：请用 `@getpaseo/plugin/server` 的 `latestTurn()` 读取本轮，它返回最近一条用户消息及其之后的全部条目。仍读取 `event.timeline` 的旧插件只会拿到空数组，因此看不到任何回复。
+实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
 
 ### 在轮次结束时发送后续消息 {#send-a-follow-up-when-a-turn-ends}
 
 把 [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts) 复制到你的插件中。该辅助文件从 `@getpaseo/protocol/agent-types` 导入类型；请把与 daemon 版本相同的 `@getpaseo/protocol` 加入开发依赖，并在加载插件之前安装它们。`latestOutputText` 会拼接最近一条用户消息之后的文本片段。
 
 ```ts
-import { latestTurn, type PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -531,7 +531,8 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const text = latestOutputText(await latestTurn(agent.timeline));
+    const turn = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const text = latestOutputText(turn.entries.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -546,8 +547,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-该处理函数只获取最近 20 条时间线条目，不检查这一页之前的输出。插件需要更多历史时，请用 `cursor` 和 `direction` 继续翻页。
 
 这会用现有的 SDK 发送一条新消息。持续匹配会不断发送后续消息；需要时请在插件中添加次数限制或延迟。附件和工具的效果不会被重放。
 

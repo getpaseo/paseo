@@ -332,7 +332,11 @@ test.skipIf(process.platform !== "linux")(
 
 // Turn hooks carry no history; read the reply the way plugins do.
 async function latestReplyText(client: DaemonClient, agentId: string): Promise<string> {
-  const page = await client.fetchAgentTimeline(agentId, { direction: "tail", limit: 50 });
+  const page = await client.fetchAgentTimeline(agentId, {
+    direction: "tail",
+    limit: 1,
+    wholeTurns: true,
+  });
   return assistantText(page.entries.map((entry) => entry.item));
 }
 
