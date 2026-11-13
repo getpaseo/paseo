@@ -102,8 +102,11 @@ export class ProviderInstallations {
     AgentClient,
     CachedRead<ProviderInstallationUpdateCheck>
   >();
-  /** The installed version each client last reported, compared as an opaque string. */
-  private readonly installedVersions = new WeakMap<AgentClient, string | null>();
+  /** The installed version each cached update check answered for, compared as an opaque string. */
+  private readonly checkedVersions = new WeakMap<
+    CachedRead<ProviderInstallationUpdateCheck>,
+    string | null
+  >();
 
   constructor(options: ProviderInstallationsOptions) {
     this.logger = options.logger;
@@ -139,7 +142,6 @@ export class ProviderInstallations {
         run: (context) => inspect.call(installation, context),
         failed: (message) => ({ status: "error" as const, message }),
       });
-      this.noteInstalledVersion(client, result.inspection);
     }
     return result;
   }
@@ -156,7 +158,13 @@ export class ProviderInstallations {
     const installation = client.installation;
     const checkForUpdates = installation?.checkForUpdates;
     if (!installation || !checkForUpdates) return null;
-    return this.read(provider, client, this.updateChecks, options, {
+    // A cached check answers only for the version it was computed against, so a CLI updated
+    // outside Paseo is not offered the update it already has.
+    const version = await this.installedVersion(provider, client);
+    const cached = this.updateChecks.get(client);
+    if (cached && version !== undefined && this.checkedVersions.get(cached) !== version)
+      this.updateChecks.delete(client);
+    const check = this.read(provider, client, this.updateChecks, options, {
       name: "update check",
       parse: (value) => ProviderUpdateCheckSchema.parse(value),
       timeoutMs: this.updateCheckTimeoutMs,
@@ -168,6 +176,10 @@ export class ProviderInstallations {
       run: (context) => checkForUpdates.call(installation, context),
       failed: (message) => ({ status: "error" as const, message }),
     });
+    const entry = this.updateChecks.get(client);
+    if (entry && version !== undefined && !this.checkedVersions.has(entry))
+      this.checkedVersions.set(entry, version);
+    return check;
   }
 
   /**
@@ -224,18 +236,17 @@ export class ProviderInstallations {
   }
 
   /**
-   * Drops the cached update check when the installed version changes, so a CLI updated outside
-   * Paseo is not offered the update it already has. A failed inspection says nothing about it.
+   * The version the provider reports now, shared with any inspection in flight. Undefined when
+   * the provider cannot inspect or the inspection failed, which says nothing about the version.
    */
-  private noteInstalledVersion(
+  private async installedVersion(
+    provider: AgentProvider,
     client: AgentClient,
-    inspection: ProviderInstallationInspection,
-  ): void {
-    if (inspection.status === "error") return;
-    const version = inspection.status === "installed" ? (inspection.version ?? null) : null;
-    if (this.installedVersions.has(client) && this.installedVersions.get(client) !== version)
-      this.updateChecks.delete(client);
-    this.installedVersions.set(client, version);
+  ): Promise<string | null | undefined> {
+    if (!client.installation?.inspect) return undefined;
+    const inspection = (await this.inspect(provider))?.inspection;
+    if (!inspection || inspection.status === "error") return undefined;
+    return inspection.status === "installed" ? (inspection.version ?? null) : null;
   }
 
   private async runUpdate(

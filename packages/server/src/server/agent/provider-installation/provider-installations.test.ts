@@ -468,6 +468,8 @@ describe("ProviderInstallations", () => {
     let checks = 0;
     const client = builtinClient({
       async inspect() {
+        // The app sends inspect and check together; the check must not answer first.
+        await new Promise((resolve) => setTimeout(resolve, 20));
         return { status: "installed", version: installed };
       },
       async checkForUpdates() {
@@ -484,25 +486,25 @@ describe("ProviderInstallations", () => {
       updateCheckCacheMs: 3_600_000,
       now: () => time,
     });
-    await installations.inspect("codex");
-    await expect(installations.checkForUpdates("codex")).resolves.toEqual({
-      status: "available",
-      versions: ["2.0.0"],
-    });
+    const together = () =>
+      Promise.all([installations.inspect("codex"), installations.checkForUpdates("codex")]);
+    await expect(together()).resolves.toEqual([
+      { inspection: { status: "installed", version: "1.0.0" } },
+      { status: "available", versions: ["2.0.0"] },
+    ]);
 
     // The CLI updated itself outside Paseo.
     installed = "2.0.0";
     time = 31_000;
-    await expect(installations.inspect("codex")).resolves.toEqual({
-      inspection: { status: "installed", version: "2.0.0" },
-    });
-    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
+    await expect(together()).resolves.toEqual([
+      { inspection: { status: "installed", version: "2.0.0" } },
+      { status: "current" },
+    ]);
     expect(checks).toBe(2);
 
     // The same version again keeps the long-cached answer.
     time = 62_000;
-    await installations.inspect("codex");
-    await installations.checkForUpdates("codex");
+    await together();
     expect(checks).toBe(2);
   });
 
