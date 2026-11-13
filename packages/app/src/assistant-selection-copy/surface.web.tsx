@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   type ClipboardEvent,
   type CSSProperties,
@@ -56,6 +57,7 @@ export function AssistantSelectionCopySurface({
   children,
   style,
 }: AssistantSelectionCopySurfaceProps) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const dragOrigin = useRef<DragOrigin | null>(null);
   const handlePointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
     dragOrigin.current = null;
@@ -78,21 +80,42 @@ export function AssistantSelectionCopySurface({
     if (!origin || origin.pointerId !== event.pointerId || !(event.buttons & 1)) return;
     const x = event.clientX;
     const y = event.clientY;
-    if (Math.hypot(x - origin.x, y - origin.y) < 4) return;
+    if (!origin.synthetic && Math.hypot(x - origin.x, y - origin.y) < 4) return;
     queueMicrotask(() => repairDragSelection(origin, x, y));
   }, []);
-  const handlePointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    const origin = dragOrigin.current;
-    dragOrigin.current = null;
-    if (!origin || origin.pointerId !== event.pointerId) return;
-    const x = event.clientX;
-    const y = event.clientY;
-    if (Math.hypot(x - origin.x, y - origin.y) < 4) return;
-    requestAnimationFrame(() => repairDragSelection(origin, x, y));
-  }, []);
+  const handlePointerUp = useCallback(
+    (event: Pick<PointerEvent<HTMLDivElement>, "pointerId" | "clientX" | "clientY">) => {
+      const origin = dragOrigin.current;
+      dragOrigin.current = null;
+      if (!origin || origin.pointerId !== event.pointerId) return;
+      const x = event.clientX;
+      const y = event.clientY;
+      if (!origin.synthetic && Math.hypot(x - origin.x, y - origin.y) < 4) return;
+      requestAnimationFrame(() => repairDragSelection(origin, x, y));
+    },
+    [],
+  );
   const handlePointerCancel = useCallback(() => {
     dragOrigin.current = null;
   }, []);
+  useEffect(() => {
+    const handleWindowPointerUp = (event: globalThis.PointerEvent) => {
+      if (dragOrigin.current?.pointerId !== event.pointerId) return;
+      if (event.target instanceof Node && surfaceRef.current?.contains(event.target)) {
+        handlePointerUp(event);
+      } else {
+        dragOrigin.current = null;
+      }
+    };
+    window.addEventListener("pointerup", handleWindowPointerUp, true);
+    window.addEventListener("pointercancel", handlePointerCancel, true);
+    window.addEventListener("blur", handlePointerCancel);
+    return () => {
+      window.removeEventListener("pointerup", handleWindowPointerUp, true);
+      window.removeEventListener("pointercancel", handlePointerCancel, true);
+      window.removeEventListener("blur", handlePointerCancel);
+    };
+  }, [handlePointerUp, handlePointerCancel]);
   const handleCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
     const content = createAssistantSelectionClipboardContent(window.getSelection());
     if (!content) {
@@ -106,11 +129,10 @@ export function AssistantSelectionCopySurface({
 
   return (
     <div
+      ref={surfaceRef}
       onCopy={handleCopy}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
       style={DISPLAY_CONTENTS}
     >
       <View style={style}>{children}</View>
