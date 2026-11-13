@@ -29,7 +29,9 @@ const NEUTRAL_FILL_STEPS = {
 // the contrast the theme gives its own text: foreground stays at least this readable on it. The
 // margin over 3:1 absorbs the rounding of the fill to 8-bit channels.
 const NEUTRAL_FILL_TEXT_FLOOR = 3.05;
-// A theme whose own text is quieter than that still gets a fill that separates from the page.
+// The fill never steps less than this, so it stays visible against the page. A theme whose body
+// text is under about 3.8:1 (3.05 x 1.25) cannot have both: the fill keeps this step and text on
+// it falls under 3:1.
 const NEUTRAL_FILL_MIN_STEP = 1.25;
 
 // Tertiary text: muted text, that fraction of the way toward the background, but never quieter

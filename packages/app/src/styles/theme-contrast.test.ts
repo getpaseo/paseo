@@ -181,6 +181,20 @@ describe("a plugin theme whose own text is quiet", () => {
   });
 });
 
+describe("a plugin theme with body text between 3:1 and 3.8:1", () => {
+  it("keeps the fill visible and lets text on it fall under 3:1", () => {
+    const { colors } = buildPluginTheme({
+      ...MOCHA,
+      colors: { ...MOCHA.colors, background: "#202020", foreground: "#757575" },
+    });
+    expect(contrastRatio(colors.surface0, colors.foreground)).toBeLessThan(3.8);
+    expect(contrastRatio(colors.surface0, colors.surface3)).toBeGreaterThanOrEqual(
+      NEUTRAL_FILL_STEP,
+    );
+    expect(contrastRatio(colors.foreground, colors.surface3)).toBeLessThan(NEUTRAL_FILL_TEXT_FLOOR);
+  });
+});
+
 describe("built-in themes", () => {
   it.each(themes.filter(({ name }) => !name.startsWith("plugin ")))(
     "$name keeps a control hover visible on the workspace surface",
