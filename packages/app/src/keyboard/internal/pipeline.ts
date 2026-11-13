@@ -39,7 +39,11 @@ export function createKeyboardPipeline(options: KeyboardPipelineOptions) {
       const previous = chord;
       const result = resolveKeyboardShortcut({
         event,
-        context: { ...options.getContext(), focusScope: input.focusScope },
+        context: {
+          ...options.getContext(),
+          focusScope: input.focusScope,
+          overlayOpen: options.overlays.hasActive(),
+        },
         bindings: options.getBindings(),
         chordState: chord,
         onChordReset: reset,

@@ -593,6 +593,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, usesDesktopBindings: true, focusScope: "terminal" },
     },
     {
+      name: "blocks Cmd+ArrowLeft tab switching while a floating overlay is open",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "other", overlayOpen: true },
+    },
+    {
+      name: "blocks Cmd+ArrowRight tab switching while a floating overlay is open",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "other", overlayOpen: true },
+    },
+    {
       name: "does not bind Ctrl+ArrowRight to tab navigation on non-mac",
       event: { key: "ArrowRight", code: "ArrowRight", ctrlKey: true },
       context: { isMac: false, usesDesktopBindings: true, focusScope: "other" },
@@ -1501,5 +1511,72 @@ describe("shortcut capture completion", () => {
     expect(isShortcutCaptureComplete("show-shortcuts", [])).toBe(false);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+K"])).toBe(true);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+0"])).toBe(true);
+  });
+});
+
+describe("macOS tab relative navigation override compatibility", () => {
+  const macDesktop = { isMac: true, usesDesktopBindings: true };
+  const PREV_TAB_ID = "workspace-tab-navigate-relative-alt-shift-left";
+  const NEXT_TAB_ID = "workspace-tab-navigate-relative-alt-shift-right";
+
+  it("keeps existing saved binding IDs reachable on macOS desktop", () => {
+    expect(getBindingIdForAction("workspace-tab-prev", macDesktop)).toBe(PREV_TAB_ID);
+    expect(getBindingIdForAction("workspace-tab-next", macDesktop)).toBe(NEXT_TAB_ID);
+  });
+
+  it("disables default arrow and bracket aliases when the row is cleared or rebound", () => {
+    const clearedBindings = buildEffectiveBindings({
+      [PREV_TAB_ID]: UNASSIGNED_COMBO,
+      [NEXT_TAB_ID]: UNASSIGNED_COMBO,
+    });
+    expect(
+      resolveShortcutKeysForAction(
+        "workspace-tab-prev",
+        { [PREV_TAB_ID]: UNASSIGNED_COMBO },
+        macDesktop,
+      ),
+    ).toBeNull();
+    for (const event of [
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+      { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event,
+          context: { ...macDesktop, focusScope: "other" },
+          bindings: clearedBindings,
+        }).match,
+      ).toBeNull();
+    }
+
+    const reboundOverrides: ShortcutOverrides = { [PREV_TAB_ID]: "Ctrl+PageUp" };
+    const reboundBindings = buildEffectiveBindings(reboundOverrides);
+    expect(
+      resolveShortcutKeysForAction("workspace-tab-prev", reboundOverrides, macDesktop),
+    ).toEqual([["ctrl", "PageUp"]]);
+    expect(
+      resolveShortcut({
+        event: { key: "PageUp", code: "PageUp", ctrlKey: true },
+        context: { ...macDesktop, focusScope: "other" },
+        bindings: reboundBindings,
+      }).match?.action,
+    ).toBe("workspace.tab.navigate.relative");
+    for (const oldEvent of [
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event: oldEvent,
+          context: { ...macDesktop, focusScope: "other" },
+          bindings: reboundBindings,
+        }).match,
+      ).toBeNull();
+    }
   });
 });

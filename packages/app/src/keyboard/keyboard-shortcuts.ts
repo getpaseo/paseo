@@ -21,6 +21,7 @@ export interface KeyboardShortcutContext {
   usesDesktopBindings: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+  overlayOpen?: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -77,6 +78,8 @@ interface ShortcutWhen {
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
+  /** false = disabled when a floating overlay (menu, popover, dialog) is active */
+  overlay?: false;
   /** Allowed focus scope or scopes */
   focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
@@ -103,6 +106,18 @@ interface ShortcutHelp {
 
 interface ShortcutBinding {
   id: string;
+  /**
+   * Canonical override key in `ShortcutOverrides` when a platform-specific
+   * primary binding replaces a shared binding's default combo while keeping
+   * existing user overrides reachable in Settings.
+   */
+  overrideId?: string;
+  /**
+   * Secondary alias binding that stays active alongside the default combo,
+   * and disables itself when the primary binding's override row is cleared or
+   * rebound.
+   */
+  aliasOf?: string;
   action: KeyboardActionId;
   combo: string;
   repeat?: false;
@@ -717,6 +732,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   // --- Tab relative navigation ---
   {
     id: "workspace-tab-navigate-relative-cmd-alt-left-mac-desktop",
+    overrideId: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+Alt+ArrowLeft",
     when: { mac: true, desktopBindings: true, commandCenter: false },
@@ -729,6 +745,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
   {
     id: "workspace-tab-navigate-relative-cmd-alt-right-mac-desktop",
+    overrideId: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+Alt+ArrowRight",
     when: { mac: true, desktopBindings: true, commandCenter: false },
@@ -765,16 +782,18 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
   {
     id: "workspace-tab-navigate-relative-cmd-arrow-left-mac",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+ArrowLeft",
-    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    when: { mac: true, commandCenter: false, editable: false, terminal: false, overlay: false },
     payload: { type: "delta", delta: -1 },
   },
   {
     id: "workspace-tab-navigate-relative-cmd-arrow-right-mac",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+ArrowRight",
-    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    when: { mac: true, commandCenter: false, editable: false, terminal: false, overlay: false },
     payload: { type: "delta", delta: 1 },
   },
 
@@ -1289,9 +1308,30 @@ export function isShortcutCaptureComplete(bindingId: string, combos: readonly st
   return binding?.payload?.type !== "index" || /(^|\+)(Digit|[1-9])$/.test(lastCombo);
 }
 
+function hasValidShortcutOverride(overrides: ShortcutOverrides, key: string): boolean {
+  if (!(key in overrides)) return false;
+  const value = overrides[key];
+  if (value === UNASSIGNED_COMBO) return true;
+  if (typeof value !== "string") return false;
+  try {
+    parseBindingChord(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
-    const override = overrides[binding.id];
+    if (
+      binding.aliasOf &&
+      !(binding.id in overrides) &&
+      hasValidShortcutOverride(overrides, binding.aliasOf)
+    ) {
+      return { ...binding, combo: "", parsedChord: [] };
+    }
+    const overrideKey = binding.id in overrides ? binding.id : (binding.overrideId ?? binding.id);
+    const override = overrides[overrideKey];
     if (override === UNASSIGNED_COMBO) {
       return { ...binding, combo: "", parsedChord: [] };
     }
@@ -1418,6 +1458,7 @@ export function matchesKeyboardShortcutContext(
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
+  if (when.overlay === false && context.overlayOpen) return false;
   if (
     when.focusScope !== undefined &&
     !(typeof when.focusScope === "string"
@@ -1648,7 +1689,7 @@ export function getBindingIdForAction(
     if (!helpMatchesPlatform(binding.when, platform)) {
       continue;
     }
-    return binding.id;
+    return binding.overrideId ?? binding.id;
   }
   return null;
 }
