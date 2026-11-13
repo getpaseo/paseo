@@ -63,7 +63,7 @@ describe("install link visibility", () => {
     expect(section.installLink()).toBeNull();
   });
 
-  it("offers a quiet install link when the installation check failed", () => {
+  it("offers a quiet install link when the installation check failed", async () => {
     const section = mount(
       ready({
         status: "ready",
@@ -73,7 +73,7 @@ describe("install link visibility", () => {
         },
       }),
     );
-    expect(section.view.getByText("version probe exploded")).toBeTruthy();
+    await expect.element(section.view.getByText("version probe exploded")).toBeVisible();
     expect(section.installLink()).not.toBeNull();
     expect(section.installButton()).toBeNull();
   });
@@ -109,7 +109,7 @@ describe("update check", () => {
     },
   });
 
-  it("shows the reported versions and message as written, with Update instructions", () => {
+  it("shows the reported versions and message as written, with Update instructions", async () => {
     const section = mount(installed, {
       status: "ready",
       updateCheck: {
@@ -118,12 +118,14 @@ describe("update check", () => {
         message: "Restart to finish",
       },
     });
-    expect(section.view.getByText("Update available")).toBeTruthy();
+    await expect.element(section.view.getByText("Update available")).toBeVisible();
     expect(
       section.view.getAllByTestId("provider-updates-version").map((node) => node.textContent),
     ).toEqual(["0.168.0", "nightly (unstable)"]);
-    expect(section.view.getByText("Restart to finish")).toBeTruthy();
-    expect(section.view.getByRole("button", { name: "Update instructions" })).toBeTruthy();
+    await expect.element(section.view.getByText("Restart to finish")).toBeVisible();
+    await expect
+      .element(section.view.getByRole("button", { name: "Update instructions" }))
+      .toBeVisible();
   });
 
   it.each([
@@ -136,17 +138,19 @@ describe("update check", () => {
       updates: { status: "ready", updateCheck: { status: "error", message: "Offline" } },
     },
     { name: "a failed request", updates: { status: "error", message: "Offline" } },
-  ] as const)("shows $name as inconclusive, never up to date", ({ updates }) => {
+  ] as const)("shows $name as inconclusive, never up to date", async ({ updates }) => {
     const section = mount(installed, updates);
-    expect(section.view.getByText("Couldn't check for updates")).toBeTruthy();
-    expect(section.view.getByText("Offline")).toBeTruthy();
+    await expect.element(section.view.getByText("Couldn't check for updates")).toBeVisible();
+    await expect.element(section.view.getByText("Offline")).toBeVisible();
     expect(section.view.queryByText("Up to date")).toBeNull();
-    expect(section.view.getByRole("link", { name: "Update instructions" })).toBeTruthy();
+    await expect
+      .element(section.view.getByRole("link", { name: "Update instructions" }))
+      .toBeVisible();
   });
 
-  it("shows up to date only when the provider says so", () => {
+  it("shows up to date only when the provider says so", async () => {
     const section = mount(installed, { status: "ready", updateCheck: { status: "current" } });
-    expect(section.view.getByText("Up to date")).toBeTruthy();
+    await expect.element(section.view.getByText("Up to date")).toBeVisible();
   });
 });
 
@@ -189,10 +193,12 @@ describe("update action", () => {
     expect(section.view.queryByRole("button", { name: "Update instructions" })).toBeNull();
   });
 
-  it("keeps Update instructions when the provider does not run its own update", () => {
+  it("keeps Update instructions when the provider does not run its own update", async () => {
     const section = mount(installed(false), available, action().value);
     expect(section.view.queryByRole("button", { name: "Update" })).toBeNull();
-    expect(section.view.getByRole("button", { name: "Update instructions" })).toBeTruthy();
+    await expect
+      .element(section.view.getByRole("button", { name: "Update instructions" }))
+      .toBeVisible();
   });
 
   it("shows a running update with its output so far", () => {
@@ -238,7 +244,7 @@ describe("update action", () => {
     expect(section.view.queryByTestId("provider-update-output")).toBeNull();
   });
 
-  it("shows a failure with its message, its output and the update instructions", () => {
+  it("shows a failure with its message, its output and the update instructions", async () => {
     const section = mount(
       installed(true),
       available,
@@ -251,22 +257,26 @@ describe("update action", () => {
       }).value,
     );
     expect(section.view.getByTestId("provider-update-status").textContent).toBe("Update failed");
-    expect(section.view.getByText("exited with code 1")).toBeTruthy();
+    await expect.element(section.view.getByText("exited with code 1")).toBeVisible();
     expect(section.view.getByTestId("provider-update-output").textContent).toBe(
       "npm error EACCES\n",
     );
-    expect(section.view.getByText("Earlier output was dropped.")).toBeTruthy();
-    expect(section.view.getByRole("link", { name: "Update instructions" })).toBeTruthy();
-    expect(section.view.getByRole("button", { name: "Update" })).toBeTruthy();
+    await expect.element(section.view.getByText("Earlier output was dropped.")).toBeVisible();
+    await expect
+      .element(section.view.getByRole("link", { name: "Update instructions" }))
+      .toBeVisible();
+    await expect.element(section.view.getByRole("button", { name: "Update" })).toBeVisible();
   });
 
-  it("shows why the host refused to start the update", () => {
+  it("shows why the host refused to start the update", async () => {
     const section = mount(
       installed(true),
       available,
       action({ startError: "Provider codex cannot update itself" }).value,
     );
     expect(section.view.getByTestId("provider-update-status").textContent).toBe("Update failed");
-    expect(section.view.getByText("Provider codex cannot update itself")).toBeTruthy();
+    await expect
+      .element(section.view.getByText("Provider codex cannot update itself"))
+      .toBeVisible();
   });
 });
