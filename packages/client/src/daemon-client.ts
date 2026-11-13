@@ -117,6 +117,7 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
+  ProviderInstallationInspectResponseMessage,
   UsageReportEntry,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -629,6 +630,7 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+type ProviderInstallationInspectPayload = ProviderInstallationInspectResponseMessage["payload"];
 interface UsageListReportsPayload {
   requestId: string;
   reports: UsageReportEntry[];
@@ -6221,6 +6223,22 @@ export class DaemonClient {
       },
       responseType: "provider_diagnostic_response",
       timeout: 180000,
+    });
+  }
+
+  /** Install and update links plus installed state. Requires `features.providerInstallation`. */
+  async inspectProviderInstallation(
+    provider: AgentProvider,
+    options?: { refresh?: boolean; requestId?: string },
+  ): Promise<ProviderInstallationInspectPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.installation.inspect.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "provider.installation.inspect.request",
+        provider,
+        ...(options?.refresh ? { refresh: true } : {}),
+      },
+      timeout: 60_000,
     });
   }
 

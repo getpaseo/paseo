@@ -4,7 +4,10 @@ import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
+  ProviderInspectionSchema,
   ProviderStatusSchema,
+  type ProviderInspection,
+  type ProviderInstallationContext,
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
@@ -438,6 +441,27 @@ export class PluginRuntime {
     );
   }
 
+  async inspectProviderInstallation(
+    pluginId: string,
+    providerId: string,
+    context: ProviderInstallationContext,
+  ): Promise<ProviderInspection> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return ProviderInspectionSchema.parse(
+      await this.request(
+        loaded,
+        {
+          type: "provider.installation.inspect",
+          requestId: randomUUID(),
+          providerId,
+          request: { launch: context.launch },
+        },
+        context.signal,
+      ),
+    );
+  }
+
   async connectProvider(
     pluginId: string,
     providerId: string,
@@ -756,6 +780,8 @@ export class PluginRuntime {
         loaded.pending.delete(requestId);
         if (message.type === "tool.call")
           void send(child, { type: "tool.cancel", requestId }).catch(() => {});
+        if (message.type === "provider.installation.inspect")
+          void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
         signal?.removeEventListener("abort", cancel);
         reject(signal?.reason ?? new Error("Tool call canceled"));
       };
@@ -773,6 +799,8 @@ export class PluginRuntime {
             const { subscriptionId } = message;
             void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
           }
+          if (message.type === "provider.installation.inspect")
+            void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
           reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
         },
         message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,

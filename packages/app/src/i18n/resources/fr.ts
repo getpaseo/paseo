@@ -3129,6 +3129,15 @@ export const fr: TranslationResources = {
         custom: "Modèles personnalisés",
         updated: "Mis à jour {{time}}",
       },
+      installation: {
+        title: "Installation",
+        version: "Version",
+        installed: "Installé",
+        notInstalled: "Non installé",
+        install: "Installer",
+        checking: "Vérification…",
+        failed: "Impossible de vérifier l'installation",
+      },
       diagnostic: {
         title: "Diagnostic",
         button: "Diagnostic",

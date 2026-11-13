@@ -2030,6 +2030,7 @@ export class VoiceAssistantWebSocketServer {
         relayProtectedSecurity: true,
         usageSetting: true,
         usageSources: true,
+        providerInstallation: true,
         ownedSubscriptions: true,
         providerOptionControls: true,
         entityMetadata: true,

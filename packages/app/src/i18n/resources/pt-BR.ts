@@ -3102,6 +3102,15 @@ export const ptBR: TranslationResources = {
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
       },
+      installation: {
+        title: "Instalação",
+        version: "Versão",
+        installed: "Instalado",
+        notInstalled: "Não instalado",
+        install: "Instalar",
+        checking: "Verificando…",
+        failed: "Não foi possível verificar a instalação",
+      },
       diagnostic: {
         title: "Diagnóstico",
         button: "Diagnóstico",

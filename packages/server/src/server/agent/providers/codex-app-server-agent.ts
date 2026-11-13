@@ -24,6 +24,7 @@ import {
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
+  type AgentClientInstallation,
   type AgentSession,
   type AgentSessionConfig,
   type SteerActiveTurnOptions,
@@ -115,6 +116,7 @@ import {
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
+  readCommandVersionOutput,
   resolveBinaryVersion,
 } from "./diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
@@ -7750,9 +7752,36 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 }
 
+const CODEX_INSTALL_URL = "https://developers.openai.com/codex/cli";
+
+/** `codex --version` prints `codex-cli <version>`; report the version part. */
+function readCodexVersionLabel(output: string): string | undefined {
+  const line = output.split("\n")[0]?.trim() ?? "";
+  return line.replace(/^codex-cli\s+/i, "") || undefined;
+}
+
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly installation: AgentClientInstallation = {
+    installUrl: CODEX_INSTALL_URL,
+    updateUrl: CODEX_INSTALL_URL,
+    inspect: async ({ signal }) => {
+      const launch = await resolveCodexLaunch(this.runtimeSettings);
+      const availability = await checkCodexLaunchAvailable(launch);
+      if (!availability.available) return { status: "not_installed" };
+      const output = await readCommandVersionOutput({
+        command:
+          launch.source === "override"
+            ? launch.command
+            : (availability.resolvedPath ?? launch.command),
+        args: [...launch.args, "--version"],
+        env: this.runtimeSettings?.env,
+        signal,
+      });
+      return { status: "installed", version: readCodexVersionLabel(output) };
+    },
+  };
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
 

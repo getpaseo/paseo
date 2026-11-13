@@ -3187,6 +3187,15 @@ export const en = {
         custom: "Custom models",
         updated: "Updated {{time}}",
       },
+      installation: {
+        title: "Installation",
+        version: "Version",
+        installed: "Installed",
+        notInstalled: "Not installed",
+        install: "Install",
+        checking: "Checking…",
+        failed: "Couldn't check this installation",
+      },
       diagnostic: {
         title: "Diagnostic",
         button: "Diagnostic",

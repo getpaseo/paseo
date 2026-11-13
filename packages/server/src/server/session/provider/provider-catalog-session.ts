@@ -517,6 +517,30 @@ export class ProviderCatalogSession {
       });
     }
   }
+
+  async handleInspectProviderInstallationRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.installation.inspect.request" }>,
+  ): Promise<void> {
+    const response = { provider: msg.provider, requestId: msg.requestId };
+    try {
+      const installation = await this.providerSnapshotManager.installations.inspect(msg.provider, {
+        refresh: msg.refresh,
+      });
+      this.host.emit({
+        type: "provider.installation.inspect.response",
+        payload: { ...response, installation, error: null },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "provider.installation.inspect.response",
+        payload: {
+          ...response,
+          installation: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
 }
 
 function resolveCatalogRequestCwd(cwd?: string | null): string | undefined {

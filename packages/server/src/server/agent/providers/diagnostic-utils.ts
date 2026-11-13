@@ -388,13 +388,21 @@ export async function buildCommandResolutionDiagnosticRows(
   ];
 }
 
+/** Run a version command and return its trimmed output, stdout first. Throws when it fails. */
+export async function readCommandVersionOutput(
+  invocation: BinaryDiagnosticVersionCommand & { signal?: AbortSignal },
+): Promise<string> {
+  const { stdout, stderr } = await execCommand(invocation.command, invocation.args, {
+    ...createProviderEnvSpec({ runtimeSettings: { env: invocation.env } }),
+    timeout: 5_000,
+    signal: invocation.signal,
+  });
+  return stdout.trim() || stderr.trim();
+}
+
 async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {
   try {
-    const { stdout, stderr } = await execCommand(invocation.command, invocation.args, {
-      ...createProviderEnvSpec({ runtimeSettings: { env: invocation.env } }),
-      timeout: 5_000,
-    });
-    return stdout.trim() || stderr.trim() || "unknown";
+    return (await readCommandVersionOutput(invocation)) || "unknown";
   } catch (error) {
     return `error: ${toDiagnosticErrorMessage(error)}`;
   }

@@ -1958,6 +1958,14 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProviderInstallationInspectRequestMessageSchema = z.object({
+  type: z.literal("provider.installation.inspect.request"),
+  provider: AgentProviderSchema,
+  /** Skip the daemon's short result cache and ask the provider again. */
+  refresh: z.boolean().optional(),
+  requestId: z.string(),
+});
+
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
@@ -3592,6 +3600,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GetProvidersSnapshotRequestMessageSchema,
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
+  ProviderInstallationInspectRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
   UsageListReportsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
@@ -3918,6 +3927,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
+        // COMPAT(providerInstallation): added in v0.13.3, remove gate after 2027-05-13.
+        providerInstallation: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -6742,6 +6753,31 @@ export const ProviderDiagnosticResponseMessageSchema = z.object({
   }),
 });
 
+/** Provider-owned facts; `version` is an opaque string the app shows as written. */
+export const ProviderInstallationInspectionSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("installed"), version: z.string().optional() }),
+  z.object({ status: z.literal("not_installed") }),
+  z.object({ status: z.literal("error"), message: z.string() }),
+]);
+
+export const ProviderInstallationSchema = z.object({
+  installUrl: z.string().optional(),
+  updateUrl: z.string().optional(),
+  /** Absent when the provider does not report its installation. */
+  inspection: ProviderInstallationInspectionSchema.optional(),
+});
+
+export const ProviderInstallationInspectResponseMessageSchema = z.object({
+  type: z.literal("provider.installation.inspect.response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    /** Null when the provider declares no installation contract. */
+    installation: ProviderInstallationSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
 export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
 
@@ -7595,6 +7631,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProvidersSnapshotUpdateMessageSchema,
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
+  ProviderInstallationInspectResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
   UsageListReportsUpdateMessageSchema,
   UsageListReportsResponseMessageSchema,
@@ -7778,6 +7815,11 @@ export type RefreshProvidersSnapshotResponseMessage = z.infer<
 >;
 export type ProviderDiagnosticResponseMessage = z.infer<
   typeof ProviderDiagnosticResponseMessageSchema
+>;
+export type ProviderInstallation = z.infer<typeof ProviderInstallationSchema>;
+export type ProviderInstallationInspection = z.infer<typeof ProviderInstallationInspectionSchema>;
+export type ProviderInstallationInspectResponseMessage = z.infer<
+  typeof ProviderInstallationInspectResponseMessageSchema
 >;
 export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
 export type UsageProblem = z.infer<typeof UsageProblemSchema>;

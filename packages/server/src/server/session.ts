@@ -3462,6 +3462,8 @@ export class Session {
         return this.providerCatalogSession.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
+      case "provider.installation.inspect.request":
+        return this.providerCatalogSession.handleInspectProviderInstallationRequest(msg);
       case "provider.usage.list.request":
         return this.usageSession.handleLegacyList(msg);
       case "usage.list_reports.request":

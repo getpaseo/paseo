@@ -161,6 +161,25 @@ test("registration exposes Muse with a daemon-resolved command", () => {
     icon: "icon.svg",
   });
 });
+test("installation links to the Muse guide and reports the installed version", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.7.2" },
+  };
+  const signal = new AbortController().signal;
+  expect(provider.installation?.installUrl).toBe("https://paseo.sh/docs/muse-code");
+  await expect(
+    provider.installation?.inspect?.({ launch: { ...launch, resolved: true }, signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.7.2" });
+  await expect(
+    provider.installation?.inspect?.({
+      launch: { ...launch, command: "muse", resolved: false },
+      signal,
+    }),
+  ).resolves.toEqual({ status: "not_installed" });
+});
 test("catalog uses model effort variants, modes, and bounded cached discovery", async () => {
   const h = await harness("catalog-controls");
   await h.send({ type: "catalog", requestId: "catalog-1" });

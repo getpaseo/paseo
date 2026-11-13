@@ -6,6 +6,7 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
+  ProviderInstallationLaunch,
   ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
 import {
@@ -19,11 +20,18 @@ export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  installation?: PluginProviderInstallationMetadata;
   command?: readonly [string, ...string[]];
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
+}
+
+export interface PluginProviderInstallationMetadata {
+  installUrl?: string;
+  updateUrl?: string;
+  hasInspect: boolean;
 }
 
 export interface PluginUsageSourceMetadata {
@@ -42,6 +50,13 @@ export type PluginProcessRequest =
       providerId: string;
       request: ProviderStatusRequest;
     }
+  | {
+      type: "provider.installation.inspect";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch };
+    }
+  | { type: "provider.installation.cancel"; requestId: string }
   | {
       type: "initialize";
       pluginId: string;
@@ -132,6 +147,14 @@ const providerMetadataSchema = z
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    installation: z
+      .object({
+        installUrl: z.string().optional(),
+        updateUrl: z.string().optional(),
+        hasInspect: z.boolean(),
+      })
+      .strict()
+      .optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
@@ -187,6 +210,19 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
       })
       .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.inspect"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z
+          .object({
+            launch: ProviderLaunchSchema.extend({ resolved: z.boolean() }).strict().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    z.object({ type: z.literal("provider.installation.cancel"), requestId: z.string() }).strict(),
     z
       .object({
         type: z.literal("initialize"),

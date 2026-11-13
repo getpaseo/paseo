@@ -3092,6 +3092,15 @@ export const ar: TranslationResources = {
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
       },
+      installation: {
+        title: "التثبيت",
+        version: "الإصدار",
+        installed: "مثبّت",
+        notInstalled: "غير مثبّت",
+        install: "تثبيت",
+        checking: "جارٍ التحقق…",
+        failed: "تعذّر التحقق من التثبيت",
+      },
       diagnostic: {
         title: "التشخيص",
         button: "التشخيص",

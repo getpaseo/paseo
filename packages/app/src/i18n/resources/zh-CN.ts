@@ -3021,6 +3021,15 @@ export const zhCN: TranslationResources = {
         custom: "自定义 Models",
         updated: "已更新 {{time}}",
       },
+      installation: {
+        title: "安装",
+        version: "版本",
+        installed: "已安装",
+        notInstalled: "未安装",
+        install: "安装",
+        checking: "正在检查…",
+        failed: "无法检查安装状态",
+      },
       diagnostic: {
         title: "诊断",
         button: "诊断",

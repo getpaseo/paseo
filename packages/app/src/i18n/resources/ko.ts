@@ -3075,6 +3075,15 @@ export const ko: TranslationResources = {
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",
       },
+      installation: {
+        title: "설치",
+        version: "버전",
+        installed: "설치됨",
+        notInstalled: "설치되지 않음",
+        install: "설치",
+        checking: "확인 중…",
+        failed: "설치를 확인할 수 없습니다",
+      },
       diagnostic: {
         title: "진단",
         button: "진단",

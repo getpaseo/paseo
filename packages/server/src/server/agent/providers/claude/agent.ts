@@ -130,6 +130,7 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
+  type AgentClientInstallation,
   type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
@@ -1608,6 +1609,17 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly discoverModels: typeof discoverClaudeModels;
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
+  readonly installation: AgentClientInstallation = {
+    installUrl: CLAUDE_INSTALL_URL,
+    updateUrl: CLAUDE_UPDATE_URL,
+    inspect: async ({ signal }) => {
+      const probe = await readClaudeCodeVersion(this.runtimeSettings, signal);
+      if (probe.status === "not_installed") return probe;
+      return probe.version
+        ? { status: "installed", version: probe.version }
+        : { status: "installed" };
+    },
+  };
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly logger: Logger;
@@ -1923,18 +1935,38 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
   );
 }
 
+const CLAUDE_INSTALL_URL = "https://code.claude.com/docs/en/setup#install-claude-code";
+const CLAUDE_UPDATE_URL = "https://code.claude.com/docs/en/setup#update-claude-code";
+
+type ClaudeCodeVersionRead =
+  | { status: "not_installed" }
+  /** `version` is null when the configured command is a wrapper that does not report Claude Code's version. */
+  | { status: "installed"; version: string | null };
+
 export async function resolveClaudeCodeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
   signal?: AbortSignal,
 ): Promise<string> {
+  const read = await readClaudeCodeVersion(runtimeSettings, signal);
+  if (read.status === "not_installed") {
+    throw new Error("Claude binary not found while resolving Claude Code version");
+  }
+  if (!read.version) {
+    throw new Error("Unable to parse Claude Code version from --version output");
+  }
+  return read.version;
+}
+
+async function readClaudeCodeVersion(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  signal: AbortSignal | undefined,
+): Promise<ClaudeCodeVersionRead> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
     defaultBinary: "claude",
   });
   const availability = await checkProviderLaunchAvailable(launch);
-  if (!availability.available) {
-    throw new Error("Claude binary not found while resolving Claude Code version");
-  }
+  if (!availability.available) return { status: "not_installed" };
   const executable = availability.resolvedPath ?? launch.command;
   const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
     ...createProviderEnvSpec({ runtimeSettings }),
@@ -1948,10 +1980,7 @@ export async function resolveClaudeCodeVersion(
   const version = /\d+\.\d+\.\d+\s+\(Claude Code\)/i.test(rawVersionOutput)
     ? parseClaudeCodeVersion(rawVersionOutput)
     : null;
-  if (!version) {
-    throw new Error("Unable to parse Claude Code version from --version output");
-  }
-  return version.join(".");
+  return { status: "installed", version: version ? version.join(".") : null };
 }
 
 async function resolveClaudeAuth(

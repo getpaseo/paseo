@@ -3113,6 +3113,15 @@ export const ru: TranslationResources = {
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",
       },
+      installation: {
+        title: "Установка",
+        version: "Версия",
+        installed: "Установлено",
+        notInstalled: "Не установлено",
+        install: "Установить",
+        checking: "Проверка…",
+        failed: "Не удалось проверить установку",
+      },
       diagnostic: {
         title: "Диагностика",
         button: "Диагностика",
