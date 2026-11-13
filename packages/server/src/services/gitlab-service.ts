@@ -251,6 +251,7 @@ const GitLabApprovalsSchema = z
 
 const GitLabProjectSchema = z
   .object({
+    path_with_namespace: z.string(),
     forked_from_project: z
       .object({ path_with_namespace: z.string().optional() })
       .nullable()

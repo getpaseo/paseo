@@ -447,6 +447,14 @@ describe("createGiteaService getReferenceRepository", () => {
     expect(calls).toEqual([["api", "repos/example-user/sample-repo"]]);
   });
 
+  it("rejects when tea api answers with an error body, since tea exits 0 on HTTP errors", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ message: "user does not exist [uid: 0, name: ]" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
   it("is null for a repository that is not a fork", async () => {
     const { service } = makeService(() =>
       ok(JSON.stringify({ full_name: "example-user/sample-repo", fork: false, parent: null })),

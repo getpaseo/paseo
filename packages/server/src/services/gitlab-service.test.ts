@@ -277,6 +277,12 @@ describe("createGitLabService getReferenceRepository", () => {
     expect(calls).toEqual([["api", "projects/example-group%2Fexample-project"]]);
   });
 
+  it("rejects when glab api answers with an error body", async () => {
+    const { service } = makeService(() => ok(JSON.stringify({ message: "404 Project Not Found" })));
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
   it("is null for a project that is not a fork", async () => {
     const { service } = makeService(() =>
       ok(JSON.stringify({ path_with_namespace: "example-group/example-project" })),

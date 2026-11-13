@@ -18,9 +18,18 @@ export function ForgeShorthandProvider({
   forgeWeb: ForgeWeb | null | undefined;
   children: ReactNode;
 }) {
+  // Keyed on the strings: the descriptor hands over a new `forgeWeb` object whenever any
+  // other workspace field changes, and a new context value re-renders every Markdown message.
+  const webHost = forgeWeb?.host;
+  const referenceRepository = forgeWeb?.referenceRepository;
   const value = useMemo(
-    () => createForgeShorthand({ forge, remoteUrl, forgeWeb }),
-    [forge, remoteUrl, forgeWeb],
+    () =>
+      createForgeShorthand({
+        forge,
+        remoteUrl,
+        forgeWeb: webHost ? { host: webHost, referenceRepository } : null,
+      }),
+    [forge, remoteUrl, webHost, referenceRepository],
   );
   return <ForgeShorthandContext.Provider value={value}>{children}</ForgeShorthandContext.Provider>;
 }

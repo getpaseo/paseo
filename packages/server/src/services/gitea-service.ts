@@ -247,8 +247,10 @@ const GiteaPullRequestApiSchema = z
   })
   .passthrough();
 
+// `full_name` is required so an HTTP error body, which `tea api` returns with exit code 0, fails the parse.
 const GiteaRepositoryApiSchema = z
   .object({
+    full_name: z.string(),
     parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
   })
   .passthrough();
