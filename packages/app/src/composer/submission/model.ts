@@ -45,7 +45,7 @@ export function beginMessageSubmission(
   input: PendingMessageSubmission,
 ): MessageSubmissionRecord[] {
   if (submissions.some((submission) => submission.clientMessageId === input.clientMessageId)) {
-    throw new Error(`Message submission already exists: ${input.clientMessageId}`);
+    return submissions as MessageSubmissionRecord[];
   }
   return [...submissions, { ...input, providerAcknowledged: false, rpcSettled: false }];
 }

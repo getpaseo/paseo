@@ -161,7 +161,7 @@ export function appendSubmittedUserMessage(input: {
     (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
   );
   if (alreadyExists) {
-    throw new Error(`Submitted user message already exists: ${clientMessageId}`);
+    return { tail: input.tail, head: input.head };
   }
   return input.head.length > 0
     ? { tail: input.tail, head: [...input.head, input.message] }
