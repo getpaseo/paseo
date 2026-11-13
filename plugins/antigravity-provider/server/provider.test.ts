@@ -1,3 +1,5 @@
+import { createHook } from "node:async_hooks";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -419,6 +421,66 @@ it("keeps a turn alive while a silent subagent child is still writing", async ()
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it.each(["text", "tool"])(
+  "keeps a turn alive when fresh %s arrives during the watchdog's child-log check",
+  async (activity) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agy-watchdog-race-"));
+    temporary.push(dir);
+    const control = path.join(dir, "control");
+    const childLogs = 4096;
+    const h = await harness({
+      PASEO_ANTIGRAVITY_TURN_IDLE_MS: "300",
+      AGY_TEST_RACE_CONTROL: control,
+      AGY_TEST_RACE_CHILD_LOGS: String(childLogs),
+      AGY_TEST_RACE_ACTIVITY: activity,
+    });
+    await h.open();
+    const message = await h.prompt("WATCHDOG_RACE");
+    await h.wait(
+      (event) =>
+        event.type === "timeline.item" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "invoke_subagent",
+    );
+    let checkedLogs = 0;
+    let lastCheck: number | undefined;
+    let refreshedDuringCheck = false;
+    const unsubscribe = h.connection.onEvent((event) => {
+      if (event.type !== "timeline.item") return;
+      const item = event.item;
+      const freshText = item.type === "assistant_message" && item.text === "resumed";
+      const freshTool =
+        item.type === "tool_call" && item.name === "run_command" && item.status === "running";
+      if ((freshText || freshTool) && checkedLogs > 0 && checkedLogs < childLogs)
+        refreshedDuringCheck = true;
+    });
+    // Observe real filesystem requests. The fake CLI resumes only once stat() is pending,
+    // and waits for the stale-log scan to finish before completing the turn.
+    const hook = createHook({
+      init(id, type) {
+        if (type !== "FSREQPROMISE") return;
+        checkedLogs += 1;
+        if (checkedLogs === 1) writeFileSync(control, "resume");
+        if (checkedLogs === childLogs) lastCheck = id;
+      },
+      destroy(id) {
+        if (id !== lastCheck) return;
+        hook.disable();
+        writeFileSync(`${control}.finish`, "");
+      },
+    });
+    hook.enable();
+    try {
+      const result = await h.completed(message);
+      expect(refreshedDuringCheck).toBe(true);
+      expect(result).toMatchObject({ state: "completed" });
+    } finally {
+      hook.disable();
+      unsubscribe();
+    }
+  },
+);
 
 it("stops an unresponsive driver and still respawns the conversation", async () => {
   const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });

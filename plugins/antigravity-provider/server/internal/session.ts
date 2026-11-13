@@ -373,11 +373,15 @@ export class Session {
   }
 
   private async failIfIdle(turn: Turn, idleMs: number): Promise<void> {
-    if (await this.childActive(turn, idleMs)) {
-      if (this.state.type === "running" && this.state.turn === turn) this.armWatchdog();
+    const watchdog = this.watchdog;
+    const childActive = await this.childActive(turn, idleMs);
+    // A frame replaces the timer while stat() is pending, invalidating this idle window.
+    if (this.watchdog !== watchdog) return;
+    if (this.state.type !== "running" || this.state.turn !== turn) return;
+    if (childActive) {
+      this.armWatchdog();
       return;
     }
-    if (this.state.type !== "running" || this.state.turn !== turn) return;
     this.failTurn(
       new AntigravityError(
         `Antigravity produced no output for ${Math.round(idleMs / 1000)}s. Its model quota may be exhausted and it is retrying; check the reset time with agy, then retry.`,

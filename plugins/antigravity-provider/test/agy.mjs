@@ -1,5 +1,6 @@
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 
 const args = process.argv.slice(2);
 const log = process.env.AGY_TEST_LOG;
@@ -75,6 +76,56 @@ lines.on("line", (line) => {
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
   if (text.includes("QUOTA_STALL")) return;
+  if (text.includes("WATCHDOG_RACE")) {
+    const control = process.env.AGY_TEST_RACE_CONTROL;
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 0,
+        state: "DONE",
+        step_type: "subagent",
+        tool_name: "invoke_subagent",
+        subagent_info: {
+          subagents: Array.from(
+            { length: Number(process.env.AGY_TEST_RACE_CHILD_LOGS) },
+            (_, i) => ({
+              type_name: "child",
+              log_uri: pathToFileURL(`${control}.missing-${i}`).href,
+            }),
+          ),
+        },
+      },
+    });
+    let activity;
+    const poll = setInterval(() => {
+      if (!activity && existsSync(control)) {
+        const isTool = process.env.AGY_TEST_RACE_ACTIVITY === "tool";
+        const frame = {
+          event: "step_update",
+          step_update: {
+            conversation_id: conversationId,
+            step_index: 1,
+            state: "ACTIVE",
+            step_type: isTool ? "tool" : "agent_response",
+            tool_name: isTool ? "run_command" : "",
+            tool_info: isTool ? { name: "run_command" } : null,
+            text_delta: "resumed",
+          },
+        };
+        emit(frame);
+        activity = setInterval(() => emit(frame), 50);
+      }
+      if (!existsSync(`${control}.finish`)) return;
+      clearInterval(poll);
+      clearInterval(activity);
+      emit({
+        event: "result",
+        result: { conversation_id: conversationId, status: "SUCCESS", response: "done" },
+      });
+    }, 1);
+    return;
+  }
   if (text.includes("SUBAGENT_WAIT")) {
     const childLog = process.env.AGY_TEST_CHILD_LOG;
     emit({
