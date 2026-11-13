@@ -194,6 +194,11 @@ Drop a hunk when the installed LegendList ships its fix.
 Android's `PaseoScrollView` and iOS's `PaseoScrollViewComponentView`.
 `VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
 
+After an iOS change, [rebuild the native client](development.md#running-the-ios-app-on-a-local-simulator)
+and check the compact tool-detail sheet as well as the timeline: drag its body in both
+directions and scroll wide content horizontally. A chat-only check misses the sheet's
+native gesture binding.
+
 **Content clamp.** A mount that shrinks the content while `maintainVisibleContentPosition` is set
 applies the shrink twice on both platforms: the scroll view clamps its offset to the new end during
 the mount, and React Native then adds the anchor's movement to the clamped offset
