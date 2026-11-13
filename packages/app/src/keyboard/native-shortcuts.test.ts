@@ -240,6 +240,16 @@ describe("hardware source adapter", () => {
     releaseRebound();
 
     source.publishPolicy({
+      bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Mod+J Shift+Tab" }),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: true,
+    });
+    const releaseChord = focusSurfaces.declare("message-input");
+    expect(claimed).toEqual([...tabSwitching, "Shift+Tab"]);
+    releaseChord();
+
+    source.publishPolicy({
       bindings: buildEffectiveBindings({}),
       isMac: true,
       usesDesktopBindings: true,
