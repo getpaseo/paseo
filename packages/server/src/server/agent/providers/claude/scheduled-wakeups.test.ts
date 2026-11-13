@@ -68,12 +68,13 @@ describe("ClaudeScheduledWakeups", () => {
     scheduleBoth(clock, wakeups);
     expect(wakeups.hasPending()).toBe(true);
 
-    // The cron fires first; its next run keeps the jitter (02:00 nominal, 02:01 observed).
+    // The cron fires first, 62 s after its 01:56 slot; the next run keeps that jitter
+    // (02:00 nominal, 02:01 observed).
     clock.set("2026-11-13T18:57:02.000Z");
     expect(wakeups.observe(fire("schedule_wakeup"))).toBe("2026-11-13T18:58:00.073Z");
 
     clock.set("2026-11-13T18:58:01.000Z");
-    expect(wakeups.observe(fire("loop_wakeup"))).toBe("2026-11-13T19:01:00.000Z");
+    expect(wakeups.observe(fire("loop_wakeup"))).toBe("2026-11-13T19:01:02.000Z");
 
     wakeups.observe(toolUse("toolu_delete", "CronDelete", { id: "878c515b" }));
     expect(wakeups.observe(toolResult("toolu_delete", "Cancelled job 878c515b."))).toBeNull();
@@ -87,6 +88,44 @@ describe("ClaudeScheduledWakeups", () => {
     expect(wakeups.observe(fire("loop_wakeup"))).toBeUndefined();
     expect(wakeups.observe(fire(null))).toBeUndefined();
     expect(wakeups.observe({ type: "command_lifecycle", state: "completed" })).toBeUndefined();
+  });
+
+  test("follows a job that runs ahead of its slots, even when Claude skips the first one", () => {
+    // Captured on a dev daemon: created at 02:29:48 local, Claude skipped the 02:30 slot and the
+    // first run came at 02:34:34, 26 s before 02:35.
+    const clock = createClock("2026-11-13T19:29:48.000Z");
+    const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
+    wakeups.observe(
+      toolUse("toolu_cron", "CronCreate", { cron: "*/5 * * * *", recurring: true, durable: false }),
+    );
+    expect(
+      wakeups.observe(
+        toolResult(
+          "toolu_cron",
+          "Scheduled recurring job d17dc700 (Every 5 minutes). Next run: Nov 14 2:35am. Session-only (not written to disk, dies when Claude exits). Auto-expires after 7 days. Use CronDelete to cancel sooner.",
+        ),
+      ),
+    ).toBe("2026-11-13T19:35:00.000Z");
+
+    clock.set("2026-11-13T19:34:34.000Z");
+    expect(wakeups.observe(fire("schedule_wakeup"))).toBe("2026-11-13T19:39:34.000Z");
+    clock.set("2026-11-13T19:39:34.000Z");
+    expect(wakeups.observe(fire("schedule_wakeup"))).toBe("2026-11-13T19:44:34.000Z");
+  });
+
+  test("does not count an early run's own slot as the next one", () => {
+    const clock = createClock("2026-11-13T19:27:00.000Z");
+    const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
+    wakeups.observe(toolUse("toolu_cron", "CronCreate", { cron: "*/5 * * * *" }));
+    expect(
+      wakeups.observe(
+        toolResult("toolu_cron", "Scheduled recurring job e5f6. Next run: Nov 14 2:30am."),
+      ),
+    ).toBe("2026-11-13T19:30:00.000Z");
+
+    // 02:30 runs at 02:29:34: the next wake is 02:34:34, not the 02:30 slot that just ran.
+    clock.set("2026-11-13T19:29:34.000Z");
+    expect(wakeups.observe(fire("schedule_wakeup"))).toBe("2026-11-13T19:34:34.000Z");
   });
 
   test("drops a one-shot cron once it fires", () => {

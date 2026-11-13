@@ -4,7 +4,10 @@ const MINUTE_MS = 60_000;
 /** Claude clamps ScheduleWakeup delays to this range. */
 const MIN_WAKEUP_DELAY_S = 60;
 const MAX_WAKEUP_DELAY_S = 3600;
-/** Claude fires a recurring job up to 10% of its period late, capped at 15 minutes. */
+/**
+ * Claude moves every run of a recurring job by the same per-job jitter, early or late: a `*\/5`
+ * job ran 26 s before its slots, a `*\/2` job 56 s after them. Never more than this.
+ */
 const MAX_CRON_JITTER_MS = 15 * MINUTE_MS;
 /** Session crons expire seven days after creation. */
 const CRON_LIFETIME_MS = 7 * 24 * 60 * MINUTE_MS;
@@ -20,7 +23,7 @@ interface CronWake {
   expression: string;
   recurring: boolean;
   dueAt: number;
-  /** Claude's per-job jitter, kept so later runs land where Claude will fire them. */
+  /** Claude's per-job jitter (negative when early), so later runs land where Claude fires them. */
   offsetMs: number;
   expiresAt: number;
 }
@@ -121,16 +124,16 @@ export class ClaudeScheduledWakeups {
     const id = /\bjob ([\w-]+)/.exec(text)?.[1];
     if (!id) return;
     const now = this.now();
-    const nominal = this.nextRun(call.expression, now);
+    // Claude may skip a slot that its jitter already put in the past, so the reported run is
+    // matched to its nearest slot, not to the next one.
     const reported = parseNextRun(text, now, this.timeZone);
-    const dueAt = reported ?? nominal;
+    const dueAt = reported ?? this.nextRun(call.expression, now);
     if (dueAt === null) return;
-    const offsetMs = reported !== null && nominal !== null ? reported - nominal : 0;
     this.crons.set(id, {
       expression: call.expression,
       recurring: call.recurring,
       dueAt,
-      offsetMs: offsetMs > 0 && offsetMs <= MAX_CRON_JITTER_MS ? offsetMs : 0,
+      offsetMs: this.jitter(call.expression, dueAt) ?? 0,
       expiresAt: now + CRON_LIFETIME_MS,
     });
   }
@@ -145,10 +148,26 @@ export class ClaudeScheduledWakeups {
     const [id, cron] =
       [...this.crons].sort((left, right) => left[1].dueAt - right[1].dueAt)[0] ?? [];
     if (!id || !cron) return;
-    const nominal = cron.recurring ? this.nextRun(cron.expression, this.now()) : null;
-    const dueAt = nominal === null ? null : nominal + cron.offsetMs;
+    // The fire shows the jitter to the second. An early fire precedes its own slot, so the next
+    // run is counted from that slot rather than from now.
+    const firedAt = this.now();
+    const offsetMs = this.jitter(cron.expression, firedAt) ?? cron.offsetMs;
+    const nominal = cron.recurring ? this.nextRun(cron.expression, firedAt - offsetMs) : null;
+    const dueAt = nominal === null ? null : nominal + offsetMs;
     if (dueAt === null || dueAt > cron.expiresAt) this.crons.delete(id);
-    else this.crons.set(id, { ...cron, dueAt });
+    else this.crons.set(id, { ...cron, dueAt, offsetMs });
+  }
+
+  /** How far `time` is from the expression's nearest slot, or null when no slot is close. */
+  private jitter(expression: string, time: number): number | null {
+    let nearest: number | null = null;
+    let run = this.nextRun(expression, time - MAX_CRON_JITTER_MS);
+    while (run !== null && run <= time + MAX_CRON_JITTER_MS) {
+      if (nearest === null || Math.abs(run - time) < Math.abs(nearest - time)) nearest = run;
+      if (run >= time) break;
+      run = this.nextRun(expression, run);
+    }
+    return nearest === null ? null : time - nearest;
   }
 
   private nextRun(expression: string, after: number): number | null {
