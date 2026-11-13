@@ -1,8 +1,24 @@
-import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findTypedFilePath, locateTypedPath, type ListDirectory } from "./typed-file-path";
+import { describe, expect, it, vi } from "vitest";
+import { findTypedFilePath, locateTypedPath, type TypedFileClient } from "./typed-file-path";
+
+type DirectorySuggestionsPayload = Awaited<ReturnType<TypedFileClient["getDirectorySuggestions"]>>;
+
+function suggestionsPayload(
+  entries: DirectorySuggestionsPayload["entries"],
+  error: string | null = null,
+): DirectorySuggestionsPayload {
+  return {
+    directories: entries.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])),
+    entries,
+    error,
+    requestId: "request",
+  };
+}
+
+function fakeClient(answer: () => Promise<DirectorySuggestionsPayload>) {
+  const getDirectorySuggestions = vi.fn<TypedFileClient["getDirectorySuggestions"]>(answer);
+  return { client: { getDirectorySuggestions }, getDirectorySuggestions };
+}
 
 describe("locateTypedPath", () => {
   it("splits absolute and home-relative paths into parent and name", () => {
@@ -22,73 +38,68 @@ describe("locateTypedPath", () => {
     expect(locateTypedPath("~/")).toBeNull();
     expect(locateTypedPath("/tmp/x/")).toBeNull();
     expect(locateTypedPath("/tmp/..")).toBeNull();
+    expect(locateTypedPath("/tmp/a\\b.txt")).toBeNull();
   });
 });
 
 describe("findTypedFilePath", () => {
-  let home: string;
-  let listDirectory: ListDirectory;
+  it("asks the daemon for exactly the typed name in the typed directory", async () => {
+    const { client, getDirectorySuggestions } = fakeClient(async () =>
+      suggestionsPayload([{ path: "y.md", kind: "file" }]),
+    );
 
-  beforeEach(async () => {
-    home = await mkdtemp(path.join(tmpdir(), "paseo-typed-file-path-"));
-    await mkdir(path.join(home, "x", "nested"), { recursive: true });
-    await writeFile(path.join(home, "x", "y.md"), "notes");
-    await writeFile(path.join(home, "a.txt"), "top");
-    await symlink(path.join(home, "x", "nested"), path.join(home, "x", "linked-dir"));
-    // Lists the way the daemon's file explorer does: entry kinds come from readdir, so a symlink
-    // is a "file" whatever it points to, and listing anything but a directory fails.
-    listDirectory = async (cwd, relativePath) => {
-      const root = cwd === "~" || cwd.startsWith("~/") ? path.join(home, cwd.slice(1)) : cwd;
-      const target = path.join(root, relativePath);
-      if (!(await stat(target)).isDirectory()) throw new Error("Requested path is not a directory");
-      const dirents = await readdir(target, { withFileTypes: true });
-      return {
-        entries: dirents.map((dirent) => ({
-          name: dirent.name,
-          kind: dirent.isDirectory() ? "directory" : "file",
-        })),
-      };
-    };
-  });
-
-  afterEach(async () => {
-    await rm(home, { recursive: true, force: true });
-  });
-
-  it("finds an absolute file path and returns its directory", async () => {
-    const query = path.join(home, "x", "y.md");
-    await expect(findTypedFilePath({ query, listDirectory })).resolves.toEqual({
-      parent: path.join(home, "x"),
-      name: "y.md",
-    });
-  });
-
-  it("finds a home-relative file path", async () => {
-    await expect(findTypedFilePath({ query: "~/x/y.md", listDirectory })).resolves.toEqual({
+    await expect(findTypedFilePath({ query: "~/x/y.md", client })).resolves.toEqual({
       parent: "~/x",
       name: "y.md",
     });
-    await expect(findTypedFilePath({ query: "~/a.txt", listDirectory })).resolves.toEqual({
-      parent: "~",
-      name: "a.txt",
+    expect(getDirectorySuggestions).toHaveBeenCalledWith({
+      cwd: "~/x",
+      query: "y.md",
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "exact",
+      limit: 1,
     });
   });
 
-  it("leaves a directory path alone, including one behind a symlink", async () => {
-    await expect(
-      findTypedFilePath({ query: path.join(home, "x", "nested"), listDirectory }),
-    ).resolves.toBeNull();
-    await expect(
-      findTypedFilePath({ query: path.join(home, "x", "linked-dir"), listDirectory }),
-    ).resolves.toBeNull();
+  it("finds a file at the filesystem root", async () => {
+    const { client, getDirectorySuggestions } = fakeClient(async () =>
+      suggestionsPayload([{ path: "a.txt", kind: "file" }]),
+    );
+
+    await expect(findTypedFilePath({ query: "/a.txt", client })).resolves.toEqual({
+      parent: "/",
+      name: "a.txt",
+    });
+    expect(getDirectorySuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/", query: "a.txt" }),
+    );
   });
 
-  it("offers nothing for a path that does not exist", async () => {
+  it("offers nothing when the typed path is not a file", async () => {
+    const { client } = fakeClient(async () => suggestionsPayload([]));
+
+    await expect(findTypedFilePath({ query: "/tmp/x/nested", client })).resolves.toBeNull();
+  });
+
+  it("does not ask about a query that is not a rooted path", async () => {
+    const { client, getDirectorySuggestions } = fakeClient(async () => suggestionsPayload([]));
+
+    await expect(findTypedFilePath({ query: "repo", client })).resolves.toBeNull();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+  });
+
+  it("fails instead of guessing when the lookup fails", async () => {
+    const daemonError = fakeClient(async () => suggestionsPayload([], "EACCES"));
+    const disconnected = fakeClient(async () => {
+      throw new Error("Connection closed");
+    });
+
     await expect(
-      findTypedFilePath({ query: path.join(home, "x", "y.m"), listDirectory }),
-    ).resolves.toBeNull();
+      findTypedFilePath({ query: "/tmp/x/y.md", client: daemonError.client }),
+    ).rejects.toThrow("EACCES");
     await expect(
-      findTypedFilePath({ query: path.join(home, "missing", "y.md"), listDirectory }),
-    ).resolves.toBeNull();
+      findTypedFilePath({ query: "/tmp/x/y.md", client: disconnected.client }),
+    ).rejects.toThrow("Connection closed");
   });
 });

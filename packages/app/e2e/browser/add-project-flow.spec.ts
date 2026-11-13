@@ -455,6 +455,65 @@ test.describe("Add Project command-center flow", () => {
     }
   });
 
+  test("Enter right after pasting a file path adds its directory", async ({ page }) => {
+    const projectDirectory = await mkdtemp(path.join(tmpdir(), "paseo-e2e-file-path-enter-"));
+    const filePath = path.join(projectDirectory, "notes.txt");
+    const projectName = path.basename(projectDirectory);
+    let projectId: string | null = null;
+    try {
+      await writeFile(filePath, "notes");
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+      await addProjectFlowInput(page).fill(filePath);
+      await page.keyboard.press("Enter");
+
+      projectId = await expectOpenedProject(page, projectName);
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName,
+        projectPath: projectDirectory,
+      });
+    } finally {
+      await removeCreatedProject(projectDirectory, projectId).catch(() => undefined);
+      await rm(projectDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("a file found by directory search is still the typed parent in New directory", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(tmpdir(), "paseo-e2e-file-path-parent-"));
+    const filePath = path.join(parentDirectory, "notes.txt");
+    const rows = page.getByTestId("add-project-flow-results").getByRole("button");
+    try {
+      await writeFile(filePath, "notes");
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+      await addProjectFlowInput(page).fill(filePath);
+      await expect(rows.first()).toHaveAttribute(
+        "data-testid",
+        `add-project-flow-path-${encodeURIComponent(parentDirectory)}`,
+        { timeout: 30_000 },
+      );
+
+      await addProjectFlowBack(page).click();
+      await chooseAddProjectMethod(page, "new-directory");
+      await addProjectFlowInput(page).fill(filePath);
+
+      await expect(rows.first()).toHaveAttribute(
+        "data-testid",
+        `add-project-flow-path-${encodeURIComponent(filePath)}`,
+        { timeout: 30_000 },
+      );
+      await expect(rows.first()).toContainText("Use this parent");
+    } finally {
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("New directory validates the name, restores parent and name state, then creates a Project", async ({
     page,
   }) => {

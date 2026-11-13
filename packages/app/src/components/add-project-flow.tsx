@@ -85,7 +85,7 @@ import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
 } from "@/runtime/host-runtime";
-import { useHostFeatureMap } from "@/runtime/host-features";
+import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
@@ -457,6 +457,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     retry: false,
     staleTimeMs: 15_000,
   });
+  // COMPAT(directorySuggestionsExactMatch): added after v0.16.0-beta.2, remove gate after 2027-05-13.
+  const canFindTypedFiles = useHostFeature(hostId, "directorySuggestionsExactMatch");
+  const typedFileLookup = useTypedFilePath({
+    client,
+    hostId,
+    query: debouncedQuery,
+    enabled: page.kind === "directory-search" && canFindTypedFiles,
+  });
+  const resolveTypedFile = typedFileLookup.resolve;
 
   const handleBack = useCallback(() => {
     const previous = backAddProjectPage(state);
@@ -481,14 +490,16 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const openAddedProject = useCallback(
-    async (path: string, sourceKind: "directory-search" | "method") => {
+    async (path: string, sourceKind: "directory-search" | "method", typedPath = false) => {
       if (!hostId || submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
         setPageStatus(current, sourceKind, { isSubmitting: true, error: null }),
       );
       try {
-        const result = await openProject(path);
+        // Enter right after pasting arrives before the lookup has answered for that path.
+        const typedFile = typedPath ? await resolveTypedFile(path) : null;
+        const result = await openProject(typedFile?.parent ?? path);
         if (result.ok) {
           openNewWorkspaceForProject(hostId, result.project);
           return;
@@ -510,7 +521,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submissionInFlightRef.current = false;
       }
     },
-    [hostId, openNewWorkspaceForProject, openProject],
+    [hostId, openNewWorkspaceForProject, openProject, resolveTypedFile],
   );
 
   const browse = useCallback(async () => {
@@ -548,12 +559,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     () => (directoryQuery.data?.query === query ? directoryQuery.data.paths : EMPTY_PATHS),
     [directoryQuery.data, query],
   );
-  const typedFileLookup = useTypedFilePath({
-    client,
-    hostId,
-    query: debouncedQuery,
-    enabled: page.kind === "directory-search",
-  });
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
@@ -650,7 +655,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: directoryOptionSubtitle(option, shortPath),
           icon: Folder,
           testID: pathTestId(option.path),
-          select: () => void openAddedProject(option.path, "directory-search"),
+          select: () =>
+            void openAddedProject(option.path, "directory-search", option.kind === "path"),
         };
       });
     }
