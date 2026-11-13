@@ -103,8 +103,12 @@ try:
             print(json.dumps({'status': 'available', 'identity': hashlib.sha256(identity.encode()).hexdigest()} if has_token and identity else {'status': 'unavailable' if has_token else 'signed-out'}))
         finally:
             dbus.Interface(bus.get_object('org.freedesktop.secrets', session), 'org.freedesktop.Secret.Session').Close()
-except Exception:
-    print(json.dumps({'status': 'unavailable'}))
+except Exception as error:
+    # agy falls back to its file store when the Secret Service cannot be activated.
+    # A session bus can exist on a headless host without any keyring service.
+    name = getattr(error, 'get_dbus_name', lambda: None)()
+    missing_service = name in ['org.freedesktop.DBus.Error.ServiceUnknown', 'org.freedesktop.DBus.Error.Spawn.ServiceNotFound']
+    print(json.dumps({'status': 'file-fallback' if missing_service else 'unavailable'}))
 `;
 
 const WINDOWS_KEYRING_READER = String.raw`
@@ -212,7 +216,8 @@ export async function readCredentialState(env: Environment): Promise<CredentialS
       });
       const result = JSON.parse(stdout);
       if (result.status === "available" && /^[a-f0-9]{64}$/.test(result.identity)) return result;
-      if (result.status === "signed-out") return readCredentialFile(env);
+      if (result.status === "signed-out" || result.status === "file-fallback")
+        return readCredentialFile(env);
       return unavailable;
     }
     const { stdout } =

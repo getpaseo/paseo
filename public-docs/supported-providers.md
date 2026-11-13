@@ -39,6 +39,9 @@ credentials on your next message. An account switch interrupts an active turn or
 send the message again after signing in. Ordinary token renewal keeps the runtime running.
 Local Linux keyring monitoring requires `python3` with the `dbus` module (`python3-dbus` on
 Debian/Ubuntu). SSH and file-backed sign-ins use the CLI's credential file instead.
+On headless Linux hosts where D-Bus is running without an activatable Secret Service, Paseo
+also follows the CLI's file fallback. A locked keyring or temporary read error keeps the existing
+runtime until the sign-in store can be read again.
 
 Mid-turn steering is unavailable. Configured MCP servers and system prompts are forwarded to the
 ACP session, and attached images are passed as file references for the agent to read. Paseo also

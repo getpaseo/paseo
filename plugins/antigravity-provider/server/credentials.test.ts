@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import * as pluginServer from "@getpaseo/plugin/server";
 import {
   credentialIdentity,
   CredentialMonitor,
@@ -12,6 +13,7 @@ import {
 const dirs: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -64,6 +66,52 @@ it("reads SSH fallback files and the explicit keyring-unavailable fallback", asy
     }),
   ).toEqual(credentialIdentity(fixture()));
 });
+
+it.runIf(process.platform === "linux")(
+  "observes file account switches when D-Bus has no Secret Service",
+  async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agy-no-secret-service-"));
+    dirs.push(dir);
+    const nativeReader = vi.spyOn(pluginServer, "execCommand").mockResolvedValue({
+      stdout: JSON.stringify({ status: "file-fallback" }),
+      stderr: "",
+    });
+    const env = { ANTIGRAVITY_EXECUTABLE_DATA_DIR: dir, DBUS_SESSION_BUS_ADDRESS: "fixture-bus" };
+    const changes: unknown[] = [];
+    const monitor = new CredentialMonitor();
+    const watch = monitor.watch(env, (state) => changes.push(state));
+    try {
+      await writeFile(path.join(dir, "antigravity-oauth-token"), fixture());
+      expect(await watch.read()).toEqual(credentialIdentity(fixture()));
+      await writeFile(path.join(dir, "antigravity-oauth-token"), fixture("second@example.com"));
+      expect(await watch.read()).toEqual(credentialIdentity(fixture("second@example.com")));
+      expect(changes).toEqual([credentialIdentity(fixture("second@example.com"))]);
+      expect(nativeReader).toHaveBeenCalledTimes(2);
+    } finally {
+      watch.dispose();
+    }
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "does not use a fallback file when the keyring is locked or temporarily unreadable",
+  async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agy-locked-keyring-"));
+    dirs.push(dir);
+    const nativeReader = vi.spyOn(pluginServer, "execCommand").mockResolvedValue({
+      stdout: JSON.stringify({ status: "unavailable" }),
+      stderr: "",
+    });
+    await writeFile(path.join(dir, "antigravity-oauth-token"), fixture());
+    expect(
+      await readCredentialState({
+        ANTIGRAVITY_EXECUTABLE_DATA_DIR: dir,
+        DBUS_SESSION_BUS_ADDRESS: "fixture-bus",
+      }),
+    ).toEqual({ status: "unavailable" });
+    expect(nativeReader).toHaveBeenCalledOnce();
+  },
+);
 
 it("shares polls and keeps the last known identity through read errors, and disposes the final subscription", async () => {
   vi.useFakeTimers();
