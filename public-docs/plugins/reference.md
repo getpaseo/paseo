@@ -854,14 +854,14 @@ function hideAlerts() {
 }
 ```
 
-### Workspace row items
+### Workspace row badge items
 
-`addWorkspaceRowItem({ id, title, icon, Component })` adds an item to the line under each workspace
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` adds an item to the line under each workspace
 title in the sidebar, after the row's own items (host, pull request, checks, services, labels).
 `title` and `icon` label the item's toggle in the sidebar's **Show** menu. Items start visible.
 
 `Component` renders once per workspace row on the plugin's host and receives
-`PluginWorkspaceRowItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render
+`PluginWorkspaceRowBadgeItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render
 `WorkspaceRowBadge` from `@getpaseo/plugin/client/ui`, or `null` when there is nothing to say about
 the workspace:
 
@@ -877,12 +877,12 @@ renders the component, so share one query across rows instead of fetching per wo
 plugin's React Query client is shared by all of its components on a host.
 
 ```tsx
-import type { PluginWorkspaceRowItemProps } from "@getpaseo/plugin/client";
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 
-function ReviewState({ workspaceId }: PluginWorkspaceRowItemProps) {
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
   const list = useRpc(reviewStates);
   const { data } = useQuery({
     queryKey: ["review-states"],
@@ -894,10 +894,17 @@ function ReviewState({ workspaceId }: PluginWorkspaceRowItemProps) {
   return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
 }
 
-client.addWorkspaceRowItem({ id: "review", title: "Review", icon: "Eye", Component: ReviewState });
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
 ```
 
-Hosts older than this API have no `addWorkspaceRowItem`; check for it before calling.
+Hosts older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
+
+See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
 
 ## Host UI
 

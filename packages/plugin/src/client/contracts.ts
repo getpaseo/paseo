@@ -121,7 +121,7 @@ export interface PluginSidebarViewContribution<Text extends PluginText = string>
   Component: ComponentType<PluginSidebarViewProps>;
 }
 
-export interface PluginWorkspaceRowItemProps extends PluginHostProps {
+export interface PluginWorkspaceRowBadgeItemProps extends PluginHostProps {
   workspaceId: string;
 }
 
@@ -129,12 +129,12 @@ export interface PluginWorkspaceRowItemProps extends PluginHostProps {
  * Part of the line under a workspace's title in the sidebar, on every workspace of the plugin's host.
  * Render `WorkspaceRowBadge`, or nothing when there is nothing to say about this workspace.
  */
-export interface PluginWorkspaceRowItemContribution<Text extends PluginText = string> {
+export interface PluginWorkspaceRowBadgeItemContribution<Text extends PluginText = string> {
   id: string;
   /** The item's toggle in the sidebar's Show menu. */
   title: Text;
   icon: PluginIcon;
-  Component: ComponentType<PluginWorkspaceRowItemProps>;
+  Component: ComponentType<PluginWorkspaceRowBadgeItemProps>;
 }
 
 /**
@@ -230,7 +230,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
-  addWorkspaceRowItem(contribution: PluginWorkspaceRowItemContribution<PluginText>): PluginCleanup;
+  addWorkspaceRowBadgeItem(
+    contribution: PluginWorkspaceRowBadgeItemContribution<PluginText>,
+  ): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
     contribution: PluginCommandCenterItemContribution<PluginText>,

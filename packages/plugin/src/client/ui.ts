@@ -183,7 +183,7 @@ export interface WorkspaceRowBadgeProps {
   /** Defaults to `label`. */
   accessibilityLabel?: string;
 }
-/** One item on a sidebar workspace row's meta line. Render it from a workspace row item's `Component`. */
+/** One item on a sidebar workspace row's meta line. Render it from a workspace row badge item's `Component`. */
 export declare const WorkspaceRowBadge: ComponentType<WorkspaceRowBadgeProps>;
 
 /** Paseo's loading state. Fills the panel; the panel decides when to show it. */

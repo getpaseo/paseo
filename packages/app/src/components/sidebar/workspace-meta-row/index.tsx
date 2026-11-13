@@ -16,7 +16,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
-import { PluginWorkspaceRowItems, usePluginWorkspaceRowItems } from "@/plugins/workspace-row-items";
+import {
+  PluginWorkspaceRowBadgeItems,
+  usePluginWorkspaceRowBadgeItems,
+} from "@/plugins/workspace-row-badge-items";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
@@ -93,7 +96,7 @@ export function WorkspaceMetaRow({
     visible: rowItems,
     checksDisplay,
   });
-  const pluginItems = usePluginWorkspaceRowItems(workspace?.serverId ?? null);
+  const pluginItems = usePluginWorkspaceRowBadgeItems(workspace?.serverId ?? null);
 
   if (items.length === 0 && (!workspace || pluginItems.length === 0)) return null;
 
@@ -106,7 +109,7 @@ export function WorkspaceMetaRow({
         </Fragment>
       ))}
       {workspace ? (
-        <PluginWorkspaceRowItems
+        <PluginWorkspaceRowBadgeItems
           targets={pluginItems}
           workspaceId={workspace.workspaceId}
           separated={items.length > 0}

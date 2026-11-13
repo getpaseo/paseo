@@ -37,7 +37,7 @@ import type {
   PluginScreenContribution,
   PluginSidebarItemContribution,
   PluginWorkspacePanelContribution,
-  PluginWorkspaceRowItemContribution,
+  PluginWorkspaceRowBadgeItemContribution,
 } from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
@@ -134,7 +134,7 @@ export function runPluginClientBundle(
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
-    workspaceRowItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
@@ -326,19 +326,19 @@ export function runPluginClientBundle(
     addSidebarFooterItem(contribution: PluginSidebarItemContribution) {
       return addSidebarItem("footer", contribution);
     },
-    addWorkspaceRowItem(contribution: PluginWorkspaceRowItemContribution) {
-      const itemId = requireId(contribution.id, "workspace row item id");
+    addWorkspaceRowBadgeItem(contribution: PluginWorkspaceRowBadgeItemContribution) {
+      const itemId = requireId(contribution.id, "workspace row badge item id");
       if (workspaceRowItemIds.has(itemId))
-        throw new Error(`Duplicate workspace row item: ${itemId}`);
+        throw new Error(`Duplicate workspace row badge item: ${itemId}`);
       const title = normalizePluginText(contribution.title);
-      if (!title) throw new Error(`Workspace row item ${itemId} has no title`);
-      const icon = parsePluginIcon(`Workspace row item ${itemId}`, contribution.icon);
+      if (!title) throw new Error(`Workspace row badge item ${itemId} has no title`);
+      const icon = parsePluginIcon(`Workspace row badge item ${itemId}`, contribution.icon);
       if (!isComponentType(contribution.Component)) {
-        throw new Error(`Workspace row item ${itemId} is not a component`);
+        throw new Error(`Workspace row badge item ${itemId} is not a component`);
       }
       workspaceRowItemIds.add(itemId);
       return register(
-        collector.workspaceRowItems,
+        collector.workspaceRowBadgeItems,
         { id: itemId, title, icon, Component: contribution.Component },
         () => workspaceRowItemIds.delete(itemId),
       );
@@ -654,7 +654,7 @@ export function runPluginClientBundle(
     sidebarViews: collector.sidebarViews,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
-    workspaceRowItems: collector.workspaceRowItems,
+    workspaceRowBadgeItems: collector.workspaceRowBadgeItems,
     filePanels: collector.filePanels,
     composerItems: collector.composerItems,
     newWorkspaceItems: collector.newWorkspaceItems,

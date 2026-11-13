@@ -51,7 +51,7 @@ function installation(
     surfaces: surfaces.map((id) => ({ id, title: id, Component: () => null })),
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
-    workspaceRowItems: [],
+    workspaceRowBadgeItems: [],
     legacySidebarItems: sidebarItems.map((item) => ({
       ...item,
       title: item.id,

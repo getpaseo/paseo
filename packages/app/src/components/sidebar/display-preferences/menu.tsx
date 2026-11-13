@@ -59,7 +59,7 @@ import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
 import { PluginIconView } from "@/plugins/icons";
-import type { PluginWorkspaceRowItemGroup } from "@/plugins/workspace-row-items";
+import type { PluginWorkspaceRowBadgeItemGroup } from "@/plugins/workspace-row-badge-items";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -634,8 +634,8 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           testID={`sidebar-row-item-${item}`}
         />
       ))}
-      {preferences.pluginRowItems.map((item) => (
-        <PluginRowItemOption key={item.key} item={item} preferences={preferences} />
+      {preferences.pluginRowBadgeItems.map((item) => (
+        <PluginRowBadgeItemOption key={item.key} item={item} preferences={preferences} />
       ))}
       <ChecksSubTrigger />
       <MenuSeparator />
@@ -655,16 +655,16 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
   );
 }
 
-/** A plugin's workspace row item, toggled like the row's own. */
-function PluginRowItemOption({
+/** A plugin's workspace row badge item, toggled like the row's own. */
+function PluginRowBadgeItemOption({
   item,
   preferences,
 }: {
-  item: PluginWorkspaceRowItemGroup;
+  item: PluginWorkspaceRowBadgeItemGroup;
   preferences: Preferences;
 }): ReactElement {
   const handleSelect = useCallback(
-    () => preferences.togglePluginRowItem(item.key),
+    () => preferences.togglePluginRowBadgeItem(item.key),
     [item.key, preferences],
   );
   const leading = useMemo(
@@ -675,11 +675,11 @@ function PluginRowItemOption({
   );
   return (
     <MenuItem
-      selected={preferences.isPluginRowItemVisible(item.key)}
+      selected={preferences.isPluginRowBadgeItemVisible(item.key)}
       leading={leading}
       closeOnSelect={false}
       onSelect={handleSelect}
-      testID={`sidebar-row-item-plugin-${item.pluginId}-${item.itemId}`}
+      testID={`sidebar-row-badge-item-plugin-${item.pluginId}-${item.itemId}`}
     >
       {item.title}
     </MenuItem>

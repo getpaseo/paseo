@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "../types";
-import { groupPluginWorkspaceRowItems, isWorkspaceRowItemVisible } from "./model";
+import { groupPluginWorkspaceRowBadgeItems, isWorkspaceRowBadgeItemVisible } from "./model";
 
 function Item() {
   return null;
@@ -12,7 +12,7 @@ function installed(id: string, serverId: string, itemIds: string[]): InstalledPl
     serverId,
     locale: "en",
     i18n: { resolve: (text: string) => text },
-    workspaceRowItems: itemIds.map((itemId) => ({
+    workspaceRowBadgeItems: itemIds.map((itemId) => ({
       id: itemId,
       title: `${id} ${itemId}`,
       icon: "Gauge",
@@ -21,9 +21,9 @@ function installed(id: string, serverId: string, itemIds: string[]): InstalledPl
   } as unknown as InstalledPlugin;
 }
 
-describe("groupPluginWorkspaceRowItems", () => {
+describe("groupPluginWorkspaceRowBadgeItems", () => {
   it("lists each plugin item once across hosts, in install order", () => {
-    const groups = groupPluginWorkspaceRowItems([
+    const groups = groupPluginWorkspaceRowBadgeItems([
       installed("status", "host-a", ["state"]),
       installed("asks", "host-a", ["open"]),
       installed("status", "host-b", ["state"]),
@@ -35,10 +35,10 @@ describe("groupPluginWorkspaceRowItems", () => {
   });
 });
 
-describe("isWorkspaceRowItemVisible", () => {
+describe("isWorkspaceRowBadgeItemVisible", () => {
   it("shows items until they are switched off", () => {
-    expect(isWorkspaceRowItemVisible({}, "status/state")).toBe(true);
-    expect(isWorkspaceRowItemVisible({ "status/state": true }, "status/state")).toBe(true);
-    expect(isWorkspaceRowItemVisible({ "status/state": false }, "status/state")).toBe(false);
+    expect(isWorkspaceRowBadgeItemVisible({}, "status/state")).toBe(true);
+    expect(isWorkspaceRowBadgeItemVisible({ "status/state": true }, "status/state")).toBe(true);
+    expect(isWorkspaceRowBadgeItemVisible({ "status/state": false }, "status/state")).toBe(false);
   });
 });

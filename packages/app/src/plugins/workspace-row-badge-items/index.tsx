@@ -1,5 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { PluginWorkspaceRowItemProps } from "@getpaseo/plugin/client";
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -13,15 +13,15 @@ import { PluginEnvironmentProvider, type PluginEnvironment } from "../popover";
 import { useInstalledPlugins } from "../registry";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
-import type { InstalledPlugin, PluginWorkspaceRowItemContribution } from "../types";
-import { WorkspaceRowItemFrameContext, type WorkspaceRowItemFrame } from "./frame";
-import { isWorkspaceRowItemVisible, workspaceRowItemKey } from "./model";
+import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
+import { WorkspaceRowBadgeItemFrameContext, type WorkspaceRowBadgeItemFrame } from "./frame";
+import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
 export { WorkspaceRowBadge } from "./kit";
 export {
-  groupPluginWorkspaceRowItems,
-  isWorkspaceRowItemVisible,
-  type PluginWorkspaceRowItemGroup,
+  groupPluginWorkspaceRowBadgeItems,
+  isWorkspaceRowBadgeItemVisible,
+  type PluginWorkspaceRowBadgeItemGroup,
 } from "./model";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
@@ -30,26 +30,29 @@ function renderNothing() {
   return null;
 }
 
-interface RowItemTarget {
+interface RowBadgeItemTarget {
   plugin: InstalledPlugin;
-  item: PluginWorkspaceRowItemContribution;
+  item: PluginWorkspaceRowBadgeItemContribution;
 }
 
 /** The visible plugin row items installed on this workspace's host. */
-export function usePluginWorkspaceRowItems(serverId: string | null): RowItemTarget[] {
+export function usePluginWorkspaceRowBadgeItems(serverId: string | null): RowBadgeItemTarget[] {
   const installed = useInstalledPlugins();
   const {
-    settings: { sidebarPluginRowItems },
+    settings: { sidebarPluginRowBadgeItems },
   } = useAppSettings();
   return useMemo(
     () =>
       installed
         .filter((plugin) => plugin.serverId === serverId)
-        .flatMap((plugin) => plugin.workspaceRowItems.map((item) => ({ plugin, item })))
+        .flatMap((plugin) => plugin.workspaceRowBadgeItems.map((item) => ({ plugin, item })))
         .filter(({ plugin, item }) =>
-          isWorkspaceRowItemVisible(sidebarPluginRowItems, workspaceRowItemKey(plugin.id, item.id)),
+          isWorkspaceRowBadgeItemVisible(
+            sidebarPluginRowBadgeItems,
+            workspaceRowBadgeItemKey(plugin.id, item.id),
+          ),
         ),
-    [installed, serverId, sidebarPluginRowItems],
+    [installed, serverId, sidebarPluginRowBadgeItems],
   );
 }
 
@@ -57,19 +60,19 @@ export function usePluginWorkspaceRowItems(serverId: string | null): RowItemTarg
  * Plugin items on a workspace's meta line, after the row's own. No wrapper views: an item that
  * renders nothing must leave no gap behind it on the line.
  */
-export function PluginWorkspaceRowItems({
+export function PluginWorkspaceRowBadgeItems({
   targets,
   workspaceId,
   separated,
 }: {
-  targets: readonly RowItemTarget[];
+  targets: readonly RowBadgeItemTarget[];
   workspaceId: string;
   /** The row drew items of its own, so the first plugin item leads with a separator. */
   separated: boolean;
 }) {
   return targets.map((target, index) => (
-    <ThemedRowItemHost
-      key={workspaceRowItemKey(target.plugin.id, target.item.id)}
+    <ThemedRowBadgeItemHost
+      key={workspaceRowBadgeItemKey(target.plugin.id, target.item.id)}
       target={target}
       workspaceId={workspaceId}
       separated={separated || index > 0}
@@ -78,13 +81,13 @@ export function PluginWorkspaceRowItems({
   ));
 }
 
-function RowItemHost({
+function RowBadgeItemHost({
   target: { plugin, item },
   workspaceId,
   separated,
   theme,
 }: {
-  target: RowItemTarget;
+  target: RowBadgeItemTarget;
   workspaceId: string;
   separated: boolean;
   theme: PluginTheme;
@@ -103,11 +106,11 @@ function RowItemHost({
     [plugin, toast],
   );
   const title = plugin.i18n.resolve(item.title, plugin.locale);
-  const frame = useMemo<WorkspaceRowItemFrame>(
-    () => ({ title, testID: `plugin-workspace-row-${plugin.id}-${item.id}`, separated }),
+  const frame = useMemo<WorkspaceRowBadgeItemFrame>(
+    () => ({ title, testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`, separated }),
     [item.id, plugin.id, separated, title],
   );
-  const props = useMemo<PluginWorkspaceRowItemProps>(
+  const props = useMemo<PluginWorkspaceRowBadgeItemProps>(
     () => ({
       theme,
       host: { id: plugin.serverId, label: hostLabel },
@@ -120,12 +123,12 @@ function RowItemHost({
   return (
     <SurfaceErrorBoundary installation={plugin} Surface={Item} renderError={renderNothing}>
       <PluginEnvironmentProvider environment={environment}>
-        <WorkspaceRowItemFrameContext.Provider value={frame}>
+        <WorkspaceRowBadgeItemFrameContext.Provider value={frame}>
           <Item {...props} />
-        </WorkspaceRowItemFrameContext.Provider>
+        </WorkspaceRowBadgeItemFrameContext.Provider>
       </PluginEnvironmentProvider>
     </SurfaceErrorBoundary>
   );
 }
 
-const ThemedRowItemHost = withUnistyles(RowItemHost);
+const ThemedRowBadgeItemHost = withUnistyles(RowBadgeItemHost);

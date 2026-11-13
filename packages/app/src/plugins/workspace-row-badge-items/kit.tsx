@@ -5,7 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { Theme } from "@/styles/theme";
 import { parsePluginIcon, PluginIconView } from "../icons";
-import { useWorkspaceRowItemFrame } from "./frame";
+import { useWorkspaceRowBadgeItemFrame } from "./frame";
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 
@@ -36,7 +36,7 @@ export function WorkspaceRowBadge({
   tone = "muted",
   accessibilityLabel,
 }: WorkspaceRowBadgeProps) {
-  const frame = useWorkspaceRowItemFrame("WorkspaceRowBadge");
+  const frame = useWorkspaceRowBadgeItemFrame("WorkspaceRowBadge");
   // Parsed at render, not registration, so an invalid icon throws to the item's boundary.
   const parsedIcon = useMemo(
     () => (icon === undefined ? null : parsePluginIcon("Workspace row badge", icon)),
