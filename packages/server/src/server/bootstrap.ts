@@ -1007,6 +1007,20 @@ export async function createPaseoDaemon(
     },
   });
   const providerSnapshotManager = agentProviderRuntime.snapshotManager;
+  pluginRuntime.bindUsageProviderModels(async () =>
+    (await providerSnapshotManager.listProviders()).map((entry) => ({
+      provider: entry.provider,
+      models:
+        entry.status === "ready" && entry.enabled !== false
+          ? (entry.models ?? []).map((model) => ({
+              id: model.id,
+              label: model.label,
+              description: model.description,
+              aliases: model.aliases,
+            }))
+          : [],
+    })),
+  );
   daemonConfigStore.onFieldChange("catalogRefreshTimeoutMs", (value) => {
     providerSnapshotManager.setRefreshTimeoutMs(typeof value === "number" ? value : undefined);
   });

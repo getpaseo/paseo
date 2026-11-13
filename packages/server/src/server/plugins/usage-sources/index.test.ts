@@ -9,6 +9,38 @@ import {
 } from "../../../../../../plugins/cursor-usage-source/server/usage.js";
 import { inputSchema as cursorInputSchema } from "../../../../../../plugins/cursor-usage-source/shared/input.js";
 
+test("global discovery receives provider model metadata", async () => {
+  const registry = new UsageSourceRegistry();
+  registry.setProviderModels(async () => [
+    {
+      provider: "pi",
+      models: [{ id: "deepseek/deepseek-flash", label: "DeepSeek V4.1 Flash" }],
+    },
+  ]);
+  let discoveredScope: unknown;
+  registry.register({
+    id: "deepseek-fixture",
+    label: "DeepSeek fixture",
+    discover: async (scope) => {
+      discoveredScope = scope;
+      return [{ key: "default", input: {} }];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+
+  await registry.listReports();
+
+  expect(discoveredScope).toEqual({
+    kind: "global",
+    providers: [
+      {
+        provider: "pi",
+        models: [{ id: "deepseek/deepseek-flash", label: "DeepSeek V4.1 Flash" }],
+      },
+    ],
+  });
+});
+
 test("#7142: host usage retains distinct Cursor accounts after their individual details are read", async () => {
   const root = await mkdtemp(join(tmpdir(), "cursor-accounts-"));
   try {

@@ -64,8 +64,25 @@ export interface UsageAccount {
   input: JsonValue;
 }
 
+export const UsageProviderModelSchema = z.object({
+  provider: z.string().min(1),
+  models: z.array(
+    z.object({
+      id: z.string().min(1),
+      label: z.string(),
+      description: z.string().optional(),
+      aliases: z.array(z.string()).optional(),
+    }),
+  ),
+});
+
+export type UsageProviderModel = z.infer<typeof UsageProviderModelSchema>;
+
 export const UsageScopeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("global") }),
+  z.object({
+    kind: z.literal("global"),
+    providers: z.array(UsageProviderModelSchema).optional(),
+  }),
   z.object({
     kind: z.literal("session"),
     provider: z.string(),

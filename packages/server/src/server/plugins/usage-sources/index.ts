@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
-import type { UsageScope } from "@getpaseo/plugin/server/usage";
+import type { UsageProviderModel, UsageScope } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
 import type { Logger } from "pino";
 import {
@@ -58,6 +58,7 @@ export class UsageSourceRegistry {
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
+  private providerModels: (() => Promise<readonly UsageProviderModel[]>) | undefined;
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -85,6 +86,12 @@ export class UsageSourceRegistry {
     for (const key of this.successful.keys())
       if (key.startsWith(`${id}:`)) this.successful.delete(key);
     for (const key of this.pending.keys()) if (key.startsWith(`${id}:`)) this.pending.delete(key);
+  }
+
+  setProviderModels(resolver: () => Promise<readonly UsageProviderModel[]>): void {
+    this.providerModels = resolver;
+    this.defaults = new Map();
+    for (const key of this.cache.keys()) this.cache.delete(key);
   }
 
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
@@ -195,6 +202,18 @@ export class UsageSourceRegistry {
     scope: UsageScope,
     previous: ReadonlyMap<string, KnownReport> = new Map(),
   ): Promise<Map<string, KnownReport>> {
+    const effectiveScope: UsageScope =
+      scope.kind === "global" && this.providerModels
+        ? {
+            ...scope,
+            providers: [
+              ...(await this.providerModels().catch((error: unknown) => {
+                this.logger.warn({ err: error }, "Provider model lookup for usage failed");
+                return [];
+              })),
+            ],
+          }
+        : scope;
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         const reports = new Map<string, KnownReport>();
@@ -208,7 +227,7 @@ export class UsageSourceRegistry {
                 input: z.json(),
               }),
             )
-            .parse(await source.discover(scope));
+            .parse(await source.discover(effectiveScope));
           for (const account of accounts) {
             const id = `${source.id}:${account.key}`;
             const known = reports.get(id);
