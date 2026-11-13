@@ -1,0 +1,95 @@
+import { expect, test } from "../support/fixtures";
+import { expectComposerVisible } from "../support/helpers/composer";
+import {
+  composerControl,
+  expectGlyphMatchesLabel,
+  expectIconOnlyGlyph,
+  readComposerControlTone,
+} from "../support/helpers/composer-toolbar-tone";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+
+const THINKING = "agent-thinking-selector";
+const MODE = "mode-control";
+const ATTACH = "message-input-attach-button";
+
+async function openSeededComposer(page: import("@playwright/test").Page, repoPrefix: string) {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix,
+    title: "Toolbar tone",
+    model: "ten-second-stream",
+  });
+  await openAgentRoute(page, agent);
+  await expectComposerVisible(page);
+  await expect(composerControl(page, MODE)).toBeVisible({ timeout: 30_000 });
+  return agent;
+}
+
+test.describe("Composer toolbar glyph tone", () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  test.describe("on a touch screen", () => {
+    test.use({ hasTouch: true, viewport: { width: 1024, height: 1366 } });
+
+    test("a glyph beside its label matches the label while an icon-only glyph stays foreground", async ({
+      page,
+    }) => {
+      const agent = await openSeededComposer(page, "composer-tone-touch-");
+      try {
+        const thinking = await readComposerControlTone(composerControl(page, THINKING));
+        const mode = await readComposerControlTone(composerControl(page, MODE));
+        const attach = await readComposerControlTone(composerControl(page, ATTACH));
+
+        expectGlyphMatchesLabel(thinking, "thinking");
+        expectGlyphMatchesLabel(mode, "mode");
+        expectIconOnlyGlyph(attach, "attach");
+        expect(attach.glyph, "an icon-only glyph is brighter than a labelled glyph").not.toBe(
+          thinking.label,
+        );
+      } finally {
+        await agent.cleanup();
+      }
+    });
+  });
+
+  test.describe("on a compact non-touch window", () => {
+    test.use({ hasTouch: false, viewport: { width: 590, height: 844 } });
+
+    test("the icon-only thinking glyph stays foreground and the labelled mode glyph matches its label", async ({
+      page,
+    }) => {
+      const agent = await openSeededComposer(page, "composer-tone-compact-");
+      try {
+        const thinking = await readComposerControlTone(composerControl(page, THINKING));
+        const mode = await readComposerControlTone(composerControl(page, MODE));
+        const attach = await readComposerControlTone(composerControl(page, ATTACH));
+
+        expectIconOnlyGlyph(thinking, "thinking");
+        expectGlyphMatchesLabel(mode, "mode");
+        expectIconOnlyGlyph(attach, "attach");
+        expect(thinking.glyph, "the icon-only glyphs share one tone").toBe(attach.glyph);
+        expect(thinking.glyph, "an icon-only glyph is brighter than a labelled glyph").not.toBe(
+          mode.label,
+        );
+      } finally {
+        await agent.cleanup();
+      }
+    });
+  });
+
+  test.describe("with a wide pointer", () => {
+    test.use({ hasTouch: false, viewport: { width: 1280, height: 800 } });
+
+    test("a labelled glyph stays muted and matches its label", async ({ page }) => {
+      const agent = await openSeededComposer(page, "composer-tone-pointer-");
+      try {
+        const thinking = await readComposerControlTone(composerControl(page, THINKING));
+        const mode = await readComposerControlTone(composerControl(page, MODE));
+
+        expectGlyphMatchesLabel(thinking, "thinking");
+        expectGlyphMatchesLabel(mode, "mode");
+      } finally {
+        await agent.cleanup();
+      }
+    });
+  });
+});
