@@ -177,6 +177,32 @@ describe.each(providers)("$name update check", ({ banner, client }) => {
   });
 });
 
+describe("Codex prerelease update check", () => {
+  const codex = providers[0]!;
+  const client = codex.client;
+  const banner = codex.banner;
+
+  test("orders a prerelease before the release with the same numbers", async () => {
+    const prerelease = await versionCommand(banner("0.200.0-alpha.1"));
+    await expect(check(client(prerelease, releases("0.200.0").lookup))).resolves.toEqual({
+      status: "available",
+      versions: ["0.200.0"],
+    });
+    const release = await versionCommand(banner("0.200.0"));
+    await expect(check(client(release, releases("0.200.0-alpha.1").lookup))).resolves.toEqual({
+      status: "current",
+    });
+  });
+
+  test("is inconclusive between two prereleases of the same release", async () => {
+    const argv = await versionCommand(banner("0.200.0-alpha.1"));
+    await expect(check(client(argv, releases("0.200.0-alpha.2").lookup))).resolves.toEqual({
+      status: "unknown",
+      message: "Cannot compare 0.200.0-alpha.1 with 0.200.0-alpha.2",
+    });
+  });
+});
+
 test("Claude Code is inconclusive when a wrapper command hides its version", async () => {
   const argv = await versionCommand("cux 0.4.1");
   const { lookup, lookups } = releases("2.1.323");

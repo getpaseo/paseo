@@ -462,6 +462,50 @@ describe("ProviderInstallations", () => {
     });
   });
 
+  test("asks for updates again once the installed version changes", async () => {
+    let time = 0;
+    let installed = "1.0.0";
+    let checks = 0;
+    const client = builtinClient({
+      async inspect() {
+        return { status: "installed", version: installed };
+      },
+      async checkForUpdates() {
+        checks += 1;
+        return installed === "1.0.0"
+          ? { status: "available", versions: ["2.0.0"] }
+          : { status: "current" };
+      },
+    });
+    const installations = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: () => client,
+      inspectCacheMs: 30_000,
+      updateCheckCacheMs: 3_600_000,
+      now: () => time,
+    });
+    await installations.inspect("codex");
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({
+      status: "available",
+      versions: ["2.0.0"],
+    });
+
+    // The CLI updated itself outside Paseo.
+    installed = "2.0.0";
+    time = 31_000;
+    await expect(installations.inspect("codex")).resolves.toEqual({
+      inspection: { status: "installed", version: "2.0.0" },
+    });
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
+    expect(checks).toBe(2);
+
+    // The same version again keeps the long-cached answer.
+    time = 62_000;
+    await installations.inspect("codex");
+    await installations.checkForUpdates("codex");
+    expect(checks).toBe(2);
+  });
+
   test("aborts a slow update check and reports it as an error", async () => {
     let aborted = false;
     function waitForAbort(signal: AbortSignal) {

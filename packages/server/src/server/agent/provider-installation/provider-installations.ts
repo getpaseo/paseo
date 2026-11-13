@@ -102,6 +102,8 @@ export class ProviderInstallations {
     AgentClient,
     CachedRead<ProviderInstallationUpdateCheck>
   >();
+  /** The installed version each client last reported, compared as an opaque string. */
+  private readonly installedVersions = new WeakMap<AgentClient, string | null>();
 
   constructor(options: ProviderInstallationsOptions) {
     this.logger = options.logger;
@@ -137,6 +139,7 @@ export class ProviderInstallations {
         run: (context) => inspect.call(installation, context),
         failed: (message) => ({ status: "error" as const, message }),
       });
+      this.noteInstalledVersion(client, result.inspection);
     }
     return result;
   }
@@ -218,6 +221,21 @@ export class ProviderInstallations {
   close(): void {
     for (const controller of this.runningUpdates)
       controller.abort(new Error("The daemon is stopping"));
+  }
+
+  /**
+   * Drops the cached update check when the installed version changes, so a CLI updated outside
+   * Paseo is not offered the update it already has. A failed inspection says nothing about it.
+   */
+  private noteInstalledVersion(
+    client: AgentClient,
+    inspection: ProviderInstallationInspection,
+  ): void {
+    if (inspection.status === "error") return;
+    const version = inspection.status === "installed" ? (inspection.version ?? null) : null;
+    if (this.installedVersions.has(client) && this.installedVersions.get(client) !== version)
+      this.updateChecks.delete(client);
+    this.installedVersions.set(client, version);
   }
 
   private async runUpdate(
