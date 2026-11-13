@@ -47,6 +47,7 @@ import {
   type ProviderSessionConfig,
   type ProviderSetting,
   type ProviderTimelineItem,
+  type ProviderUsage,
 } from "../provider.js";
 
 const ADAPTER_CAPABILITIES = [
@@ -395,6 +396,7 @@ class AcpRuntime {
   private notificationLane: Promise<void> = Promise.resolve();
   private promptLane: Promise<void> = Promise.resolve();
   private activePrompt: { turnId: string; settled: Promise<void> } | null = null;
+  private lastUsage: ProviderUsage = {};
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
     let child: ChildProcessWithoutNullStreams | null = null;
@@ -623,6 +625,20 @@ class AcpRuntime {
     ).then(
       async (response): Promise<void> => {
         await this.drainNotifications();
+        if (response.usage) {
+          this.lastUsage = {
+            ...this.lastUsage,
+            inputTokens: response.usage.inputTokens,
+            outputTokens: response.usage.outputTokens,
+            cachedInputTokens: response.usage.cachedReadTokens ?? undefined,
+          };
+          this.emit({
+            type: "session.usage",
+            sessionId: this.options.boundarySessionId,
+            turnId,
+            usage: this.lastUsage,
+          });
+        }
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems(state);
@@ -695,15 +711,16 @@ class AcpRuntime {
   async configure(
     changes: Extract<ProviderInput, { type: "session.configure" }>["changes"],
   ): Promise<void> {
-    const ordered: AcpConfigChange[] = [];
-    if (changes.model !== undefined) ordered.push({ target: "model", value: changes.model });
-    if (changes.mode !== undefined) ordered.push({ target: "mode", value: changes.mode });
+    const requested: AcpConfigChange[] = [];
+    if (changes.model !== undefined) requested.push({ target: "model", value: changes.model });
+    if (changes.mode !== undefined) requested.push({ target: "mode", value: changes.mode });
     if (changes.thinkingOption !== undefined) {
-      ordered.push({ target: "thinking", value: changes.thinkingOption });
+      requested.push({ target: "thinking", value: changes.thinkingOption });
     }
     for (const [id, value] of Object.entries(changes.settings ?? {})) {
-      ordered.push({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    const ordered = this.inAgentOrder(requested);
     const previousModes = this.modes ? structuredClone(this.modes) : null;
     const previousOptions = structuredClone(this.configOptions);
     this.configTransaction = true;
@@ -769,14 +786,36 @@ class AcpRuntime {
   }
 
   private async applyInitialConfig(config: ProviderSessionConfig): Promise<void> {
-    if (config.model) await this.applyConfigChange({ target: "model", value: config.model });
-    if (config.mode) await this.applyConfigChange({ target: "mode", value: config.mode });
+    const requested: AcpConfigChange[] = [];
+    if (config.model) requested.push({ target: "model", value: config.model });
+    if (config.mode) requested.push({ target: "mode", value: config.mode });
     if (config.thinkingOption) {
-      await this.applyConfigChange({ target: "thinking", value: config.thinkingOption });
+      requested.push({ target: "thinking", value: config.thinkingOption });
     }
     for (const [id, value] of Object.entries(config.settings)) {
-      await this.applyConfigChange({ target: "setting", id, value });
+      requested.push({ target: "setting", id, value });
     }
+    for (const change of this.inAgentOrder(requested)) await this.applyConfigChange(change);
+  }
+
+  // One option can reset another: choosing an fx provider also selects that provider's saved
+  // model, so a model applied first would be lost. Agents list the option that decides first.
+  private inAgentOrder(changes: readonly AcpConfigChange[]): AcpConfigChange[] {
+    const position = (change: AcpConfigChange): number => {
+      const configId = this.configIdFor(change);
+      const index = this.configOptions.findIndex((option) => option.id === configId);
+      return index === -1 ? this.configOptions.length : index;
+    };
+    return changes.toSorted((left, right) => position(left) - position(right));
+  }
+
+  private configIdFor(change: AcpConfigChange): string | undefined {
+    if (change.target === "setting") return change.id;
+    if (change.target === "model") return modelOption(this.configOptions)?.id;
+    if (change.target === "thinking") {
+      return this.configOptions.find((option) => option.category === "thought_level")?.id;
+    }
+    return this.configOptions.find((option) => option.category === "mode")?.id;
   }
 
   private async applyConfigChange(change: AcpConfigChange): Promise<void> {
@@ -804,13 +843,7 @@ class AcpRuntime {
       this.modes = { ...this.modes, currentModeId: change.value };
       return;
     }
-    let category: "model" | "thought_level" | null = null;
-    if (change.target === "model") category = "model";
-    if (change.target === "thinking") category = "thought_level";
-    const configId =
-      change.target === "setting"
-        ? change.id
-        : this.configOptions.find((option) => option.category === category)?.id;
+    const configId = this.configIdFor(change);
     if (!configId) {
       throw new Error(`ACP session does not expose ${change.target} configuration`);
     }
@@ -1049,14 +1082,16 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "usage_update") {
+      this.lastUsage = {
+        ...this.lastUsage,
+        contextWindowUsedTokens: update.used,
+        contextWindowMaxTokens: update.size,
+        totalCostUsd: update.cost?.currency === "USD" ? update.cost.amount : undefined,
+      };
       this.emit({
         type: "session.usage",
         sessionId: this.options.boundarySessionId,
-        usage: {
-          contextWindowUsedTokens: update.used,
-          contextWindowMaxTokens: update.size,
-          totalCostUsd: update.cost?.currency === "USD" ? update.cost.amount : undefined,
-        },
+        usage: this.lastUsage,
       });
       return;
     }
@@ -1375,7 +1410,7 @@ function toProviderConfigState(
   modes: NewSessionResponse["modes"],
   options: readonly SessionConfigOption[],
 ): ProviderConfigState {
-  const model = options.find((option) => option.category === "model");
+  const model = modelOption(options);
   const thinking = options.find((option) => option.category === "thought_level");
   return {
     model: selectedValue(model),
@@ -1393,9 +1428,21 @@ function toProviderConfigState(
       label: option.label,
     })),
     settings: options
-      .filter((option) => option.category !== "model" && option.category !== "thought_level")
+      .filter(
+        (option) =>
+          option !== model &&
+          option.category !== "thought_level" &&
+          !(modes && option.category === "mode"),
+      )
       .map(toProviderSetting),
   };
+}
+
+// ACP's category is a grouping hint, so one category can hold several controls. fx files its
+// provider first, then the model, Fast, and Ultrafast under "model".
+function modelOption(options: readonly SessionConfigOption[]): SessionConfigOption | undefined {
+  const candidates = options.filter((option) => option.category === "model");
+  return candidates.find((option) => option.id === "model") ?? candidates[0];
 }
 
 function toProviderCatalog(
@@ -1480,7 +1527,9 @@ function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
     name: snapshot.name ?? snapshot.title,
     detail,
   };
-  if (status === "failed") return { ...base, status, error: snapshot.output };
+  if (status === "failed") {
+    return { ...base, status, error: snapshot.output ?? { message: "Tool failed" } };
+  }
   return { ...base, status, error: null };
 }
 

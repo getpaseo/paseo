@@ -1614,6 +1614,8 @@ describe("ClaudeAgentSession features", () => {
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["Mythos 5.1", "claude-mythos-5-1", { type: "adaptive", display: "summarized" }, "high"],
+    ["Fable 5.2", "claude-fable-5-2", { type: "adaptive", display: "summarized" }, "medium"],
+    ["Mythos 5.2", "claude-mythos-5-2", { type: "adaptive", display: "summarized" }, "medium"],
     ["Haiku 5.5", "claude-haiku-5-5", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],

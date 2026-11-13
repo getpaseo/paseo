@@ -47,8 +47,16 @@ function usageReportsQueryKey(serverId: string) {
   return [...hostUsageQueryKey(serverId), "reports"] as const;
 }
 
-function agentUsageQueryKey(serverId: string, agentId: string) {
-  return [...hostUsageQueryKey(serverId), "agent", agentId] as const;
+function agentUsageQueryKey(serverId: string, agentId: string, usageScopeKey: string | undefined) {
+  return [...hostUsageQueryKey(serverId), "agent", agentId, usageScopeKey ?? null] as const;
+}
+
+function useAgentUsageScopeKey(serverId: string, agentId: string | undefined) {
+  return useSessionStore((state) =>
+    agentId === undefined
+      ? undefined
+      : state.sessions[serverId]?.agents.get(agentId)?.usageScopeKey,
+  );
 }
 
 function requireClient(serverId: string) {
@@ -190,24 +198,25 @@ export function useUsageHostReports({
 
 /**
  * The reports of the account an agent runs under, as its meter's tooltip or sheet shows them.
- * Fetched while either is mounted, so only while it is open.
+ * Fetched while either is mounted, so only while it is open. Kept in the cache between opens, so
+ * the first frame of a reopen shows them while its own request refreshes them.
  */
 export function useAgentUsage(serverId: string, agentId: string): AgentUsageView {
   const queryClient = useQueryClient();
   const canReport = useHostReportsUsage(serverId);
-  const queryKey = agentUsageQueryKey(serverId, agentId);
+  const usageScopeKey = useAgentUsageScopeKey(serverId, agentId);
+  const queryKey = agentUsageQueryKey(serverId, agentId, usageScopeKey);
   const query = useFetchQuery({
     queryKey,
-    // Consuming the signal cancels the request when the details close, so a reopen sends a new
-    // request instead of joining one scoped to the login the agent ran under before.
+    // Consuming the signal cancels the request when the details close, so a report still on its
+    // way cannot land under a scope the agent has since left.
     queryFn: ({ signal }) => streamReports({ queryClient, queryKey, serverId, agentId, signal }),
     enabled: canReport,
     // Another agent's reports never stand in while this one's load.
     dataShape: "value",
-    // Dropped as soon as the details close: an agent resumed under another login keeps its ID, so
-    // reports kept from an earlier open could show the old login. The daemon's cache keeps each
-    // open's request cheap.
-    gcTime: 0,
+    // COMPAT(agentUsageScopeKey): added in v0.15.4, remove after 2027-05-09. Without the key,
+    // an agent resumed under another login keeps its query, so its reports die with the details.
+    gcTime: usageScopeKey === undefined ? 0 : Infinity,
     // The daemon's errors (an unknown agent) do not heal on retry, and reopening the details
     // fetches again; retrying would hold the loading sentence for seconds instead.
     retry: false,
@@ -255,13 +264,14 @@ export function useReportRefresh(
   agentId?: string,
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
+  const usageScopeKey = useAgentUsageScopeKey(serverId, agentId);
   const mutation = useMutation({
     mutationFn: () => getReport(serverId, reportId, true, agentId),
     onSuccess: (report) => {
       queryClient.setQueryData<UsageReportEntry[]>(
         agentId === undefined
           ? usageReportsQueryKey(serverId)
-          : agentUsageQueryKey(serverId, agentId),
+          : agentUsageQueryKey(serverId, agentId, usageScopeKey),
         (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
       );
     },

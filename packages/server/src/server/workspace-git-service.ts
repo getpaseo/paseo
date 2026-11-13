@@ -48,6 +48,7 @@ import {
   runGitCommand,
   type RunGitCommand,
 } from "../utils/run-git-command.js";
+import type { GitProcessPriority } from "../utils/git-process-scheduler.js";
 import { GitObservationPaths } from "./git-observation-paths.js";
 import { branchNameFromRef } from "../utils/worktree-metadata.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
@@ -209,7 +210,10 @@ export interface WorkspaceGitService {
 
   /** Publishes computed snapshot changes independently of workspace UI subscriptions. */
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
-  getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload>;
+  getCheckout(
+    cwd: string,
+    options?: WorkspaceGitCheckoutReadOptions,
+  ): Promise<ProjectCheckoutLitePayload>;
   getSnapshot(
     cwd: string,
     options?: WorkspaceGitSnapshotOptions,
@@ -329,7 +333,28 @@ export type WorkspaceGitSnapshotOptions =
       reason: string;
     };
 
+/**
+ * Who is waiting for a refresh. "demand" refreshes answer a caller; "observation"
+ * refreshes react to watchers, polls and fetches and run in the background Git
+ * lane so they never queue in front of interactive Git work.
+ */
+type WorkspaceGitRefreshOrigin = "demand" | "observation";
+
+export interface WorkspaceGitCheckoutReadOptions {
+  /** Git lane for the fresh checkout read; defaults to the caller's ambient lane. */
+  priority?: GitProcessPriority;
+}
+
+// A caller waiting on a merged refresh keeps it out of the background lane.
+function mergeRefreshOrigins(
+  pending: WorkspaceGitRefreshOrigin,
+  request: WorkspaceGitRefreshOrigin,
+): WorkspaceGitRefreshOrigin {
+  return pending === "demand" ? pending : request;
+}
+
 interface WorkspaceGitRefreshRequest {
+  origin: WorkspaceGitRefreshOrigin;
   force: boolean;
   refreshStructure: boolean;
   refreshWorktree: boolean;
@@ -341,6 +366,7 @@ interface WorkspaceGitRefreshRequest {
 }
 
 interface ScheduledWorkspaceGitRefreshOptions {
+  origin: WorkspaceGitRefreshOrigin;
   force?: boolean;
   scope?: "refs" | "structure" | "worktree";
   includeForge?: boolean;
@@ -782,13 +808,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.requestWorkspaceSnapshot(target, request);
   }
 
-  async getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
+  async getCheckout(
+    cwd: string,
+    options?: WorkspaceGitCheckoutReadOptions,
+  ): Promise<ProjectCheckoutLitePayload> {
     this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const status = await this.deps.getCheckoutStatus(normalizedCwd, {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
+      ...(options?.priority
+        ? { runGitCommand: createRunGitCommand("checkout-read", { priority: options.priority }) }
+        : {}),
     });
     const cached = this.getCachedSnapshot(normalizedCwd);
     if (cached && cached.git.isGit !== status.isGit) {
@@ -1009,6 +1041,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       await this.resumeWorkspaceIfFolderRestored(target);
     }
     await this.refreshWorkspaceTarget(target, {
+      origin: "demand",
       force: false,
       refreshStructure: true,
       refreshWorktree: true,
@@ -1048,7 +1081,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       void this.resumeWorkspaceIfFolderRestored(target);
       return;
     }
-    this.scheduleWorkspaceRefresh(target, { queueIfBusy: false });
+    this.scheduleWorkspaceRefresh(target, { origin: "demand", queueIfBusy: false });
   }
 
   onWorkspaceStateMayHaveChanged(cwd: string): void {
@@ -1064,6 +1097,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     this.scheduleWorkspaceRefresh(target, {
+      origin: "demand",
       force: true,
       includeForge: true,
       reason: "external-state-change",
@@ -1292,6 +1326,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         return;
       }
       void this.refreshWorkspaceTarget(target, {
+        origin: "demand",
         force: false,
         refreshStructure: true,
         refreshWorktree: true,
@@ -1371,7 +1406,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     await this.ensureRepoTarget(target);
     if (this.isActiveObservedWorkspaceTarget(target)) {
       target.observationSetupComplete = true;
+      this.refreshAfterWorkingTreeCoverage(target);
     }
+  }
+
+  // Watchers report only changes made after they subscribe, and the initial
+  // snapshot is read in parallel with observation setup, so an edit or branch
+  // switch in between reaches no watcher. Read the checkout once more now that
+  // every later change will. Degraded polling keeps its own cadence.
+  private refreshAfterWorkingTreeCoverage(target: WorkspaceGitTarget): void {
+    if (!target.workingTreeWatchTarget?.subscription) {
+      return;
+    }
+    void this.refreshWorkspaceTarget(
+      target,
+      this.buildScheduledRefreshRequest({
+        origin: "observation",
+        reason: "observation-established",
+      }),
+    );
   }
 
   private async getFactsForObservation(target: WorkspaceGitTarget): Promise<CheckoutSnapshotFacts> {
@@ -1762,6 +1815,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.latestFacts = null;
     target.folderMissing = false;
     await this.refreshWorkspaceTarget(target, {
+      origin: "observation",
       force: false,
       refreshStructure: true,
       refreshWorktree: true,
@@ -1805,6 +1859,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             return false;
           }
           const changed = await this.refreshDegradedPollTarget(workspaceTarget, {
+            origin: "observation",
             force: false,
             refreshStructure: target.repoRoot === null,
             refreshWorktree: true,
@@ -2286,7 +2341,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
-        this.scheduleWorkspaceRefresh(workspaceTarget, { scope: "worktree", reason });
+        this.scheduleWorkspaceRefresh(workspaceTarget, {
+          origin: "observation",
+          scope: "worktree",
+          reason,
+        });
       }
     }
   }
@@ -2869,6 +2928,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           }
         }
         this.scheduleWorkspaceRefresh(workspaceTarget, {
+          origin: "observation",
           scope,
           emitUnchanged: refresh.refreshBase,
           reason,
@@ -2909,6 +2969,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             workingTreeTargets.add(workingTreeTarget);
           }
           return await this.refreshDegradedPollTarget(workspaceTarget, {
+            origin: "observation",
             force: false,
             refreshStructure: true,
             refreshWorktree: true,
@@ -2940,7 +3001,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private scheduleWorkspaceRefresh(
     targetOrCwd: WorkspaceGitTarget | string,
-    options?: ScheduledWorkspaceGitRefreshOptions,
+    options: ScheduledWorkspaceGitRefreshOptions,
   ): void {
     const target =
       typeof targetOrCwd === "string"
@@ -3309,6 +3370,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const force = options?.force === true;
     return {
+      origin: "demand",
       force,
       refreshStructure: true,
       refreshWorktree: true,
@@ -3332,10 +3394,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private buildScheduledRefreshRequest(
-    options: ScheduledWorkspaceGitRefreshOptions | undefined,
+    options: ScheduledWorkspaceGitRefreshOptions,
   ): WorkspaceGitRefreshRequest {
     const scope = options?.scope;
     return {
+      origin: options.origin,
       force: options?.force === true,
       refreshStructure: scope !== "worktree" && scope !== "refs",
       refreshWorktree: scope !== "structure" && scope !== "refs",
@@ -3366,6 +3429,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       request.movedRemoteRefs,
     );
     return {
+      origin: mergeRefreshOrigins(pending.origin, request.origin),
       force,
       refreshStructure: pending.refreshStructure || request.refreshStructure,
       refreshWorktree: pending.refreshWorktree || request.refreshWorktree,
@@ -3404,7 +3468,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         });
       }
       try {
-        const runRefreshGitCommand = createRunGitCommand(`workspace-refresh:${request.reason}`);
+        // Demand refreshes keep the caller's lane, so a user action running at
+        // "high" is not demoted.
+        const runRefreshGitCommand = createRunGitCommand(`workspace-refresh:${request.reason}`, {
+          priority: request.origin === "observation" ? "background" : undefined,
+        });
         const admittedSnapshot = await this.workspaceRefreshLimit(() => {
           if (
             target.closed ||
@@ -3792,7 +3860,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
               }
             },
           },
-          createRunGitCommand("background-fetch"),
+          createRunGitCommand("background-fetch", { priority: "background" }),
         );
       } catch (error) {
         this.logger.warn(

@@ -127,7 +127,41 @@ for (const scenario of [
     await creation.submitPrompt("Retry this workspace and agent together.");
     await creation.expectAgentCount(1);
   });
+
+  test(`an edited prompt after failed agent initialization starts the agent in its workspace${scenario.suffix}`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    await creation.openWorkspaceForm("local");
+    await creation.submitPrompt("Start the original task.", "Create");
+    await creation.expectAgentStillStarting();
+    await startup.fail();
+    await creation.expectStartupFailure();
+    await creation.expectOneCreatedWorkspace();
+    await scenario.prepare(creation);
+    await creation.submitPrompt("Start the edited task.");
+    await creation.expectPromptVisible("Start the edited task.");
+    await creation.expectOneCreatedWorkspace();
+    await creation.expectAgentCount(1);
+    await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+  });
 }
+
+test("an edited agent draft starts after its first start failed", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  await creation.openAgentDraft();
+  await startup.fail();
+  await creation.submitPrompt("Start the original task.");
+  await creation.expectStartupFailure();
+  await creation.submitPrompt("Start the edited task.");
+  await creation.expectPromptVisible("Start the edited task.");
+  await creation.expectAgentCount(1);
+  await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+});
 
 for (const entry of [
   {
@@ -159,7 +193,9 @@ for (const entry of [
     await entry.settled(creation);
     await creation.expectCreatedAgentError();
     await creation.expectPromptBeforeError(prompt);
-    await page.screenshot({ path: testInfo.outputPath("created-agent-prompt-error.png") });
+    await page.screenshot({
+      path: testInfo.outputPath("created-agent-prompt-error.png"),
+    });
     await creation.reloadAgent();
     await creation.expectPromptBeforeError(prompt);
     await creation.submitPrompt("emit 1 coalesced agent stream updates for a corrected prompt.");

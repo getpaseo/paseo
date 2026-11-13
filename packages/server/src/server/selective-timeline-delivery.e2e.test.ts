@@ -184,6 +184,7 @@ async function connect(input: {
   timelineNotifications?: boolean;
   pluginTimelineItems?: boolean;
   workspaceSetupBlocked?: boolean;
+  ownedSubscriptions?: boolean;
 }): Promise<ConnectedClient> {
   let socket!: WebSocket;
   const client = new DaemonClient({
@@ -194,7 +195,7 @@ async function connect(input: {
       return socket as unknown as WebSocketLike;
     },
     capabilities: {
-      [CLIENT_CAPS.ownedSubscriptions]: false,
+      [CLIENT_CAPS.ownedSubscriptions]: input.ownedSubscriptions ?? false,
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
       [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
       [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
@@ -210,6 +211,97 @@ async function connect(input: {
   clients.push(connected);
   return connected;
 }
+
+async function startDaemonWithMockAgents(
+  home: { paseoHomeRoot: string; cleanup: boolean } | Record<string, never> = {},
+): Promise<void> {
+  await daemon.close();
+  daemon = await createTestPaseoDaemon({
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+    ...home,
+  });
+}
+
+async function connectForFreshness(clientId: string): Promise<ConnectedClient> {
+  return connect({ clientId, selective: true, ownedSubscriptions: true });
+}
+
+async function createChatAtHead(connected: ConnectedClient, title: string) {
+  const agent = await connected.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title,
+    model: "ten-second-stream",
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Already on screen",
+  });
+  const page = await connected.client.fetchAgentTimeline(agent.id, { direction: "tail" });
+  if (!page.endCursor) throw new Error("Expected a timeline cursor");
+  return { agentId: agent.id, head: { epoch: page.endCursor.epoch, seq: page.endCursor.seq } };
+}
+
+test("subscribing with a cursor answers whether each chat is at its head", async () => {
+  await startDaemonWithMockAgents();
+  const connected = await connectForFreshness("freshness-loaded");
+  const atHead = await createChatAtHead(connected, "At head");
+  const staleSeq = await createChatAtHead(connected, "Stale seq");
+  const otherEpoch = await createChatAtHead(connected, "Other epoch");
+  const noCursor = await createChatAtHead(connected, "No cursor");
+
+  const observation = connected.client.observeTimeline(
+    [atHead.agentId, staleSeq.agentId, otherEpoch.agentId, noCursor.agentId],
+    {
+      cursors: {
+        [atHead.agentId]: atHead.head,
+        [staleSeq.agentId]: { ...staleSeq.head, seq: staleSeq.head.seq - 1 },
+        [otherEpoch.agentId]: { ...otherEpoch.head, epoch: "another-epoch" },
+      },
+    },
+  );
+
+  const answer = await observation.ready;
+  expect(answer.timelines).toEqual({
+    [atHead.agentId]: "current",
+    [staleSeq.agentId]: "behind",
+    [otherEpoch.agentId]: "behind",
+  });
+  // Only a current chat skips the fetch that would have delivered its agent row.
+  expect(Object.keys(answer.agents ?? {})).toEqual([atHead.agentId]);
+  expect(answer.agents?.[atHead.agentId]).toMatchObject({ id: atHead.agentId, title: "At head" });
+
+  connected.clear();
+  await daemon.daemon.agentManager.appendTimelineItem(atHead.agentId, {
+    type: "assistant_message",
+    text: "Arrives after the answer",
+  });
+  await connected.next(isAgentStream(atHead.agentId), "live row after a current answer");
+  await observation.release();
+});
+
+test("subscribing with a cursor answers behind for a stored agent and leaves it unloaded", async () => {
+  const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-freshness-"));
+  await startDaemonWithMockAgents({ paseoHomeRoot, cleanup: false });
+  const before = await connectForFreshness("freshness-before-restart");
+  const stored = await createChatAtHead(before, "Stored");
+  before.close();
+  await before.client.close();
+  await startDaemonWithMockAgents({ paseoHomeRoot, cleanup: true });
+  expect(daemon.daemon.agentManager.getAgent(stored.agentId)).toBeNull();
+
+  const connected = await connectForFreshness("freshness-after-restart");
+  const observation = connected.client.observeTimeline([stored.agentId], {
+    cursors: { [stored.agentId]: stored.head },
+  });
+
+  const answer = await observation.ready;
+  expect(answer.timelines).toEqual({ [stored.agentId]: "behind" });
+  expect(answer.agents).toEqual({});
+  expect(daemon.daemon.agentManager.getAgent(stored.agentId)).toBeNull();
+  await observation.release();
+});
 
 test("notification timeline items are sent only to clients that advertise support", async () => {
   await daemon.close();

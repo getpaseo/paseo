@@ -4167,11 +4167,23 @@ export class DaemonClient {
 
   observeTimeline(
     agentIds: string[],
-    options?: { signal?: AbortSignal },
+    options?: {
+      signal?: AbortSignal;
+      /** The caller's position per chat; the response answers whether each is at the head. */
+      cursors?: Record<string, { epoch: string; seq: number }>;
+    },
   ): OwnedSubscription<CorrelatedResponsePayload<"agent.timeline.set_subscription.response">> {
     return this.observe(
       "agent.timeline.set_subscription.response",
-      { type: "agent.timeline.set_subscription.request", agentIds },
+      {
+        type: "agent.timeline.set_subscription.request",
+        agentIds,
+        // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+        ...(options?.cursors &&
+        this.lastServerInfoMessage?.features?.timelineFreshnessCheck === true
+          ? { cursors: options.cursors }
+          : {}),
+      },
       options,
     );
   }
