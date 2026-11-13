@@ -1406,6 +1406,59 @@ test("a parent lookup that finishes during a refresh keeps its answer", async ()
   expect(repositoryViews).toBe(1);
 }, 30_000);
 
+test("disposal waits for a background parent lookup", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  const lookupStarted = Promise.withResolvers<void>();
+  const releaseLookup = Promise.withResolvers<void>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "repo" && args[1] === "view" && args[2] === "fork-owner/repo") {
+              lookupStarted.resolve();
+              await releaseLookup.promise;
+              return {
+                stdout: JSON.stringify({
+                  owner: { login: "fork-owner" },
+                  name: "repo",
+                  parent: { owner: { login: "main-owner" }, name: "repo" },
+                }),
+                stderr: "",
+              };
+            }
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      },
+    },
+  });
+
+  try {
+    await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+    await lookupStarted.promise;
+
+    let disposed = false;
+    const disposal = service.dispose().then(() => {
+      disposed = true;
+      return undefined;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(disposed).toBe(false);
+
+    releaseLookup.resolve();
+    await disposal;
+    expect(disposed).toBe(true);
+  } finally {
+    releaseLookup.resolve();
+    await service.dispose();
+  }
+}, 30_000);
+
 test("the first snapshot publishes git state and pull request status without waiting for the parent lookup", async () => {
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
   writeFileSync(path.join(repo, "changed.txt"), "dirty\n");

@@ -662,6 +662,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private readonly pendingRefreshes = new Set<Promise<WorkspaceGitRuntimeSnapshot>>();
+  private readonly pendingForgeWebLookups = new Set<Promise<void>>();
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -1156,11 +1157,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchAliases.clear();
     this.snapshotUpdatedListeners.clear();
     // Unsubscribing can remove a target while its Git command still owns the cwd.
-    // Stop admission first, then drain those refreshes before releasing the service.
-    this.disposePromise = Promise.all([
-      this.fileObserver.close(),
-      Promise.allSettled(this.pendingRefreshes),
-    ]).then(() => undefined);
+    // Stop admission first, then drain those refreshes and the parent lookups they start.
+    this.disposePromise = (async () => {
+      await Promise.all([this.fileObserver.close(), Promise.allSettled(this.pendingRefreshes)]);
+      await Promise.allSettled(this.pendingForgeWebLookups);
+    })();
     return this.disposePromise;
   }
 
@@ -3798,7 +3799,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       nowMs: this.deps.now().getTime(),
     });
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
-    void this.resolveForgeWebReferenceIfDue(target);
+    this.queueForgeWebReferenceLookup(target);
   }
 
   private combineSnapshot(target: WorkspaceGitTarget): WorkspaceGitRuntimeSnapshot {
@@ -3854,7 +3855,23 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       forceEmit: false,
     });
-    void this.resolveForgeWebReferenceIfDue(target);
+    this.queueForgeWebReferenceLookup(target);
+  }
+
+  private queueForgeWebReferenceLookup(target: WorkspaceGitTarget): void {
+    const lookup = this.resolveForgeWebReferenceIfDue(target)
+      .catch((error) => {
+        if (!this.disposed) {
+          this.logger.warn(
+            { err: error, cwd: target.cwd },
+            "Failed to resolve the forge reference repository",
+          );
+        }
+      })
+      .finally(() => {
+        this.pendingForgeWebLookups.delete(lookup);
+      });
+    this.pendingForgeWebLookups.add(lookup);
   }
 
   // The status poll is the only periodic work an idle workspace has, so it also
