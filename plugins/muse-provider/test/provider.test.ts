@@ -1153,6 +1153,14 @@ for (const mode of ["answer", "cancel"] as const) {
     );
   });
 }
+test("parent session negotiates session.subsession for native children", async () => {
+  const h = await harness("subagent");
+  await h.open();
+  expect(
+    await h.wait((e) => e.type === "session.opened" && e.sessionId === "paseo-session"),
+  ).toMatchObject({ capabilities: expect.arrayContaining(["session.subsession"]) });
+});
+
 for (const variant of ["tool", "dedicated", "workflow"]) {
   test(`${variant} subagent opens only the supplied child and pages its real transcript`, async () => {
     const h = await harness("subagent", { MUSE_TEST_CHILD: variant });
