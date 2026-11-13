@@ -437,7 +437,7 @@ optional, so declare only what your CLI supports:
 | Member            | Users see                                                               | Declare it when                                        |
 | ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
 | `installUrl`      | **Install instructions**, and **Install** while not installed           | Users install a CLI                                    |
-| `updateUrl`       | **Update instructions**                                                 | Your docs say how to update                            |
+| `updateUrl`       | **Update instructions** when a check finds an update or cannot tell     | Your docs say how to update                            |
 | `inspect`         | **Version**, or **Not installed**                                       | The CLI reports its version                            |
 | `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
 | `update`          | **Update** while an update is available, then the updater's output      | The CLI updates itself with a command                  |
