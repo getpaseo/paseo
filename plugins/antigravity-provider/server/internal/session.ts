@@ -14,6 +14,7 @@ import type {
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
+import { loadTranscriptHistory, resolveAntigravityAppDataDir } from "./history.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
@@ -40,6 +41,7 @@ interface SessionOptions {
   launch: ProviderLaunch;
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
+  history: "replay" | "skip";
   emit(event: ProviderEvent): void;
 }
 
@@ -61,6 +63,15 @@ export class Session {
   }
 
   async open(requestId: string, capabilities: readonly string[]): Promise<void> {
+    const resumedConversationId = this.conversationId;
+    const historyEntries =
+      this.options.history === "replay" && resumedConversationId !== null
+        ? await loadTranscriptHistory({
+            conversationId: resumedConversationId,
+            appDataDir: resolveAntigravityAppDataDir(this.options.launch.env, this.config.env),
+            systemPrompt: this.config.systemPrompt,
+          })
+        : [];
     await this.ensureDriver();
     this.emit({
       type: "session.opened",
@@ -75,6 +86,9 @@ export class Session {
     this.publishFullAccessNotice();
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    for (const entry of historyEntries) {
+      this.item(entry.item, entry.timestamp);
+    }
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -365,8 +379,13 @@ export class Session {
       },
     });
   }
-  private item(item: ProviderTimelineItem): void {
-    this.emit({ type: "timeline.item", sessionId: this.options.id, item });
+  private item(item: ProviderTimelineItem, timestamp?: string): void {
+    this.emit({
+      type: "timeline.item",
+      sessionId: this.options.id,
+      item,
+      ...(timestamp ? { timestamp } : {}),
+    });
   }
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
