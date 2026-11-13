@@ -10,7 +10,7 @@
  * A ratio keeps the step equally visible on every base; a lightness delta disappears near black.
  * The numbers come from the default themes: Paseo dark and Light.
  */
-import { mixHexColors, stepContrast } from "@/utils/color";
+import { contrastRatio, mixHexColors, stepContrast } from "@/utils/color";
 
 export type ColorScheme = "light" | "dark";
 
@@ -25,8 +25,16 @@ const NEUTRAL_FILL_STEPS = {
   light: { surface3: 1.27, surface4: 1.48 },
 } as const;
 
-// Tertiary text: muted text, that fraction of the way toward the background.
+// `surface3` carries text (message bubbles, secondary buttons, badges), so its step is bounded by
+// the contrast the theme gives its own text: foreground stays at least this readable on it. The
+// margin over 3:1 absorbs the rounding of the fill to 8-bit channels.
+const NEUTRAL_FILL_TEXT_FLOOR = 3.05;
+
+// Tertiary text: muted text, that fraction of the way toward the background, but never quieter
+// than this contrast against it (or than the muted text itself, when that is already quieter). The
+// margin over 2.5:1 absorbs the rounding to 8-bit channels.
 const TERTIARY_TEXT_FADE = 0.35;
+const TERTIARY_TEXT_FLOOR = 2.55;
 
 // ANSI white and bright white on a light terminal are text, so they are grays that read on the
 // background: white at the contrast of body text, bright white a notch softer.
@@ -52,14 +60,19 @@ export function deriveNeutralFills(
   scheme: ColorScheme,
 ): { surface3: string; surface4: string } {
   const steps = NEUTRAL_FILL_STEPS[scheme];
+  // Foreground on the fill is about (foreground on background) / step.
+  const textBound = contrastRatio(background, foreground) / NEUTRAL_FILL_TEXT_FLOOR;
   return {
-    surface3: stepContrast(background, foreground, steps.surface3),
+    surface3: stepContrast(background, foreground, Math.min(steps.surface3, textBound)),
     surface4: stepContrast(background, foreground, steps.surface4),
   };
 }
 
 export function deriveTertiaryText(mutedForeground: string, background: string): string {
-  return mixHexColors(mutedForeground, background, TERTIARY_TEXT_FADE);
+  const faded = mixHexColors(mutedForeground, background, TERTIARY_TEXT_FADE);
+  const floor = Math.min(TERTIARY_TEXT_FLOOR, contrastRatio(background, mutedForeground));
+  if (contrastRatio(background, faded) >= floor) return faded;
+  return stepContrast(background, mutedForeground, floor);
 }
 
 export function deriveLightTerminalWhites(

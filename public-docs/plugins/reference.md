@@ -1355,8 +1355,11 @@ colors, and the terminal without listing them.
 
 Paseo derives the rest from these colors, so a theme never lists them: the hovered and selected
 state of a row, the neutral fill behind chips, badges, secondary buttons, and your message bubble,
-tertiary text, and the terminal's ANSI white. Each is a fixed step from the color it sits on, toward
-`foreground`.
+tertiary text, and on light themes the terminal's ANSI white. Each is a fixed step from the color it
+sits on, toward `foreground`.
+
+`sidebar` requires Paseo 0.16.0 or later. Older apps reject a theme with an unknown color, and the
+plugin's other contributions fail to load with it, so raise `requirements.paseo` when you use it.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.

@@ -54,11 +54,27 @@ const SOLARIZED_LIGHT: PluginThemeContribution = {
   },
 };
 
+const SOLARIZED_DARK: PluginThemeContribution = {
+  id: "solarized-dark",
+  name: "Solarized Dark",
+  appearance: "dark",
+  colors: {
+    background: "#002b36",
+    foreground: "#839496",
+    raised: "#073642",
+    control: "#073642",
+    border: "#073642",
+    accent: "#268bd2",
+    mutedForeground: "#586e75",
+    ring: "#93a1a1",
+  },
+};
+
 const themes: Array<{ name: string; theme: Theme }> = [
   ...THEME_OPTIONS.flatMap((option) =>
     "theme" in option ? [{ name: option.name, theme: option.theme as Theme }] : [],
   ),
-  ...[LATTE, MOCHA, SOLARIZED_LIGHT].map((contribution) => ({
+  ...[LATTE, MOCHA, SOLARIZED_LIGHT, SOLARIZED_DARK].map((contribution) => ({
     name: `plugin ${contribution.name}`,
     theme: buildPluginTheme(contribution),
   })),
@@ -75,6 +91,7 @@ const SELECTED_TEXT_KEEPS = 0.6;
 const SELECTED_TEXT_FLOOR = 2.5;
 const NEUTRAL_FILL_STEP = 1.2;
 const NEUTRAL_FILL_TEXT_FLOOR = 3;
+const TERTIARY_TEXT_FLOOR = 2.5;
 const TERMINAL_WHITE_FLOOR = 3;
 // The bright hues are dim on a cream or white background by design; the floor only has to catch a
 // color that disappears.
@@ -140,6 +157,17 @@ describe.each(themes)("$name", ({ theme }) => {
     }
   });
 });
+
+describe.each(themes.filter(({ name }) => name.startsWith("plugin ")))(
+  "$name derived text",
+  ({ theme }) => {
+    it("keeps tertiary text readable on the page", () => {
+      expect(
+        contrastRatio(theme.colors.surface0, theme.colors.foregroundExtraMuted),
+      ).toBeGreaterThanOrEqual(TERTIARY_TEXT_FLOOR);
+    });
+  },
+);
 
 describe("built-in themes", () => {
   it.each(themes.filter(({ name }) => !name.startsWith("plugin ")))(
