@@ -563,6 +563,68 @@ describe("WorkspaceLaunchManager", () => {
     },
   );
 
+  it("waits for a closing launch before starting a replacement on its block", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "launch-switch-closing-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        launches: { dev: { command: "./bin/dev" }, full: { command: "./bin/full" } },
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+      }),
+    );
+    const closeStarted = createDeferred();
+    const finishClose = createDeferred();
+    const terminals = createTerminalManager({
+      beforeKill: async () => {
+        closeStarted.resolve();
+        await finishClose.promise;
+      },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminals.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "closing-launch-switch",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    const launch = await manager.start(context, "dev");
+    if (!launch.terminalId) throw new Error("Expected launch terminal");
+    terminals.manager.killTerminal(launch.terminalId);
+    const replacement = manager.start(context, "full");
+    try {
+      await closeStarted.promise;
+      expect(terminals.created).toHaveLength(1);
+      expect(terminals.manager.getClosingTerminals?.()).toHaveLength(1);
+      expect(environment.get(context.workspaceId)?.portBase).toBe(43000);
+    } finally {
+      finishClose.resolve();
+    }
+    try {
+      await expect(replacement).resolves.toMatchObject({
+        launchName: "full",
+        lifecycle: "running",
+        portBase: 43000,
+      });
+      expect(terminals.created).toHaveLength(2);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("waits for a hidden closing script before releasing its workspace block", async () => {
     const closeStarted = createDeferred();
     const finishClose = createDeferred();

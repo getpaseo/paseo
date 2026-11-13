@@ -229,12 +229,19 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (!config) {
       throw new Error(`Launch '${launchName}' is not configured in paseo.json`);
     }
-    if (!this.deps.terminalManager || !this.deps.serviceProxy) {
+    const terminalManager = this.deps.terminalManager;
+    if (!terminalManager || !this.deps.serviceProxy) {
       throw new Error("Workspace launches are not available on this daemon");
     }
-    const unavailableError = this.deps.terminalManager.getUnavailableError?.();
+    const unavailableError = terminalManager.getUnavailableError?.();
     if (unavailableError) throw unavailableError;
 
+    const closingLaunches = this.getClosingTerminals(context.workspaceId).filter(
+      (terminal) => terminal.workspaceLaunch,
+    );
+    await Promise.all(
+      closingLaunches.map((terminal) => terminalManager.killTerminalAndWait(terminal.id)),
+    );
     const activeLaunchName = this.activeLaunches.get(context.workspaceId);
     const activeRuntime = activeLaunchName
       ? this.runtimes.get(context.workspaceId)?.get(activeLaunchName)
@@ -423,6 +430,11 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
   }
 
+  private getClosingTerminals(workspaceId: string): readonly TerminalSession[] {
+    const closing = this.deps.terminalManager?.getClosingTerminals?.() ?? [];
+    return closing.filter((terminal) => terminal.workspaceId === workspaceId);
+  }
+
   private async getWorkspaceTerminals(workspaceId: string): Promise<TerminalSession[]> {
     const terminalManager = this.deps.terminalManager;
     if (!terminalManager) return [];
@@ -431,7 +443,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
         .listDirectories()
         .map((directory) => terminalManager.getTerminals(directory, { workspaceId })),
     );
-    const closing = terminalManager.getClosingTerminals?.() ?? [];
+    const closing = this.getClosingTerminals(workspaceId);
     return [...lists.flat(), ...closing].filter((terminal) => terminal.workspaceId === workspaceId);
   }
 
@@ -524,9 +536,15 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
 
   private async stopRuntime(runtime: WorkspaceLaunchRuntime): Promise<void> {
     const terminalId = runtime.terminalId;
-    const terminal = terminalId ? this.deps.terminalManager?.getTerminal(terminalId) : null;
-    if (terminalId && terminal && this.deps.terminalManager) {
-      await this.deps.terminalManager.killTerminalAndWait(terminalId, { preserveSession: true });
+    const terminalManager = this.deps.terminalManager;
+    if (terminalId && terminalManager) {
+      const visible = terminalManager.getTerminal(terminalId);
+      const closing = this.getClosingTerminals(runtime.context.workspaceId).find(
+        (entry) => entry.id === terminalId,
+      );
+      if (visible || closing) {
+        await terminalManager.killTerminalAndWait(terminalId, { preserveSession: !closing });
+      }
     }
     if (runtime.lifecycle === "running") {
       this.markStopped(runtime, null);
