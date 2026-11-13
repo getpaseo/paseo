@@ -102,15 +102,41 @@ function mountTimeline(historyMounted: StreamItem[]) {
     },
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
-    // Resize observers and the hold's settle run on animation frames.
-    settle: () =>
+    jumpToMessage: (messageId: string) =>
+      act(() => viewportRef.current!.scrollToMessage!(messageId)),
+    scrollToBottom: () => act(() => viewportRef.current!.scrollToBottom()),
+    // Resize observers, the hold's settle and the prompt jump's correction run on animation frames.
+    settle: (frames = 4) =>
       act(async () => {
-        for (let frame = 0; frame < 4; frame += 1) {
+        for (let frame = 0; frame < frames; frame += 1) {
           await new Promise((resolve) => requestAnimationFrame(resolve));
         }
       }),
   };
 }
+
+describe("web prompt jump", () => {
+  // Opening a chat at its start, or an outline jump, keeps correcting toward the prompt for a few
+  // frames. Scroll to bottom and sending a message are newer requests the correction must not undo.
+  it("stays at the bottom when a bottom jump follows a prompt jump", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+
+    timeline.jumpToMessage("message-1");
+    expect(timeline.distanceFromEnd()).toBeGreaterThan(100);
+    timeline.scrollToBottom();
+    // The correction ran for a dozen frames before the list returned to the end, so every frame
+    // is checked, not only the last one.
+    const distances: number[] = [timeline.distanceFromEnd()];
+    for (let frame = 0; frame < 30; frame += 1) {
+      await timeline.settle(1);
+      distances.push(timeline.distanceFromEnd());
+    }
+
+    expect(distances.filter((distance) => distance > 1)).toEqual([]);
+  });
+});
 
 describe("web disclosure hold", () => {
   it("keeps the trigger's top when an anchored toggle at the bottom opens rows below it, and stops following", async () => {

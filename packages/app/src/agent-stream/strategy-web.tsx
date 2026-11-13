@@ -708,7 +708,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reportReadingPosition();
   }, [onNearBottomChange, reportReadingPosition]);
 
-  const { isJumpSettling, scrollToMessage } = useScrollToMessage({
+  const { isJumpSettling, cancelJump, scrollToMessage } = useScrollToMessage({
     active: isActive,
     scrollContainerRef,
     rowVirtualizer,
@@ -1191,6 +1191,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const handle: StreamViewportHandle = {
       focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
+        // A bottom jump is newer than a prompt jump still correcting toward its prompt; that
+        // correction would pull the list back up on its next frame.
+        cancelJump();
         setFollowOutput(true);
         cancelPendingStickToBottom();
         forceStickToBottom();
@@ -1225,6 +1228,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       cancelPendingStickToBottom();
     };
   }, [
+    cancelJump,
     cancelPendingStickToBottom,
     forceStickToBottom,
     measureRows,
