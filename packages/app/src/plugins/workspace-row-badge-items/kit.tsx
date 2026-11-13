@@ -1,10 +1,13 @@
 import type { WorkspaceRowBadgeProps, WorkspaceRowBadgeTone } from "@getpaseo/plugin/client/ui";
-import { useMemo } from "react";
+import { createContext, useContext, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { Theme } from "@/styles/theme";
 import { parsePluginIcon, PluginIconView } from "../icons";
+
+/** The item's title, the accessible name of a badge that has neither a label nor its own. */
+export const WorkspaceRowBadgeTitleContext = createContext<string | undefined>(undefined);
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 
@@ -35,6 +38,7 @@ export function WorkspaceRowBadge({
   tone = "muted",
   accessibilityLabel,
 }: WorkspaceRowBadgeProps) {
+  const itemTitle = useContext(WorkspaceRowBadgeTitleContext);
   // Parsed at render, not registration, so an invalid icon throws to the item's boundary.
   const parsedIcon = useMemo(
     () => (icon === undefined ? null : parsePluginIcon("Workspace row badge", icon)),
@@ -42,7 +46,7 @@ export function WorkspaceRowBadge({
   );
   if (!parsedIcon && !label) return null;
   return (
-    <View style={styles.item} accessibilityLabel={accessibilityLabel ?? label}>
+    <View style={styles.item} accessibilityLabel={accessibilityLabel ?? label ?? itemTitle}>
       {parsedIcon ? (
         <ThemedPluginIconView
           icon={parsedIcon}

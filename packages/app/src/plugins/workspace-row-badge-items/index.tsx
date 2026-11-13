@@ -10,6 +10,8 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
 import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
+import { WorkspaceRowBadgeTitleContext } from "./kit";
+
 export { WorkspaceRowBadge } from "./kit";
 export {
   groupPluginWorkspaceRowBadgeItems,
@@ -78,11 +80,14 @@ function RowBadgeItemHost({
     () => ({ ...hostProps, workspaceId }),
     [hostProps, workspaceId],
   );
+  const title = plugin.i18n.resolve(item.title, plugin.locale);
   const Item = item.Component;
   return (
     <SurfaceErrorBoundary installation={plugin} Surface={Item} renderError={renderNothing}>
       <PluginEnvironmentProvider environment={environment}>
-        <Item {...props} />
+        <WorkspaceRowBadgeTitleContext.Provider value={title}>
+          <Item {...props} />
+        </WorkspaceRowBadgeTitleContext.Provider>
       </PluginEnvironmentProvider>
     </SurfaceErrorBoundary>
   );

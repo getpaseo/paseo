@@ -26,6 +26,10 @@ function Docs() {
   return <WorkspaceRowBadge icon="BookOpen" label="Docs" />;
 }
 
+function IconOnly() {
+  return <WorkspaceRowBadge icon="Star" />;
+}
+
 function Quiet() {
   return null;
 }
@@ -37,6 +41,7 @@ function Broken() {
 export default function contribute(client) {
   client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
   client.addWorkspaceRowBadgeItem({ id: "docs", title: "Docs state", icon: "BookOpen", Component: Docs });
+  client.addWorkspaceRowBadgeItem({ id: "icon", title: "Icon state", icon: "Star", Component: IconOnly });
   client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
   client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
   return () => {};
@@ -91,6 +96,10 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
       await expect(badge(page, "review")).toContainText("In review");
       // The null and throwing items after them draw nothing, and the line adds nothing of its own.
       await expect(badgeLine(page, "review")).toHaveText("In reviewDocs");
+      // An icon-only badge is named by its item's title.
+      await expect(
+        page.getByLabel("Icon state", { exact: true }).locator("visible=true"),
+      ).toBeVisible();
       await expect(page.getByText(TITLE).first()).toBeVisible();
       await page.screenshot({ path: info.outputPath("wide.png") });
     });
