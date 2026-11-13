@@ -40,10 +40,12 @@ interface ModelAlias {
 }
 
 function piAgentDirectory(env: Record<string, string | undefined>): string {
-  return (
-    env.PI_CODING_AGENT_DIR?.trim() ||
-    join(env.HOME?.trim() || env.USERPROFILE?.trim() || homedir(), ".pi", "agent")
-  );
+  const home = env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
+  const configured = env.PI_CODING_AGENT_DIR?.trim();
+  if (configured === "~") return home;
+  if (configured?.startsWith("~/") || configured?.startsWith("~\\"))
+    return join(home, configured.slice(2));
+  return configured || join(home, ".pi", "agent");
 }
 
 function piAuthPath(env: Record<string, string | undefined> = process.env): string {

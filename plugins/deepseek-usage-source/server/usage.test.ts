@@ -41,11 +41,13 @@ describe("DeepSeek usage discovery", () => {
       USERPROFILE: process.env.USERPROFILE,
       DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
       PASEO_DEEPSEEK_MODEL_ALIASES: process.env.PASEO_DEEPSEEK_MODEL_ALIASES,
+      PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
     };
     process.env.HOME = home;
     process.env.USERPROFILE = home;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.PASEO_DEEPSEEK_MODEL_ALIASES;
+    delete process.env.PI_CODING_AGENT_DIR;
   });
 
   afterEach(() => {
@@ -182,6 +184,23 @@ describe("DeepSeek usage discovery", () => {
         env: { PI_CODING_AGENT_DIR: agentDirectory },
       }),
     ).toEqual([
+      {
+        key: "default",
+        label: "DeepSeek API",
+        input: { store: "file", locator: join(agentDirectory, "auth.json") },
+      },
+    ]);
+  });
+
+  it("expands ~ in PI_CODING_AGENT_DIR", async () => {
+    const agentDirectory = join(home, "tilde-pi-agent");
+    mkdirSync(agentDirectory, { recursive: true });
+    writeFileSync(
+      join(agentDirectory, "auth.json"),
+      JSON.stringify({ deepseek: { key: "tilde-pi-key" } }),
+    );
+    process.env.PI_CODING_AGENT_DIR = "~/tilde-pi-agent";
+    expect(await discover(providerSnapshot)).toEqual([
       {
         key: "default",
         label: "DeepSeek API",
