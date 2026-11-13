@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
 import { formatPct, formatDisplayPct, formatProviderUsageLabel } from "./format";
-import { displayPercent } from "./model";
+import { displayPercent, resolveUsageSnapshot } from "./model";
 import { effectiveUsagePins, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageReportEntry, UsageTone } from "./types";
@@ -23,6 +23,8 @@ export interface PinnedUsageWindow {
 export interface PinnedUsageSource {
   key: string;
   icon: string | null;
+  /** The displayed values are retained from before a failed refresh. */
+  hasError: boolean;
   windows: PinnedUsageWindow[];
 }
 
@@ -74,8 +76,9 @@ export function resolvePinnedUsage(
 ): PinnedUsageSource[] {
   const pins = effectiveUsagePins(preferences, reports);
   return groupBySource(reports).flatMap((entry) => {
-    if (entry.report.status !== "available") return [];
-    const windows = entry.report.windows
+    const snapshot = resolveUsageSnapshot(entry);
+    if (!snapshot) return [];
+    const windows = snapshot.report.windows
       .filter(
         (window) =>
           displayPercent(window, preferences.displayAs) !== null &&
@@ -94,6 +97,13 @@ export function resolvePinnedUsage(
         };
       });
     if (windows.length === 0) return [];
-    return [{ key: entry.id, icon: entry.icon ?? null, windows }];
+    return [
+      {
+        key: entry.id,
+        icon: entry.icon ?? null,
+        hasError: entry.report.status === "error",
+        windows,
+      },
+    ];
   });
 }

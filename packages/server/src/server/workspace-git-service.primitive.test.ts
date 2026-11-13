@@ -264,6 +264,8 @@ function createSnapshot(cwd: string, overrides?: SnapshotOverrides): WorkspaceGi
       pullRequest: resolveSnapshotPullRequest(base, overrides),
       error: resolveSnapshotError(base, overrides),
     },
+    // Every remote these fixtures use is on github.com.
+    ...(forge ? { forgeWeb: { host: "github.com" } } : {}),
   };
 }
 
@@ -704,8 +706,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
     await refresh;
-    expect(await service.getSnapshot(REPO_CWD)).toEqual(
-      createSnapshot(REPO_CWD, {
+    // A branch change resets the PR status but not where the same remote lives on the web.
+    expect(await service.getSnapshot(REPO_CWD)).toEqual({
+      ...createSnapshot(REPO_CWD, {
         git: {
           currentBranch: "feature",
           diffStat: { additions: 4, deletions: 2 },
@@ -716,7 +719,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
           error: null,
         },
       }),
-    );
+      forgeWeb: { host: "github.com" },
+    });
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
 
