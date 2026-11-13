@@ -52,19 +52,24 @@ const KEYCHAIN_TIMEOUT_MS = 2_000;
 
 const execFileAsync = promisify(execFile);
 
+/** Runs `security` with the given arguments; resolves to trimmed stdout, or null on failure. */
+export type SecurityCommandRunner = (args: string[]) => Promise<string | null>;
 export type CursorKeychainReader = (service: string) => Promise<string | null>;
 
-export async function readCursorAgentKeychainToken(service: string): Promise<string | null> {
+async function runSecurityCommand(args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "security",
-      ["find-generic-password", "-s", service, "-a", CURSOR_AGENT_KEYCHAIN_ACCOUNT, "-w"],
-      { timeout: KEYCHAIN_TIMEOUT_MS },
-    );
+    const { stdout } = await execFileAsync("security", args, { timeout: KEYCHAIN_TIMEOUT_MS });
     return stdout.trim() || null;
   } catch {
     return null;
   }
+}
+
+export function readCursorAgentKeychainToken(
+  service: string,
+  run: SecurityCommandRunner = runSecurityCommand,
+): Promise<string | null> {
+  return run(["find-generic-password", "-s", service, "-a", CURSOR_AGENT_KEYCHAIN_ACCOUNT, "-w"]);
 }
 
 function usableCursorToken(value: string | null | undefined): string | null {
