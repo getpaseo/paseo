@@ -2,7 +2,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FocusOwnerScope } from "@/components/ui/focus-owner/index.native";
 import { useEmbedFocus } from "./focus.native";
-import { embedState, mountEmbedFocusScreen, touchStart } from "./focus-test-screen";
+import { embedState, mountEmbedFocusScreen, touchStart } from "./test-utils/embed-focus-screen";
 
 // The native scope runs here on React DOM, whose touch events follow the React tree as React
 // Native's do. The shared `Portal` must re-open the native scope, not the web one.

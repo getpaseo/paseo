@@ -2,7 +2,12 @@ import React, { act, useLayoutEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FocusOwnerScope } from "@/components/ui/focus-owner/index.web";
 import { useEmbedFocus } from "./focus.web";
-import { byTestId, embedState, mountEmbedFocusScreen, pointerDown } from "./focus-test-screen";
+import {
+  byTestId,
+  embedState,
+  mountEmbedFocusScreen,
+  pointerDown,
+} from "./test-utils/embed-focus-screen";
 
 vi.stubGlobal("React", React);
 
