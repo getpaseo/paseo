@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -978,6 +980,7 @@ interface ComposerProps {
   commandDraft?: DraftCommandTarget;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
   onMessageSent?: () => void;
+  onViewSubmittedMessage?: (clientMessageId: string) => Promise<boolean>;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -1297,6 +1300,7 @@ function ComposerContentImpl({
   onFocusInput,
   commandDraft,
   onMessageSent,
+  onViewSubmittedMessage,
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1410,7 +1414,31 @@ function ComposerContentImpl({
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
   const editingSession = useComposerEditingSession(inputMode, providedEditingSession);
   const isFullscreen = useComposerFullscreen(editingSession);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendErrorState] = useState<{
+    message: string;
+    clientMessageId: string | null;
+  } | null>(null);
+  const viewSubmittedMessage = useMutation({
+    mutationFn: async () => {
+      if (!sendError?.clientMessageId || !onViewSubmittedMessage) return;
+      const found = await onViewSubmittedMessage(sendError.clientMessageId);
+      if (!found) throw new Error(t("composer.errors.messageNotFound"));
+    },
+  });
+  const { reset: resetMessageLocation, mutate: locateSubmittedMessage } = viewSubmittedMessage;
+  const setSendError = useCallback(
+    (message: string | null, clientMessageId?: string) => {
+      resetMessageLocation();
+      setSendErrorState(
+        message === null ? null : { message, clientMessageId: clientMessageId ?? null },
+      );
+    },
+    [resetMessageLocation],
+  );
+  const handleViewSubmittedMessage = useCallback(
+    () => locateSubmittedMessage(),
+    [locateSubmittedMessage],
+  );
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
@@ -1564,6 +1592,7 @@ function ComposerContentImpl({
       blurOnSubmit,
       clearDraft,
       onClientSlashCommand,
+      setSendError,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
@@ -1588,7 +1617,14 @@ function ComposerContentImpl({
       });
       return true;
     },
-    [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],
+    [
+      blurOnSubmit,
+      clearDraft,
+      replaceUserInput,
+      resetSuppression,
+      setSelectedAttachments,
+      setSendError,
+    ],
   );
 
   const { pickImages } = useImageAttachmentPicker();
@@ -1674,7 +1710,8 @@ function ComposerContentImpl({
 
   useEffect(() => {
     agentIdRef.current = agentId;
-  }, [agentId]);
+    setSendError(null);
+  }, [agentId, serverId, setSendError]);
 
   useEffect(() => {
     sendAgentMessageRef.current = async (
@@ -1813,6 +1850,7 @@ function ComposerContentImpl({
       });
     },
     [
+      setSendError,
       allowEmptySubmit,
       beginSubmit,
       clearDraft,
@@ -2075,10 +2113,10 @@ function ComposerContentImpl({
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
-        setSendError(result.errorMessage);
+        setSendError(result.errorMessage, result.clientMessageId);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, submitMessage, t, setSendError],
   );
 
   const handleQueue = useCallback(
@@ -2530,11 +2568,33 @@ function ComposerContentImpl({
   const sendErrorNode = useMemo(
     () =>
       sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
-          {sendError}
-        </Text>
+        <View>
+          <Text accessibilityRole="alert" style={styles.sendErrorText}>
+            {sendError.message}
+          </Text>
+          {sendError.clientMessageId && onViewSubmittedMessage ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={viewSubmittedMessage.isPending}
+              style={styles.viewMessageButton}
+              onPress={handleViewSubmittedMessage}
+            >
+              {t("composer.viewMessage")}
+            </Button>
+          ) : null}
+          {viewSubmittedMessage.error ? (
+            <Text
+              accessibilityRole="alert"
+              style={styles.sendErrorText}
+              testID="view-submitted-message-error"
+            >
+              {viewSubmittedMessage.error.message}
+            </Text>
+          ) : null}
+        </View>
       ) : null,
-    [sendError],
+    [sendError, onViewSubmittedMessage, viewSubmittedMessage, handleViewSubmittedMessage, t],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
@@ -2817,6 +2877,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.accent,
   },
+  viewMessageButton: { alignSelf: "flex-start", paddingHorizontal: 0 },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.base,

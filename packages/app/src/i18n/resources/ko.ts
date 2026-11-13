@@ -121,6 +121,7 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "메시지 보기",
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -183,6 +184,7 @@ export const ko: TranslationResources = {
       removeReview: "리뷰 첨부 제거",
     },
     errors: {
+      messageNotFound: "이 메시지는 아직 대화에 없습니다.",
       failedToSend: "메시지를 보내지 못했습니다",
       failedToCreateAgent: "에이전트를 생성하지 못했습니다",
       noHostSelected: "선택된 호스트가 없습니다",

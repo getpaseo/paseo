@@ -83,6 +83,7 @@ interface DraftCreateScenario {
 }
 
 interface RejectionScenario {
+  agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
   errorMessage: string;
 }
 
@@ -139,13 +140,13 @@ const test = baseTest.extend<{
     const agent = await seedMockAgentWorkspace({
       repoPrefix: `message-rejection-${testInfo.workerIndex}-`,
       title: "Message rejection regression",
-      model: "ten-second-stream",
+      model: "one-minute-stream",
       featureValues: { mockPromptRejections: 1 },
     });
     await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
     await expectComposerVisible(page);
     await expectAgentIdle(page);
-    await provide({ errorMessage });
+    await provide({ errorMessage, agent });
     await agent.cleanup();
   },
   unrelatedRunningScenario: async ({ page }, provide, testInfo) => {
@@ -1206,12 +1207,52 @@ test.describe("Agent message submission", () => {
   test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,
-  }) => {
+  }, testInfo) => {
     const prompt = "Restore this rejected submission.";
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-before-jump.png") });
+    await page.getByRole("button", { name: "View message", exact: true }).click();
+    const highlighted = page.getByTestId("user-message-highlight");
+    await expect(highlighted).toHaveCount(1);
+    await expect(highlighted).toContainText(prompt);
+    await expect(highlighted).toBeInViewport();
+    await expect(
+      page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
+    ).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-recovery.png") });
     await retryRestoredSubmission(page, prompt);
+    await expect(highlighted).toHaveCount(0);
+  });
+  test("keeps a failed message location after a later queued send succeeds", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const failedPrompt = "Locate this earlier rejected message.";
+    const queuedPrompt = "This later queued message succeeds.";
+    await submitMessageThatWillBeRejected(page, failedPrompt);
+    await expectRejectedSubmissionRestored(page, { prompt: failedPrompt, ...rejectionScenario });
+    await rejectionScenario.agent.client.sendAgentMessage(
+      rejectionScenario.agent.agentId,
+      "Keep an unrelated turn active.",
+    );
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: "Keep an unrelated turn active." }),
+    ).toBeVisible();
+    await queueMessage(page, queuedPrompt);
+    await page.getByRole("button", { name: "Send queued message now" }).click();
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: queuedPrompt }),
+    ).toHaveAttribute("aria-busy", "false");
+    await expect(
+      page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "View message", exact: true }).click();
+    const highlighted = page.getByTestId("user-message-highlight");
+    await expect(highlighted).toHaveCount(1);
+    await expect(highlighted).toContainText(failedPrompt);
+    await expect(highlighted).not.toContainText(queuedPrompt);
   });
 
   test("restores an ambiguous Steer failure without retrying or interrupting", async ({
@@ -1409,6 +1450,11 @@ test.describe("Agent message submission", () => {
     ).toBeVisible();
     await unrelatedRunningScenario.gate.disconnect();
     await expectFailedSubmissionRestored(page, prompt);
+    const viewMessage = page.getByRole("button", { name: "View message", exact: true });
+    await viewMessage.click();
+    await expect(page.getByTestId("view-submitted-message-error")).toBeVisible();
+    await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
+    await expect(viewMessage).toBeEnabled();
   });
 
   test("keeps a submitted prompt before its response when canonical history arrives", async ({
