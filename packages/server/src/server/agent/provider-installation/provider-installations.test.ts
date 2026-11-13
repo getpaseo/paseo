@@ -502,10 +502,16 @@ describe("ProviderInstallations", () => {
     ]);
     expect(checks).toBe(2);
 
+    // Two clients reopening together after another change share one new check.
+    installed = "3.0.0";
+    time = 93_000;
+    await Promise.all([together(), together()]);
+    expect(checks).toBe(3);
+
     // The same version again keeps the long-cached answer.
-    time = 62_000;
+    time = 124_000;
     await together();
-    expect(checks).toBe(2);
+    expect(checks).toBe(3);
   });
 
   test("an update check never starts an inspection or waits on one to ask the provider", async () => {
