@@ -9,6 +9,7 @@ import { pluginRequirements } from "../support/helpers/plugin-fixture";
 
 const PLUGIN_ID = "agent-timeline-scope-e2e";
 const SCREEN_TITLE = "Embeds";
+const PHONE = { width: 390, height: 844 };
 
 interface EmbedComposer {
   controls?: "all" | "none" | Record<string, "shown" | "hidden">;
@@ -199,6 +200,30 @@ test("Escape interrupts only the embed that has focus", async ({ page }) => {
       await expect.poll(() => agentStatus(right), { timeout: 15_000 }).toBe("running");
 
       await expectEscapeInterruptsOnlyTheFocusedEmbed(page, { left, right, embed });
+    },
+  );
+});
+
+test("a phone-width embed without the model picker keeps its other controls", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await withEmbeds(
+    page,
+    {
+      agents: [{ title: "Compact agent", model: "e2e-fast-stream", prompt: "Say hello." }],
+      composer: { controls: { model: "hidden" } },
+    },
+    async ({ agents: [agent], embed }) => {
+      await page.setViewportSize(PHONE);
+      const toolbar = embed(agent.agentId).getByTestId("agent-controls-toolbar");
+      await expect(toolbar).toBeVisible();
+      await toolbar.getByRole("button", { name: "Open agent features", exact: true }).click();
+      // The phone sheet lands at the app root, outside the embed.
+      const sheet = page.getByTestId("agent-controls-combined-sheet-controls");
+      await expect(page.getByTestId("agent-controls-model")).toHaveCount(0);
+      await expect(sheet.getByRole("button", { name: /agent mode/i })).toBeVisible();
+      await expect(sheet.getByRole("button", { name: "Alpha flag", exact: true })).toBeVisible();
+      await expect(sheet.getByRole("button", { name: "Beta flag", exact: true })).toBeVisible();
     },
   );
 });

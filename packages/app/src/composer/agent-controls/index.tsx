@@ -1,5 +1,5 @@
 import { useComposerControlsScope } from "@/composer/controls-scope";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
 import {
@@ -701,6 +701,9 @@ function ControlledAgentControls({
             showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
+            activeSheet={activeSheet}
+            handleOpenSheet={handleOpenSheet}
+            handleCloseSheet={handleCloseSheet}
           />
         )}
         {!isCompact ? (
@@ -752,8 +755,6 @@ interface DesktopAgentControlsContentProps extends AgentControlsContentProps {
 }
 
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
-  const sheetBridge = useComposerSheetBridge();
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const {
     provider,
@@ -789,10 +790,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const modelToolbar = useMemo(
     () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
     [glyphs, presentation.showCarets],
-  );
-  const featuresSheetHeader = useMemo<SheetHeader>(
-    () => ({ title: t("agentControls.features.title") }),
-    [t],
   );
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
   const hasFeatures = featureItems.length > 0 || hasPluginItems;
@@ -842,40 +839,22 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
       {modeControl ? <AgentModeControl {...modeControl} onClose={onDropdownClose} /> : null}
 
       {presentation.aggregateFeatures && hasFeatures ? (
-        <>
-          <Pressable
-            onPress={handleOpenFeatures}
+        <FeaturesSheet
+          glyphs={glyphs}
+          disabled={disabled}
+          visible={activeSheet === "features"}
+          onOpen={handleOpenFeatures}
+          onClose={handleCloseSheet}
+        >
+          <ComposerControls
+            items={featureItems}
+            surface="sheet"
             disabled={disabled}
-            style={styles.modeIconBadge}
-            accessibilityRole="button"
-            accessibilityLabel={t("agentControls.features.open")}
-            testID="agent-controls-features"
-          >
-            <ComposerToolbarGlyph role="icon">
-              <Settings2
-                size={glyphs.icon.size}
-                strokeWidth={glyphs.icon.strokeWidth}
-                color={toolbarGlyphColor(theme, glyphs.icon.tone)}
-              />
-            </ComposerToolbarGlyph>
-          </Pressable>
-          <AdaptiveModalSheet
-            header={featuresSheetHeader}
-            visible={activeSheet === "features"}
-            onClose={handleCloseSheet}
-            contextBridge={sheetBridge}
-            testID="agent-features-sheet"
-          >
-            <ComposerControls
-              items={featureItems}
-              surface="sheet"
-              disabled={disabled}
-              openId={openSelector}
-              onOpenIdChange={handleSheetOpenChange}
-            />
-            <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />
-          </AdaptiveModalSheet>
-        </>
+            openId={openSelector}
+            onOpenIdChange={handleSheetOpenChange}
+          />
+          <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />
+        </FeaturesSheet>
       ) : (
         <ComposerControls
           items={featureItems}
@@ -890,7 +869,61 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   );
 }
 
+/** The settings button and the sheet it opens, holding controls that have no room inline. */
+function FeaturesSheet({
+  glyphs,
+  disabled,
+  visible,
+  onOpen,
+  onClose,
+  children,
+}: {
+  glyphs: ToolbarGlyphs;
+  disabled: boolean;
+  visible: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const sheetBridge = useComposerSheetBridge();
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const header = useMemo<SheetHeader>(() => ({ title: t("agentControls.features.title") }), [t]);
+  return (
+    <>
+      <Pressable
+        onPress={onOpen}
+        disabled={disabled}
+        style={styles.modeIconBadge}
+        accessibilityRole="button"
+        accessibilityLabel={t("agentControls.features.open")}
+        testID="agent-controls-features"
+      >
+        <ComposerToolbarGlyph role="icon">
+          <Settings2
+            size={glyphs.icon.size}
+            strokeWidth={glyphs.icon.strokeWidth}
+            color={toolbarGlyphColor(theme, glyphs.icon.tone)}
+          />
+        </ComposerToolbarGlyph>
+      </Pressable>
+      <AdaptiveModalSheet
+        header={header}
+        visible={visible}
+        onClose={onClose}
+        contextBridge={sheetBridge}
+        testID="agent-features-sheet"
+      >
+        {children}
+      </AdaptiveModalSheet>
+    </>
+  );
+}
+
 interface SheetAgentControlsContentProps extends AgentControlsContentProps {
+  activeSheet: ActiveSheet;
+  handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
+  handleCloseSheet: () => void;
   showLabels: boolean;
   displayThinking: string | null;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
@@ -926,7 +959,11 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     showLabels,
     modelSelectorServerId,
     canSwitchProvider,
+    activeSheet,
+    handleOpenSheet,
+    handleCloseSheet,
   } = props;
+  const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
 
   const sheetControls = (
     <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
@@ -977,7 +1014,18 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     >
       {sheetControls}
     </CompactModelSheet>
-  ) : null;
+  ) : (
+    // A host that hides the model picker still folds the other controls into a sheet.
+    <FeaturesSheet
+      glyphs={glyphs}
+      disabled={disabled}
+      visible={activeSheet === "features"}
+      onOpen={handleOpenFeatures}
+      onClose={handleCloseSheet}
+    >
+      {sheetControls}
+    </FeaturesSheet>
+  );
 }
 
 function useAgentOptionControls(
