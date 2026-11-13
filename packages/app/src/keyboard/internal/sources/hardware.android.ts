@@ -1,5 +1,5 @@
 import { requireNativeModule } from "expo-modules-core";
-import type { HardwareKeyboardEvent } from "./hardware";
+import type { ClaimedShortcut, HardwareKeyboardEvent } from "./hardware";
 interface HardwareKeyboardModule {
   getHardwareKeyboardPresent(): boolean;
   addListener(event: "onHardwareKeyboardPresenceChanged", handler: () => void): { remove(): void };
@@ -19,6 +19,9 @@ export function subscribeHardwareKeyboard(
 export function setHardwareKeyboardOverlayKeys(keys: readonly string[]): void {
   module.setOverlayKeys(keys);
 }
+// A focused Android EditText types nothing for Tab, Shift+Tab or Alt+Shift+[,
+// so there is no character to take from it.
+export function setHardwareKeyboardClaimedShortcuts(_shortcuts: readonly ClaimedShortcut[]): void {}
 
 export function getHardwareKeyboardPresent(): boolean {
   return module.getHardwareKeyboardPresent();

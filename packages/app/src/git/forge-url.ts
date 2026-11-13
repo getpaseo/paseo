@@ -6,17 +6,23 @@
  * format); an unknown forge has no grammar and yields null, so the action is
  * simply absent rather than wrong.
  *
- * URL grammar lives on each client forge module. The repo identity and host
- * both ride the manifest's `cloudHosts` only to canonicalize a cloud SSH alias
- * (e.g. ssh.github.com -> github.com); a self-hosted host is used as-is.
+ * URL grammar lives on each client forge module. The daemon resolves the web
+ * host (SSH config aliases, cloud SSH hosts) and the repository that owns
+ * issue and change-request numbers (a fork's parent) and publishes them as
+ * `forgeWeb`; branch and file links stay on the origin repository.
  */
-import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
-import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import {
+  forgeWebHost,
+  isForgeCloudHost,
+  parseGitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
+import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import type { ForgeReferenceSigil } from "@/git/client-forge-module";
 import { getClientForgeLogicModule } from "@/git/forges";
 
 export interface ForgeBlobUrlInput {
   remoteUrl: string | null | undefined;
+  forgeWeb?: ForgeWeb | null;
   branch: string | null | undefined;
   path: string | null | undefined;
   lineStart?: number;
@@ -25,12 +31,17 @@ export interface ForgeBlobUrlInput {
 
 export interface ForgeBranchTreeUrlInput {
   remoteUrl: string | null | undefined;
+  forgeWeb?: ForgeWeb | null;
   branch: string | null | undefined;
 }
 
 export interface ForgeReferenceUrlInput {
   remoteUrl: string | null | undefined;
-  /** Repository path of a cross-repository reference; the remote's repository when absent. */
+  forgeWeb?: ForgeWeb | null;
+  /**
+   * Repository path of a cross-repository reference; the repository that owns
+   * issue numbers (`forgeWeb.referenceRepository`, else the remote's) when absent.
+   */
   repo?: string | null;
   sigil: ForgeReferenceSigil;
   number: number;
@@ -62,13 +73,6 @@ interface ForgeWebLocation {
   repo: string;
 }
 
-/**
- * Web host + repo path from a remote. The host is the remote's host, except a
- * cloud SSH alias (a non-first entry in the forge's `cloudHosts`, e.g.
- * ssh.github.com) is canonicalized to the forge's web host (`cloudHosts[0]`).
- * Self-hosted hosts are returned untouched. The repo path supports nested
- * groups (e.g. GitLab subgroups) since it is the full remote path.
- */
 function isValidRepoPath(path: string): boolean {
   const segments = path.split("/").filter((segment) => segment.length > 0);
   if (segments.length === 0) {
@@ -77,9 +81,17 @@ function isValidRepoPath(path: string): boolean {
   return !segments.includes("..");
 }
 
+/**
+ * Web location of the origin repository. The host is the daemon's
+ * `forgeWeb.host`. A daemon without `forgeWeb` publishes none, so the remote's
+ * own host is used, with a cloud SSH alias mapped to the forge's web host.
+ * The repo path supports nested groups (e.g. GitLab subgroups) since it is
+ * the full remote path.
+ */
 function resolveForgeWebLocation(
   forge: string,
   remoteUrl: string | null | undefined,
+  forgeWeb: ForgeWeb | null | undefined,
 ): ForgeWebLocation | null {
   if (!remoteUrl) {
     return null;
@@ -88,9 +100,9 @@ function resolveForgeWebLocation(
   if (!location || !isValidRepoPath(location.path)) {
     return null;
   }
-  const cloudHosts = (getForgeDefinition(forge)?.cloudHosts ?? []).map(normalizeHost);
-  const isCloudHost = cloudHosts.includes(location.host);
-  const webHost = isCloudHost ? cloudHosts[0] : location.host;
+  // COMPAT(forgeWeb): added in v0.16.0, remove the remote-derived host after 2027-06-01 once daemon floor >= v0.16.0.
+  const webHost = forgeWeb?.host ?? forgeWebHost(forge, location.host);
+  const isCloudHost = isForgeCloudHost(forge, location.host);
   // Carry a non-default port only for a self-hosted http(s) origin (e.g.
   // `:60443`): the web UI shares that origin. An SSH/scp remote's port is not the
   // web port, and a canonicalized cloud host always serves on the default port.
@@ -139,7 +151,7 @@ export function buildForgeBranchTreeUrl(
   input: ForgeBranchTreeUrlInput,
 ): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
   const branch = input.branch?.trim();
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
@@ -149,7 +161,7 @@ export function buildForgeBranchTreeUrl(
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
   const branch = input.branch?.trim();
   const filePath = normalizeBlobPath(input.path);
   if (!grammar || !location || !branch || branch === "HEAD" || !filePath) {
@@ -175,8 +187,8 @@ export function buildForgeReferenceUrl(
   const referencePath = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths?.find(
     (path) => path.sigil === input.sigil,
   );
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
-  const repo = input.repo ?? location?.repo;
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
+  const repo = input.repo ?? input.forgeWeb?.referenceRepository ?? location?.repo;
   if (
     !referencePath ||
     !location ||

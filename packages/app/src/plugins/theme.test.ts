@@ -64,6 +64,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],

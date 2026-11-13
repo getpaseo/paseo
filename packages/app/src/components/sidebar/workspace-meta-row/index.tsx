@@ -16,6 +16,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import {
+  PluginWorkspaceRowBadgeItems,
+  usePluginWorkspaceRowBadgeItems,
+} from "@/plugins/workspace-row-badge-items";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
@@ -59,6 +63,9 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * state has its own colors — a label is a name a person chose, so it carries its own identity
  * color on a tint instead (see `WorkspaceLabelChip`). It sits last so the reported facts are
  * read first, and it stays the same height as the rest of the line.
+ *
+ * Plugin items follow everything the row knows itself. A plugin renders its slot as it likes:
+ * the row adds no separator, since only the plugin knows whether it has anything to say.
  */
 export function WorkspaceMetaRow({
   currentBranch,
@@ -67,6 +74,7 @@ export function WorkspaceMetaRow({
   prHint,
   serviceSummary,
   labels = EMPTY_LABELS,
+  workspace = null,
 }: {
   currentBranch: string | null;
   projectName: string | null;
@@ -74,6 +82,8 @@ export function WorkspaceMetaRow({
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   labels?: readonly WorkspaceLabelDefinition[];
+  /** The real workspace behind the row; previews leave it out and get no plugin items. */
+  workspace?: { serverId: string; workspaceId: string } | null;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
@@ -86,8 +96,9 @@ export function WorkspaceMetaRow({
     visible: rowItems,
     checksDisplay,
   });
+  const pluginItems = usePluginWorkspaceRowBadgeItems(workspace?.serverId ?? null);
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && (!workspace || pluginItems.length === 0)) return null;
 
   return (
     <View style={styles.row}>
@@ -97,6 +108,9 @@ export function WorkspaceMetaRow({
           <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
         </Fragment>
       ))}
+      {workspace ? (
+        <PluginWorkspaceRowBadgeItems targets={pluginItems} workspaceId={workspace.workspaceId} />
+      ) : null}
     </View>
   );
 }

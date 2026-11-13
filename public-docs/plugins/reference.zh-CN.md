@@ -705,6 +705,51 @@ function hideAlerts() {
 }
 ```
 
+### 工作区行徽章项 {#workspace-row-badge-items}
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` 在侧边栏每个工作区标题下方的那一行中添加一项，位于该行自带的各项（主机、拉取请求、检查、服务、标签）之后。`title` 和 `icon` 用于标注该项在侧边栏 **Show** 菜单中的开关，插件开关位于分隔线下方的独立分组中。各项默认可见。
+
+`Component` 为插件所在主机上的每个工作区行渲染一次，并接收 `PluginWorkspaceRowBadgeItemProps`：`theme`、`host`、`layout` 和 `workspaceId`。渲染 `@getpaseo/plugin/client/ui` 中的 `WorkspaceRowBadge`；工作区没有需要说明的内容时返回 `null`：
+
+| 属性                 | 含义                                                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `icon`               | 可选。任意[图标](#icons)形式，以该行的图标尺寸绘制。                  |
+| `label`              | 可选。一个简短的词。既没有 `icon` 也没有 `label` 的徽章不绘制。       |
+| `tone`               | `"muted"`（默认）、`"success"`、`"warning"`、`"danger"` 或 `"info"`。 |
+| `accessibilityLabel` | 默认为 `label`，其次是该项的 `title`。                                |
+
+该行不会在你的徽章周围添加分隔符，返回 `null` 不会留下空隙。可以渲染任意数量的徽章。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
+
+参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
+
 ## 宿主 UI {#host-ui}
 
 在客户端代码中从 `@getpaseo/plugin/client/ui` 导入由 Paseo 提供的 UI。下面的示例会打开一个受控的弹窗、渲染一个宿主图标，并用 toast 确认操作：

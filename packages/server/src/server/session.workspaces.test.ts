@@ -6619,6 +6619,45 @@ test("lists Git runtime for a checkout explicitly owned by a non-Git project", a
   });
 });
 
+test("lists where the workspace's forge is on the web so every client builds the same links", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-forge-web",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-forge-web",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
+  session.workspaceRuntimeStore.get = () => ({
+    ...createWorkspaceRuntimeSnapshot(REPO_CWD),
+    forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+  });
+
+  const [descriptor] = (
+    await session.buildWorkspaceDescriptorMap({ includeGitData: true })
+  ).values();
+
+  expect(descriptor?.forgeWeb).toEqual({
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
+});
+
 test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fields", async () => {
   const setupSession = () => {
     const session = createSessionForWorkspaceTests();

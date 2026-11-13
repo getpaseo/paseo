@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   isGitHubHost,
+  parseGitHubRemoteIdentity,
   parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
@@ -959,6 +960,11 @@ interface GitHubServiceDependencies {
    * per invocation.
    */
   resolveRepoSlug: (cwd: string) => Promise<string | null>;
+  /**
+   * owner/name of the origin remote on any host: an SSH alias or Enterprise
+   * host included, which `resolveRepoSlug` leaves to `gh`.
+   */
+  resolveOriginRepository: (cwd: string) => Promise<string | null>;
 }
 
 export interface GitHubCommandRunnerOptions {
@@ -1050,6 +1056,7 @@ interface CreateGitHubServiceOptions {
   now?: () => number;
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
   resolveRepoSlug?: (cwd: string) => Promise<string | null>;
+  resolveOriginRepository?: (cwd: string) => Promise<string | null>;
 }
 
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
@@ -1132,6 +1139,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     now: options.now ?? Date.now,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
     resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
+    resolveOriginRepository: options.resolveOriginRepository ?? resolveOriginRepositoryPath,
   };
   // A resolved enterprise host is cached permanently; a null resolution (no
   // host, or the auth probe said no) expires so `gh auth login --hostname`
@@ -2543,6 +2551,26 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return { success: true };
     },
 
+    getReferenceRepository(input) {
+      return cached({
+        cwd: input.cwd,
+        method: "getReferenceRepository",
+        args: {},
+        readOptions: input,
+        load: async () => {
+          const repo = await deps.resolveOriginRepository(input.cwd);
+          if (!repo) {
+            return null;
+          }
+          // A failed lookup must reject: "no parent" is cached as a final answer.
+          const view = await readGitHubRepoView({ cwd: input.cwd, repo, run });
+          const parentOwner = view.parent?.owner?.login;
+          const parentName = view.parent?.name;
+          return parentOwner && parentName ? `${parentOwner}/${parentName}` : null;
+        },
+      });
+    },
+
     isAuthenticated(input) {
       return cached({
         cwd: input.cwd,
@@ -3224,20 +3252,53 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
   return parseGitHubRemoteUrl(stdout.trim())?.repo ?? null;
 }
 
-async function getGitHubRepoView(options: {
-  cwd: string;
-  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
-}): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
-  const args = ["repo", "view", "--json", "owner,name,parent"];
+async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> {
+  let stdout: string;
   try {
-    const stdout = await options.run(args, {
-      cwd: options.cwd,
-    });
-    return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
-      args,
-      cwd: options.cwd,
-      emptyFallback: "{}",
-    });
+    ({ stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+    }));
+  } catch {
+    return null;
+  }
+  const location = parseGitRemoteLocation(stdout.trim());
+  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
+}
+
+interface GitHubRepoViewOptions {
+  cwd: string;
+  /** owner/name to ask about; `gh` picks the default repository for the directory when absent. */
+  repo?: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}
+
+async function readGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema>> {
+  const args = [
+    "repo",
+    "view",
+    ...(options.repo ? [options.repo] : []),
+    "--json",
+    "owner,name,parent",
+  ];
+  const stdout = await options.run(args, {
+    cwd: options.cwd,
+  });
+  return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
+    args,
+    cwd: options.cwd,
+    emptyFallback: "{}",
+  });
+}
+
+async function getGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
+  try {
+    return await readGitHubRepoView(options);
   } catch (error) {
     // A missing CLI or an auth failure must surface as its typed class so the
     // caller reports the real problem; only a genuine "not a resolvable repo"
