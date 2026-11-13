@@ -127,7 +127,8 @@ import {
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
-import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import type { ComposerInputMode } from "@/composer/input-mode";
+import { useComposerControlsScope, useComposerPresentation } from "@/composer/controls-scope";
 import { useIsInputLive } from "./input/use-input-live";
 import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -1309,7 +1310,9 @@ function ComposerContentImpl({
   submitLabel,
   placeholder,
 }: ComposerContentProps) {
-  const mode = resolveComposerInputMode(inputMode);
+  const mode = useComposerPresentation(inputMode);
+  // A host that hides attachments refuses files by any route, not only the button.
+  const controlsScope = useComposerControlsScope();
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -2521,7 +2524,7 @@ function ComposerContentImpl({
       onGenericFiles: handleGenericFilesDropped,
       onWorkspaceFile: handleWorkspaceFileDropped,
     },
-    { disabled: isSubmitLoadingVisible },
+    { disabled: isSubmitLoadingVisible || !controlsScope.attachments },
   );
 
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
@@ -2602,8 +2605,8 @@ function ComposerContentImpl({
                   cwd={cwd}
                   attachmentMenuItems={attachmentMenuItems}
                   onAttachButtonRef={handleAttachButtonRef}
-                  onAddImages={addImages}
-                  onPasteImages={handleNativePasteImages}
+                  onAddImages={controlsScope.attachments ? addImages : undefined}
+                  onPasteImages={controlsScope.attachments ? handleNativePasteImages : undefined}
                   client={client}
                   isReadyForDictation={isDictationReady}
                   placeholder={messagePlaceholder}

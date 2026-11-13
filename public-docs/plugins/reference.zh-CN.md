@@ -768,6 +768,79 @@ import { Markdown } from "@getpaseo/plugin/client/ui";
 组件不添加页面内边距或滚动容器。需要时请在外层使用布局或滚动视图。
 内容获取以及加载和错误状态由插件负责。
 
+### Agent 时间线 {#agent-timeline}
+
+从 `@getpaseo/plugin/client/ui` 导入 `AgentTimeline`，即可在屏幕、面板或弹窗中按 Agent 标签页的样子
+显示 Agent 的时间线。下面的屏幕左侧列出 Agent，右侧通过一个简单的消息框与选中的 Agent 对话：
+
+```tsx
+import { AgentTimeline } from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+import { View } from "react-native";
+import { AgentList } from "./agent-list";
+
+export function Overseer() {
+  const [agentId, setAgentId] = useState<string | null>(null);
+  return (
+    <View style={{ flex: 1, flexDirection: "row" }}>
+      <AgentList selected={agentId} onSelect={setAgentId} />
+      {agentId ? <AgentTimeline agentId={agentId} composer={{ controls: "none" }} /> : null}
+    </View>
+  );
+}
+```
+
+| 属性       | 默认值                  | 含义                                                  |
+| ---------- | ----------------------- | ----------------------------------------------------- |
+| `agentId`  | 必填                    | 要显示的 Agent。                                      |
+| `serverId` | 当前界面所属的主机      | Agent 所在的主机。                                    |
+| `composer` | Agent 标签页的 composer | `false` 以只读方式显示时间线；对象用于配置 composer。 |
+| `testID`   | 无                      | 时间线根节点的测试标识。                              |
+
+`composer` 接受：
+
+| 字段          | 取值                                                                           | 含义                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `controls`    | `"all"`（默认）、`"none"` 或 `{ model, mode, thinking, options, attachments }` | `"none"` 只保留消息框和发送按钮。对象会隐藏设为 `"hidden"` 的控件，省略的控件照常显示。隐藏 `attachments` 也会拒绝粘贴和拖放的文件。 |
+| `items`       | `"all"`（默认）、`"none"` 或条目 ID 列表                                       | 工具栏中的[composer 条目](#composer-items)。列表只保留你的插件中具有这些 ID 的条目。`controls: "none"` 时忽略。                      |
+| `placeholder` | 字符串                                                                         | 替换消息框的占位文字。                                                                                                               |
+
+时间线由宿主提供：你的插件和其他插件贡献的[时间线条目](#timeline-items)、向上滚动时加载的更早历史、
+流式输出，以及加载、错误和已归档状态。组件会填满父容器，不添加标题；composer 位于底部。
+在紧凑布局中请让它占满整个屏幕，就像示例中列表和时间线轮流显示那样。
+
+与 Agent 标签页不同的行为：
+
+- **权限与提问。** 有 composer 时，用户可在时间线中直接回答。只读时间线会显示它们但不提供按钮；
+  请提供 `navigation.openAgent` 让用户去回答。
+- **需要关注。** 带 composer 的时间线在显示时会清除 Agent 的关注状态，与获得焦点的标签页相同。
+  只读时间线从不清除，这样一页预览不会掩盖需要用户处理的 Agent。
+- **斜杠文本。** 使用 `controls: "none"` 时，用户输入的所有内容（包括 `/exit` 和 `/clear`）都会原样发送给 Agent。
+  显示工具栏时，`/exit` 会归档 Agent，`/clear` 会归档 Agent 并在其工作区中打开一个新草稿，这会离开你的屏幕。
+- **没有胶囊轨道。** 任务、子 Agent 和[Composer 胶囊](#composer-pills)会打开工作区的标签页和面板，
+  因此时间线不显示它们。
+
+当 Agent 同时在标签页或多个时间线中打开时，不会产生额外开销：Paseo 对每个 Agent 只保持一个实时订阅。
+
+隐藏模型控件只影响这个视图。用户仍可在 Agent 的标签页中更改模型。要选择模型，请对
+[`useComposers({ agentId })`](#reach-a-composer-by-reference) 返回的 Agentcomposer 调用 `setModel`。
+
+`AgentTimeline` 需要 Paseo 0.16.0 或更高版本。声明 `"requirements": { "paseo": ">=0.16.0" }`，
+或者通过检查导出是否存在来继续支持旧版应用（旧版中该导出为 undefined）：
+
+```tsx
+{
+  typeof AgentTimeline === "function" ? (
+    <AgentTimeline agentId={agentId} composer={{ controls: "none" }} />
+  ) : (
+    <Button title="Open agent" onPress={() => navigation?.openAgent({ agentId })} />
+  );
+}
+```
+
+可运行的[Agent 时间线示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-timeline)
+可在消息框、隐藏附件的工具栏和只读模式之间切换。
+
 ### Modal {#modal}
 
 `Modal` 在紧凑布局中使用底部面板，否则使用居中的对话框。`open` 状态由插件负责。

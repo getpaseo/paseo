@@ -6,6 +6,7 @@ import {
   ComposerControlSurfaceProvider,
   type ComposerControlSurface,
 } from "@/composer/agent-controls/composer-control";
+import { showsComposerItem, useComposerControlsScope } from "@/composer/controls-scope";
 import { useComposerModel } from "@/composer/model";
 import { PluginItemList, pluginThemeMapping, usePluginItemHost } from "../item-host";
 import { PluginEnvironmentProvider } from "../popover";
@@ -13,23 +14,33 @@ import { useInstalledPlugins } from "../registry";
 import type { InstalledPlugin } from "../types";
 import { toPluginComposer } from "./model";
 
-function useServerPlugins(serverId: string | null): InstalledPlugin[] {
+interface ServerPluginItems {
+  plugin: InstalledPlugin;
+  items: InstalledPlugin["composerItems"];
+}
+
+/** The host's plugins with the composer items the surrounding composer shows. */
+function useServerPlugins(serverId: string | null): ServerPluginItems[] {
   const installed = useInstalledPlugins();
-  return useMemo(
-    () =>
-      serverId === null
-        ? []
-        : installed.filter(
-            (plugin) => plugin.serverId === serverId && plugin.composerItems.length > 0,
-          ),
-    [installed, serverId],
-  );
+  const { items: scope } = useComposerControlsScope();
+  return useMemo(() => {
+    if (serverId === null) return [];
+    const entries: ServerPluginItems[] = [];
+    for (const plugin of installed) {
+      if (plugin.serverId !== serverId) continue;
+      const items = plugin.composerItems.filter((item) =>
+        showsComposerItem(scope, plugin.id, item.id),
+      );
+      if (items.length > 0) entries.push({ plugin, items });
+    }
+    return entries;
+  }, [installed, scope, serverId]);
 }
 
 /** How many composer items the host's plugins registered, whether or not each renders anything. */
 export function usePluginComposerItemCount(serverId: string | null): number {
   const plugins = useServerPlugins(serverId);
-  return plugins.reduce((count, plugin) => count + plugin.composerItems.length, 0);
+  return plugins.reduce((count, entry) => count + entry.items.length, 0);
 }
 
 /**
@@ -47,8 +58,13 @@ export function PluginComposerItems({
   if (serverId === null || plugins.length === 0) return null;
   return (
     <ComposerControlSurfaceProvider value={surface}>
-      {plugins.map((plugin) => (
-        <ThemedPluginComposerItems key={plugin.id} plugin={plugin} uniProps={pluginThemeMapping} />
+      {plugins.map(({ plugin, items }) => (
+        <ThemedPluginComposerItems
+          key={plugin.id}
+          plugin={plugin}
+          items={items}
+          uniProps={pluginThemeMapping}
+        />
       ))}
     </ComposerControlSurfaceProvider>
   );
@@ -56,9 +72,11 @@ export function PluginComposerItems({
 
 function PluginComposerItemsHost({
   plugin,
+  items,
   theme,
 }: {
   plugin: InstalledPlugin;
+  items: InstalledPlugin["composerItems"];
   theme: PluginHostProps["theme"];
 }) {
   const model = useComposerModel();
@@ -76,7 +94,7 @@ function PluginComposerItemsHost({
   return (
     <PluginEnvironmentProvider environment={environment}>
       <PluginComposerProvider composer={composer}>
-        <PluginItemList plugin={plugin} items={plugin.composerItems} props={props} />
+        <PluginItemList plugin={plugin} items={items} props={props} />
       </PluginComposerProvider>
     </PluginEnvironmentProvider>
   );

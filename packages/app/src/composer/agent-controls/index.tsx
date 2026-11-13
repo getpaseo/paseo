@@ -1,3 +1,4 @@
+import { useComposerControlsScope } from "@/composer/controls-scope";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
@@ -991,6 +992,23 @@ function useAgentOptionControls(
   );
 }
 
+/** The agent's controls, minus the ones the surrounding composer scope hides. */
+function useScopedAgentControls(input: {
+  onSelectModel: (modelId: string) => Promise<void>;
+  thinkingOptions: AgentControlOption[];
+  optionControls: ComposerOptionControls | undefined;
+  modeControl: AgentModeControlValue | null;
+}) {
+  const scope = useComposerControlsScope();
+  const hasThinking = scope.thinking && input.thinkingOptions.length > 0;
+  return {
+    onSelectModel: scope.model ? input.onSelectModel : undefined,
+    thinkingOptions: hasThinking ? input.thinkingOptions : undefined,
+    optionControls: scope.options ? input.optionControls : undefined,
+    modeControl: scope.mode ? input.modeControl : null,
+  };
+}
+
 export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
@@ -1244,6 +1262,13 @@ export const AgentControls = memo(function AgentControls({
     [refreshSnapshot],
   );
 
+  const scoped = useScopedAgentControls({
+    onSelectModel: handleSelectModel,
+    thinkingOptions,
+    optionControls: agentOptionControls,
+    modeControl,
+  });
+
   if (!agent) {
     return null;
   }
@@ -1257,23 +1282,23 @@ export const AgentControls = memo(function AgentControls({
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
-        onSelectModel={handleSelectModel}
+        onSelectModel={scoped.onSelectModel}
         agentProfiles={agentProfiles}
         onApplyAgentProfile={agentProfiles?.applyProfile}
         onEditAgentProfiles={handleEditAgentProfiles}
         onCreateAgentProfile={profileActions.create}
         onEditAgentProfile={profileActions.edit}
-        thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
+        thinkingOptions={scoped.thinkingOptions}
         selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
         onSelectThinkingOption={handleSelectThinkingOption}
-        optionControls={agentOptionControls}
+        optionControls={scoped.optionControls}
         isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
         onModelSelectorOpen={handleModelSelectorOpen}
         onRetryModelProvider={handleRetryModelProvider}
         isRetryingModelProvider={snapshotIsRefreshing}
         onDropdownClose={onDropdownClose}
         disabled={!client}
-        modeControl={modeControl}
+        modeControl={scoped.modeControl}
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
       />

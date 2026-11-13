@@ -186,6 +186,51 @@ export interface MarkdownProps {
 /** Renders Markdown using Paseo’s theme, selection, and link behavior. */
 export declare const Markdown: ComponentType<MarkdownProps>;
 
+/** How an embedded composer control shows. */
+export type AgentTimelineControlVisibility = "shown" | "hidden";
+
+/** The agent tab's toolbar with chosen controls hidden. An omitted control is shown. */
+export interface AgentTimelineControls {
+  model?: AgentTimelineControlVisibility;
+  mode?: AgentTimelineControlVisibility;
+  thinking?: AgentTimelineControlVisibility;
+  /** The provider's own option controls, such as a fast-mode toggle. */
+  options?: AgentTimelineControlVisibility;
+  /** The attach button, and pasted and dropped files. */
+  attachments?: AgentTimelineControlVisibility;
+}
+
+export interface AgentTimelineComposer {
+  /**
+   * `"all"` (default): the agent tab's toolbar. `"none"`: a message box with Send and nothing
+   * else; slash text is sent to the agent as typed. An object hides the controls it names.
+   */
+  controls?: "all" | "none" | AgentTimelineControls;
+  /**
+   * Plugin composer items in the toolbar. `"all"` (default) shows every plugin's items; a list
+   * shows only the named items of the plugin rendering the timeline. Ignored with
+   * `controls: "none"`.
+   */
+  items?: "all" | "none" | readonly string[];
+  /** Replaces the default placeholder. */
+  placeholder?: string;
+}
+
+export interface AgentTimelineProps {
+  agentId: string;
+  /** The host the agent runs on. Defaults to the host of the surface rendering the timeline. */
+  serverId?: string;
+  /** The agent tab's composer when omitted. `false` shows the timeline read-only. */
+  composer?: false | AgentTimelineComposer;
+  testID?: string;
+}
+
+/**
+ * An agent's timeline as its tab shows it, with an optional composer. Fills its parent.
+ * Undefined on Paseo older than 0.16.0.
+ */
+export declare const AgentTimeline: ComponentType<AgentTimelineProps>;
+
 export interface ComposerControlProps {
   /** The control's label and tooltip. */
   title: string;
