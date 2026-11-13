@@ -8,6 +8,7 @@ import {
   ScrollView,
   Text,
   View,
+  useWindowDimensions,
   type PressableStateCallbackType,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -120,12 +121,11 @@ import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-p
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
-import {
-  SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
-  SETTINGS_DESKTOP_SIDEBAR_WIDTH,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+import { SETTINGS_DESKTOP_DETAIL_MIN_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import { usePanelStore } from "@/stores/panel-store";
 import { density, densityIconBox, densityIconSize } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
@@ -979,10 +979,19 @@ function SettingsSidebar({
   );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const { width: viewportWidth } = useWindowDimensions();
+  const visibleSidebarWidth = resolveDesktopSidebarWidth({
+    requestedWidth: sidebarWidth,
+    viewportWidth,
+  });
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
   const outerContainerStyle = useMemo(
-    () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
-    [isDesktop],
+    () => [
+      isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer,
+      isDesktop && inlineUnistylesStyle({ width: visibleSidebarWidth }),
+    ],
+    [isDesktop, visibleSidebarWidth],
   );
   const innerContainerStyle = useMemo(
     () => [{ flex: 1 }, isDesktop ? { paddingTop: insets.top } : null],
@@ -1485,7 +1494,6 @@ const desktopStyles = StyleSheet.create({
 
 const sidebarStyles = StyleSheet.create((theme) => ({
   desktopContainer: {
-    width: SETTINGS_DESKTOP_SIDEBAR_WIDTH,
     flexShrink: 1,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
