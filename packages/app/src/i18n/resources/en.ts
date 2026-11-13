@@ -2758,6 +2758,11 @@ export const en = {
         contentWidthAccessibility: "Content width in pixels",
         reset: "Reset",
         resetAccessibility: "Reset content width to default",
+        tabPlacement: "Tab placement",
+        tabPlacementHint: "Position of the tabs in a workspace on wide screens",
+        tabPlacementTop: "Horizontal (top)",
+        tabPlacementLeft: "Vertical (left)",
+        tabPlacementAccessibility: "Tab placement: {{value}}",
       },
       syntax: {
         title: "Syntax",

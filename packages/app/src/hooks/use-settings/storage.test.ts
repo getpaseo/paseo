@@ -459,6 +459,36 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("keeps tabs on top until a placement is picked", async () => {
+    const result = await loadAppSettingsFromStorage(makeDeps());
+
+    expect(result.tabRailPlacement).toBe("top");
+  });
+
+  it("loads a picked tab placement from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ tabRailPlacement: "left" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.tabRailPlacement).toBe("left");
+  });
+
+  it("drops an unknown tab placement back to top", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ tabRailPlacement: "bottom" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.tabRailPlacement).toBe("top");
+  });
+
   it("normalizes terminal scrollback lines from storage", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

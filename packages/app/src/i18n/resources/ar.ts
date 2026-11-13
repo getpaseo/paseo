@@ -2667,6 +2667,11 @@ export const ar: TranslationResources = {
         contentWidthAccessibility: "عرض المحتوى بالبكسل",
         reset: "إعادة تعيين",
         resetAccessibility: "إعادة عرض المحتوى إلى الافتراضي",
+        tabPlacement: "موضع علامات التبويب",
+        tabPlacementHint: "موضع علامات التبويب في مساحة العمل على الشاشات العريضة",
+        tabPlacementTop: "أفقي (أعلى)",
+        tabPlacementLeft: "عمودي (يسار)",
+        tabPlacementAccessibility: "موضع علامات التبويب: {{value}}",
       },
       syntax: {
         title: "بناء الجملة",

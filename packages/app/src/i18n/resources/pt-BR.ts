@@ -2670,6 +2670,11 @@ export const ptBR: TranslationResources = {
         contentWidthAccessibility: "Largura do conteúdo em pixels",
         reset: "Redefinir",
         resetAccessibility: "Redefinir a largura do conteúdo",
+        tabPlacement: "Posição das abas",
+        tabPlacementHint: "Posição das abas em um workspace em telas largas",
+        tabPlacementTop: "Horizontal (em cima)",
+        tabPlacementLeft: "Vertical (à esquerda)",
+        tabPlacementAccessibility: "Posição das abas: {{value}}",
       },
       syntax: {
         title: "Sintaxe",

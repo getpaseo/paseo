@@ -2656,6 +2656,11 @@ export const ja: TranslationResources = {
         contentWidthAccessibility: "コンテンツ幅 (ピクセル)",
         reset: "リセット",
         resetAccessibility: "コンテンツ幅をデフォルトに戻す",
+        tabPlacement: "タブの位置",
+        tabPlacementHint: "ワイド画面でのワークスペース内のタブの位置",
+        tabPlacementTop: "水平（上）",
+        tabPlacementLeft: "垂直（左）",
+        tabPlacementAccessibility: "タブの位置: {{value}}",
       },
       syntax: {
         title: "構文ハイライト",

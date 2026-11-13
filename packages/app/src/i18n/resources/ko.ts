@@ -2646,6 +2646,11 @@ export const ko: TranslationResources = {
         contentWidthAccessibility: "콘텐츠 너비(픽셀)",
         reset: "재설정",
         resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
+        tabPlacement: "탭 위치",
+        tabPlacementHint: "와이드 화면에서 워크스페이스 탭의 위치",
+        tabPlacementTop: "가로(위쪽)",
+        tabPlacementLeft: "세로(왼쪽)",
+        tabPlacementAccessibility: "탭 위치: {{value}}",
       },
       syntax: {
         title: "구문",

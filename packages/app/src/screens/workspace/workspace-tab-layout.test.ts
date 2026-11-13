@@ -11,6 +11,7 @@ import {
   workspaceTabSwitcherPopoverLayout,
   selectWorkspaceChrome,
   computeWorkspaceTabLayout,
+  resolveWorkspaceTabRailWidth,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
 
@@ -278,6 +279,25 @@ describe("desktop pane chrome", () => {
     );
     expect(selectWorkspaceChrome({ width: 500, compact: "pane dropdown", full })).toBe(full);
     expect(selectWorkspaceChrome({ width: null, compact: "pane dropdown", full })).toBe(full);
+  });
+});
+
+describe("left tab rail width", () => {
+  it("draws the stored width in a pane with room for it", () => {
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 260, paneWidth: 900 })).toBe(260);
+  });
+
+  it("holds a dragged width inside the rail's limits", () => {
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 40, paneWidth: 1600 })).toBe(140);
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 900, paneWidth: 1600 })).toBe(480);
+  });
+
+  it("leaves a narrow pane at least half its width for content", () => {
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 400, paneWidth: 600 })).toBe(300);
+  });
+
+  it("keeps the rail usable in a pane narrower than twice its minimum", () => {
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 400, paneWidth: 200 })).toBe(140);
   });
 });
 
