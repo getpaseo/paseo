@@ -61,6 +61,8 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
+A send rejected before its prompt reaches the provider, for example because the requested mode could
+not be set, leaves no receipt, so retrying its message ID submits it.
 An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
 accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
 work. Inspect the agent before choosing a new message ID. Receipts contain identity and request
