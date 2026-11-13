@@ -134,6 +134,62 @@ describe("DeepSeek usage discovery", () => {
     ).rejects.toThrow();
   });
 
+  it("does not create a DeepSeek card for a Pi login with another provider only", async () => {
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".pi", "agent", "auth.json"),
+      JSON.stringify({ openai: { key: "not-deepseek" } }),
+    );
+    expect(await discover(providerSnapshot)).toEqual([]);
+  });
+
+  it("uses the session's DeepSeek key instead of the daemon's key", async () => {
+    process.env.DEEPSEEK_API_KEY = "daemon-key";
+    const accounts = await discover({
+      kind: "session",
+      provider: "pi",
+      model: "deepseek/deepseek-flash",
+      env: { DEEPSEEK_API_KEY: "session-key" },
+    });
+    expect(accounts).toEqual([
+      {
+        key: "default",
+        label: "DeepSeek API",
+        input: { store: "value", locator: "session-key" },
+      },
+    ]);
+
+    let authorization: string | null = null;
+    await fetchUsage(accounts[0]!.input as Parameters<typeof fetchUsage>[0], async (_url, init) => {
+      authorization = new Headers(init?.headers).get("Authorization");
+      return Response.json({ is_available: true, balance_infos: [] });
+    });
+    expect(authorization).toBe("Bearer session-key");
+  });
+
+  it("honors a session-specific Pi agent directory", async () => {
+    const agentDirectory = join(home, "session-pi-agent");
+    mkdirSync(agentDirectory, { recursive: true });
+    writeFileSync(
+      join(agentDirectory, "auth.json"),
+      JSON.stringify({ deepseek: { key: "session-pi-key" } }),
+    );
+    expect(
+      await discover({
+        kind: "session",
+        provider: "pi",
+        model: "deepseek/deepseek-flash",
+        env: { PI_CODING_AGENT_DIR: agentDirectory },
+      }),
+    ).toEqual([
+      {
+        key: "default",
+        label: "DeepSeek API",
+        input: { store: "file", locator: join(agentDirectory, "auth.json") },
+      },
+    ]);
+  });
+
   it("parses comma and semicolon separated aliases", () => {
     expect(parseModelAliases("claude:sonnet, pi:deepseek-flash;claude:opus")).toEqual([
       { provider: "claude", model: "sonnet" },

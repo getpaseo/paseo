@@ -39,12 +39,11 @@ interface ModelAlias {
   model: string;
 }
 
-function piAuthPath(): string {
-  return join(homedir(), ".pi", "agent", "auth.json");
+function piAuthPath(agentDirectory?: string): string {
+  return join(agentDirectory?.trim() || join(homedir(), ".pi", "agent"), "auth.json");
 }
 
-async function readPiKey(): Promise<string | null> {
-  const path = piAuthPath();
+async function readPiKey(path: string): Promise<string | null> {
   if (!existsSync(path)) return null;
   const parsed = JSON.parse(await readFile(path, "utf8")) as {
     deepseek?: { key?: unknown };
@@ -54,17 +53,37 @@ async function readPiKey(): Promise<string | null> {
     : null;
 }
 
-async function findKeyLocator(): Promise<KeyLocator | null> {
+async function piKeyLocator(path: string): Promise<KeyLocator | null> {
+  if (!existsSync(path)) return null;
+  try {
+    return (await readPiKey(path)) ? { store: "file", locator: path } : null;
+  } catch {
+    return { store: "file", locator: path };
+  }
+}
+
+async function findKeyLocator(scope: UsageScope): Promise<KeyLocator | null> {
+  if (scope.kind === "session") {
+    const sessionKey = scope.env.DEEPSEEK_API_KEY?.trim();
+    if (sessionKey) return { store: "value", locator: sessionKey };
+    const agentDirectory = scope.env.PI_CODING_AGENT_DIR;
+    if (agentDirectory) {
+      const sessionLogin = await piKeyLocator(piAuthPath(agentDirectory));
+      if (sessionLogin) return sessionLogin;
+    }
+  }
+
   if (process.env.DEEPSEEK_API_KEY?.trim()) return { store: "env", locator: "DEEPSEEK_API_KEY" };
-  if (existsSync(piAuthPath())) return { store: "file", locator: piAuthPath() };
+  const login = await piKeyLocator(piAuthPath());
+  if (login) return login;
   return null;
 }
 
 async function readApiKey(input: UsageInput): Promise<string | null> {
   if (input.store === "env") return process.env[input.locator]?.trim() || null;
-  if (input.locator !== piAuthPath()) return null;
+  if (input.store === "value") return input.locator.trim() || null;
   if (!existsSync(input.locator)) throw new Error("Pi auth file no longer exists");
-  return readPiKey();
+  return readPiKey(input.locator);
 }
 
 export function parseModelAliases(raw = process.env[MODEL_ALIAS_ENV] ?? ""): ModelAlias[] {
@@ -130,7 +149,7 @@ export function scopeShowsDeepSeek(scope: UsageScope, aliases = parseModelAliase
 
 export async function discover(scope: UsageScope): Promise<UsageAccount[]> {
   if (!scopeShowsDeepSeek(scope)) return [];
-  const input = await findKeyLocator();
+  const input = await findKeyLocator(scope);
   if (!input) return [];
   return [{ key: "default", label: "DeepSeek API", input }];
 }
