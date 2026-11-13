@@ -211,6 +211,42 @@ describe("reconcileProjectSelection", () => {
     });
   });
 
+  it("adopts a remembered project after it hydrates into a linked group", () => {
+    const fallback = project("fallback", "host-b");
+    const remembered = project("app", "host-a");
+    const linkedProject: HostProjectListItem = {
+      ...project("linked-app", "host-b"),
+      viewKey: "local-project-link:app",
+      projectKey: null,
+      projectName: "app",
+      hosts: [
+        remembered.hosts[0]!,
+        {
+          serverId: "host-b",
+          projectId: "app-b",
+          iconWorkingDir: "/work/app",
+          worktreeSupport: "supported",
+        },
+      ],
+    };
+    const current = createProjectSelection(
+      context({ selectedServerId: "host-b", initialProject: fallback, projects: [fallback] }),
+    );
+    const afterRememberedHydration = context({
+      selectedServerId: "host-b",
+      initialProject: linkedProject,
+      projects: [fallback, linkedProject],
+      lastActiveProject: remembered,
+    });
+
+    expect(afterRememberedHydration.initialProjectSource).toBe("lastActive");
+    expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual({
+      contextKey: "host:",
+      project: linkedProject,
+      source: "initial",
+    });
+  });
+
   it("keeps manual selections when the remembered project hydrates", () => {
     const manual = project("manual");
     const remembered = project("remembered");
