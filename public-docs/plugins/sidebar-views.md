@@ -3,7 +3,7 @@
 A sidebar view replaces the content between Paseo's header and footer. You receive theme tokens,
 active entity refs and navigation methods, then render your own React Native UI. Install the
 [sidebar-views example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/sidebar-views)
-to try projects, task-based agents, nested agents and label folders.
+to try projects, task-based agents, nested agents, label folders and open tabs.
 
 ## Register a view
 
@@ -127,6 +127,49 @@ by a worker from before timestamp tracking has `createdAt: null`. Script ownersh
 workspace script runtime entries. The host observation follows terminal creation, closure, title
 changes and reconnects, and releases when its last plugin subscriber leaves.
 
+## Show open tabs and subagents
+
+`useWorkspaceTabs(workspaceRef)` returns the workspace's open tabs on this device, pane by pane
+in strip order, and `activeTabId`, the tab the workspace shows when it opens. Tabs are app state:
+another device has its own. The explorer's Files and Changes tabs are left out. A tab has `id`,
+`kind`, and the `agent`, `terminalId`, `providerSubagent` or `path` it shows. An unchanged tab
+keeps its object, and an unchanged list keeps its identity.
+
+```tsx
+function TabRow({ tab, view }: { tab: PluginWorkspaceTab; view: PluginSidebarViewProps }) {
+  return (
+    <WorkspaceTabPresentation tab={tab}>
+      {(presentation) => (
+        <Pressable onPress={() => view.navigation.openTab(tab)}>
+          <presentation.Icon size={14} color={view.theme.colors.foregroundMuted} />
+          <Text>{presentation.label}</Text>
+          <WorkspaceTabMenu tab={tab} label={presentation.label} />
+        </Pressable>
+      )}
+    </WorkspaceTabPresentation>
+  );
+}
+```
+
+`WorkspaceTabPresentation` resolves the label, subtitle, icon, unsaved state and status
+`indicator` the app's tab strip shows. `navigation.openTab` opens the workspace with that tab
+focused. `WorkspaceTabMenu` is the app's own tab menu: copy, reload, rename and close, with the
+app's confirmations and rename dialog. There is no imperative close, so a tab with unsaved work
+always asks first.
+
+`useSubagents(tab.agent)` lists an agent's subagents oldest first: Paseo agents it started
+(`kind: "agent"`, read with `useAgent`) and the provider's own subagents (`kind: "provider"`, with
+`title`, `description`, `status` and `requiresAttention`). Reading them fetches the provider's
+list when the host supports it. Pass `{ parentSubagentId }` for a provider subagent's children.
+`useSubagentPresentation` gives a row's label, icon, status and facts line.
+`navigation.openSubagent(subagent, { parentTab })` opens it as the subagents track does: beside
+the parent tab, or in the subagent's own workspace when it has one. `SubagentMenu` adds detach and
+archive to the tab actions.
+
+The hooks come from `@getpaseo/plugin/client` and the components from
+`@getpaseo/plugin/client/ui`. The `tabs` view in the example lists each workspace's tabs with
+their subagents.
+
 ## Act on a ref
 
 `usePaseo()` routes ref-based actions to the ref's host:
@@ -157,8 +200,8 @@ to other devices. Use `scope: "host"` for data clients should share through the 
 
 ## Match the app's density
 
-Render with React Native primitives. The SDK exports no sidebar-view rows, sections, lists,
-badges or drag helpers. The existing header/footer item kit is a separate surface.
+Render with React Native primitives. Apart from the tab presentation and menus, the SDK exports no
+sidebar-view rows, sections, lists, badges or drag helpers. The existing header/footer item kit is a separate surface.
 
 For a dense row use a minimum height of 28, horizontal padding of 12, a 12-point primary label
 with 16-point line height and an 11-point secondary label. Use these supplied tokens:

@@ -11,6 +11,11 @@ export {
 export { ExternalLink } from "@/components/ui/external-link";
 
 export { SidebarRow, SidebarSeparator } from "@/plugins/sidebar-items/kit";
+export {
+  SubagentMenu,
+  WorkspaceTabMenu,
+  WorkspaceTabPresentation,
+} from "@/plugins/workspace-tabs/bridge";
 
 export { DocumentFrame } from "@/file-panels/document-frame";
 

@@ -20,6 +20,12 @@ import type {
 } from "react-native";
 import type { PluginIconProps } from "../icons.js";
 import type { PluginIcon } from "./contracts.js";
+import type {
+  PluginSubagentMenuProps,
+  PluginTabMenuProps,
+  PluginTabPresentation,
+  PluginWorkspaceTab,
+} from "./workspace-tabs.js";
 
 export interface ModalProps {
   title: string;
@@ -172,6 +178,19 @@ export interface SidebarRowProps {
 export declare const SidebarRow: ComponentType<SidebarRowProps>;
 /** A line between groups of rows. Render it from a sidebar item's `Component`. */
 export declare const SidebarSeparator: ComponentType;
+
+/** Resolves a tab's label, icon, unsaved state and status as the app's tab strip shows them. */
+export declare const WorkspaceTabPresentation: ComponentType<{
+  tab: PluginWorkspaceTab;
+  children: (presentation: PluginTabPresentation) => ReactNode;
+}>;
+/**
+ * The tab's menu as the app shows it: copy, reload, rename and close, with the app's own
+ * confirmations and rename dialog.
+ */
+export declare const WorkspaceTabMenu: ComponentType<PluginTabMenuProps>;
+/** A subagent row's menu: its tab's actions, then detach and archive. */
+export declare const SubagentMenu: ComponentType<PluginSubagentMenuProps>;
 
 /** Paseo's loading state. Fills the panel; the panel decides when to show it. */
 export declare const Loading: ComponentType;

@@ -7,6 +7,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { createPluginHosts } from "../hosts";
 import type { InstalledPlugin } from "../types";
+import { openPluginSubagent, openPluginWorkspaceTab } from "../workspace-tabs/open";
 import { createPluginClientStateSource } from "./source";
 
 interface InstallationApi {
@@ -60,6 +61,8 @@ export function getPluginClientApi(plugin: InstalledPlugin): InstallationApi {
           }),
         );
       },
+      openTab: openPluginWorkspaceTab,
+      openSubagent: openPluginSubagent,
     },
   });
   const api = { paseo, hosts };

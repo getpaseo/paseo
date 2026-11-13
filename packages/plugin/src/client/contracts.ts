@@ -5,6 +5,7 @@ import type { PluginPaseoApi } from "./reference-api.js";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
+import type { PluginSubagent, PluginWorkspaceTab } from "./workspace-tabs.js";
 import type {
   PluginComposer,
   PluginComposerItemContribution,
@@ -110,6 +111,14 @@ export interface PluginSidebarViewProps extends Pick<PluginHostProps, "theme" | 
     openAgent(ref: AgentRef): void;
     openTerminal(ref: TerminalRef): void;
     openProject(ref: ProjectRef): void;
+    /** Opens the tab's workspace with that tab focused. */
+    openTab(tab: PluginWorkspaceTab): void;
+    /**
+     * Opens a subagent the way its parent's subagents track does. Pass the parent's tab to open
+     * a subagent sharing the workspace beside that tab; a subagent in its own workspace opens
+     * there.
+     */
+    openSubagent(subagent: PluginSubagent, options?: { parentTab?: PluginWorkspaceTab }): void;
   };
   dismiss(): void;
 }
