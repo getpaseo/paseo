@@ -7,10 +7,14 @@ import { StyleSheet } from "react-native-unistyles";
 export const TIMELINE_CONTROL_ICON_SIZE = 16;
 
 export const timelineControlStyles = StyleSheet.create((theme) => ({
+  // The row's own background sits behind the buttons. No padding, border or shadow: when no
+  // button shows, the empty row has no size and must draw nothing.
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
   },
   button: {
     width: 32,
