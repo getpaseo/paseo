@@ -34,6 +34,7 @@ import {
   type ListUsageReportsOptions,
   UsageSourceRegistry,
 } from "./usage-sources/index.js";
+import { createUsageReportFile } from "./usage-sources/usage-report-file.js";
 import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
@@ -70,6 +71,8 @@ interface PluginRuntimePort {
 
 interface PluginServiceDependencies {
   usageAgents?: AgentUsageLookup;
+  /** Keeps each account's last usage report across daemon restarts. */
+  usageReportFile?: string;
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
@@ -119,6 +122,10 @@ export class PluginService {
       300_000,
       this.logger,
       dependencies.usageAgents,
+      undefined,
+      dependencies.usageReportFile
+        ? createUsageReportFile({ filePath: dependencies.usageReportFile, logger: this.logger })
+        : undefined,
     );
     this.runtime =
       dependencies.runtime ??

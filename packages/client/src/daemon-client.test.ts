@@ -1131,6 +1131,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_replacement_invalidation: true,
       provider_snapshot_references: true,
       explicit_event_subscriptions: true,
+      usage_retained_reports: true,
       owned_subscriptions: true,
       binary_chunking_v1: true,
       compact_provider_snapshots: true,
@@ -8580,6 +8581,52 @@ test("uses modern usage RPC when both capabilities are advertised", async () => 
   );
   expect(await result).toStrictEqual(payload);
   expect(updates).toEqual([report]);
+});
+
+test("a report streamed again replaces its expired copy in the finished list", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { usageSources: true } });
+  await connected;
+  const updates: unknown[] = [];
+  const result = client.listUsageReports({ requestId: "expired-usage" }, (report) =>
+    updates.push(report),
+  );
+  const entry = (id: string, fetchedAt: string) => ({
+    id,
+    sourceId: id,
+    sourceLabel: id,
+    account: {},
+    fetchedAt,
+    report: { status: "available", windows: [] },
+  });
+  const expired = entry("claude:work", "2026-09-30T00:00:00.000Z");
+  const other = entry("codex:work", "2026-09-30T00:05:00.000Z");
+  const refetched = entry("claude:work", "2026-09-30T00:06:00.000Z");
+  for (const report of [expired, other, refetched]) {
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "usage.list_reports.update",
+        payload: { requestId: "expired-usage", report },
+      }),
+    );
+  }
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "usage.list_reports.response",
+      payload: { requestId: "expired-usage", error: null },
+    }),
+  );
+  expect(updates).toEqual([expired, other, refetched]);
+  expect((await result).reports).toEqual([refetched, other]);
 });
 
 test("rejects usage requests when the host has neither capability", async () => {

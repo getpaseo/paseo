@@ -10,6 +10,7 @@ import {
   type UsageProblem,
   type UsageReport,
 } from "@getpaseo/protocol/messages";
+import type { RetainedUsage, UsageReportStore } from "./usage-report-file.js";
 
 export interface UsageSource {
   id: string;
@@ -39,7 +40,15 @@ export interface ListUsageReportsOptions {
   forceRefresh?: boolean;
   reportIds?: string[];
   agentId?: string;
+  /** Stream an expired report before its refetch; only for callers that keep the later copy. */
+  streamExpired?: boolean;
   onReport?: (report: UsageReportEntry) => void;
+}
+
+interface Discovery {
+  reports: Map<string, KnownReport>;
+  /** Sources whose discovery succeeded; a failed one kept its previous mapping. */
+  confirmed: Set<UsageSource>;
 }
 
 interface AgentReports {
@@ -49,7 +58,10 @@ interface AgentReports {
   reports: Map<string, KnownReport>;
 }
 
-/** Owns account identity, ordered logins for each account, and the five-minute fetch cache. */
+/**
+ * Owns account identity, ordered logins for each account, and the five-minute fetch cache. An
+ * expired entry stays until its account retires, so a list can show it while it refetches.
+ */
 export class UsageSourceRegistry {
   private readonly sources = new Map<string, UsageSource>();
   private readonly known = new Map<string, KnownReport>();
@@ -58,6 +70,9 @@ export class UsageSourceRegistry {
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
+  /** Saved by an earlier daemon run; neither claimed by an account nor retired by discovery yet. */
+  private readonly restored = new Map<string, RetainedUsage>();
+  private restoring: Promise<void> | undefined;
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -65,6 +80,7 @@ export class UsageSourceRegistry {
     private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
     private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
     private readonly deadlineMs = 20_000,
+    private readonly store?: UsageReportStore,
   ) {}
 
   register(source: UsageSource): void {
@@ -90,6 +106,8 @@ export class UsageSourceRegistry {
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
     if (options.agentId !== undefined && options.reportIds !== undefined)
       throw new Error("agentId and reportIds cannot be combined");
+    this.restoring ??= this.restore();
+    await this.restoring;
     this.pruneAgents();
     let ids: string[];
     let reports = this.known;
@@ -99,22 +117,82 @@ export class UsageSourceRegistry {
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
-      this.defaults = await this.discover({ kind: "global" }, this.defaults);
+      const discovery = await this.discover({ kind: "global" }, this.defaults);
+      this.defaults = discovery.reports;
       this.mergeKnown();
+      this.settleRestored(discovery.confirmed);
+      // Retirements reach the store even when nothing is fetched.
+      this.persist();
       ids = [...this.known.keys()];
     }
     return Promise.all(
       [...new Set(ids)].flatMap((id) => {
         const known = reports.get(id);
         if (!known) return [];
+        const cacheKey = cacheIdentity(id, known);
+        this.claimRestored(cacheKey);
+        const cached = this.cache.get(cacheKey);
+        // Shown until its refetch below replaces it, so a slow source keeps its place on screen.
+        if (options.streamExpired && !options.forceRefresh && cached && !this.isFresh(cached))
+          options.onReport?.(cached.entry);
         return [
-          this.fetchId(id, known, options.forceRefresh).then((entry) => {
+          this.fetchId(id, known, cacheKey, options.forceRefresh).then((entry) => {
             options.onReport?.(entry);
             return entry;
           }),
         ];
       }),
     );
+  }
+
+  private async restore(): Promise<void> {
+    if (!this.store) return;
+    for (const retained of await this.store.load()) this.restored.set(retained.key, retained);
+  }
+
+  private claimRestored(cacheKey: string): void {
+    const retained = this.restored.get(cacheKey);
+    if (!retained) return;
+    this.restored.delete(cacheKey);
+    if (!this.cache.has(cacheKey))
+      this.cache.set(cacheKey, { at: retained.at, entry: retained.entry });
+    if (retained.successful && !this.successful.has(cacheKey))
+      this.successful.set(cacheKey, retained.successful);
+  }
+
+  /**
+   * A source whose global discovery succeeded decides which of its restored entries are still
+   * accounts. Other discoveries confirm nothing: an agent's scope sees only its own login, and a
+   * failed discovery keeps the previous mapping.
+   */
+  private settleRestored(confirmed: ReadonlySet<UsageSource>): void {
+    const active = this.activeCacheKeys();
+    for (const [key, retained] of this.restored) {
+      const source = this.sources.get(retained.entry.sourceId);
+      if (!source || !confirmed.has(source)) continue;
+      if (active.has(key)) this.claimRestored(key);
+      else this.restored.delete(key);
+    }
+  }
+
+  private isFresh(cached: { at: number }): boolean {
+    return this.now() - cached.at < this.ttlMs;
+  }
+
+  private persist(): void {
+    void this.store?.save(this.retained());
+  }
+
+  /**
+   * Live entries, plus restored ones no global discovery has settled yet: plugin sources register
+   * after the daemon starts, so a source can be missing from the first discoveries.
+   */
+  private retained(): RetainedUsage[] {
+    const retained = new Map(this.restored);
+    for (const [key, { at, entry }] of this.cache) {
+      retained.set(key, { key, at, entry, successful: this.successful.get(key) });
+    }
+    return [...retained.values()];
   }
 
   private pruneAgents(): void {
@@ -138,7 +216,7 @@ export class UsageSourceRegistry {
       previous.provider === session.provider &&
       previous.model === session.model;
     if (sameScope) return [...previous.reports.keys()];
-    const reports = await this.discover({
+    const { reports } = await this.discover({
       kind: "session",
       provider: session.provider,
       model: session.model,
@@ -194,7 +272,8 @@ export class UsageSourceRegistry {
   private async discover(
     scope: UsageScope,
     previous: ReadonlyMap<string, KnownReport> = new Map(),
-  ): Promise<Map<string, KnownReport>> {
+  ): Promise<Discovery> {
+    const confirmed = new Set<UsageSource>();
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         const reports = new Map<string, KnownReport>();
@@ -219,6 +298,7 @@ export class UsageSourceRegistry {
                 known.logins.push(login);
             } else reports.set(id, { source, logins: [login], label: account.label });
           }
+          confirmed.add(source);
         } catch (error) {
           this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
           // A failed store read does not confirm removal. Session discovery has no previous
@@ -234,7 +314,7 @@ export class UsageSourceRegistry {
     for (const reports of discovered) {
       for (const [id, report] of reports) merged.set(id, report);
     }
-    return merged;
+    return { reports: merged, confirmed };
   }
 
   // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
@@ -262,12 +342,15 @@ export class UsageSourceRegistry {
     };
   }
 
-  private fetchId(id: string, known: KnownReport, forceRefresh = false): Promise<UsageReportEntry> {
+  private fetchId(
+    id: string,
+    known: KnownReport,
     // Account identity groups cards; the ordered login set identifies a fetch result.
-    const cacheKey = cacheIdentity(id, known);
+    cacheKey: string,
+    forceRefresh = false,
+  ): Promise<UsageReportEntry> {
     const cached = this.cache.get(cacheKey);
-    if (!forceRefresh && cached && this.now() - cached.at < this.ttlMs)
-      return Promise.resolve(cached.entry);
+    if (!forceRefresh && cached && this.isFresh(cached)) return Promise.resolve(cached.entry);
     const pending = this.pending.get(cacheKey);
     if (pending) return pending;
     const request = (async () => {
@@ -310,11 +393,8 @@ export class UsageSourceRegistry {
   }
 
   private writeCache(id: string, entry: UsageReportEntry): void {
-    const at = this.now();
-    for (const [cachedId, cached] of this.cache) {
-      if (at - cached.at >= this.ttlMs) this.cache.delete(cachedId);
-    }
-    this.cache.set(id, { at, entry });
+    this.cache.set(id, { at: this.now(), entry });
+    this.persist();
   }
 
   private async fetchBeforeDeadline(source: UsageSource, input: unknown): Promise<UsageReport> {

@@ -6308,8 +6308,12 @@ export class DaemonClient {
         return;
       }
       if (message.type !== "usage.list_reports.update") return;
-      reports.push(message.payload.report);
-      onReport?.(message.payload.report);
+      // A host streams an expired report first and its refetch later; the refetch wins.
+      const { report } = message.payload;
+      const shown = reports.findIndex((entry) => entry.id === report.id);
+      if (shown === -1) reports.push(report);
+      else reports[shown] = report;
+      onReport?.(report);
     });
     try {
       const response = await this.sendRequest({

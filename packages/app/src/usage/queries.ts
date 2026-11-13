@@ -33,8 +33,9 @@ import {
 } from "./model";
 import type { UsageReportEntry, UsageView } from "./types";
 
-// The daemon caches each report for five minutes, so re-reading it is cheap.
-// An explicit refresh passes `forceRefresh` to bypass that cache.
+// The daemon caches each report for five minutes, so re-reading it is cheap. After that it
+// streams the expired copy first and replaces it once refetched; an explicit refresh passes
+// `forceRefresh` to skip both.
 const REPORTS_STALE_TIME_MS = 60_000;
 const REPORTS_REFETCH_INTERVAL_MS = 5 * 60_000;
 
