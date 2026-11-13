@@ -528,6 +528,65 @@ describe("ForgeService", () => {
     vi.useFakeTimers();
   });
 
+  describe("getReferenceRepository", () => {
+    const forkView = JSON.stringify({
+      owner: { login: "fork-owner" },
+      name: "repo",
+      parent: { owner: { login: "main-owner" }, name: "repo" },
+    });
+
+    it("names the parent of a fork checkout, asking about the origin repository explicitly", async () => {
+      const runner = createRunner([forkView]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "fork-owner/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).resolves.toBe(
+        "main-owner/repo",
+      );
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0].args).toEqual([
+        "repo",
+        "view",
+        "fork-owner/repo",
+        "--json",
+        "owner,name,parent",
+      ]);
+    });
+
+    it("rejects when gh cannot answer, so a failed lookup is not mistaken for a repository without a parent", async () => {
+      const service = createGitHubService({
+        runner: async () => {
+          throw new GitHubCommandError({
+            args: ["repo", "view"],
+            cwd: "/tmp/repo",
+            exitCode: 1,
+            stderr: "error connecting to api.github.com",
+          });
+        },
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "fork-owner/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).rejects.toBeInstanceOf(
+        GitHubCommandError,
+      );
+    });
+
+    it("is null for a repository that is not a fork", async () => {
+      const runner = createRunner([JSON.stringify({ owner: { login: "acme" }, name: "repo" })]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "acme/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).resolves.toBeNull();
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

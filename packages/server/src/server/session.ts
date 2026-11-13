@@ -6184,6 +6184,7 @@ export class Session {
       // resolves to "github") so the sidebar/hover-card brand mark matches the
       // status projection without a second resolve.
       forge: snapshot.forge.forge,
+      forgeWeb: snapshot.forgeWeb,
     };
   }
 
