@@ -1151,6 +1151,40 @@ function exitFixture(
 }
 
 describe("terminal output before natural exit", () => {
+  test("replays output missed during worker disconnection before retaining a completed launch", async () => {
+    let snapshot = terminalReplay("before disconnect", 1);
+    const f = exitFixture(async () => snapshot, {
+      workspaceLaunch: {
+        launchName: "dev",
+        command: "./bin/dev",
+        portBase: 42000,
+        portCount: 100,
+      },
+    });
+    try {
+      await f.subscribe({}, true, "reconnected");
+      await flushMicrotasks();
+      expect(
+        f.frames.filter((row) => row.binary?.opcode === TerminalStreamOpcode.Restore),
+      ).toHaveLength(1);
+      // Recovery announces the retained exit before snapshotReady. These bytes never streamed.
+      snapshot = terminalReplay("final failure while disconnected", 3);
+      f.exit();
+      await flushMicrotasks();
+      const restores = f.frames.filter(
+        (row) => row.binary?.opcode === TerminalStreamOpcode.Restore,
+      );
+      expect(restores).toHaveLength(2);
+      expect(Buffer.from(restores[1].binary!.payload).toString()).toContain(
+        "final failure while disconnected",
+      );
+      expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      await f.delivery.close();
+    }
+  });
+
   test("explicit close wins over retaining a launch's pending final replay", async () => {
     const snapshot = deferred<ReplayFixture | null>();
     const f = exitFixture(() => snapshot.promise, {

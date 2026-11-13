@@ -1024,6 +1024,7 @@ export class TerminalSessionController {
       activeStream.completion = retainOutput ? "retain" : "close";
       if (retainOutput) {
         activeStream.snapshotReady = true;
+        activeStream.needsSnapshot = true;
         void this.trySendSnapshot(activeStream);
       }
       void this.completeStream(activeStream).catch((error) =>
