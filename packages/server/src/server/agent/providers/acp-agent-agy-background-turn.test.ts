@@ -782,4 +782,207 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(cancel).toHaveBeenCalledWith({ sessionId: "session-agy-1" });
     expect(summarizeEvents(events)).toEqual(["turn_canceled"]);
   });
+
+  test("deduplicates repeated step_index rows and settles schedule TimerCondition when target task finishes", async () => {
+    const { session, events, answer, writeTranscript } = createHarness();
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "publish and watch" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "call-pub",
+            name: "run_command",
+            args: {
+              CommandLine: '"pnpm publish:web"',
+              toolSummary: '"Publish release"',
+            },
+          },
+        ],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Step is still running",
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Tool is running as a background task with task id: session-agy-1/task-3",
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Started publish.",
+        tool_calls: [],
+      },
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-12T17:56:00.100Z",
+        content:
+          '[Message] timestamp=2026-11-12T17:56:00Z sender=session-agy-1/task-3 content=Task id "session-agy-1/task-3" finished',
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "call-verify",
+            name: "run_command",
+            args: {
+              CommandLine: '"pnpm verify"',
+              toolSummary: '"Verify release"',
+            },
+          },
+        ],
+      },
+      {
+        step_index: 7,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Step is still running",
+      },
+      {
+        step_index: 7,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Tool is running as a background task with task id: session-agy-1/task-7",
+      },
+      {
+        step_index: 8,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "call-timer",
+            name: "schedule",
+            args: {
+              DurationSeconds: "90",
+              Prompt: '"Wait for verify"',
+              TimerCondition: '"session-agy-1/task-7"',
+            },
+          },
+        ],
+      },
+      {
+        step_index: 9,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Tool is running as a background task with task id: session-agy-1/task-9",
+      },
+      {
+        step_index: 10,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Waiting for verification.",
+        tool_calls: [],
+      },
+      {
+        step_index: 11,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-12T17:56:30.100Z",
+        content:
+          '[Message] timestamp=2026-11-12T17:56:30Z sender=session-agy-1/task-7 content=Task id "session-agy-1/task-7" finished',
+      },
+      {
+        step_index: 12,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Publish and verification succeeded.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("publish and watch");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual([
+      "tool:execute:completed",
+      "tool:other:completed",
+      "assistant:Waiting for verification.",
+      "assistant:Publish and verification succeeded.",
+      "turn_completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("background task terminated by signal in step output file settles without SYSTEM_MESSAGE", async () => {
+    const { session, brainDir, sessionId, events, answer, writeTranscript } = createHarness();
+    writeTranscript([
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "commit changes" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [{ id: "call-sig", name: "run_command", args: '{"CommandLine":"committer"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: "Tool is running as a background task with task id: session-agy-1/task-3",
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Committing now.",
+        tool_calls: [],
+      },
+    ]);
+
+    await session.startTurn("commit changes");
+    await answer({ stopReason: "end_turn" });
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    const stepDir = path.join(brainDir, sessionId, ".system_generated", "steps", "3");
+    mkdirSync(stepDir, { recursive: true });
+    writeFileSync(
+      path.join(stepDir, "output.txt"),
+      "Command was terminated by signal or canceled.\n",
+      "utf8",
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual(["turn_completed"]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("aborted or errored foreground turn without background work does not stay busy", async () => {
+    const { session, events, answer, writeTranscript } = createHarness();
+    writeTranscript([
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "run broken tool" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [{ id: "call-err", name: "read_file", args: '{"Path":"/nonexistent"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "ERROR",
+        content: "Error: file not found",
+      },
+    ]);
+
+    await session.startTurn("run broken tool");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual(["turn_completed"]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
 });

@@ -397,6 +397,24 @@ function isAntigravityCommand(command: readonly string[] | undefined): boolean {
   return base === "agy" || base === "antigravity";
 }
 
+function normalizeAntigravityToolArgsRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
+      try {
+        normalized[key] = JSON.parse(value);
+        continue;
+      } catch {
+        // Keep raw string when it is not a valid JSON string literal.
+      }
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+}
+
 function parseAntigravityToolArgs(
   rawArgs: string | Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -404,11 +422,11 @@ function parseAntigravityToolArgs(
     return {};
   }
   if (typeof rawArgs === "object") {
-    return rawArgs;
+    return normalizeAntigravityToolArgsRecord(rawArgs);
   }
   try {
     const parsed: unknown = JSON.parse(rawArgs);
-    return isRecord(parsed) ? parsed : {};
+    return isRecord(parsed) ? normalizeAntigravityToolArgsRecord(parsed) : {};
   } catch {
     return {};
   }
@@ -488,14 +506,29 @@ function parseAntigravityTranscriptJsonl(raw: string): AntigravityTranscriptRow[
   if (!trimmed) {
     return [];
   }
-  return trimmed.split("\n").flatMap((line) => {
+  const rows: AntigravityTranscriptRow[] = [];
+  const rowIndexByStepIndex = new Map<number, number>();
+  for (const line of trimmed.split("\n")) {
     try {
       const parsed = AntigravityTranscriptRowSchema.safeParse(JSON.parse(line));
-      return parsed.success ? [parsed.data] : [];
+      if (!parsed.success) {
+        continue;
+      }
+      const row = parsed.data;
+      if (row.step_index !== undefined) {
+        const existingIndex = rowIndexByStepIndex.get(row.step_index);
+        if (existingIndex !== undefined) {
+          rows[existingIndex] = row;
+          continue;
+        }
+        rowIndexByStepIndex.set(row.step_index, rows.length);
+      }
+      rows.push(row);
     } catch {
-      return [];
+      // Ignore malformed JSONL lines.
     }
-  });
+  }
+  return rows;
 }
 
 async function readAntigravityTranscriptRows(
@@ -627,7 +660,10 @@ function collectAntigravityToolResults({
     results.length < expectedCount ||
     results.some(
       (result) =>
-        result.status !== undefined && result.status !== "DONE" && result.status !== "ERROR",
+        result.status !== undefined &&
+        result.status !== "DONE" &&
+        result.status !== "ERROR" &&
+        !/background task with task id:/u.test(result.content ?? ""),
     )
   ) {
     return null;
@@ -841,41 +877,74 @@ function seedAntigravitySyncedStepIndex({
   return syncedStepIndex;
 }
 
-function isParentPlannerStepDaemon({
+function findParentAntigravityPlannerRow({
   rows,
   index,
+  lastUserIndex,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   index: number;
-}): boolean {
-  for (let parentIndex = index; parentIndex >= 0; parentIndex -= 1) {
+  lastUserIndex: number;
+}): AntigravityTranscriptRow | undefined {
+  for (let parentIndex = index; parentIndex > lastUserIndex; parentIndex -= 1) {
     if (rows[parentIndex]?.type === "PLANNER_RESPONSE") {
-      return hasAntigravityDaemonToolCall(rows[parentIndex]?.tool_calls);
+      return rows[parentIndex];
     }
   }
-  return false;
+  return undefined;
+}
+
+function findAntigravityScheduleTimerCondition(
+  toolCalls: readonly AntigravityTranscriptToolCall[] | undefined,
+): string | null {
+  if (!Array.isArray(toolCalls)) {
+    return null;
+  }
+  for (const toolCall of toolCalls) {
+    if (toolCall.name !== "schedule") {
+      continue;
+    }
+    const args = parseAntigravityToolArgs(toolCall.args);
+    if (typeof args.TimerCondition === "string" && args.TimerCondition.length > 0) {
+      return args.TimerCondition;
+    }
+  }
+  return null;
 }
 
 function isEntitySettledInSubsequentRows({
   rows,
   startIndex,
   entityId,
+  timerCondition,
   cancelPattern,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   startIndex: number;
   entityId: string;
+  timerCondition?: string | null;
   cancelPattern: RegExp;
 }): boolean {
   for (let nextIndex = startIndex; nextIndex < rows.length; nextIndex += 1) {
     const nextRow = rows[nextIndex]!;
     const nextContent = nextRow.content ?? "";
-    if (!nextContent.includes(entityId)) {
+    if (nextRow.type === "SYSTEM_MESSAGE") {
+      if (
+        nextContent.includes(entityId) ||
+        nextContent.includes("tasks have been stopped") ||
+        timerCondition === "any" ||
+        (Boolean(timerCondition) &&
+          timerCondition !== "never" &&
+          nextContent.includes(timerCondition!))
+      ) {
+        return true;
+      }
       continue;
     }
     if (
-      nextRow.type === "SYSTEM_MESSAGE" ||
-      (nextRow.type === "GENERIC" && cancelPattern.test(nextContent))
+      nextRow.type === "GENERIC" &&
+      nextContent.includes(entityId) &&
+      cancelPattern.test(nextContent)
     ) {
       return true;
     }
@@ -883,35 +952,86 @@ function isEntitySettledInSubsequentRows({
   return false;
 }
 
-function isAntigravityBackgroundTaskRowActive({
+async function isAntigravityStepOutputTerminated({
+  sessionBrainDir,
+  stepIndex,
+}: {
+  sessionBrainDir: string;
+  stepIndex: number | undefined;
+}): Promise<boolean> {
+  if (stepIndex === undefined) {
+    return false;
+  }
+  try {
+    const output = await fs.readFile(
+      path.join(sessionBrainDir, ".system_generated", "steps", String(stepIndex), "output.txt"),
+      "utf8",
+    );
+    return /terminated by signal|canceled/iu.test(output);
+  } catch {
+    return false;
+  }
+}
+
+async function isAntigravityBackgroundTaskRowActive({
   rows,
   index,
+  lastUserIndex,
+  sessionId,
+  sessionBrainDir,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   index: number;
-}): boolean {
+  lastUserIndex: number;
+  sessionId: string;
+  sessionBrainDir: string;
+}): Promise<boolean> {
   const row = rows[index]!;
   const taskMatch = (row.content ?? "").match(/background task with task id:\s*([^\s"\\]+)/u);
-  if (!taskMatch || isParentPlannerStepDaemon({ rows, index })) {
+  const taskId = taskMatch?.[1];
+  if (!taskId || !taskId.startsWith(`${sessionId}/`)) {
     return false;
   }
-  return !isEntitySettledInSubsequentRows({
-    rows,
-    startIndex: index + 1,
-    entityId: taskMatch[1]!,
-    cancelPattern: /killed|cancelled|terminated|not found|completed|finished|stopped/iu,
-  });
+  const parentRow = findParentAntigravityPlannerRow({ rows, index, lastUserIndex });
+  if (hasAntigravityDaemonToolCall(parentRow?.tool_calls)) {
+    return false;
+  }
+  const timerCondition = findAntigravityScheduleTimerCondition(parentRow?.tool_calls);
+  if (
+    isEntitySettledInSubsequentRows({
+      rows,
+      startIndex: index + 1,
+      entityId: taskId,
+      timerCondition,
+      cancelPattern: /killed|cancelled|canceled|terminated|not found|completed|finished|stopped/iu,
+    })
+  ) {
+    return false;
+  }
+  return !(await isAntigravityStepOutputTerminated({
+    sessionBrainDir,
+    stepIndex: row.step_index,
+  }));
 }
 
 function isAntigravitySubagentRowActive({
   rows,
   index,
+  lastUserIndex,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   index: number;
+  lastUserIndex: number;
 }): boolean {
   const content = rows[index]?.content ?? "";
   if (!content.includes("Created the following subagent:")) {
+    return false;
+  }
+  const parentRow = findParentAntigravityPlannerRow({ rows, index, lastUserIndex });
+  if (
+    !Array.isArray(parentRow?.tool_calls) ||
+    !parentRow.tool_calls.some((toolCall) => toolCall.name === "invoke_subagent")
+  ) {
     return false;
   }
   const subagentMatch = content.match(/conversationId":\s*"([^"]+)"/u);
@@ -928,12 +1048,12 @@ function isAntigravitySubagentRowActive({
 
 function hasIncompletePlannerToolCalls({
   rows,
-  lastUserIndex,
+  scanStart,
 }: {
   rows: readonly AntigravityTranscriptRow[];
-  lastUserIndex: number;
+  scanStart: number;
 }): boolean {
-  for (let index = lastUserIndex + 1; index < rows.length; index += 1) {
+  for (let index = scanStart; index < rows.length; index += 1) {
     const row = rows[index]!;
     if (row.type !== "PLANNER_RESPONSE") {
       continue;
@@ -957,32 +1077,52 @@ function hasIncompletePlannerToolCalls({
   return false;
 }
 
-function hasActiveAntigravityBackgroundWork({
+async function hasActiveAntigravityBackgroundWork({
   rows,
   lastUserIndex,
+  firstWakeupIndex,
+  syncedStepIndex,
+  sessionId,
+  sessionBrainDir,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   lastUserIndex: number;
-}): boolean {
+  firstWakeupIndex: number;
+  syncedStepIndex: number | undefined;
+  sessionId: string;
+  sessionBrainDir: string;
+}): Promise<boolean> {
   if (lastUserIndex < 0) {
     return false;
   }
-  const lastRow = rows[rows.length - 1];
-  const hasIncompleteFinalStep =
-    rows.length > lastUserIndex + 1 &&
-    (lastRow?.type !== "PLANNER_RESPONSE" ||
-      lastRow?.status !== "DONE" ||
-      (Array.isArray(lastRow.tool_calls) && lastRow.tool_calls.length > 0));
-  if (hasIncompleteFinalStep || hasIncompletePlannerToolCalls({ rows, lastUserIndex })) {
-    return true;
-  }
-  for (let index = 0; index < rows.length; index += 1) {
-    if (rows[index]?.type !== "GENERIC") {
+  for (let index = lastUserIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (row.status === "RUNNING" && !/background task with task id:/u.test(row.content ?? "")) {
+      return true;
+    }
+    if (row.type !== "GENERIC") {
       continue;
     }
     if (
-      isAntigravityBackgroundTaskRowActive({ rows, index }) ||
-      isAntigravitySubagentRowActive({ rows, index })
+      (await isAntigravityBackgroundTaskRowActive({
+        rows,
+        index,
+        lastUserIndex,
+        sessionId,
+        sessionBrainDir,
+      })) ||
+      isAntigravitySubagentRowActive({ rows, index, lastUserIndex })
+    ) {
+      return true;
+    }
+  }
+  if (firstWakeupIndex >= 0) {
+    const lastRow = rows[rows.length - 1];
+    const lastStepIndex = lastRow?.step_index ?? rows.length - 1;
+    if (
+      (syncedStepIndex !== undefined && syncedStepIndex < lastStepIndex) ||
+      lastRow?.type === "SYSTEM_MESSAGE" ||
+      hasIncompletePlannerToolCalls({ rows, scanStart: firstWakeupIndex })
     ) {
       return true;
     }
@@ -4526,7 +4666,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         });
       }
 
-      const hasActiveBackgroundWork = hasActiveAntigravityBackgroundWork({ rows, lastUserIndex });
+      const hasActiveBackgroundWork = await hasActiveAntigravityBackgroundWork({
+        rows,
+        lastUserIndex,
+        firstWakeupIndex,
+        syncedStepIndex: this.antigravitySyncedStepIndex,
+        sessionId: this.sessionId,
+        sessionBrainDir,
+      });
+      if (this.closed) {
+        this.antigravityBackgroundBusy = false;
+        return;
+      }
       this.settleAntigravityPollOutcome({ turnId, busy: hasActiveBackgroundWork });
     } catch (error) {
       this.logger.warn(
