@@ -23,6 +23,7 @@ interface DragOrigin {
   offset: number;
   x: number;
   y: number;
+  synthetic: boolean;
 }
 
 function caretAtPoint(x: number, y: number): { node: Node; offset: number } | null {
@@ -32,14 +33,23 @@ function caretAtPoint(x: number, y: number): { node: Node; offset: number } | nu
   return range ? { node: range.startContainer, offset: range.startOffset } : null;
 }
 
-function restoreCollapsedSelection(origin: DragOrigin, x: number, y: number): void {
+function repairDragSelection(origin: DragOrigin, x: number, y: number): void {
   if (!origin.node.isConnected || origin.offset > origin.node.length) return;
   const selection = window.getSelection();
-  if (!selection?.isCollapsed) return;
+  if (!selection || (!origin.synthetic && !selection.isCollapsed)) return;
+  if (
+    origin.synthetic &&
+    !selection.isCollapsed &&
+    (selection.anchorNode !== origin.node || selection.anchorOffset !== origin.offset)
+  ) {
+    origin.synthetic = false;
+    return;
+  }
   const end = caretAtPoint(x, y);
   if (!end?.node.isConnected) return;
-  // A drag can move the caret while Chromium leaves the native selection collapsed.
+  // A repaired range must keep following the pointer even after it becomes noncollapsed.
   selection.setBaseAndExtent(origin.node, origin.offset, end.node, end.offset);
+  origin.synthetic = true;
 }
 
 export function AssistantSelectionCopySurface({
@@ -60,6 +70,7 @@ export function AssistantSelectionCopySurface({
       offset: caret.offset,
       x: event.clientX,
       y: event.clientY,
+      synthetic: false,
     };
   }, []);
   const handlePointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
@@ -68,7 +79,7 @@ export function AssistantSelectionCopySurface({
     const x = event.clientX;
     const y = event.clientY;
     if (Math.hypot(x - origin.x, y - origin.y) < 4) return;
-    queueMicrotask(() => restoreCollapsedSelection(origin, x, y));
+    queueMicrotask(() => repairDragSelection(origin, x, y));
   }, []);
   const handlePointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
     const origin = dragOrigin.current;
@@ -77,7 +88,7 @@ export function AssistantSelectionCopySurface({
     const x = event.clientX;
     const y = event.clientY;
     if (Math.hypot(x - origin.x, y - origin.y) < 4) return;
-    requestAnimationFrame(() => restoreCollapsedSelection(origin, x, y));
+    requestAnimationFrame(() => repairDragSelection(origin, x, y));
   }, []);
   const handlePointerCancel = useCallback(() => {
     dragOrigin.current = null;
