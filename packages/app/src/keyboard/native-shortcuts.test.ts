@@ -216,18 +216,17 @@ describe("hardware source adapter", () => {
       commandCenterOpen = open;
       for (const listener of commandCenterListeners) listener();
     };
-    const tabSwitching = ["Alt+Shift+BracketLeft", "Alt+Shift+BracketRight"];
-    expect(claimed).toEqual(tabSwitching);
+    // iPad tab switching uses Cmd+Shift+[ / ], which no text control types.
+    expect(claimed).toEqual([]);
 
+    const releaseComposer = focusSurfaces.declare("message-input");
+    expect(claimed).toEqual(["Shift+Tab"]);
     setCommandCenterOpen(true);
     expect(claimed).toEqual([]);
     setCommandCenterOpen(false);
-    expect(claimed).toEqual(tabSwitching);
-
-    const releaseComposer = focusSurfaces.declare("message-input");
-    expect(claimed).toEqual([...tabSwitching, "Shift+Tab"]);
+    expect(claimed).toEqual(["Shift+Tab"]);
     releaseComposer();
-    expect(claimed).toEqual(tabSwitching);
+    expect(claimed).toEqual([]);
 
     source.publishPolicy({
       bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Alt+M" }),
@@ -236,7 +235,7 @@ describe("hardware source adapter", () => {
       enabled: true,
     });
     const releaseRebound = focusSurfaces.declare("message-input");
-    expect(claimed).toEqual(["Alt+KeyM", ...tabSwitching]);
+    expect(claimed).toEqual(["Alt+KeyM"]);
     releaseRebound();
 
     // A chord's later step is only a shortcut while the chord is in progress;
@@ -248,9 +247,10 @@ describe("hardware source adapter", () => {
       enabled: true,
     });
     const releaseChord = focusSurfaces.declare("message-input");
-    expect(claimed).toEqual(tabSwitching);
+    expect(claimed).toEqual([]);
     releaseChord();
 
+    const releaseFinal = focusSurfaces.declare("message-input");
     source.publishPolicy({
       bindings: buildEffectiveBindings({}),
       isMac: true,
@@ -264,7 +264,9 @@ describe("hardware source adapter", () => {
       usesDesktopBindings: true,
       enabled: true,
     });
+    expect(claimed).toEqual(["Shift+Tab"]);
     detach();
     expect(claimed).toEqual([]);
+    releaseFinal();
   });
 });
