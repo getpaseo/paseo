@@ -2727,6 +2727,11 @@ export const ptBR: TranslationResources = {
         contentWidthWide: "Largo",
         contentWidthFull: "Total",
         contentWidthCustom: "Largura personalizada · {{width}} px",
+        tabPlacement: "Posição das abas",
+        tabPlacementHint: "Posição das abas em um workspace em telas largas",
+        tabPlacementTop: "Horizontal (em cima)",
+        tabPlacementLeft: "Vertical (à esquerda)",
+        tabPlacementAccessibility: "Posição das abas: {{value}}",
       },
       syntax: {
         title: "Sintaxe",

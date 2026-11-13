@@ -12,7 +12,7 @@ import React, {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent, type ScrollView } from "react-native";
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 import { useFilePanelOpenWithMenu } from "@/file-panels";
 import {
   CopyX,
@@ -48,12 +48,16 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import type { TabRailPlacement } from "@/hooks/use-settings";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
-import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
+import {
+  retainWorkspaceTabMeasuredWidth,
+  type WorkspaceTabLayoutResult,
+} from "@/screens/workspace/workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -120,6 +124,11 @@ const TAB_DROP_INDICATOR_WIDTH = 4;
 const TAB_MODIFIED_DOT_SIZE = 8;
 // The tab rail only renders in the wide layout, so the device alone picks its glyph size.
 const TAB_RAIL_GLYPH_SIZE = paneContentToolbarIconSize(false);
+// A column's toolbar glyph sits on the leading rail of the tab icons stacked below it.
+const TAB_COLUMN_TOOLBAR_LEADING_PADDING =
+  TAB_ROW_PADDING_HORIZONTAL +
+  TAB_CHIP_HORIZONTAL_PADDING -
+  (smallIconButtonChromeFrameSize(false) - TAB_RAIL_GLYPH_SIZE) / 2;
 const TAB_MIN_WIDTH = 64;
 const TAB_MAX_WIDTH = 160;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
@@ -393,10 +402,13 @@ function WorkspacePaneToolbarActions({
 
 function WorkspaceExitFocusModeButton({
   visible,
+  inColumn,
   onPress,
   onLayout,
 }: {
   visible: boolean;
+  /** A row divides the button from the tabs beside it. A column has nothing beside it to divide. */
+  inColumn: boolean;
   onPress: () => void;
   onLayout: (event: LayoutChangeEvent) => void;
 }) {
@@ -407,7 +419,10 @@ function WorkspaceExitFocusModeButton({
   }
 
   return (
-    <View style={styles.exitFocusModeSlot} onLayout={onLayout}>
+    <View
+      style={inColumn ? styles.exitFocusModeSlotInColumn : styles.exitFocusModeSlot}
+      onLayout={onLayout}
+    >
       <ToolbarButton
         label={t("workspace.tabs.actions.exitFocusMode")}
         shortcut={focusModeKeys}
@@ -462,6 +477,33 @@ function TabContextMenuItem({
       {entry.label}
     </ContextMenuItem>
   );
+}
+
+interface TabChipLayout {
+  /** `null` in a column, where every chip fills the column's width. */
+  width: number | null;
+  showLabel: boolean;
+  allowsCloseButton: boolean;
+}
+
+const COLUMN_TAB_CHIP_LAYOUT: TabChipLayout = {
+  width: null,
+  showLabel: true,
+  allowsCloseButton: true,
+};
+
+function resolveTabChipLayout(input: {
+  inColumn: boolean;
+  layout: WorkspaceTabLayoutResult;
+  index: number;
+}): TabChipLayout {
+  if (input.inColumn) return COLUMN_TAB_CHIP_LAYOUT;
+  const item = input.layout.items[input.index];
+  return {
+    width: item?.width ?? 150,
+    showLabel: item?.showLabel ?? true,
+    allowsCloseButton: input.layout.closeButtonPolicy === "all",
+  };
 }
 
 function tabKeyExtractor(tab: WorkspaceDesktopTabRowItem) {
@@ -531,6 +573,8 @@ function sameWidths(left: number[], right: number[]): boolean {
 }
 
 export interface WorkspaceDesktopTabsRowProps {
+  /** Tabs across the top of the pane, or down a column on its left. */
+  placement?: TabRailPlacement;
   host?: PaneHost;
   launchPurpose?: WorkspaceTabLaunchPurpose;
   paneId?: string;
@@ -752,7 +796,7 @@ function TabChip({
   isActive: boolean;
   isDragging: boolean;
   isFocused: boolean;
-  resolvedTabWidth: number;
+  resolvedTabWidth: number | null;
   showLabel: boolean;
   showCloseButton: boolean;
   /** The surface the row paints, so chip fills and their knockouts match the host. */
@@ -807,7 +851,7 @@ function TabChip({
       styles.tab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
-      {
+      resolvedTabWidth !== null && {
         minWidth: resolvedTabWidth,
         width: resolvedTabWidth,
         maxWidth: resolvedTabWidth,
@@ -891,7 +935,7 @@ function TabChip({
             </ContextMenuTrigger>
           </TooltipTrigger>
           <TooltipContent
-            side="bottom"
+            side={resolvedTabWidth === null ? "right" : "bottom"}
             align="center"
             offset={8}
             maxWidth={720}
@@ -1071,6 +1115,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
 }
 
 function ResolvedWorkspaceDesktopTabsRow({
+  placement,
   host = "main",
   launchPurpose = "primary",
   paneId,
@@ -1107,6 +1152,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
+  const inColumn = placement === "left";
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const tabsScrollRef = useRef<ScrollView>(null);
@@ -1259,6 +1305,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   );
 
   const displayedTabs = useMemo(() => {
+    // A row draws the tabs it last measured, so a chip never paints at a width computed for
+    // another label. A column's chips all fill its width, so it draws the current tabs directly.
+    if (inColumn) return tabs;
     if (!trackSnapshot) {
       return EMPTY_RESOLVED_TAB_ROWS;
     }
@@ -1269,7 +1318,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       const current = currentTabs.get(snapshotTab.tab.key);
       return current?.label === trackSnapshot.labels[index]?.label ? current.tab : snapshotTab;
     });
-  }, [tabLabels, tabs, trackSnapshot]);
+  }, [inColumn, tabLabels, tabs, trackSnapshot]);
 
   const { layout } = useWorkspaceTabLayout({
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
@@ -1298,8 +1347,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       kind: "workspace-tab" as const,
       paneId,
       tabId: tab.tab.tabId,
+      axis: inColumn ? ("vertical" as const) : ("horizontal" as const),
     });
-  }, [paneId]);
+  }, [inColumn, paneId]);
 
   const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
 
@@ -1321,11 +1371,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       dragHandleProps,
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
+      const chipLayout = resolveTabChipLayout({ inColumn, layout, index });
       const shouldShowCloseButton =
-        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
-      const layoutItem = layout.items[index] ?? null;
-      const resolvedTabWidth = layoutItem?.width ?? 150;
-      const showLabel = layoutItem?.showLabel ?? true;
+        chipLayout.allowsCloseButton && item.presentation.showCloseButton;
       const showDropIndicatorBefore = activeDragTabId !== null && tabDropPreviewIndex === index;
       const showDropIndicatorAfter =
         activeDragTabId !== null &&
@@ -1351,8 +1399,8 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
-          resolvedTabWidth={resolvedTabWidth}
-          showLabel={showLabel}
+          resolvedTabWidth={chipLayout.width}
+          showLabel={chipLayout.showLabel}
           showCloseButton={shouldShowCloseButton}
           rail={rail}
           setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -1367,9 +1415,9 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [
       activeDragTabId,
+      inColumn,
       isFocused,
-      layout.closeButtonPolicy,
-      layout.items,
+      layout,
       normalizedServerId,
       normalizedWorkspaceId,
       onCloseOtherTabs,
@@ -1401,6 +1449,62 @@ function ResolvedWorkspaceDesktopTabsRow({
     [layout.requiresHorizontalScrollFallback],
   );
 
+  const tabList = (
+    <SortableInlineList
+      axis={inColumn ? "vertical" : "horizontal"}
+      data={displayedTabs}
+      keyExtractor={tabKeyExtractor}
+      useDragHandle
+      disabled={!externalDndContext && displayedTabs.length < 2}
+      onDragEnd={handleDragEnd}
+      externalDndContext={externalDndContext}
+      activeId={activeDragTabId}
+      getItemData={getTabDragData}
+      renderItem={renderTab}
+    />
+  );
+
+  if (inColumn) {
+    return (
+      <RenderProfile id="WorkspaceDesktopTabsRow">
+        <View style={styles.tabsColumn} testID="workspace-tabs-column">
+          <View style={styles.tabsColumnToolbar}>
+            <WorkspaceExitFocusModeButton
+              visible={focusModeEnabled}
+              inColumn
+              onPress={onExitFocusMode}
+              onLayout={handleExitFocusModeLayout}
+            />
+            <View style={styles.tabsColumnToolbarSpacer} />
+            <WorkspacePaneToolbarActions
+              panePanelKinds={panePanelKinds}
+              host={host}
+              launchPurpose={launchPurpose}
+              showNewTabButton
+              showSplitActions={showPaneSplitActions}
+              showMaximizeAction={showPaneMaximizeAction}
+              paneMaximized={paneMaximized}
+              serverId={normalizedServerId}
+              paneId={paneId}
+              newTabShortcutKeys={newTabKeys}
+              onSplitRight={onSplitRight}
+              onSplitDown={onSplitDown}
+              onTogglePaneMaximized={onTogglePaneMaximized}
+            />
+          </View>
+          <ScrollView
+            testID="workspace-tabs-scroll"
+            style={styles.tabsColumnScroll}
+            contentContainerStyle={styles.tabsColumnContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {tabList}
+          </ScrollView>
+        </View>
+      </RenderProfile>
+    );
+  }
+
   const row = (
     <View
       style={[styles.tabsContainer, onSidebar && styles.tabsContainerSidebar]}
@@ -1424,6 +1528,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       </View>
       <WorkspaceExitFocusModeButton
         visible={focusModeEnabled}
+        inColumn={false}
         onPress={onExitFocusMode}
         onLayout={handleExitFocusModeLayout}
       />
@@ -1441,17 +1546,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onScroll={tabScrollBoundary.onScroll}
           scrollEventThrottle={16}
         >
-          <SortableInlineList
-            data={displayedTabs}
-            keyExtractor={tabKeyExtractor}
-            useDragHandle
-            disabled={!externalDndContext && displayedTabs.length < 2}
-            onDragEnd={handleDragEnd}
-            externalDndContext={externalDndContext}
-            activeId={activeDragTabId}
-            getItemData={getTabDragData}
-            renderItem={renderTab}
-          />
+          {tabList}
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
               panePanelKinds={panePanelKinds}
@@ -1537,7 +1632,7 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  resolvedTabWidth: number;
+  resolvedTabWidth: number | null;
   showLabel: boolean;
   showCloseButton: boolean;
   rail: WorkspaceTabRailSurface;
@@ -1551,10 +1646,12 @@ function ResolvedDesktopTabChip({
 }) {
   const { t } = useTranslation();
   const presentation = item.presentation;
+  const inColumn = resolvedTabWidth === null;
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
         tab: item.tab,
+        axis: inColumn ? "vertical" : "horizontal",
         index,
         tabCount,
         onCopyResumeCommand,
@@ -1570,6 +1667,7 @@ function ResolvedDesktopTabChip({
         labels,
       }),
     [
+      inColumn,
       index,
       item.tab,
       onCloseOtherTabs,
@@ -1599,9 +1697,16 @@ function ResolvedDesktopTabChip({
       : rawTooltipLabel;
 
   return (
-    <View style={styles.tabSlot}>
+    <View style={inColumn ? styles.tabSlotInColumn : styles.tabSlot}>
       {showDropIndicatorBefore ? (
-        <View style={[styles.tabDropIndicator, styles.tabDropIndicatorBefore]} />
+        <View
+          testID="workspace-tabs-drop-indicator"
+          style={
+            inColumn
+              ? [styles.tabDropIndicatorInColumn, styles.tabDropIndicatorAbove]
+              : [styles.tabDropIndicator, styles.tabDropIndicatorBefore]
+          }
+        />
       ) : null}
       <TabChip
         serverId={serverId}
@@ -1626,7 +1731,14 @@ function ResolvedDesktopTabChip({
         dragHandleProps={dragHandleProps}
       />
       {showDropIndicatorAfter ? (
-        <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
+        <View
+          testID="workspace-tabs-drop-indicator"
+          style={
+            inColumn
+              ? [styles.tabDropIndicatorInColumn, styles.tabDropIndicatorBelow]
+              : [styles.tabDropIndicator, styles.tabDropIndicatorAfter]
+          }
+        />
       ) : null}
     </View>
   );
@@ -1665,6 +1777,28 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     paddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
   },
+  tabsColumn: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: theme.colors.surface0,
+  },
+  tabsColumnToolbar: {
+    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  tabsColumnToolbarSpacer: {
+    flex: 1,
+  },
+  tabsColumnScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  tabsColumnContent: {
+    paddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
+    paddingBottom: TAB_ROW_PADDING_HORIZONTAL,
+  },
   exitFocusModeSlot: {
     alignSelf: "stretch",
     flexDirection: "row",
@@ -1672,6 +1806,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[0.5],
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
+  },
+  exitFocusModeSlotInColumn: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: TAB_COLUMN_TOOLBAR_LEADING_PADDING,
   },
   inlineAddButton: {
     flexDirection: "row",
@@ -1706,6 +1846,11 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "visible",
     marginHorizontal: TAB_CHIP_GAP / 2,
   },
+  tabSlotInColumn: {
+    position: "relative",
+    overflow: "visible",
+    marginVertical: TAB_CHIP_GAP / 2,
+  },
   tabHandle: {
     flexDirection: "row",
     alignItems: "center",
@@ -1738,6 +1883,23 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabDropIndicatorAfter: {
     right: -TAB_CHIP_GAP / 2 - TAB_DROP_INDICATOR_WIDTH / 2,
+  },
+  // The same pill turned on its side, centred in the gap between two stacked chips.
+  tabDropIndicatorInColumn: {
+    position: "absolute",
+    left: theme.spacing[0.5],
+    right: theme.spacing[0.5],
+    height: TAB_DROP_INDICATOR_WIDTH,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+    zIndex: 10,
+    pointerEvents: "none",
+  },
+  tabDropIndicatorAbove: {
+    top: -TAB_CHIP_GAP / 2 - TAB_DROP_INDICATOR_WIDTH / 2,
+  },
+  tabDropIndicatorBelow: {
+    bottom: -TAB_CHIP_GAP / 2 - TAB_DROP_INDICATOR_WIDTH / 2,
   },
   tabLabel: {
     flexShrink: 1,
