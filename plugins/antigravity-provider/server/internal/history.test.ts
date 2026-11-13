@@ -36,10 +36,10 @@ async function writeTranscript(
 describe("resolveAntigravityAppDataDir", () => {
   it("prefers session env ANTIGRAVITY_APP_DATA_DIR over launch env and HOME", () => {
     expect(
-      resolveAntigravityAppDataDir(
-        { ANTIGRAVITY_APP_DATA_DIR: "/launch/agy", HOME: "/launch/home" },
-        { ANTIGRAVITY_APP_DATA_DIR: " /session/agy ", HOME: "/session/home" },
-      ),
+      resolveAntigravityAppDataDir({
+        launchEnv: { ANTIGRAVITY_APP_DATA_DIR: "/launch/agy", HOME: "/launch/home" },
+        sessionEnv: { ANTIGRAVITY_APP_DATA_DIR: " /session/agy ", HOME: "/session/home" },
+      }),
     ).toBe("/session/agy");
   });
 
@@ -48,7 +48,10 @@ describe("resolveAntigravityAppDataDir", () => {
     process.env.ANTIGRAVITY_APP_DATA_DIR = "/host/should-ignore";
     try {
       expect(
-        resolveAntigravityAppDataDir({ HOME: "/launch/home" }, { HOME: "/session/home" }),
+        resolveAntigravityAppDataDir({
+          launchEnv: { HOME: "/launch/home" },
+          sessionEnv: { HOME: "/session/home" },
+        }),
       ).toBe(path.join("/session/home", ".gemini", "antigravity-cli"));
     } finally {
       if (previous === undefined) delete process.env.ANTIGRAVITY_APP_DATA_DIR;
@@ -478,6 +481,28 @@ describe("loadTranscriptHistory", () => {
     expect(await loadTranscriptHistory({ conversationId: "conv-empty", appDataDir })).toEqual([
       {
         item: { type: "user_message", id: "history:0:user", text: "From compact fallback" },
+        timestamp: undefined,
+      },
+    ]);
+
+    await writeTranscript(appDataDir, "conv-corrupt", "transcript_full.jsonl", [
+      "{truncated_json",
+      "not json at all",
+    ]);
+    await writeTranscript(appDataDir, "conv-corrupt", "transcript.jsonl", [
+      {
+        step_index: 0,
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>\nRecovered from compact log\n</USER_REQUEST>",
+      },
+    ]);
+    expect(await loadTranscriptHistory({ conversationId: "conv-corrupt", appDataDir })).toEqual([
+      {
+        item: {
+          type: "user_message",
+          id: "history:0:user",
+          text: "Recovered from compact log",
+        },
         timestamp: undefined,
       },
     ]);

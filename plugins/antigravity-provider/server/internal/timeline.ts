@@ -45,12 +45,22 @@ const READ_TOOLS = new Set(["view_file", "read_file"]);
 const WRITE_TOOLS = new Set(["write_to_file", "write_file"]);
 const EDIT_TOOLS = new Set(["replace_file_content", "multi_replace_file_content", "edit_file"]);
 
-function mapFileToolDetail(
-  name: string,
-  filePath: string,
-  parameters: Readonly<Record<string, ToolJsonValue>>,
-  output?: string,
-): ProviderToolCallDetail | undefined {
+interface MapFileToolDetailOptions {
+  name: string;
+  filePath: string;
+  parameters: Readonly<Record<string, ToolJsonValue>>;
+  output?: string;
+}
+
+export interface MapToolDetailOptions {
+  name: string;
+  parameters: Readonly<Record<string, ToolJsonValue>>;
+  output?: string;
+  error?: ToolJsonValue;
+}
+
+function mapFileToolDetail(options: MapFileToolDetailOptions): ProviderToolCallDetail | undefined {
+  const { name, filePath, parameters, output } = options;
   if (READ_TOOLS.has(name)) {
     const detail: ProviderToolCallDetail = { type: "read", filePath };
     if (output !== undefined) detail.content = output;
@@ -74,12 +84,8 @@ function mapFileToolDetail(
   return undefined;
 }
 
-export function mapToolDetail(
-  name: string,
-  parameters: Readonly<Record<string, ToolJsonValue>>,
-  output?: string,
-  error?: ToolJsonValue,
-): ProviderToolCallDetail {
+export function mapToolDetail(options: MapToolDetailOptions): ProviderToolCallDetail {
+  const { name, parameters, output, error } = options;
   if (name === "run_command") {
     const command = readNonEmptyString(parameters.CommandLine);
     if (command !== undefined) {
@@ -90,7 +96,7 @@ export function mapToolDetail(
   }
   const filePath = resolveFilePath(parameters);
   if (filePath !== undefined) {
-    const detail = mapFileToolDetail(name, filePath, parameters, output);
+    const detail = mapFileToolDetail({ name, filePath, parameters, output });
     if (detail) return detail;
   }
   return {
@@ -115,5 +121,10 @@ function toolDetail(step: Step): ProviderToolCallDetail {
   const info = step.tool_info;
   if (!info) return { type: "plain_text", label: step.tool_name, text: "" };
   // Native frames summarize writes; they do not carry the file contents or diff.
-  return mapToolDetail(info.name, info.parameters, info.output, info.error ?? undefined);
+  return mapToolDetail({
+    name: info.name,
+    parameters: info.parameters,
+    output: info.output,
+    error: info.error ?? undefined,
+  });
 }

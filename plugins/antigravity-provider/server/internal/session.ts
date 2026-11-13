@@ -68,7 +68,10 @@ export class Session {
       this.options.history === "replay" && resumedConversationId !== null
         ? await loadTranscriptHistory({
             conversationId: resumedConversationId,
-            appDataDir: resolveAntigravityAppDataDir(this.options.launch.env, this.config.env),
+            appDataDir: resolveAntigravityAppDataDir({
+              launchEnv: this.options.launch.env,
+              sessionEnv: this.config.env,
+            }),
             systemPrompt: this.config.systemPrompt,
           })
         : [];

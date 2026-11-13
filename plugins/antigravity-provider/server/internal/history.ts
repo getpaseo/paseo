@@ -101,11 +101,16 @@ function firstEnvValue(
   return undefined;
 }
 
+export interface ResolveAntigravityAppDataDirOptions {
+  launchEnv?: Readonly<Record<string, string | undefined>>;
+  sessionEnv?: Readonly<Record<string, string | undefined>>;
+}
+
 /** Resolves Antigravity CLI's app data directory matching `agy` env precedence. */
 export function resolveAntigravityAppDataDir(
-  launchEnv?: Readonly<Record<string, string | undefined>>,
-  sessionEnv?: Readonly<Record<string, string | undefined>>,
+  options: ResolveAntigravityAppDataDirOptions,
 ): string {
+  const { launchEnv, sessionEnv } = options;
   const configured = firstEnvValue([sessionEnv, launchEnv], "ANTIGRAVITY_APP_DATA_DIR");
   if (configured) return configured;
   const home =
@@ -216,14 +221,27 @@ function unwrapUserRequest(rawContent: string): string {
   return rawContent;
 }
 
-function extractUserMessageText(
-  rawContent: string,
-  isFirstUserTurn: boolean,
-  systemPrompt?: string,
-): string {
-  let text = unwrapUserRequest(rawContent);
-  if (isFirstUserTurn && systemPrompt) {
-    const prefix = `${systemPrompt}\n\n`;
+interface ExtractUserMessageTextOptions {
+  rawContent: string;
+  isFirstUserTurn: boolean;
+  systemPrompt?: string;
+}
+
+interface BuildToolItemOptions {
+  pending: PendingToolCall;
+  result?: TranscriptEntry;
+}
+
+interface RecordToolResultOptions {
+  state: ReplayAccumulator;
+  pending: PendingToolCall;
+  entry: TranscriptEntry;
+}
+
+function extractUserMessageText(options: ExtractUserMessageTextOptions): string {
+  let text = unwrapUserRequest(options.rawContent);
+  if (options.isFirstUserTurn && options.systemPrompt) {
+    const prefix = `${options.systemPrompt}\n\n`;
     if (text.startsWith(prefix)) {
       text = text.slice(prefix.length);
     }
@@ -231,7 +249,8 @@ function extractUserMessageText(
   return text;
 }
 
-function buildToolItem(pending: PendingToolCall, result?: TranscriptEntry): HistoryReplayEntry {
+function buildToolItem(options: BuildToolItemOptions): HistoryReplayEntry {
+  const { pending, result } = options;
   const timestamp = result?.createdAt ?? pending.timestamp;
   const base = {
     type: "tool_call" as const,
@@ -240,22 +259,35 @@ function buildToolItem(pending: PendingToolCall, result?: TranscriptEntry): Hist
     name: pending.name,
   };
   if (!result || (result.status !== undefined && CANCELED_STATUSES.has(result.status))) {
-    const detail = mapToolDetail(pending.name, pending.args, result?.content);
+    const detail = mapToolDetail({
+      name: pending.name,
+      parameters: pending.args,
+      output: result?.content,
+    });
     return { item: { ...base, detail, status: "canceled", error: null }, timestamp };
   }
   if (result.status === "ERROR" || result.error !== undefined) {
     const error = result.error ?? "Antigravity tool failed";
-    const detail = mapToolDetail(pending.name, pending.args, result.content, error);
+    const detail = mapToolDetail({
+      name: pending.name,
+      parameters: pending.args,
+      output: result.content,
+      error,
+    });
     return { item: { ...base, detail, status: "failed", error }, timestamp };
   }
-  const detail = mapToolDetail(pending.name, pending.args, result.content);
+  const detail = mapToolDetail({
+    name: pending.name,
+    parameters: pending.args,
+    output: result.content,
+  });
   const status = result.status === "RUNNING" ? "running" : "completed";
   return { item: { ...base, detail, status, error: null }, timestamp };
 }
 
 function flushPendingTools(state: ReplayAccumulator): void {
   for (const pending of state.pendingTools) {
-    state.entries.push(buildToolItem(pending));
+    state.entries.push(buildToolItem({ pending }));
   }
   state.pendingTools.length = 0;
 }
@@ -267,12 +299,9 @@ function settleRunningTools(state: ReplayAccumulator, status: "completed" | "can
   state.runningTools.length = 0;
 }
 
-function recordToolResult(
-  state: ReplayAccumulator,
-  pending: PendingToolCall,
-  entry: TranscriptEntry,
-): void {
-  const replayEntry = buildToolItem(pending, entry);
+function recordToolResult(options: RecordToolResultOptions): void {
+  const { state, pending, entry } = options;
+  const replayEntry = buildToolItem({ pending, result: entry });
   state.entries.push(replayEntry);
   if (entry.status === "RUNNING" && replayEntry.item.type === "tool_call") {
     state.runningTools.push({ entry: replayEntry, item: replayEntry.item });
@@ -313,7 +342,7 @@ function appendPlannerResponse(state: ReplayAccumulator, entry: TranscriptEntry)
 function applyTranscriptEntry(state: ReplayAccumulator, entry: TranscriptEntry): void {
   if (entry.type === "GENERIC") {
     const pending = state.pendingTools.shift();
-    if (pending) recordToolResult(state, pending, entry);
+    if (pending) recordToolResult({ state, pending, entry });
     return;
   }
   if (entry.type === "SYSTEM_MESSAGE" || entry.type === "CHECKPOINT") {
@@ -323,7 +352,11 @@ function applyTranscriptEntry(state: ReplayAccumulator, entry: TranscriptEntry):
   settleRunningTools(state, entry.type === "PLANNER_RESPONSE" ? "completed" : "canceled");
 
   if (entry.type === "USER_INPUT" && entry.content !== undefined) {
-    const text = extractUserMessageText(entry.content, !state.seenUserTurn, state.systemPrompt);
+    const text = extractUserMessageText({
+      rawContent: entry.content,
+      isFirstUserTurn: !state.seenUserTurn,
+      systemPrompt: state.systemPrompt,
+    });
     state.seenUserTurn = true;
     state.entries.push({
       item: { type: "user_message", id: `history:${entry.stepIndex}:user`, text },
@@ -354,20 +387,24 @@ function isSafeConversationId(conversationId: string): boolean {
   );
 }
 
+interface ReadTranscriptFileOptions {
+  transcriptPath: string;
+  systemPrompt?: string;
+}
+
 async function readTranscriptFile(
-  transcriptPath: string,
-  systemPrompt?: string,
+  options: ReadTranscriptFileOptions,
 ): Promise<TranscriptReadResult> {
   const state: ReplayAccumulator = {
     entries: [],
     pendingTools: [],
     runningTools: [],
     seenUserTurn: false,
-    systemPrompt,
+    systemPrompt: options.systemPrompt,
   };
   let lineNumber = 0;
   let readAnyLine = false;
-  const stream = createReadStream(transcriptPath, { encoding: "utf8" });
+  const stream = createReadStream(options.transcriptPath, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
@@ -388,15 +425,15 @@ async function readTranscriptFile(
     lines.close();
     stream.destroy();
   }
-  if (!readAnyLine) return { entries: [], complete: false };
   flushPendingTools(state);
   settleRunningTools(state, "canceled");
+  if (!readAnyLine || state.entries.length === 0) return { entries: [], complete: false };
   return { entries: state.entries, complete: true };
 }
 
 /**
  * Reconstructs Paseo timeline items from Antigravity's persisted JSONL transcript.
- * Empty, missing, or mid-stream failed files fall back to the next candidate variant.
+ * Empty, corrupt, or mid-stream failed files fall back to the next candidate variant.
  */
 export async function loadTranscriptHistory(
   options: LoadTranscriptHistoryOptions,
@@ -411,7 +448,10 @@ export async function loadTranscriptHistory(
   );
   let partialFallback: HistoryReplayEntry[] = [];
   for (const filename of TRANSCRIPT_FILENAMES) {
-    const result = await readTranscriptFile(path.join(logsDir, filename), options.systemPrompt);
+    const result = await readTranscriptFile({
+      transcriptPath: path.join(logsDir, filename),
+      systemPrompt: options.systemPrompt,
+    });
     if (result.complete) return result.entries;
     if (partialFallback.length === 0 && result.entries.length > 0) {
       partialFallback = result.entries;
