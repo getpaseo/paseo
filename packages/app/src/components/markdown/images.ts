@@ -46,6 +46,7 @@ export function useMarkdownSource(
     () =>
       prepareMarkdownSource(text, context.workspaceRoot, {
         supportsSvg: isWeb,
+        latexMath: isWeb,
         commandNames,
         forgeReferencePattern,
       }),

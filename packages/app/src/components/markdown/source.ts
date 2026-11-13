@@ -1,6 +1,13 @@
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
+import {
+  hasUnescapedDollar,
+  isRangeOverlapping,
+  prepareMarkdownMath,
+  type ProtectedTextRange,
+  type TextRange,
+} from "./math";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
@@ -130,12 +137,119 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
   return link.url.slice(workspaceRoot.length + 1);
 }
 
-/** Preserve source spelling; adapt workspace images, spoiler delimiters, and entity text. */
+const BARE_URL_GLOBAL = new RegExp(BARE_URL, "g");
+const PROSE_TEXT_TOKEN = /(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);|(?<!\\)\|\|/g;
+
+function recordProtectedNode(
+  node: Nodes,
+  source: string,
+  start: number,
+  end: number,
+  protectedRanges: ProtectedTextRange[],
+): boolean {
+  if (node.type === "code" || node.type === "inlineCode" || node.type === "html") {
+    protectedRanges.push({ start, end, hardBoundary: true });
+    return true;
+  }
+  if (node.type === "image" || node.type === "imageReference") {
+    protectedRanges.push({ start, end, hardBoundary: false });
+    return true;
+  }
+  if (node.type === "link" || node.type === "linkReference") {
+    if (source[start] !== "[") {
+      protectedRanges.push({ start, end, hardBoundary: true });
+      return true;
+    }
+    const lastChildEnd = node.children.at(-1)?.position?.end.offset ?? start + 1;
+    if (lastChildEnd < end) {
+      protectedRanges.push({
+        start: lastChildEnd,
+        end,
+        hardBoundary: node.type === "link" && /[:/]/.test(node.url),
+      });
+    }
+  }
+  return false;
+}
+
+function collectMathContext(tree: Root, source: string) {
+  const blocks: TextRange[] = [];
+  const protectedRanges: ProtectedTextRange[] = [];
+  for (const match of source.matchAll(BARE_URL_GLOBAL)) {
+    protectedRanges.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      hardBoundary: true,
+    });
+  }
+  function scan(node: Nodes, insideBlock: boolean) {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    const isMathBlock =
+      node.type === "paragraph" || node.type === "heading" || node.type === "tableCell";
+    if (!insideBlock && isMathBlock && start !== undefined && end !== undefined) {
+      blocks.push({ start, end });
+    }
+    if (
+      start !== undefined &&
+      end !== undefined &&
+      recordProtectedNode(node, source, start, end, protectedRanges)
+    ) {
+      return;
+    }
+    if ("children" in node) {
+      for (const child of node.children) scan(child, insideBlock || isMathBlock);
+    }
+  }
+  scan(tree, false);
+  return prepareMarkdownMath(source, blocks, protectedRanges);
+}
+
+function appendEmptyCellEdits(
+  source: string,
+  start: number,
+  end: number,
+  mathRanges: readonly TextRange[],
+  edits: { start: number; end: number; text: string }[],
+) {
+  // MD4C's always-enabled spoiler extension otherwise consumes adjacent cell
+  // delimiters. Spaces keep empty GFM cells empty without producing spoilers.
+  const row = source.slice(start, end);
+  for (const match of row.matchAll(/(?<!\\)\|(?=\|)/g)) {
+    const insertAt = start + match.index + 1;
+    if (!isRangeOverlapping(mathRanges, insertAt, insertAt + 1)) {
+      edits.push({ start: insertAt, end: insertAt, text: " " });
+    }
+  }
+}
+
+function appendTextEdits(
+  source: string,
+  start: number,
+  end: number,
+  mathRanges: readonly TextRange[],
+  edits: { start: number; end: number; text: string }[],
+) {
+  const slice = source.slice(start, end);
+  for (const match of slice.matchAll(PROSE_TEXT_TOKEN)) {
+    const matchStart = start + match.index;
+    const matchEnd = matchStart + match[0].length;
+    if (isRangeOverlapping(mathRanges, matchStart, matchEnd)) continue;
+    const replacement =
+      match[0] === "||" ? "\\|\\|" : decodeString(match[0]).replace(/[!-/:-@[-`{-~]/g, "\\$&");
+    if (replacement !== match[0]) {
+      edits.push({ start: matchStart, end: matchEnd, text: replacement });
+    }
+  }
+}
+
+/** Preserve source spelling; adapt workspace images, spoiler delimiters, math, and entity text. */
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
   options: {
     supportsSvg?: boolean;
+    latexMath?: boolean;
     commandNames?: ReadonlySet<string>;
     /** Regex source for forge references such as `#12`; see `@/git/forge-shorthand`. */
     forgeReferencePattern?: string;
@@ -153,11 +267,13 @@ export function prepareMarkdownSource(
     collectInlineCodePaths(source, workspaceRoot, options.commandNames),
     options.forgeReferencePattern,
   );
+  const needsMath = Boolean(options.latexMath) && hasUnescapedDollar(source);
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
+    !needsMath &&
     // Match content, header, and delimiter lines; quote-only lines count as blank.
     !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
       source,
@@ -165,6 +281,13 @@ export function prepareMarkdownSource(
     !(workspaceRoot && source.includes("]("))
   ) {
     return { images, ...metadata, render: () => source };
+  }
+
+  let mathRanges: TextRange[] = [];
+  if (needsMath) {
+    const mathContext = collectMathContext(getTree(), source);
+    edits.push(...mathContext.edits);
+    mathRanges = mathContext.mathRanges;
   }
 
   const definitions = new Map<string, { url: string; title?: string | null }>();
@@ -214,7 +337,14 @@ export function prepareMarkdownSource(
     for (const child of paragraph.children) {
       const childStart = child.position?.start.offset;
       const childEnd = child.position?.end.offset;
-      if (childStart === undefined || childEnd === undefined || !isImageLike(child)) continue;
+      if (
+        childStart === undefined ||
+        childEnd === undefined ||
+        !isImageLike(child) ||
+        isRangeOverlapping(mathRanges, childStart, childEnd)
+      ) {
+        continue;
+      }
       const lineStart = source.lastIndexOf("\n", childStart - 1) + 1;
       const newline = source.indexOf("\n", childEnd);
       const lineEnd = newline === -1 ? source.length : newline;
@@ -255,31 +385,20 @@ export function prepareMarkdownSource(
         const boundary = lineStart - newline.length;
         edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
       }
-      if (node.type === "link") {
+      if (node.type === "link" && !isRangeOverlapping(mathRanges, start, end)) {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
           edits.push({ start: end - 1, end: end - 1, text: ` ${JSON.stringify(title)}` });
       }
       if (node.type === "tableRow") {
-        // MD4C's always-enabled spoiler extension otherwise consumes adjacent cell
-        // delimiters. Spaces keep empty GFM cells empty without producing spoilers.
-        const row = source.slice(start, end);
-        for (const match of row.matchAll(/(?<!\\)\|(?=\|)/g)) {
-          edits.push({ start: start + match.index + 1, end: start + match.index + 1, text: " " });
-        }
+        appendEmptyCellEdits(source, start, end, mathRanges, edits);
       }
       if (node.type === "image" || node.type === "imageReference") {
-        collectImage(node, start, end);
+        if (!isRangeOverlapping(mathRanges, start, end)) collectImage(node, start, end);
         return;
       }
       if (node.type === "text") {
-        const text = source
-          .slice(start, end)
-          .replace(/(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);/g, (entity) =>
-            decodeString(entity).replace(/[!-/:-@[-`{-~]/g, "\\$&"),
-          )
-          .replace(/(?<!\\)\|\|/g, "\\|\\|");
-        if (text !== source.slice(start, end)) edits.push({ start, end, text });
+        appendTextEdits(source, start, end, mathRanges, edits);
       }
     }
     if ("children" in node)
