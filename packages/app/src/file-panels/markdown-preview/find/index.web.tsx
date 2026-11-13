@@ -51,8 +51,9 @@ export function MarkdownPreviewFind({ source, children }: MarkdownPreviewFindPro
 
   useEffect(() => () => model.dispose(), [model]);
   useEffect(() => {
+    model.setPaneInteractive(isInteractive && active);
     if (!active) model.close();
-  }, [active, model]);
+  }, [active, isInteractive, model]);
 
   useEffect(() => {
     model.refreshContent();

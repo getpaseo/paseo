@@ -28,11 +28,19 @@ function rangeRect(range: Range): DOMRect | null {
   return box.width > 0 || box.height > 0 ? box : null;
 }
 
+export interface MarkdownPreviewFindModelOptions {
+  limit?: number;
+  useCssHighlights?: boolean;
+}
+
 export class MarkdownPreviewFindModel {
+  private readonly limit: number;
+  private readonly useCssHighlights: boolean;
   private listeners = new Set<() => void>();
   private root: HTMLElement | null = null;
   private widget: HTMLElement | null = null;
   private widgetResize: ResizeObserver | null = null;
+  private paneInteractive = true;
   private ranges: Range[] = [];
   private fallbackSelectedRange: Range | null = null;
   private limited = false;
@@ -51,8 +59,20 @@ export class MarkdownPreviewFindModel {
       all: string;
       active: string;
     },
-    private readonly limit = MATCH_STATUS_LIMIT,
-  ) {}
+    options: MarkdownPreviewFindModelOptions | number = {},
+  ) {
+    if (typeof options === "number") {
+      this.limit = options;
+      this.useCssHighlights = supportsCssHighlights();
+    } else {
+      this.limit = options.limit ?? MATCH_STATUS_LIMIT;
+      this.useCssHighlights = options.useCssHighlights ?? supportsCssHighlights();
+    }
+  }
+
+  readonly setPaneInteractive = (interactive: boolean) => {
+    this.paneInteractive = interactive;
+  };
 
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -71,7 +91,7 @@ export class MarkdownPreviewFindModel {
       return;
     }
     if (this.snapshot.open && this.snapshot.query) {
-      this.recompute({ reveal: true, preserveIndex: true });
+      this.recompute({ reveal: false, preserveIndex: true });
     }
   };
 
@@ -202,7 +222,7 @@ export class MarkdownPreviewFindModel {
       total: this.ranges.length,
       limited: this.ranges.length === 0 ? false : this.limited,
     };
-    this.applyHighlights();
+    this.applyHighlights({ allowClaimSelection: options.reveal });
     this.publish();
     if (options.reveal) {
       this.revealAndReposition();
@@ -225,12 +245,22 @@ export class MarkdownPreviewFindModel {
     );
   }
 
-  private applyHighlights() {
+  private canMutateFallbackSelection(allowClaimSelection: boolean): boolean {
+    if (!this.paneInteractive) return false;
+    if (allowClaimSelection || this.isOwnFallbackSelection()) return true;
+    const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+    return Boolean(
+      activeElement && (this.root?.contains(activeElement) || this.widget?.contains(activeElement)),
+    );
+  }
+
+  private applyHighlights(options: { allowClaimSelection: boolean }) {
     if (!this.snapshot.open || this.ranges.length === 0) {
       this.clearHighlights();
       return;
     }
-    if (!supportsCssHighlights()) {
+    if (!this.useCssHighlights) {
+      if (!this.canMutateFallbackSelection(options.allowClaimSelection)) return;
       const selection = typeof window !== "undefined" ? window.getSelection() : null;
       if (!selection) return;
       const active = this.ranges[this.activeIndex];
@@ -254,7 +284,7 @@ export class MarkdownPreviewFindModel {
   }
 
   private clearHighlights() {
-    if (supportsCssHighlights()) {
+    if (this.useCssHighlights) {
       CSS.highlights.delete(this.highlightNames.all);
       CSS.highlights.delete(this.highlightNames.active);
     }

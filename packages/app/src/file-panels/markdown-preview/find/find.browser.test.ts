@@ -153,45 +153,52 @@ it("highlights matches, scrolls offscreen occurrences into view, and flips corne
   model.dispose();
 });
 
-it("falls back to native DOM Selection when CSS Custom Highlights are unavailable", () => {
-  const originalHighlight = globalThis.Highlight;
-  Object.defineProperty(globalThis, "Highlight", {
-    value: undefined,
-    configurable: true,
-    writable: true,
-  });
-  try {
-    const { root } = createPreviewSurface("<p>first NEEDLE and second needle</p>");
-    const input = document.createElement("input");
-    root.append(input);
-    input.focus();
+it("falls back to native DOM Selection when CSS Custom Highlights are unavailable without clobbering other panes", () => {
+  const { root, frame } = createPreviewSurface("<p>first NEEDLE and second needle</p>");
+  const input = document.createElement("input");
+  root.append(input);
+  input.focus();
 
-    const model = new MarkdownPreviewFindModel({
+  const model = new MarkdownPreviewFindModel(
+    {
       all: "test-md-fallback-all",
       active: "test-md-fallback-active",
-    });
-    model.setRootNode(root);
-    model.open();
-    model.setSearch("needle");
+    },
+    { useCssHighlights: false },
+  );
+  model.setRootNode(root);
+  model.open();
+  model.setSearch("needle");
 
-    expect(window.getSelection()?.toString()).toBe("NEEDLE");
-    expect(document.activeElement).toBe(input);
+  expect(window.getSelection()?.toString()).toBe("NEEDLE");
+  expect(document.activeElement).toBe(input);
 
-    // Re-opening find while fallback selection is active must preserve the lowercase query and index.
-    model.open();
-    expect(model.getSnapshot().query).toBe("needle");
+  // Re-opening find while fallback selection is active must preserve the lowercase query and index.
+  model.open();
+  expect(model.getSnapshot().query).toBe("needle");
 
-    model.next();
-    expect(window.getSelection()?.toString()).toBe("needle");
+  model.next();
+  expect(window.getSelection()?.toString()).toBe("needle");
 
-    model.close();
-    expect(window.getSelection()?.rangeCount).toBe(0);
-    model.dispose();
-  } finally {
-    Object.defineProperty(globalThis, "Highlight", {
-      value: originalHighlight,
-      configurable: true,
-      writable: true,
-    });
-  }
+  // When focus and selection move to another split pane, background refreshes must not steal selection.
+  const otherPane = createPreviewSurface("<p id='other-text'>selected in pane B</p>");
+  const otherButton = document.createElement("button");
+  otherPane.root.append(otherButton);
+  otherButton.focus();
+  const externalRange = document.createRange();
+  externalRange.selectNodeContents(otherPane.frame.querySelector("#other-text")!);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(externalRange);
+  model.setPaneInteractive(false);
+
+  frame.innerHTML = "<p>updated NEEDLE one, needle two, and needle three</p>";
+  model.refreshContent();
+  expect(model.getSnapshot().total).toBe(3);
+  expect(window.getSelection()?.toString()).toBe("selected in pane B");
+
+  // Closing the unfocused pane also leaves the other pane's selection untouched.
+  model.close();
+  expect(window.getSelection()?.toString()).toBe("selected in pane B");
+  model.dispose();
 });
