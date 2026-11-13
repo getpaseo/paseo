@@ -5,18 +5,18 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
-type ComposerChoice = "simple" | "full" | "read-only";
+type ComposerChoice = "simple" | "full" | "no-composer";
 
 const COMPOSERS: Record<ComposerChoice, false | AgentTimelineComposer> = {
   simple: { controls: "none", placeholder: "Message this agent" },
   full: { controls: { attachments: "hidden" } },
-  "read-only": false,
+  "no-composer": false,
 };
 
 const CHOICES: readonly { id: ComposerChoice; label: string }[] = [
   { id: "simple", label: "Simple" },
   { id: "full", label: "Full" },
-  { id: "read-only", label: "Read-only" },
+  { id: "no-composer", label: "No composer" },
 ];
 
 interface AgentRow {
@@ -30,7 +30,8 @@ function useStyles(theme: PluginTheme, compact: boolean) {
       root: { flex: 1, flexDirection: "row" as const, backgroundColor: theme.colors.surface0 },
       list: {
         width: compact ? undefined : 260,
-        flex: compact ? 1 : undefined,
+        // A web ScrollView grows by default; a fixed list must not.
+        flexGrow: compact ? 1 : 0,
         borderRightWidth: compact ? 0 : 1,
         borderColor: theme.colors.border,
       },
@@ -151,8 +152,8 @@ export function Agents({ theme, layout, navigation }: PluginScreenProps) {
         <View style={styles.detail}>
           <View style={styles.bar}>
             {layout.compact ? (
-              <Pressable accessibilityRole="button" onPress={back}>
-                <Text style={styles.text}>Agents</Text>
+              <Pressable accessibilityRole="button" onPress={back} style={styles.chip}>
+                <Text style={styles.text}>‹ Agents</Text>
               </Pressable>
             ) : null}
             {CHOICES.map((option) => (

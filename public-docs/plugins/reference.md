@@ -943,12 +943,12 @@ export function Overseer() {
 }
 ```
 
-| Prop       | Default                  | Meaning                                                                  |
-| ---------- | ------------------------ | ------------------------------------------------------------------------ |
-| `agentId`  | Required                 | The agent to show.                                                       |
-| `serverId` | The surface's host       | The host the agent runs on.                                              |
-| `composer` | The agent tab's composer | `false` shows the timeline read-only; an object configures the composer. |
-| `testID`   | None                     | Test identifier for the timeline's root.                                 |
+| Prop       | Default                  | Meaning                                                                 |
+| ---------- | ------------------------ | ----------------------------------------------------------------------- |
+| `agentId`  | Required                 | The agent to show.                                                      |
+| `serverId` | The surface's host       | The host the agent runs on.                                             |
+| `composer` | The agent tab's composer | `false` shows the timeline without a composer; an object configures it. |
+| `testID`   | None                     | Test identifier for the timeline's root.                                |
 
 `composer` takes:
 
@@ -965,10 +965,10 @@ compact layouts give it the whole screen, as the example's list and timeline tak
 
 Behavior that differs from the agent's tab:
 
-- **Permissions and questions.** With a composer the user answers them in the timeline. A
-  read-only timeline shows them without the buttons; offer `navigation.openAgent` to answer.
+- **Permissions and questions.** The user answers them in the timeline, with or without a
+  composer, as in the agent's tab.
 - **Needs attention.** A timeline with a composer clears the agent's attention when it is shown,
-  like a focused tab. A read-only timeline never clears it, so a page of previews doesn't hide
+  like a focused tab. A timeline without one never clears it, so a page of previews doesn't hide
   agents that need the user.
 - **Slash text.** With `controls: "none"` everything the user types, including `/exit` and
   `/clear`, is sent to the agent as written. With the toolbar, `/exit` archives the agent and
@@ -997,7 +997,7 @@ or keep supporting older apps, where the export is undefined, by checking for it
 ```
 
 The runnable [agent timeline example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-timeline)
-switches between the message box, the toolbar with attachments hidden, and read-only.
+switches between the message box, the toolbar with attachments hidden, and no composer.
 
 ### Modal
 

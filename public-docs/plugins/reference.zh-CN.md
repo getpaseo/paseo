@@ -790,12 +790,12 @@ export function Overseer() {
 }
 ```
 
-| 属性       | 默认值                  | 含义                                                  |
-| ---------- | ----------------------- | ----------------------------------------------------- |
-| `agentId`  | 必填                    | 要显示的 Agent。                                      |
-| `serverId` | 当前界面所属的主机      | Agent 所在的主机。                                    |
-| `composer` | Agent 标签页的 composer | `false` 以只读方式显示时间线；对象用于配置 composer。 |
-| `testID`   | 无                      | 时间线根节点的测试标识。                              |
+| 属性       | 默认值                  | 含义                                                        |
+| ---------- | ----------------------- | ----------------------------------------------------------- |
+| `agentId`  | 必填                    | 要显示的 Agent。                                            |
+| `serverId` | 当前界面所属的主机      | Agent 所在的主机。                                          |
+| `composer` | Agent 标签页的 composer | `false` 显示不带 composer 的时间线；对象用于配置 composer。 |
+| `testID`   | 无                      | 时间线根节点的测试标识。                                    |
 
 `composer` 接受：
 
@@ -811,10 +811,9 @@ export function Overseer() {
 
 与 Agent 标签页不同的行为：
 
-- **权限与提问。** 有 composer 时，用户可在时间线中直接回答。只读时间线会显示它们但不提供按钮；
-  请提供 `navigation.openAgent` 让用户去回答。
+- **权限与提问。** 无论是否有 composer，用户都可以像在 Agent 标签页中一样，直接在时间线中回答。
 - **需要关注。** 带 composer 的时间线在显示时会清除 Agent 的关注状态，与获得焦点的标签页相同。
-  只读时间线从不清除，这样一页预览不会掩盖需要用户处理的 Agent。
+  不带 composer 的时间线从不清除，这样一页预览不会掩盖需要用户处理的 Agent。
 - **斜杠文本。** 使用 `controls: "none"` 时，用户输入的所有内容（包括 `/exit` 和 `/clear`）都会原样发送给 Agent。
   显示工具栏时，`/exit` 会归档 Agent，`/clear` 会归档 Agent 并在其工作区中打开一个新草稿，这会离开你的屏幕。
 - **没有胶囊轨道。** 任务、子 Agent 和[Composer 胶囊](#composer-pills)会打开工作区的标签页和面板，
@@ -839,7 +838,7 @@ export function Overseer() {
 ```
 
 可运行的[Agent 时间线示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-timeline)
-可在消息框、隐藏附件的工具栏和只读模式之间切换。
+可在消息框、隐藏附件的工具栏和不带 composer 的时间线之间切换。
 
 ### Modal {#modal}
 

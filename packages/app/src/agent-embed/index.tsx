@@ -20,7 +20,7 @@ export interface AgentEmbedComposer {
 export interface AgentEmbedProps {
   serverId: string;
   agentId: string;
-  /** `null` shows the timeline read-only. */
+  /** `null` shows the timeline without a composer. */
   composer: AgentEmbedComposer | null;
   testID?: string;
 }
@@ -33,8 +33,9 @@ export interface AgentEmbedProps {
  * mounted and shares the tab's observation when the agent is also open in a tab.
  *
  * An embed with a composer is where the user acts on the agent, so it clears "needs attention"
- * as a focused tab does. A read-only embed never clears it: a plugin can show many at once, and
- * a glance at a preview is not the user handling the agent.
+ * as a focused tab does. An embed without a composer never clears it: a plugin can show many at
+ * once, and a glance at a preview is not the user handling the agent. Permissions and questions
+ * stay answerable either way, as in the workspace sheet.
  */
 export function AgentEmbed({ serverId, agentId, composer, testID }: AgentEmbedProps) {
   const viewerId = `embed:${useId()}`;

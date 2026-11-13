@@ -80,8 +80,8 @@ test.describe("AgentTimeline", () => {
         await expect(embed(page).getByTestId("message-input-attach-button")).toHaveCount(0);
       });
 
-      await test.step("read-only shows the timeline without a composer", async () => {
-        await page.getByRole("button", { name: "Read-only", exact: true }).click();
+      await test.step("composer={false} shows the timeline without a composer", async () => {
+        await page.getByRole("button", { name: "No composer", exact: true }).click();
         await expect(embed(page).getByTestId("user-message").first()).toContainText(FIRST_PROMPT);
         await expect(embed(page).getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
       });

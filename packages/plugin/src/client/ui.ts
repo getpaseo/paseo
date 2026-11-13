@@ -220,7 +220,7 @@ export interface AgentTimelineProps {
   agentId: string;
   /** The host the agent runs on. Defaults to the host of the surface rendering the timeline. */
   serverId?: string;
-  /** The agent tab's composer when omitted. `false` shows the timeline read-only. */
+  /** The agent tab's composer when omitted. `false` shows the timeline without a composer. */
   composer?: false | AgentTimelineComposer;
   testID?: string;
 }
