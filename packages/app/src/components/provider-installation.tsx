@@ -1,9 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
-import type {
-  ProviderInstallationUpdate,
-  ProviderInstallationUpdateProgress,
-} from "@getpaseo/protocol/messages";
+import { useTranslation } from "react-i18next";
+import type { ProviderInstallationUpdate } from "@getpaseo/protocol/messages";
 import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -12,6 +10,7 @@ import type {
   ProviderUpdateAction,
   ProviderUpdatesState,
 } from "./provider-installation-section";
+import { applyProviderUpdateProgress } from "./provider-update-progress";
 
 export interface ProviderInstallationRead {
   state: ProviderInstallationState;
@@ -20,19 +19,6 @@ export interface ProviderInstallationRead {
   action: ProviderUpdateAction | undefined;
   /** Ask the provider again, skipping the host's caches. */
   refresh: () => void;
-}
-
-/** Folds a progress message into the update it belongs to; a new operation starts empty. */
-function applyProgress(
-  current: ProviderInstallationUpdate | null,
-  progress: ProviderInstallationUpdateProgress,
-): ProviderInstallationUpdate {
-  const previous = current?.operation.id === progress.operation.id ? current : null;
-  return {
-    operation: progress.operation,
-    output: [...(previous?.output ?? []), ...progress.output],
-    ...(previous?.truncated ? { truncated: true } : {}),
-  };
 }
 
 /**
@@ -49,27 +35,28 @@ export function useProviderInstallation(input: {
   const supported = useHostFeature(serverId, "providerInstallation");
   const client = useHostRuntimeClient(serverId);
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const enabled = supported && visible && Boolean(client);
   const installationKey = ["provider-installation", serverId, provider] as const;
   const updatesKey = ["provider-updates", serverId, provider] as const;
 
   const inspect = useCallback(
     async (refresh: boolean) => {
-      if (!client) throw new Error("Host is not connected");
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       const result = await client.inspectProviderInstallation(provider, { refresh });
       if (result.error) throw new Error(result.error);
       return result.installation;
     },
-    [client, provider],
+    [client, provider, t],
   );
   const checkForUpdates = useCallback(
     async (refresh: boolean) => {
-      if (!client) throw new Error("Host is not connected");
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       const result = await client.checkProviderUpdates(provider, { refresh });
       if (result.error) throw new Error(result.error);
       return result.updateCheck;
     },
-    [client, provider],
+    [client, provider, t],
   );
 
   // The host caches both answers, so reading on every open is cheap.
@@ -89,13 +76,23 @@ export function useProviderInstallation(input: {
     staleTimeMs: 0,
   });
 
+  // A refresh runs through the queries so its answer or its failure is what the screen shows.
+  // `staleTime: 0` overrides the app default so the request always goes out.
   const refreshInstallation = useMutation({
-    mutationFn: () => inspect(true),
-    onSuccess: (installation) => queryClient.setQueryData(installationKey, installation),
+    mutationFn: () =>
+      queryClient.fetchQuery({
+        queryKey: installationKey,
+        queryFn: () => inspect(true),
+        staleTime: 0,
+      }),
   });
   const refreshUpdates = useMutation({
-    mutationFn: () => checkForUpdates(true),
-    onSuccess: (updateCheck) => queryClient.setQueryData(updatesKey, updateCheck),
+    mutationFn: () =>
+      queryClient.fetchQuery({
+        queryKey: updatesKey,
+        queryFn: () => checkForUpdates(true),
+        staleTime: 0,
+      }),
   });
   // The host owns the update; this view follows it while open and catches up on reopen.
   const [currentUpdate, setCurrentUpdate] = useState<ProviderInstallationUpdate | null>(null);
@@ -106,7 +103,7 @@ export function useProviderInstallation(input: {
       snapshot: (response) => setCurrentUpdate(response.update),
       update: (message) => {
         if (message.type !== "provider.installation.update.progress") return;
-        setCurrentUpdate((current) => applyProgress(current, message.payload));
+        setCurrentUpdate((current) => applyProviderUpdateProgress(current, message.payload));
         // The host dropped its cached answers; read the new version and update state.
         if (message.payload.operation.status === "succeeded") {
           void queryClient.invalidateQueries({
@@ -128,7 +125,7 @@ export function useProviderInstallation(input: {
   }, [client, enabled, provider, queryClient, serverId]);
   const startUpdate = useMutation({
     mutationFn: async () => {
-      if (!client) throw new Error("Host is not connected");
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       const result = await client.updateProvider(provider);
       if (result.error) throw new Error(result.error);
       return result.update;
