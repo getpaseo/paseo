@@ -158,8 +158,10 @@ const isAppleHandheld =
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
-// DOM events xterm turns into typed data on its textarea.
-const USER_INPUT_EVENT_TYPES = ["keydown", "keypress", "input", "paste"] as const;
+// DOM events xterm turns into typed data on its textarea. Pastes stay suppressed during a
+// replay: until the snapshot restores bracketed paste mode, a multi-line paste would run
+// line by line in the shell.
+const USER_INPUT_EVENT_TYPES = ["keydown", "keypress", "input"] as const;
 const RESET_TERMINAL_OUTPUT = new Uint8Array([0x1b, 0x63]);
 const terminalOutputEncoder = new TextEncoder();
 

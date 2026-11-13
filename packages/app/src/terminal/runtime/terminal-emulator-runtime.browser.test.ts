@@ -124,6 +124,17 @@ function typeText(mounted: MountedTerminal, text: string): void {
     );
 }
 
+/** A native paste of plain text into xterm's textarea. */
+function pasteText(mounted: MountedTerminal, text: string): void {
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", text);
+  mounted.host
+    .querySelector(".xterm-helper-textarea")
+    ?.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+    );
+}
+
 function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -833,7 +844,7 @@ describe("incremental replay lifecycle", () => {
     expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
   });
 
-  it("keeps what the user types while a replay is still parsing", async () => {
+  it("keeps what the user types, but not pastes, while a replay is still parsing", async () => {
     const mounted = createTerminalHost({ width: 720, height: 360 });
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
     mounted.runtime.replay({ type: "begin" });
@@ -841,6 +852,7 @@ describe("incremental replay lifecycle", () => {
     mounted.runtime.replay({ type: "end" });
 
     typeText(mounted, "a");
+    pasteText(mounted, "echo one\necho two\n");
     typeText(mounted, "f");
     await new Promise<void>((resolve) =>
       mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
