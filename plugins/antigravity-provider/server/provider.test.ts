@@ -387,6 +387,17 @@ it.each(["HANG", "TOOL_HANG"])(
   },
 );
 
+it("fails a turn that goes silent while agy retries an exhausted quota, then recovers", async () => {
+  const h = await harness({ PASEO_ANTIGRAVITY_TURN_IDLE_MS: "300" });
+  await h.open();
+  const message = await h.prompt("QUOTA_STALL");
+  expect(await h.completed(message)).toMatchObject({
+    state: "failed",
+    error: { code: "TURN_STALLED" },
+  });
+  await h.completed(await h.prompt("HELLO"));
+});
+
 it("stops an unresponsive driver and still respawns the conversation", async () => {
   const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
   await h.open();

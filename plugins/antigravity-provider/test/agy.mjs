@@ -74,6 +74,7 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (text.includes("QUOTA_STALL")) return;
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

@@ -20,6 +20,7 @@ import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 const persistenceSchema = z
   .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
   .strict();
+const DEFAULT_TURN_IDLE_MS = 5 * 60_000;
 interface Turn {
   id: string;
   text: Map<number, string>;
@@ -50,6 +51,7 @@ export class Session {
   private firstMessage: boolean;
   private readonly promptFiles = new PromptFiles();
   private readonly reportedDenials = new Map<string, number>();
+  private watchdog: NodeJS.Timeout | undefined;
 
   constructor(private readonly options: SessionOptions) {
     this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
@@ -96,6 +98,7 @@ export class Session {
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     };
     this.state = { type: "running", driver, turn };
+    this.armWatchdog();
     this.emit({
       type: "session.prompt_result",
       sessionId: this.options.id,
@@ -148,6 +151,7 @@ export class Session {
   async interrupt(): Promise<void> {
     if (this.state.type !== "running") return;
     const { driver, turn } = this.state;
+    this.clearWatchdog();
     this.state = { type: "stopping", driver };
     await driver.stop("interrupt");
     this.finishTools(turn, "canceled");
@@ -162,6 +166,7 @@ export class Session {
 
   async close(): Promise<void> {
     const state = this.state;
+    this.clearWatchdog();
     this.state = { type: "closed" };
     try {
       if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
@@ -240,11 +245,13 @@ export class Session {
   private accept(frame: Frame): void {
     if (this.state.type !== "running") return;
     const { turn, driver } = this.state;
+    this.armWatchdog();
     if (frame.event === "step_update") {
       this.acceptStep(frame.step_update, turn);
       return;
     }
     if (frame.event !== "result") return;
+    this.clearWatchdog();
     const result = frame.result;
     const denied = takeNewDenials(result.denied_actions, this.reportedDenials);
     if (denied.length > 0) {
@@ -311,6 +318,7 @@ export class Session {
   private failTurn(error: AntigravityError): void {
     const state = this.state;
     if (state.type !== "running" && state.type !== "idle") return;
+    this.clearWatchdog();
     this.retire(state.driver);
     if (state.type === "running") {
       this.finishTools(state.turn, "failed");
@@ -327,6 +335,36 @@ export class Session {
         sessionId: this.options.id,
         error: { message: error.message, code: error.code },
       });
+  }
+
+  // agy retries a model call that hits RESOURCE_EXHAUSTED (individual quota) without ending the
+  // turn with a result frame, so silence is the signal Paseo can observe.
+  private armWatchdog(): void {
+    this.clearWatchdog();
+    const raw = Number(this.options.launch.env?.PASEO_ANTIGRAVITY_TURN_IDLE_MS);
+    const idleMs = raw > 0 ? raw : DEFAULT_TURN_IDLE_MS;
+    this.watchdog = setTimeout(() => this.onWatchdog(idleMs), idleMs);
+    this.watchdog.unref();
+  }
+
+  private clearWatchdog(): void {
+    clearTimeout(this.watchdog);
+    this.watchdog = undefined;
+  }
+
+  private onWatchdog(idleMs: number): void {
+    if (this.state.type !== "running") return;
+    // A running tool or subagent legitimately stays quiet; only a silent model call is suspect.
+    if ([...this.state.turn.tools.values()].some((item) => item.status === "running")) {
+      this.armWatchdog();
+      return;
+    }
+    this.failTurn(
+      new AntigravityError(
+        `Antigravity produced no output for ${Math.round(idleMs / 1000)}s. Its model quota may be exhausted and it is retrying; check the reset time with agy, then retry.`,
+        "TURN_STALLED",
+      ),
+    );
   }
 
   private retire(driver: Driver): void {
