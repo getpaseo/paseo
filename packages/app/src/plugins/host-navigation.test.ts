@@ -10,6 +10,7 @@ describe("plugin host navigation", () => {
       browserAvailable: electron,
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
+      openNewWorkspace: (input) => destinations.push(input),
       openAgent: (input) => destinations.push(input),
       openWorkspace: (input) => destinations.push(input),
       createBrowser: ({ initialUrl }) => {
@@ -19,6 +20,23 @@ describe("plugin host navigation", () => {
     });
     return { navigation, destinations, browsers, workspaces };
   }
+
+  it("opens a native draft on the selected host with optional project context", () => {
+    const { navigation, destinations, browsers } = setup(false);
+    navigation.openNewWorkspace!();
+    navigation.openNewWorkspace!({
+      projectId: "project",
+      sourceDirectory: "/repo",
+      displayName: "Repo",
+    });
+    navigation.openNewWorkspace!({ serverId: "remote", projectId: "other" });
+    expect(destinations).toEqual([
+      { serverId: "selected" },
+      { serverId: "selected", projectId: "project", sourceDirectory: "/repo", displayName: "Repo" },
+      { serverId: "remote", projectId: "other" },
+    ]);
+    expect(browsers).toEqual([]);
+  });
 
   it("creates and focuses a local browser in the selected or explicit host workspace", () => {
     const { navigation, destinations, browsers } = setup();
