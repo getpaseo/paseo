@@ -55,6 +55,8 @@ async function launch(
       env: {
         ...process.env,
         FORCE_COLOR: undefined,
+        DISPLAY: undefined,
+        PASEO_ELECTRON_FLAGS: undefined,
         PATH: `${commands}:${process.env.PATH}`,
         APPIMAGE: "/tmp/Paseo.AppImage",
         PASEO_DESKTOP_SMOKE: "0",
@@ -120,4 +122,31 @@ it("applies a debugging environment sandbox override before Chromium starts", as
   });
   expect(result.args).toEqual(["--no-sandbox", ...result.input]);
   expect(result.stderr).toContain("requested by PASEO_ELECTRON_FLAGS");
+});
+
+it("selects X11 before Electron starts when an X display is available", async () => {
+  const result = await launch({ namespaces: true, env: { DISPLAY: ":0" } });
+  expect(result.args).toEqual(["--ozone-platform=x11", ...result.input]);
+});
+
+it.each([
+  ["--ozone-platform=wayland"],
+  ["--ozone-platform", "wayland"],
+  ["--ozone-platform-hint=auto"],
+])("preserves an explicit backend argument %s", async (...args) => {
+  const result = await launch({ namespaces: true, args, env: { DISPLAY: ":0" } });
+  expect(result.args).toEqual(args);
+});
+
+it("passes an environment backend override to Electron on argv", async () => {
+  const result = await launch({
+    namespaces: true,
+    env: { DISPLAY: ":0", PASEO_ELECTRON_FLAGS: "--ozone-platform=wayland" },
+  });
+  expect(result.args).toEqual([...result.input, "--ozone-platform=wayland"]);
+});
+
+it("does not add graphics flags to Node entrypoints with an X display", async () => {
+  const result = await launch({ env: { DISPLAY: ":0", ELECTRON_RUN_AS_NODE: "1" } });
+  expect(result.args).toEqual(result.input);
 });

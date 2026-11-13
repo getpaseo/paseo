@@ -6,7 +6,6 @@ import { _electron as electron, expect } from "playwright/test";
 
 const root = await mkdtemp(path.join(tmpdir(), "paseo-window-startup-"));
 const modulePath = fileURLToPath(new URL("../dist/window/show-when-ready.js", import.meta.url));
-const graphicsPath = fileURLToPath(new URL("../dist/window/graphics.js", import.meta.url));
 const automationPath = fileURLToPath(
   new URL("../dist/features/browser-automation/", import.meta.url),
 );
@@ -52,10 +51,8 @@ async function launchBackgroundBrowser() {
     main,
     `
     const { app, BrowserWindow, nativeImage } = require("electron");
-    const { configureDesktopGraphics } = require(${JSON.stringify(graphicsPath)});
     const { adaptWebContents } = require(${JSON.stringify(path.join(automationPath, "ipc.js"))});
     const { executeAutomationCommand } = require(${JSON.stringify(path.join(automationPath, "service.js"))});
-    configureDesktopGraphics({ argv: process.argv, platform: process.platform, display: process.env.DISPLAY, commandLine: app.commandLine });
     app.setPath("userData", ${JSON.stringify(path.join(root, "background-profile"))});
     app.whenReady().then(async () => {
       const win = global.backgroundWindow = new BrowserWindow({ show: false, webPreferences: { webviewTag: true } });
@@ -109,7 +106,9 @@ async function launchBackgroundBrowser() {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => key !== "ELECTRON_RUN_AS_NODE"),
   );
-  return electron.launch({ args: ["--no-sandbox", main], env });
+  const displayArgs =
+    process.platform === "linux" && process.env.DISPLAY ? ["--ozone-platform=x11"] : [];
+  return electron.launch({ args: ["--no-sandbox", ...displayArgs, main], env });
 }
 
 async function expectBackgroundBrowserWorks(desktop) {

@@ -2,7 +2,15 @@ import { pathToFileURL } from "node:url";
 import { resolvePassthroughCliEntrypoint } from "./entrypoints.js";
 
 const DESKTOP_CLI_ENV = "PASEO_DESKTOP_CLI";
-const IGNORED_ARG_PREFIXES = ["-psn_", "--class=", "--no-sandbox", "--remote-debugging-port="];
+const IGNORED_ARG_PREFIXES = [
+  "-psn_",
+  "--class=",
+  "--no-sandbox",
+  "--remote-debugging-port=",
+  "--ozone-platform=",
+  "--ozone-platform-hint=",
+];
+const BACKEND_SWITCHES = new Set(["--ozone-platform", "--ozone-platform-hint"]);
 
 export type PassthroughCliRunner = (argv: string[]) => Promise<number>;
 
@@ -14,7 +22,12 @@ export function parsePassthroughCliArgs(input: {
   const startIndex = input.isDefaultApp ? 2 : 1;
   const effective: string[] = [];
 
-  for (const arg of input.argv.slice(startIndex)) {
+  for (let index = startIndex; index < input.argv.length; index++) {
+    const arg = input.argv[index]!;
+    if (BACKEND_SWITCHES.has(arg)) {
+      index++;
+      continue;
+    }
     if (IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
       continue;
     }

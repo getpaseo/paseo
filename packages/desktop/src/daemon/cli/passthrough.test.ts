@@ -35,6 +35,27 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["--ozone-platform=x11"],
+    ["--ozone-platform", "wayland"],
+    ["--ozone-platform-hint=auto"],
+  ])("keeps graphics arguments out of CLI passthrough (%s)", (...args) => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", ...args],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toBeNull();
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", ...args, "daemon", "status"],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toEqual(["daemon", "status"]);
+  });
+
   it("ignores macOS GUI launch arguments", () => {
     expect(
       parsePassthroughCliArgs({
