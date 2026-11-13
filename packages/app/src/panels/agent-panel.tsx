@@ -96,7 +96,6 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
-import { useComposerControlsScope } from "@/composer/controls-scope";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
@@ -1776,8 +1775,8 @@ function ActiveAgentComposer({
 
 /**
  * The composer of an embedded timeline. It has no tab: `/clear` archives the agent and opens a
- * fresh draft in the agent's workspace, as forking to a tab does. Client commands run only where
- * the scope offers autocomplete, so the plain message box sends every text to the agent as typed.
+ * fresh draft in the agent's workspace, as forking to a tab does. The composer runs client commands
+ * only where the controls scope allows them, so the plain message box sends every text as typed.
  */
 function EmbeddedAgentComposer({
   agentId,
@@ -1807,7 +1806,6 @@ function EmbeddedAgentComposer({
     COMPACT_CONTENT_WIDTH,
     { initialIsBelow: isCompactFormFactor },
   );
-  const { autocomplete } = useComposerControlsScope();
   const workspaceId = useSessionStore(
     (state) => resolveChatAgentFromSession(state, serverId, agentId)?.workspaceId ?? null,
   );
@@ -1853,7 +1851,7 @@ function EmbeddedAgentComposer({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
-        onClientSlashCommand={autocomplete ? runClientSlashCommand : undefined}
+        onClientSlashCommand={runClientSlashCommand}
         placeholder={placeholder}
         isCompactLayout={isCompactComposerLayout}
       />

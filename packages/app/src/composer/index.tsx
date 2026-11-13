@@ -110,7 +110,10 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
-import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
+import {
+  type PluginClientSlashCommand,
+  usePluginClientSlashCommands,
+} from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
   resolvePluginClientSlashCommand,
@@ -209,6 +212,7 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
+const NO_PLUGIN_CLIENT_SLASH_COMMANDS: PluginClientSlashCommand[] = [];
 
 function noop() {}
 const noopCallback = () => {};
@@ -1428,11 +1432,17 @@ function ComposerContentImpl({
     onChangeAttachments: setSelectedAttachments,
     anchorRef: attachButtonRef,
   });
-  const pluginClientSlashCommands = usePluginClientSlashCommands({
+  const installedPluginClientSlashCommands = usePluginClientSlashCommands({
     serverId,
     workspaceId,
     agentId,
   });
+  // One switch for every client-side command, built-in or plugin: a host that turns them off
+  // sends all text to the agent as typed, on every path (send, queue, autocomplete).
+  const handlesClientCommands = controlsScope.clientCommands;
+  const pluginClientSlashCommands = handlesClientCommands
+    ? installedPluginClientSlashCommands
+    : NO_PLUGIN_CLIENT_SLASH_COMMANDS;
   const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
@@ -1540,6 +1550,7 @@ function ComposerContentImpl({
 
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {
+      if (!handlesClientCommands) return false;
       if (command.execution !== "immediate" || !onClientSlashCommand) {
         return false;
       }
@@ -1566,6 +1577,7 @@ function ComposerContentImpl({
     [
       blurOnSubmit,
       clearDraft,
+      handlesClientCommands,
       onClientSlashCommand,
       resetSuppression,
       setSelectedAttachments,
@@ -1592,6 +1604,21 @@ function ComposerContentImpl({
       return true;
     },
     [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],
+  );
+
+  /** Runs `text` as a client command when it is one; false sends it to the agent. */
+  const runComposerClientCommand = useCallback(
+    (text: string, hasAttachments: boolean): boolean => {
+      const clientSlashCommand = resolveClientSlashCommand({ text, hasAttachments });
+      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) return true;
+      const pluginSlashCommand = resolvePluginClientSlashCommand({
+        text,
+        hasAttachments,
+        commands: pluginClientSlashCommands,
+      });
+      return pluginSlashCommand !== null && runPluginClientSlashCommand(pluginSlashCommand);
+    },
+    [pluginClientSlashCommands, runClientSlashCommand, runPluginClientSlashCommand],
   );
 
   const { pickImages } = useImageAttachmentPicker();
@@ -1834,19 +1861,7 @@ function ComposerContentImpl({
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
       const outgoingAttachments = buildOutgoingAttachments(attachments);
-      const clientSlashCommand = resolveClientSlashCommand({
-        text: payload.text,
-        hasAttachments: outgoingAttachments.length > 0,
-      });
-      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
-        return;
-      }
-      const pluginSlashCommand = resolvePluginClientSlashCommand({
-        text: payload.text,
-        hasAttachments: outgoingAttachments.length > 0,
-        commands: pluginClientSlashCommands,
-      });
-      if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
+      if (runComposerClientCommand(payload.text, outgoingAttachments.length > 0)) return;
 
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
@@ -1857,9 +1872,7 @@ function ComposerContentImpl({
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
-      runClientSlashCommand,
-      pluginClientSlashCommands,
-      runPluginClientSlashCommand,
+      runComposerClientCommand,
       sendMessageWithContent,
     ],
   );
@@ -2087,29 +2100,10 @@ function ComposerContentImpl({
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
       const outgoingAttachments = buildOutgoingAttachments(attachments);
-      const clientSlashCommand = resolveClientSlashCommand({
-        text: payload.text,
-        hasAttachments: outgoingAttachments.length > 0,
-      });
-      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
-        return;
-      }
-      const pluginSlashCommand = resolvePluginClientSlashCommand({
-        text: payload.text,
-        hasAttachments: outgoingAttachments.length > 0,
-        commands: pluginClientSlashCommands,
-      });
-      if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
+      if (runComposerClientCommand(payload.text, outgoingAttachments.length > 0)) return;
       queueMessage(payload.text, outgoingAttachments);
     },
-    [
-      attachments,
-      buildOutgoingAttachments,
-      pluginClientSlashCommands,
-      queueMessage,
-      runClientSlashCommand,
-      runPluginClientSlashCommand,
-    ],
+    [attachments, buildOutgoingAttachments, queueMessage, runComposerClientCommand],
   );
 
   // An open autocomplete owns the arrows; otherwise they may recall sent messages.

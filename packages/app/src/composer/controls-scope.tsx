@@ -15,6 +15,11 @@ export interface ComposerControlsScope {
   attachments: boolean;
   voice: boolean;
   autocomplete: boolean;
+  /**
+   * Client slash commands, built-in (`/exit`, `/clear`) and plugin, run in the app. Off, every
+   * text goes to the agent as typed.
+   */
+  clientCommands: boolean;
   /** The context window and cost meter beside Send. */
   usage: boolean;
   items: ComposerItemsScope;
@@ -42,6 +47,7 @@ export const ALL_COMPOSER_CONTROLS: ComposerControlsScope = {
   attachments: true,
   voice: true,
   autocomplete: true,
+  clientCommands: true,
   usage: true,
   items: { kind: "all" },
 };

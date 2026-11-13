@@ -27,6 +27,7 @@ const NO_CONTROLS: ComposerControlsScope = {
   attachments: false,
   voice: false,
   autocomplete: false,
+  clientCommands: false,
   usage: false,
   items: { kind: "only", pluginId: "", itemIds: [] },
 };
@@ -53,6 +54,7 @@ function resolveControls(input: {
     attachments: chosen.attachments !== "hidden",
     voice: true,
     autocomplete: true,
+    clientCommands: true,
     usage: true,
     items,
   };
@@ -80,6 +82,7 @@ function sameComposer(left: AgentEmbedComposer | null, right: AgentEmbedComposer
     a.attachments === b.attachments &&
     a.voice === b.voice &&
     a.autocomplete === b.autocomplete &&
+    a.clientCommands === b.clientCommands &&
     a.usage === b.usage &&
     sameItems(a.items, b.items)
   );
