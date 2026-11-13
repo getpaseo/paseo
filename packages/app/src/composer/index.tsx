@@ -2199,9 +2199,10 @@ function ComposerContentImpl({
     ],
   );
 
+  const showsUsage = controlsScope.usage;
   const beforeVoiceContent = useMemo(
     () =>
-      hasAgent ? (
+      hasAgent && showsUsage ? (
         <View style={styles.contextWindowMeterSlot}>
           <ContextWindowMeter
             serverId={serverId}
@@ -2215,6 +2216,7 @@ function ComposerContentImpl({
       ) : null,
     [
       hasAgent,
+      showsUsage,
       serverId,
       agentId,
       agentState.contextWindowMaxTokens,

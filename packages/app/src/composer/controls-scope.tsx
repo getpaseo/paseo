@@ -15,6 +15,8 @@ export interface ComposerControlsScope {
   attachments: boolean;
   voice: boolean;
   autocomplete: boolean;
+  /** The context window and cost meter beside Send. */
+  usage: boolean;
   items: ComposerItemsScope;
 }
 
@@ -40,6 +42,7 @@ export const ALL_COMPOSER_CONTROLS: ComposerControlsScope = {
   attachments: true,
   voice: true,
   autocomplete: true,
+  usage: true,
   items: { kind: "all" },
 };
 

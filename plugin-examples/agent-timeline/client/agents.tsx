@@ -44,7 +44,14 @@ function useStyles(theme: PluginTheme, compact: boolean) {
       text: { color: theme.colors.foreground },
       muted: { color: theme.colors.foregroundMuted, padding: 16 },
       detail: { flex: 1, minWidth: 0 },
-      bar: { flexDirection: "row" as const, gap: 8, padding: 8, alignItems: "center" as const },
+      bar: {
+        flexDirection: "row" as const,
+        gap: 8,
+        padding: 8,
+        alignItems: "center" as const,
+        borderBottomWidth: 1,
+        borderColor: theme.colors.border,
+      },
       chip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
       chipActive: {
         paddingHorizontal: 10,
@@ -150,7 +157,7 @@ export function Agents({ theme, layout, navigation }: PluginScreenProps) {
         <Text style={styles.muted}>{layout.compact ? null : "Choose an agent"}</Text>
       ) : (
         <View style={styles.detail}>
-          <View style={styles.bar}>
+          <View style={styles.bar} testID="example-composer-choices">
             {layout.compact ? (
               <Pressable accessibilityRole="button" onPress={back} style={styles.chip}>
                 <Text style={styles.text}>‹ Agents</Text>

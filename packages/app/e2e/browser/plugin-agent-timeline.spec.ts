@@ -56,6 +56,10 @@ test.describe("AgentTimeline", () => {
         ).toHaveAttribute("placeholder", "Message this agent");
         await expect(embed(page).getByTestId("agent-controls-toolbar")).toHaveCount(0);
         await expect(embed(page).getByTestId("message-input-attach-button")).toHaveCount(0);
+        await expect(embed(page).getByTestId("context-window-meter")).toHaveCount(0);
+        const choices = await page.getByTestId("example-composer-choices").boundingBox();
+        const timeline = await embed(page).boundingBox();
+        expect(timeline!.y).toBeGreaterThanOrEqual(choices!.y + choices!.height);
       });
 
       await test.step("a message sent from the embed streams into it", async () => {
@@ -78,6 +82,7 @@ test.describe("AgentTimeline", () => {
         await page.getByRole("button", { name: "Full", exact: true }).click();
         await expect(embed(page).getByTestId("agent-controls-toolbar")).toBeVisible();
         await expect(embed(page).getByTestId("message-input-attach-button")).toHaveCount(0);
+        await expect(embed(page).getByTestId("context-window-meter")).toBeVisible();
       });
 
       await test.step("composer={false} shows the timeline without a composer", async () => {
