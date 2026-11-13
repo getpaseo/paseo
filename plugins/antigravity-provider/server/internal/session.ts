@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type {
   ProviderCatalog,
@@ -9,6 +12,7 @@ import type {
   ProviderSessionConfig,
   ProviderLaunch,
   ProviderTimelineItem,
+  ProviderToolCallDetail,
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
@@ -75,6 +79,7 @@ export class Session {
     this.publishFullAccessNotice();
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    await this.replayTranscript();
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -351,6 +356,118 @@ export class Session {
     return { version: 1, data: { conversationId: this.conversationId } };
   }
 
+  private async replayTranscript(): Promise<void> {
+    if (!this.conversationId) return;
+    const homedir = os.homedir();
+    const candidatePaths = [
+      path.join(homedir, ".gemini", "antigravity-cli", "brain", this.conversationId, ".system_generated", "logs", "transcript.jsonl"),
+      path.join(homedir, ".gemini", "antigravity", "brain", this.conversationId, ".system_generated", "logs", "transcript.jsonl"),
+    ];
+    let transcriptPath: string | null = null;
+    for (const cand of candidatePaths) {
+      if (fs.existsSync(cand)) {
+        transcriptPath = cand;
+        break;
+      }
+    }
+    if (!transcriptPath) return;
+
+    try {
+      const content = await fs.promises.readFile(transcriptPath, "utf8");
+      const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+      const steps: any[] = [];
+      for (const line of lines) {
+        try {
+          steps.push(JSON.parse(line));
+        } catch {
+          // ignore corrupted lines
+        }
+      }
+
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        if (step.type === "USER_INPUT" && step.source === "USER_EXPLICIT") {
+          let text = typeof step.content === "string" ? step.content : "";
+          const match = text.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
+          if (match) {
+            text = match[1].trim();
+          } else {
+            text = text
+              .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, "")
+              .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, "")
+              .trim();
+          }
+          if (text) {
+            this.item({
+              type: "user_message",
+              id: `history-step-${step.step_index}`,
+              clientMessageId: `history-step-${step.step_index}`,
+              text,
+            });
+          }
+        } else if (step.type === "PLANNER_RESPONSE" && step.source === "MODEL") {
+          if (step.tool_calls && Array.isArray(step.tool_calls)) {
+            const nextStep = steps[i + 1];
+            for (let toolIdx = 0; toolIdx < step.tool_calls.length; toolIdx++) {
+              const tc = step.tool_calls[toolIdx];
+              const callId = `history-step-${step.step_index}-tool-${toolIdx}`;
+              let output = "";
+              let isError = false;
+              if (nextStep && nextStep.type === "GENERIC") {
+                output = typeof nextStep.content === "string" ? nextStep.content : "";
+                if (nextStep.status === "ERROR" || nextStep.error) {
+                  isError = true;
+                  output = nextStep.error || output;
+                }
+              }
+
+              const toolName = tc.name || "Antigravity tool";
+              const rawArgs = tc.args || {};
+              const args: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(rawArgs)) {
+                args[k] = cleanArg(v);
+              }
+              const targetPath = (args.AbsolutePath || args.TargetFile || args.Path) as string | undefined;
+              let detail: ProviderToolCallDetail;
+
+              if (toolName === "run_command" && typeof args.CommandLine === "string") {
+                detail = { type: "shell", command: args.CommandLine, output };
+              } else if ((toolName === "read_file" || toolName === "view_file") && typeof targetPath === "string") {
+                detail = { type: "read", filePath: targetPath, content: output };
+              } else if ((toolName === "write_file" || toolName === "write_to_file") && typeof targetPath === "string") {
+                detail = { type: "write", filePath: targetPath, content: (args.Content as string) || output };
+              } else if ((toolName === "edit_file" || toolName === "replace_file_content" || toolName === "multi_replace_file_content") && typeof targetPath === "string") {
+                detail = { type: "edit", filePath: targetPath };
+              } else {
+                detail = { type: "unknown", input: args, output };
+              }
+
+              this.item({
+                type: "tool_call",
+                id: callId,
+                callId,
+                name: toolName,
+                status: isError ? "failed" : "completed",
+                error: isError ? (output || "Tool failed") : null,
+                detail,
+              });
+            }
+          }
+          if (step.content && typeof step.content === "string" && step.content.trim()) {
+            this.item({
+              type: "assistant_message",
+              id: `history-step-${step.step_index}`,
+              messageId: `history-step-${step.step_index}`,
+              text: step.content,
+            });
+          }
+        }
+      }
+    } catch {
+      // Replay failure should not block session startup
+    }
+  }
+
   private publishConfig(): void {
     this.emit({
       type: "session.config",
@@ -394,4 +511,21 @@ function denialNoticeTitle(
 ): string {
   if (actions.length > 1) return `${actions.length} actions denied`;
   return actions[0].action === "command" ? "Shell command denied" : "Action denied";
+}
+
+
+function cleanArg(val: unknown): unknown {
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === "string") return parsed;
+      } catch {
+        return trimmed.slice(1, -1);
+      }
+    }
+    return trimmed;
+  }
+  return val;
 }
