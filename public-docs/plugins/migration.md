@@ -207,6 +207,22 @@ setting `id` as an option key and each `value` as that option, and sends changes
 | `ProviderSetting` type                         | `ProviderOptionControl`                                                    |
 | `agent.create.before` `config.featureValues`   | `config.providerOptions`; a returned `featureValues` edit is still applied |
 
+### Turn history in v0.16
+
+`agent.turn.after` has sent an empty `timeline` since v0.13, and the SDK type no longer declares it.
+A plugin that reads `event.timeline` now fails typecheck. Read the turn from the agent instead:
+
+```ts
+const turn = await context.paseo.agents
+  .ref(event.agent.id)
+  .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+const items = turn.entries.filter((entry) => entry.turnId === event.turnId).map(({ item }) => item);
+```
+
+The filter drops entries from a turn that started after this one ended, such as a follow-up another plugin sent. The list is empty when such a turn has already started, or when `event.turnId` is `null`.
+
+Plugins built against an older SDK keep receiving `timeline: []` until removal after 2027-05-31.
+
 ## 5. Recognize half-migration errors
 
 | Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |

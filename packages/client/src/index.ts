@@ -306,6 +306,11 @@ export interface PaseoAgentTimelineRefetchOptions {
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
+  /**
+   * Extends a `tail` or `before` page back to the start of the oldest turn it touches, so
+   * `{ direction: "tail", limit: 1, wholeTurns: true }` returns the latest turn.
+   */
+  wholeTurns?: boolean;
   requestId?: string;
 }
 
