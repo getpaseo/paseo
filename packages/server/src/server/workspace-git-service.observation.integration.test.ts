@@ -1035,7 +1035,7 @@ function createCheckoutWithOrigin(origin: string): string {
   git("commit", "-m", "base");
   git("remote", "add", "origin", origin);
   cleanup.push(async () =>
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
   );
   return repo;
 }
