@@ -508,6 +508,36 @@ describe("ProviderInstallations", () => {
     expect(checks).toBe(2);
   });
 
+  test("an update check never starts an inspection or waits on one to ask the provider", async () => {
+    let inspections = 0;
+    let finishInspection: () => void = () => {};
+    const client = builtinClient({
+      async inspect() {
+        inspections += 1;
+        await new Promise<void>((resolve) => {
+          finishInspection = resolve;
+        });
+        return { status: "installed", version: "1.0.0" };
+      },
+      async checkForUpdates() {
+        return { status: "current" };
+      },
+    });
+    const installations = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: () => client,
+    });
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
+    expect(inspections).toBe(0);
+
+    const inspection = installations.inspect("codex");
+    await expect(installations.checkForUpdates("codex", { refresh: true })).resolves.toEqual({
+      status: "current",
+    });
+    finishInspection();
+    await inspection;
+  });
+
   test("aborts a slow update check and reports it as an error", async () => {
     let aborted = false;
     function waitForAbort(signal: AbortSignal) {
