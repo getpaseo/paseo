@@ -700,7 +700,63 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("keeps workspace snapshots readable when the terminal worker is unavailable", async () => {
+  it("rejects allocation until the worktree config can exclude all explicit ports", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "launch-project-config-"));
+    const directory = mkdtempSync(join(tmpdir(), "launch-worktree-config-"));
+    tempDirs.push(projectDirectory, directory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({
+        launches: { dev: { command: "./bin/dev" } },
+        worktree: { servicePorts: { range: "43000-43004", blockSize: 4 } },
+      }),
+    );
+    writeFileSync(join(directory, "paseo.json"), "{");
+    const terminals = createTerminalManager();
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminals.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "unreadable-worktree-config",
+      workspaceDirectory: directory,
+      projectConfigDirectory: projectDirectory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    try {
+      await expect(manager.start(context, "dev")).rejects.toThrow(
+        `Failed to parse paseo.json at ${join(directory, "paseo.json")}`,
+      );
+      expect(environment.get(context.workspaceId)).toBeNull();
+      expect(terminals.created).toEqual([]);
+
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          scripts: { api: { type: "service", command: "./bin/api", port: 43000 } },
+        }),
+      );
+      await expect(manager.start(context, "dev")).resolves.toMatchObject({
+        portBase: 43001,
+        portEnd: 43004,
+      });
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("allows empty disposal but preserves leases when the terminal worker is unavailable", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-unavailable-worker-"));
     tempDirs.push(directory);
     writeFileSync(
@@ -711,10 +767,11 @@ describe("WorkspaceLaunchManager", () => {
     );
     const unavailable = new Error("Terminals are held by a newer Paseo");
     const terminalManager = createTerminalManager({ unavailableError: unavailable });
+    const environment = new WorkspaceRuntimeEnvironmentService();
     const manager = new WorkspaceLaunchManager({
       terminalManager: terminalManager.manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
-      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      workspaceRuntimeEnvironment: environment,
       assertAutomationAllowed: async () => {},
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
@@ -733,6 +790,14 @@ describe("WorkspaceLaunchManager", () => {
     ]);
     await expect(manager.start(context, "dev")).rejects.toThrow(unavailable);
     expect(terminalManager.created).toEqual([]);
+    await expect(manager.disposeWorkspace(context.workspaceId)).resolves.toBeUndefined();
+    await environment.adopt({ workspaceId: context.workspaceId, portBase: 42000, portCount: 4 });
+    try {
+      await expect(manager.disposeWorkspace(context.workspaceId)).rejects.toThrow(unavailable);
+      expect(environment.get(context.workspaceId)).toMatchObject({ portBase: 42000, portCount: 4 });
+    } finally {
+      environment.release(context.workspaceId);
+    }
   });
 
   it("releases the shared port before starting a replacement launch", async () => {

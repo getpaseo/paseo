@@ -426,9 +426,14 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
     const runtimes = this.runtimes.get(workspaceId);
     const terminalManager = this.deps.terminalManager;
+    const unavailableError = terminalManager?.getUnavailableError?.();
+    if (unavailableError) {
+      const hasManagedState =
+        Boolean(runtimes?.size) || this.deps.workspaceRuntimeEnvironment.get(workspaceId) !== null;
+      if (hasManagedState) throw unavailableError;
+      return;
+    }
     if (terminalManager) {
-      const unavailableError = terminalManager.getUnavailableError?.();
-      if (unavailableError) throw unavailableError;
       const terminalIds = new Set<string>();
       for (const runtime of runtimes?.values() ?? []) {
         if (runtime.terminalId) terminalIds.add(runtime.terminalId);
@@ -748,7 +753,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
 
     const workspaceConfig = await readPaseoConfig(context.workspaceDirectory);
     if (!workspaceConfig.ok) {
-      return ports;
+      throw paseoConfigParseError(workspaceConfig);
     }
     for (const port of getExplicitWorkspaceServicePorts(
       workspaceConfig.config,
