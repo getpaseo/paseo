@@ -239,14 +239,16 @@ describe("hardware source adapter", () => {
     expect(claimed).toEqual(["Alt+KeyM", ...tabSwitching]);
     releaseRebound();
 
+    // A chord's later step is only a shortcut while the chord is in progress;
+    // claiming it always would stop the composer typing a capital A.
     source.publishPolicy({
-      bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Mod+J Shift+Tab" }),
+      bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Mod+J Shift+A" }),
       isMac: true,
       usesDesktopBindings: true,
       enabled: true,
     });
     const releaseChord = focusSurfaces.declare("message-input");
-    expect(claimed).toEqual([...tabSwitching, "Shift+Tab"]);
+    expect(claimed).toEqual(tabSwitching);
     releaseChord();
 
     source.publishPolicy({

@@ -38,16 +38,14 @@ function claimedShortcuts(
   };
   const claimed = new Map<string, ClaimedShortcut>();
   for (const binding of policy.bindings) {
-    if (binding.preventDefault === false) continue;
+    const combo = binding.parsedChord[0];
+    if (!combo || binding.preventDefault === false) continue;
+    if (combo.meta || combo.ctrl || combo.mod || !(combo.shift || combo.alt)) continue;
     if (!matchesKeyboardShortcutContext(binding.when, context)) continue;
-    // Every step of a chord reaches the text control, not only the first.
-    for (const combo of binding.parsedChord) {
-      if (combo.meta || combo.ctrl || combo.mod || !(combo.shift || combo.alt)) continue;
-      const shift = combo.shift === true;
-      const alt = combo.alt === true;
-      for (const code of combo.code === "Digit" ? DIGIT_CODES : [combo.code]) {
-        claimed.set(`${code}:${shift}:${alt}`, { code, shift, alt });
-      }
+    const shift = combo.shift === true;
+    const alt = combo.alt === true;
+    for (const code of combo.code === "Digit" ? DIGIT_CODES : [combo.code]) {
+      claimed.set(`${code}:${shift}:${alt}`, { code, shift, alt });
     }
   }
   return [...claimed.values()];
