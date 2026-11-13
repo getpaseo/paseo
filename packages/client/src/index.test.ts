@@ -790,6 +790,57 @@ async function createWorkspaceHandle(features: Record<string, boolean>) {
   return { client, ws, workspace: await creating };
 }
 
+test("a workspace handle marks the workspace read and unread", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+
+  const reading = workspace.markRead();
+  const clearRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(clearRequest).toMatchObject({
+    type: "workspace.clear_attention.request",
+    workspaceId: "workspace_open",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.clear_attention.response",
+      payload: {
+        requestId: clearRequest.requestId,
+        workspaceId: "workspace_open",
+        clearedAgentIds: [],
+        results: [],
+        success: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(reading).resolves.toBeUndefined();
+
+  const unreading = workspace.markUnread();
+  const unreadRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(unreadRequest).toMatchObject({
+    type: "workspace.mark_unread.request",
+    workspaceId: "workspace_open",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.mark_unread.response",
+      payload: {
+        requestId: unreadRequest.requestId,
+        workspaceId: "workspace_open",
+        markedAgentId: null,
+        success: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(unreading).resolves.toBeUndefined();
+  await client.close();
+});
+
 test("a background agent in an existing workspace fails before sending on a host without background agents", async () => {
   const { client, ws, workspace } = await createWorkspaceHandle({
     providerUsageList: true,

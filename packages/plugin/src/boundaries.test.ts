@@ -566,6 +566,8 @@ describe("sidebar data SDK boundary", () => {
         const terminals: readonly TerminalRef[] = useTerminals();
         const paseo = usePaseo();
         void paseo.workspaces.ref(workspace).setPinned(true);
+        void paseo.workspaces.ref(workspace).markRead();
+        void paseo.workspaces.ref(workspace).markUnread();
         void paseo.workspaces.ref(workspace).setLabel("Later", { assigned: true });
         void paseo.workspaces.ref("old-id").setTitle("Title");
         if (projects[0]) { paseo.projects.ref(projects[0]).open(); void paseo.projects.ref(projects[0]).createWorkspace(); }

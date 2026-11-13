@@ -199,6 +199,8 @@ export interface PaseoWorkspaceHandle {
   setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   setPinned(pinned: boolean): Promise<{ pinnedAt: string | null }>;
   setLabel(name: string, options: { assigned: boolean }): Promise<{ labels: string[] }>;
+  markRead(): Promise<void>;
+  markUnread(): Promise<void>;
   setBaseBranch(options: {
     baseRef: string;
     requestId?: string;
@@ -969,6 +971,8 @@ function createWorkspaceHandleFactory(
         if (current) current = { ...current, metadata };
       },
       setPinned: (pinned) => daemonClient.setWorkspacePinned(id, pinned),
+      markRead: () => daemonClient.clearWorkspaceAttention(id),
+      markUnread: () => daemonClient.markWorkspaceUnread(id),
       setLabel: (name, options) =>
         assignWorkspaceLabel({
           client: daemonClient,
