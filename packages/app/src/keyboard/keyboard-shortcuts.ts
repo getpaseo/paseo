@@ -107,15 +107,8 @@ interface ShortcutHelp {
 interface ShortcutBinding {
   id: string;
   /**
-   * Canonical override key in `ShortcutOverrides` when a platform-specific
-   * primary binding replaces a shared binding's default combo while keeping
-   * existing user overrides reachable in Settings.
-   */
-  overrideId?: string;
-  /**
-   * Secondary alias binding that stays active alongside the default combo,
-   * and disables itself when the primary binding's override row is cleared or
-   * rebound.
+   * Secondary alias binding that stays active alongside the platform's primary
+   * combo, and disables itself when that primary binding is cleared or rebound.
    */
   aliasOf?: string;
   action: KeyboardActionId;
@@ -730,11 +723,12 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Tab relative navigation ---
+  // macOS desktop uses Cmd+Shift+brackets; the browser owns those keys, so
+  // macOS web keeps Alt+Shift alongside every non-mac platform.
   {
-    id: "workspace-tab-navigate-relative-cmd-alt-left-mac-desktop",
-    overrideId: "workspace-tab-navigate-relative-alt-shift-left",
+    id: "workspace-tab-navigate-relative-cmd-shift-left-mac",
     action: "workspace.tab.navigate.relative",
-    combo: "Cmd+Alt+ArrowLeft",
+    combo: "Cmd+Shift+[",
     when: { mac: true, desktopBindings: true, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -744,10 +738,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-tab-navigate-relative-cmd-alt-right-mac-desktop",
-    overrideId: "workspace-tab-navigate-relative-alt-shift-right",
+    id: "workspace-tab-navigate-relative-cmd-shift-right-mac",
     action: "workspace.tab.navigate.relative",
-    combo: "Cmd+Alt+ArrowRight",
+    combo: "Cmd+Shift+]",
     when: { mac: true, desktopBindings: true, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -760,7 +753,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
       id: "workspace-tab-prev",
@@ -772,7 +765,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+]",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
       id: "workspace-tab-next",
@@ -781,19 +774,103 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac",
-    aliasOf: "workspace-tab-navigate-relative-alt-shift-left",
+    id: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
     action: "workspace.tab.navigate.relative",
-    combo: "Cmd+ArrowLeft",
-    when: { mac: true, commandCenter: false, editable: false, terminal: false, overlay: false },
+    combo: "Alt+Shift+[",
+    when: { mac: true, desktopBindings: false, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Alt+Shift+]",
+    when: { mac: true, desktopBindings: false, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-alt-left-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowLeft",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
     payload: { type: "delta", delta: -1 },
   },
   {
-    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac",
-    aliasOf: "workspace-tab-navigate-relative-alt-shift-right",
+    id: "workspace-tab-navigate-relative-cmd-alt-right-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowRight",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowLeft",
+    when: {
+      mac: true,
+      desktopBindings: true,
+      commandCenter: false,
+      editable: false,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: -1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-right-mac",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+ArrowRight",
-    when: { mac: true, commandCenter: false, editable: false, terminal: false, overlay: false },
+    when: {
+      mac: true,
+      desktopBindings: true,
+      commandCenter: false,
+      editable: false,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: 1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac-web",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowLeft",
+    when: {
+      mac: true,
+      desktopBindings: false,
+      commandCenter: false,
+      editable: false,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: -1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-web",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowRight",
+    when: {
+      mac: true,
+      desktopBindings: false,
+      commandCenter: false,
+      editable: false,
+      terminal: false,
+      overlay: false,
+    },
     payload: { type: "delta", delta: 1 },
   },
 
@@ -1330,8 +1407,7 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     ) {
       return { ...binding, combo: "", parsedChord: [] };
     }
-    const overrideKey = binding.id in overrides ? binding.id : (binding.overrideId ?? binding.id);
-    const override = overrides[overrideKey];
+    const override = overrides[binding.id];
     if (override === UNASSIGNED_COMBO) {
       return { ...binding, combo: "", parsedChord: [] };
     }
@@ -1689,7 +1765,7 @@ export function getBindingIdForAction(
     if (!helpMatchesPlatform(binding.when, platform)) {
       continue;
     }
-    return binding.overrideId ?? binding.id;
+    return binding.id;
   }
   return null;
 }

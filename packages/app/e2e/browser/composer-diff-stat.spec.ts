@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { seedSubagent } from "../support/helpers/subagents";
-import { submitMessage } from "../support/helpers/composer";
+import { expectWorkspaceHeaderVisible, submitMessage } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { gateNextAgentMessage } from "../support/helpers/agent-message-gate";
 import {
@@ -918,11 +918,12 @@ test.describe("touch composer tracks", () => {
         [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
       );
       await page.setViewportSize({ width: 200, height: 844 });
-      const narrowWidths = await Promise.all(
-        [tasks, subagents, changes].map(async (pill) => (await pill.boundingBox())!.width),
-      );
-      for (const [index, width] of wideWidths.entries())
-        expect(narrowWidths[index]).toBeGreaterThanOrEqual(width - 1);
+      // The compact layout mounts a new composer, so measure only after it replaces the wide one.
+      await expectWorkspaceHeaderVisible(page);
+      for (const [index, pill] of [tasks, subagents, changes].entries())
+        await expect
+          .poll(async () => (await pill.boundingBox())?.width ?? 0)
+          .toBeGreaterThanOrEqual(wideWidths[index] - 1);
       const track = page.getByTestId("composer-track-scroll");
       expect(await track.evaluate((node) => node.scrollWidth)).toBeGreaterThan(
         await track.evaluate((node) => node.clientWidth),

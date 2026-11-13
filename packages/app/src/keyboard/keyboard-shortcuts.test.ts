@@ -227,6 +227,20 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+[",
+      event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+]",
+      event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
       name: "matches tab relative navigation on mac desktop via Cmd+Alt+ArrowLeft even in message input",
       event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
       context: { isMac: true, usesDesktopBindings: true, focusScope: "message-input" },
@@ -506,6 +520,11 @@ describe("keyboard-shortcuts", () => {
       name: "does not close tab with Ctrl+W on non-mac desktop when terminal is focused",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not switch tabs with Alt+Shift+] on mac desktop (Cmd+Shift+] only)",
+      event: { key: "’", code: "BracketRight", altKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
     },
     {
       name: "does not match Ctrl+T on mac (Cmd only)",
@@ -803,8 +822,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
-        "workspace-tab-prev": ["mod", "alt", "Left"],
-        "workspace-tab-next": ["mod", "alt", "Right"],
+        "workspace-tab-prev": ["mod", "shift", "["],
+        "workspace-tab-next": ["mod", "shift", "]"],
         // Derived from `combo: "Cmd+W"`, so the token is `mod` where the row
         // used to be hand-authored as `meta`. This binding is mac-only and
         // `formatShortcut` renders both as ⌘, so the badge is unchanged — see
@@ -1368,6 +1387,17 @@ describe("unassigned shortcuts", () => {
       expect(getBindingIdForAction("workspace-tab-new", desktopNonMac)).toBe(TAB_NEW_BINDING);
     });
 
+    it("advertises Cmd+Shift+brackets for tab navigation on macOS desktop", () => {
+      const desktopMac = { isMac: true, usesDesktopBindings: true };
+
+      expect(getDefaultKeysForAction("workspace-tab-prev", desktopMac)).toEqual([
+        ["mod", "shift", "["],
+      ]);
+      expect(getDefaultKeysForAction("workspace-tab-next", desktopMac)).toEqual([
+        ["mod", "shift", "]"],
+      ]);
+    });
+
     it("still lists the default keys when nothing is overridden", () => {
       const sections = buildKeyboardShortcutHelpSections(desktopNonMac);
 
@@ -1514,34 +1544,35 @@ describe("shortcut capture completion", () => {
   });
 });
 
-describe("macOS tab relative navigation override compatibility", () => {
+describe("macOS tab relative navigation alias override compatibility", () => {
   const macDesktop = { isMac: true, usesDesktopBindings: true };
-  const PREV_TAB_ID = "workspace-tab-navigate-relative-alt-shift-left";
-  const NEXT_TAB_ID = "workspace-tab-navigate-relative-alt-shift-right";
+  const macWeb = { isMac: true, usesDesktopBindings: false };
+  const DESKTOP_PREV_TAB_ID = "workspace-tab-navigate-relative-cmd-shift-left-mac";
+  const DESKTOP_NEXT_TAB_ID = "workspace-tab-navigate-relative-cmd-shift-right-mac";
+  const WEB_PREV_TAB_ID = "workspace-tab-navigate-relative-alt-shift-left-mac-web";
+  const WEB_NEXT_TAB_ID = "workspace-tab-navigate-relative-alt-shift-right-mac-web";
 
-  it("keeps existing saved binding IDs reachable on macOS desktop", () => {
-    expect(getBindingIdForAction("workspace-tab-prev", macDesktop)).toBe(PREV_TAB_ID);
-    expect(getBindingIdForAction("workspace-tab-next", macDesktop)).toBe(NEXT_TAB_ID);
-  });
+  it("disables macOS desktop arrow aliases when the primary tab shortcut row is cleared or rebound", () => {
+    expect(getBindingIdForAction("workspace-tab-prev", macDesktop)).toBe(DESKTOP_PREV_TAB_ID);
+    expect(getBindingIdForAction("workspace-tab-next", macDesktop)).toBe(DESKTOP_NEXT_TAB_ID);
 
-  it("disables default arrow and bracket aliases when the row is cleared or rebound", () => {
     const clearedBindings = buildEffectiveBindings({
-      [PREV_TAB_ID]: UNASSIGNED_COMBO,
-      [NEXT_TAB_ID]: UNASSIGNED_COMBO,
+      [DESKTOP_PREV_TAB_ID]: UNASSIGNED_COMBO,
+      [DESKTOP_NEXT_TAB_ID]: UNASSIGNED_COMBO,
     });
     expect(
       resolveShortcutKeysForAction(
         "workspace-tab-prev",
-        { [PREV_TAB_ID]: UNASSIGNED_COMBO },
+        { [DESKTOP_PREV_TAB_ID]: UNASSIGNED_COMBO },
         macDesktop,
       ),
     ).toBeNull();
     for (const event of [
+      { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
       { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
-      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
       { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
       { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
-      { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
       { key: "ArrowRight", code: "ArrowRight", metaKey: true },
     ]) {
       expect(
@@ -1553,7 +1584,7 @@ describe("macOS tab relative navigation override compatibility", () => {
       ).toBeNull();
     }
 
-    const reboundOverrides: ShortcutOverrides = { [PREV_TAB_ID]: "Ctrl+PageUp" };
+    const reboundOverrides: ShortcutOverrides = { [DESKTOP_PREV_TAB_ID]: "Ctrl+PageUp" };
     const reboundBindings = buildEffectiveBindings(reboundOverrides);
     expect(
       resolveShortcutKeysForAction("workspace-tab-prev", reboundOverrides, macDesktop),
@@ -1566,8 +1597,8 @@ describe("macOS tab relative navigation override compatibility", () => {
       }).match?.action,
     ).toBe("workspace.tab.navigate.relative");
     for (const oldEvent of [
+      { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
       { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
-      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
       { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
     ]) {
       expect(
@@ -1575,6 +1606,30 @@ describe("macOS tab relative navigation override compatibility", () => {
           event: oldEvent,
           context: { ...macDesktop, focusScope: "other" },
           bindings: reboundBindings,
+        }).match,
+      ).toBeNull();
+    }
+  });
+
+  it("disables macOS web Cmd+Arrow aliases when the web tab shortcut row is cleared", () => {
+    expect(getBindingIdForAction("workspace-tab-prev", macWeb)).toBe(WEB_PREV_TAB_ID);
+    expect(getBindingIdForAction("workspace-tab-next", macWeb)).toBe(WEB_NEXT_TAB_ID);
+
+    const clearedBindings = buildEffectiveBindings({
+      [WEB_PREV_TAB_ID]: UNASSIGNED_COMBO,
+      [WEB_NEXT_TAB_ID]: UNASSIGNED_COMBO,
+    });
+    for (const event of [
+      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event,
+          context: { ...macWeb, focusScope: "other" },
+          bindings: clearedBindings,
         }).match,
       ).toBeNull();
     }
