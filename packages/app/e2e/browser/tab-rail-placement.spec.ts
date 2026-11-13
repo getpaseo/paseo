@@ -245,6 +245,28 @@ test.describe("Tab placement", () => {
     }
   });
 
+  test("a split pane dragged very narrow keeps half its width for content", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await openWorkspaceWithTabColumn(page, "tab-placement-sliver-");
+    try {
+      await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+      await expect(panes(page)).toHaveCount(2);
+
+      await dragBy(visible(page, "workspace-split-resize-handle"), -440, 0);
+      const narrowPane = panes(page).first();
+      await expect.poll(async () => (await boxOf(narrowPane)).width).toBeLessThan(260);
+
+      const paneWidth = (await boxOf(narrowPane)).width;
+      const column = narrowPane.getByTestId("workspace-tabs-column");
+      await expect.poll(async () => (await boxOf(column)).width).toBeLessThanOrEqual(paneWidth / 2);
+      await expect(tabsIn(column)).toHaveCount(3);
+      await page.screenshot({ path: testInfo.outputPath("narrow-split-pane.png") });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("a pane too narrow for its header swaps the column for the tab switcher", async ({
     page,
   }, testInfo) => {

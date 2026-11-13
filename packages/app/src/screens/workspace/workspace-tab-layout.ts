@@ -139,16 +139,19 @@ export function selectWorkspaceChrome<Compact, Full>(input: {
 
 /**
  * The width a pane draws a left tab rail at. The stored width is shared by every pane, so a narrow
- * pane caps it at half its own width instead of letting the rail crowd out the content.
+ * pane caps it at half its own width instead of letting the rail crowd out the content. That cap
+ * wins over the rail's own minimum: a split pane can be dragged down to a tenth of its group.
  */
 export function resolveWorkspaceTabRailWidth(input: {
   requestedWidth: number;
   paneWidth: number;
 }): number {
   "worklet";
-  const widestForPane = Math.max(MIN_TAB_RAIL_WIDTH, Math.floor(input.paneWidth / 2));
-  const widest = Math.min(MAX_TAB_RAIL_WIDTH, widestForPane);
-  return Math.max(MIN_TAB_RAIL_WIDTH, Math.min(widest, input.requestedWidth));
+  const preferred = Math.max(
+    MIN_TAB_RAIL_WIDTH,
+    Math.min(MAX_TAB_RAIL_WIDTH, input.requestedWidth),
+  );
+  return Math.min(preferred, Math.floor(input.paneWidth / 2));
 }
 
 // A count badge is only 16pt wide. Native popovers need a content width floor

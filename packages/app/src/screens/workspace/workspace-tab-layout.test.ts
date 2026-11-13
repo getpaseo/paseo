@@ -296,8 +296,9 @@ describe("left tab rail width", () => {
     expect(resolveWorkspaceTabRailWidth({ requestedWidth: 400, paneWidth: 600 })).toBe(300);
   });
 
-  it("keeps the rail usable in a pane narrower than twice its minimum", () => {
-    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 400, paneWidth: 200 })).toBe(140);
+  it("gives up its own minimum before it takes more than half of a very narrow pane", () => {
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 400, paneWidth: 200 })).toBe(100);
+    expect(resolveWorkspaceTabRailWidth({ requestedWidth: 220, paneWidth: 128 })).toBe(64);
   });
 });
 
