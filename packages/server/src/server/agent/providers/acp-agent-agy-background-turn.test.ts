@@ -985,4 +985,166 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(summarizeEvents(events)).toEqual(["turn_completed"]);
     expect(await session.canStopRuntime()).toBe(true);
   });
+
+  test("wakeup mid-step transitions (SYSTEM_MESSAGE thinking and post-GENERIC tool thinking) hold end_turn until final PLANNER_RESPONSE", async () => {
+    const { session, events, answer, writeTranscript } = createHarness();
+    const nowIso = new Date().toISOString();
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", created_at: nowIso, content: "deploy" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        tool_calls: [
+          { id: "call-bg", name: "run_command", args: '{"CommandLine":"gh run watch"}' },
+        ],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Tool is running as a background task with task id: session-agy-1/task-3",
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Waiting for deployment.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("deploy");
+    await answer({ stopReason: "end_turn" });
+    expect(summarizeEvents(events)).toEqual([]);
+
+    // 1) SYSTEM_MESSAGE arrives while the model is still thinking before step 6 is written.
+    const afterWakeupRows = [
+      ...baseRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: nowIso,
+        content: `[Message] timestamp=${nowIso} sender=session-agy-1/task-3 content=Task id "session-agy-1/task-3" finished`,
+      },
+    ];
+    writeTranscript(afterWakeupRows);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    // 2) Synchronous tool call finishes (GENERIC status: DONE) and is emitted, while model thinks for final reply.
+    const afterWakeupToolRows = [
+      ...afterWakeupRows,
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        thinking: "Checking live page in browser.",
+        tool_calls: [
+          {
+            id: "call-ego",
+            name: "run_command",
+            args: '{"CommandLine":"ego-browser verify","toolSummary":"Verify live page"}',
+          },
+        ],
+      },
+      {
+        step_index: 7,
+        type: "GENERIC",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Page verified OK",
+      },
+    ];
+    writeTranscript(afterWakeupToolRows);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+    expect(summarizeEvents(events)).toEqual([
+      "reasoning:Checking live page in browser.",
+      "tool:execute:completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    // 3) Final PLANNER_RESPONSE without tool_calls arrives -> turn settles and completes.
+    writeTranscript([
+      ...afterWakeupToolRows,
+      {
+        step_index: 8,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        content: "All checks passed.",
+        tool_calls: [],
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+    expect(summarizeEvents(events)).toEqual([
+      "reasoning:Checking live page in browser.",
+      "tool:execute:completed",
+      "assistant:All checks passed.",
+      "turn_completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("hook-state.json with fullyIdle=false holds end_turn and settles when Stop reports fullyIdle=true", async () => {
+    const { session, brainDir, sessionId, events, answer, writeTranscript } = createHarness();
+    const logsDir = path.join(brainDir, sessionId, ".system_generated", "logs");
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+
+    writeTranscript([
+      { step_index: 1, type: "USER_INPUT", status: "DONE", created_at: nowIso, content: "run" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Background work still running via lifecycle hook.",
+        tool_calls: [],
+      },
+    ]);
+    writeFileSync(
+      path.join(logsDir, "hook-state.json"),
+      JSON.stringify({
+        conversationId: sessionId,
+        event: "Stop",
+        fullyIdle: false,
+        ts: nowMs,
+      }),
+      "utf8",
+    );
+
+    await session.startTurn("run");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    writeFileSync(
+      path.join(logsDir, "hook-state.json"),
+      JSON.stringify({
+        conversationId: sessionId,
+        event: "Stop",
+        fullyIdle: true,
+        ts: nowMs + 1_000,
+      }),
+      "utf8",
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual(["turn_completed"]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
 });

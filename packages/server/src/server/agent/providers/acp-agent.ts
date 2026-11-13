@@ -355,6 +355,19 @@ const COMMAND_INVENTORY_POLL_MS = 25;
 const ANTIGRAVITY_BACKGROUND_POLL_MS = 1_500;
 const ANTIGRAVITY_SUBSCRIBE_CATCHUP_MS = 200;
 const ANTIGRAVITY_WAKEUP_TIMESTAMP_SKEW_MS = 1_500;
+const ANTIGRAVITY_MID_STEP_STALE_MS = 90_000;
+const ANTIGRAVITY_HOOK_STATE_SKEW_MS = 5_000;
+
+const AntigravityHookStateSchema = z
+  .object({
+    conversationId: z.string().nullable().optional(),
+    event: z.string().optional(),
+    fullyIdle: z.boolean().nullable().optional(),
+    ts: z.number().optional(),
+  })
+  .passthrough();
+
+type AntigravityHookState = z.infer<typeof AntigravityHookStateSchema>;
 
 const AntigravityTranscriptToolCallSchema = z
   .object({
@@ -1077,6 +1090,70 @@ function hasIncompletePlannerToolCalls({
   return false;
 }
 
+async function readAntigravityHookState(logsDir: string): Promise<AntigravityHookState | null> {
+  try {
+    const raw = await fs.readFile(path.join(logsDir, "hook-state.json"), "utf8");
+    const parsed = AntigravityHookStateSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function isAntigravityHookStateBusy({
+  hookState,
+  lastRow,
+}: {
+  hookState: AntigravityHookState | null;
+  lastRow: AntigravityTranscriptRow | undefined;
+}): boolean {
+  if (!hookState || typeof hookState.ts !== "number") {
+    return false;
+  }
+  const lastRowTimestampMs = lastRow?.created_at ? Date.parse(lastRow.created_at) : Number.NaN;
+  const isFresh =
+    Number.isNaN(lastRowTimestampMs) ||
+    hookState.ts >= lastRowTimestampMs - ANTIGRAVITY_HOOK_STATE_SKEW_MS;
+  if (!isFresh) {
+    return false;
+  }
+  return hookState.fullyIdle === false || hookState.event === "PreInvocation";
+}
+
+function isAntigravityWakeupMidStep({
+  lastRow,
+  hookState,
+  nowMs,
+}: {
+  lastRow: AntigravityTranscriptRow | undefined;
+  hookState: AntigravityHookState | null;
+  nowMs: number;
+}): boolean {
+  if (!lastRow) {
+    return false;
+  }
+  const toolCalls = Array.isArray(lastRow.tool_calls) ? lastRow.tool_calls : [];
+  if (lastRow.type === "PLANNER_RESPONSE" && lastRow.status === "DONE" && toolCalls.length === 0) {
+    return false;
+  }
+  const lastRowTimestampMs = lastRow.created_at ? Date.parse(lastRow.created_at) : Number.NaN;
+  if (
+    hookState?.event === "Stop" &&
+    hookState.fullyIdle === true &&
+    typeof hookState.ts === "number" &&
+    (Number.isNaN(lastRowTimestampMs) || hookState.ts >= lastRowTimestampMs - 2_000)
+  ) {
+    return false;
+  }
+  if (
+    !Number.isNaN(lastRowTimestampMs) &&
+    nowMs - lastRowTimestampMs > ANTIGRAVITY_MID_STEP_STALE_MS
+  ) {
+    return false;
+  }
+  return true;
+}
+
 async function hasActiveAntigravityBackgroundWork({
   rows,
   lastUserIndex,
@@ -1084,6 +1161,8 @@ async function hasActiveAntigravityBackgroundWork({
   syncedStepIndex,
   sessionId,
   sessionBrainDir,
+  logsDir,
+  nowMs = Date.now(),
 }: {
   rows: readonly AntigravityTranscriptRow[];
   lastUserIndex: number;
@@ -1091,9 +1170,16 @@ async function hasActiveAntigravityBackgroundWork({
   syncedStepIndex: number | undefined;
   sessionId: string;
   sessionBrainDir: string;
+  logsDir: string;
+  nowMs?: number;
 }): Promise<boolean> {
   if (lastUserIndex < 0) {
     return false;
+  }
+  const hookState = await readAntigravityHookState(logsDir);
+  const lastRow = rows[rows.length - 1];
+  if (isAntigravityHookStateBusy({ hookState, lastRow })) {
+    return true;
   }
   for (let index = lastUserIndex + 1; index < rows.length; index += 1) {
     const row = rows[index]!;
@@ -1117,11 +1203,10 @@ async function hasActiveAntigravityBackgroundWork({
     }
   }
   if (firstWakeupIndex >= 0) {
-    const lastRow = rows[rows.length - 1];
     const lastStepIndex = lastRow?.step_index ?? rows.length - 1;
     if (
       (syncedStepIndex !== undefined && syncedStepIndex < lastStepIndex) ||
-      lastRow?.type === "SYSTEM_MESSAGE" ||
+      isAntigravityWakeupMidStep({ lastRow, hookState, nowMs }) ||
       hasIncompletePlannerToolCalls({ rows, scanStart: firstWakeupIndex })
     ) {
       return true;
@@ -4673,6 +4758,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         syncedStepIndex: this.antigravitySyncedStepIndex,
         sessionId: this.sessionId,
         sessionBrainDir,
+        logsDir,
       });
       if (this.closed) {
         this.antigravityBackgroundBusy = false;
