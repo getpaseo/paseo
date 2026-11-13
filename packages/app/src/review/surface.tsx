@@ -36,6 +36,7 @@ import {
   type ReviewDraftComment,
 } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import {
   INLINE_REVIEW_EDITOR_HEIGHT,
   INLINE_REVIEW_GAP,
@@ -94,6 +95,7 @@ export function InlineReviewAddButton({
       accessibilityLabel={t("review.comment.add")}
       hitSlop={SMALL_ACTION_HIT_SLOP}
       onPress={onPress}
+      dataSet={FILLED_FOCUS_RING_DATASET}
       style={[styles.gutterActionVisual, style]}
     >
       <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />

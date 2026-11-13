@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 
 interface DictationControlsProps {
   volume: number;
@@ -190,7 +191,7 @@ export function DictationOverlay({
   }
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} dataSet={FILLED_FOCUS_RING_DATASET}>
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
