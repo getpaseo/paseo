@@ -338,7 +338,7 @@ function ScrollToBottomButton({
   const showBottomButton = !isNearBottom || isTimelineDetached;
   return (
     <View style={containerStyle} pointerEvents="box-none">
-      <View style={stylesheet.timelineControls}>
+      <View style={timelineControlStyles.row}>
         {pluginControls}
         {showBottomButton ? (
           <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
@@ -351,7 +351,7 @@ function ScrollToBottomButton({
             >
               <ChevronDown
                 size={TIMELINE_CONTROL_ICON_SIZE}
-                color={stylesheet.scrollToBottomIcon.color}
+                color={timelineControlStyles.icon.color}
               />
             </Pressable>
           </Animated.View>
@@ -1840,14 +1840,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     alignItems: "center",
-  },
-  timelineControls: {
-    flexDirection: "column",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  scrollToBottomIcon: {
-    color: theme.colors.foreground,
   },
 }));
 

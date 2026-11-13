@@ -59,6 +59,7 @@ import {
 import { usePluginButtonMenuOpen } from "./menu-open";
 import { pluginButtonStore } from "./store";
 import { resolvePluginPlatform } from "../platform";
+import { TIMELINE_CONTROL_ICON_SIZE, timelineControlStyles } from "@/agent-stream/timeline-control";
 import { scrollAgentTimeline } from "@/agent-stream/timeline-navigation";
 
 interface ButtonView {
@@ -107,9 +108,9 @@ function placementButtonStyle(
 ) {
   if (placement === "timeline") {
     return [
-      styles.timelineButton,
-      (state.hovered || state.pressed || state.open) && styles.timelineButtonActive,
-      disabled && styles.timelineButtonDisabled,
+      timelineControlStyles.button,
+      (state.hovered || state.pressed || state.open) && timelineControlStyles.active,
+      disabled && timelineControlStyles.disabled,
     ];
   }
   if (placement === "composer-toolbar") {
@@ -138,7 +139,7 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
 function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
   const color = view.props.theme.colors.foregroundMuted;
   let size = 14;
-  if (view.entry.placement === "timeline") size = 16;
+  if (view.entry.placement === "timeline") size = TIMELINE_CONTROL_ICON_SIZE;
   else if (view.entry.placement === "header" || view.entry.placement === "vertical-bar") size = 16;
   const Icon = pluginIconComponent(icon);
   return (
@@ -859,16 +860,6 @@ const styles = StyleSheet.create((theme) => ({
   button: { flexShrink: 1, minWidth: 0, maxWidth: 160 },
   active: { backgroundColor: theme.colors.surface2 },
   disabled: { opacity: theme.opacity[50] },
-  timelineButton: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    borderRadius: theme.borderRadius.full,
-  },
-  timelineButtonActive: { backgroundColor: theme.colors.interactionHighlight },
-  timelineButtonDisabled: { opacity: theme.opacity[50] },
   tooltipLabel: { fontSize: theme.fontSize.sm, color: theme.colors.foreground },
   composerLabel: {
     fontSize: theme.fontSize.sm,
