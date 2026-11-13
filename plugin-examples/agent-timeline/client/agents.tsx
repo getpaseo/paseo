@@ -128,7 +128,6 @@ export function Agents({ theme, layout, navigation }: PluginScreenProps) {
     },
   });
   const styles = useStyles(theme, layout.compact);
-  const back = useCallback(() => setSelected(null), []);
   const openAgent = useCallback(() => {
     if (selected) navigation?.openAgent({ agentId: selected });
   }, [navigation, selected]);
@@ -158,11 +157,6 @@ export function Agents({ theme, layout, navigation }: PluginScreenProps) {
       ) : (
         <View style={styles.detail}>
           <View style={styles.bar} testID="example-composer-choices">
-            {layout.compact ? (
-              <Pressable accessibilityRole="button" onPress={back} style={styles.chip}>
-                <Text style={styles.text}>‹ Agents</Text>
-              </Pressable>
-            ) : null}
             {CHOICES.map((option) => (
               <ChoiceChip
                 key={option.id}
