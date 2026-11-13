@@ -4443,6 +4443,18 @@ export const WorkspaceDescriptorPayloadSchema = z
       .string()
       .nullish()
       .transform((value) => value ?? null),
+    // Sidebar agent counts (finished-but-unopened / running / finished) computed
+    // from the daemon's full directory. Clients fall back to their own local
+    // projection when the field is absent.
+    // COMPAT(workspaceAgentCounts): added in v0.16.1, remove optional gate after 2027-05-12.
+    agentStatusCounts: z
+      .object({
+        unread: z.number().int().nonnegative(),
+        running: z.number().int().nonnegative(),
+        read: z.number().int().nonnegative(),
+      })
+      .nullable()
+      .optional(),
     activityAt: z.string().nullable(),
     createdAt: z.string().optional(),
     lastUserMessageAt: z.string().nullable().optional(),

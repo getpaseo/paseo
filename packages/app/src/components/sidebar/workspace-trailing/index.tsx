@@ -1,12 +1,16 @@
-import { Text } from "react-native";
+import { Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { SidebarWorkspaceTrailing } from "@/hooks/use-settings";
 import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import type { WorkspaceAgentStatusCounts } from "@/stores/session-store";
 
 export type { SidebarWorkspaceTrailing };
+
+const EMPTY_AGENT_STATUS_COUNTS: WorkspaceAgentStatusCounts = { unread: 0, running: 0, read: 0 };
 
 /**
  * The slot to the right of a workspace title. Three renderers behind one preference, so
@@ -23,18 +27,7 @@ export function useSidebarWorkspaceTrailing(): SidebarWorkspaceTrailing {
   return sidebarWorkspaceTrailing;
 }
 
-/** Whether the slot has anything to draw for this workspace under the current preference. */
-export function hasSidebarWorkspaceTrailing({
-  workspace,
-  trailing,
-}: {
-  workspace: SidebarWorkspaceEntry;
-  trailing: SidebarWorkspaceTrailing;
-}): boolean {
-  if (trailing === "diff") return workspace.diffStat !== null;
-  if (trailing === "timestamp") return workspace.statusEnteredAt !== null;
-  return false;
-}
+export { hasSidebarWorkspaceTrailing } from "./availability";
 
 export function SidebarWorkspaceTrailingContent({
   workspace,
@@ -51,7 +44,52 @@ export function SidebarWorkspaceTrailingContent({
   if (trailing === "timestamp" && workspace.statusEnteredAt) {
     return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} />;
   }
+  if (trailing === "agentStatus") {
+    return (
+      <SidebarAgentStatusCounts counts={workspace.agentStatusCounts ?? EMPTY_AGENT_STATUS_COUNTS} />
+    );
+  }
   return null;
+}
+
+export function SidebarAgentStatusCounts({
+  counts,
+  testID = "sidebar-workspace-agent-status-counts",
+}: {
+  counts: WorkspaceAgentStatusCounts;
+  testID?: string;
+}) {
+  const { t } = useTranslation();
+  // The wrapper is always mounted so gaining or losing the first count never changes how much
+  // room the title gets. Zeroes draw no text, but their slot keeps its width.
+  return (
+    <View
+      style={styles.agentStatusCounts}
+      testID={testID}
+      accessibilityLabel={t("sidebar.display.show.agentStatusCounts", {
+        ...counts,
+        defaultValue: "{{unread}} unread, {{running}} running, {{read}} read",
+      })}
+    >
+      {/* Fixed-width slots: a missing number leaves a gap in place, so the three columns stay
+          on the same x for every row instead of sliding with the title length. */}
+      <View style={styles.agentStatusSlot}>
+        {counts.unread > 0 ? (
+          <Text style={[styles.agentStatusValue, styles.agentStatusUnread]}>{counts.unread}</Text>
+        ) : null}
+      </View>
+      <View style={styles.agentStatusSlot}>
+        {counts.running > 0 ? (
+          <Text style={[styles.agentStatusValue, styles.agentStatusRunning]}>{counts.running}</Text>
+        ) : null}
+      </View>
+      <View style={styles.agentStatusSlot}>
+        {counts.read > 0 ? (
+          <Text style={[styles.agentStatusValue, styles.agentStatusRead]}>{counts.read}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
 /**
@@ -80,4 +118,28 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flexShrink: 0,
   },
+  agentStatusCounts: {
+    height: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  agentStatusSlot: {
+    width: 22,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  agentStatusValue: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+  },
+  // Green: finished, not opened. Blue: running. Grey: opened already.
+  agentStatusUnread: { color: theme.colors.statusDotSuccess },
+  agentStatusRunning: { color: theme.colors.statusDotRunning },
+  agentStatusRead: { color: theme.colors.foregroundMuted },
 }));

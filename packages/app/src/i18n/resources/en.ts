@@ -1243,6 +1243,8 @@ export const en = {
         labels: "Labels",
         diff: "Diff stats",
         timestamp: "Last activity",
+        agentStatus: "Agent status",
+        agentStatusCounts: "{{unread}} unread, {{running}} running, {{read}} read",
       },
       checks: {
         iconAndText: "Icon and text",

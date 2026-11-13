@@ -112,6 +112,14 @@ export interface Agent {
   projectPlacement?: ProjectPlacementPayload | null;
 }
 
+/**
+ * Sidebar counts for one workspace: finished-but-not-opened, running, and finished.
+ * Canonical shape comes from the wire payload so daemon and app cannot drift.
+ */
+export type WorkspaceAgentStatusCounts = NonNullable<
+  WorkspaceDescriptorPayload["agentStatusCounts"]
+>;
+
 export interface WorkspaceDescriptor {
   parentWorkspaceId?: string;
   createdAt: Date | null;
@@ -134,6 +142,8 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  /** Daemon-computed sidebar counts; null/absent on hosts that predate the field. */
+  agentStatusCounts?: WorkspaceDescriptorPayload["agentStatusCounts"];
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -179,6 +189,8 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
+    // COMPAT(workspaceAgentCounts): added in v0.16.1, remove the null fallback after 2027-05-12.
+    agentStatusCounts: payload.agentStatusCounts ?? null,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
