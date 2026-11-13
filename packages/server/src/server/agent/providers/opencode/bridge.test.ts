@@ -77,6 +77,157 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("discovers only the requested session's catalog and retains global discovery", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-discovery-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    const catalog = createCatalog();
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const unbind = bridge.bindSession({ sessionId: "bound", env: {}, tools: catalog });
+    bridge.bindSession({ sessionId: "disabled", env: {} });
+    try {
+      const { baseUrl, token } = bridge.sharedV2Connection();
+      async function discover(query: string) {
+        const response = await fetch(`${baseUrl}/_internal/opencode/tools${query}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return { status: response.status, body: await response.json() };
+      }
+      const expected = {
+        status: 200,
+        body: {
+          tools: [
+            {
+              name: "echo_context",
+              title: "Echo context",
+              description: "Returns the supplied value.",
+              inputSchema: serializePaseoToolInputParameters(catalog.getTool("echo_context")!),
+            },
+          ],
+        },
+      };
+      expect(await discover("")).toEqual(expected);
+      expect(await discover("?sessionID=bound")).toEqual(expected);
+      expect(await discover("?sessionID=disabled")).toEqual({ status: 200, body: { tools: [] } });
+      const missing = {
+        status: 404,
+        body: { error: "OpenCode session is not bound to a Paseo agent" },
+      };
+      expect(await discover("?sessionID=unknown")).toEqual(missing);
+      expect(await discover("?sessionID=")).toEqual(missing);
+      unbind();
+      expect(await discover("?sessionID=bound")).toEqual(missing);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  test("registers and executes session-only tools without exposing them to other sessions", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-session-tools-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    const builtin = createCatalog();
+    const pluginTool = {
+      name: "plugin_action",
+      description: "Run a session-specific plugin action.",
+      inputSchema: { value: z.string() },
+    };
+    const tools = new Map([...builtin.tools, [pluginTool.name, pluginTool] as const]);
+    const calls: unknown[] = [];
+    const author: PaseoToolCatalog = {
+      tools,
+      getTool: (name) => tools.get(name),
+      executeTool: async (name, input, context) => {
+        if (name !== pluginTool.name) return builtin.executeTool(name, input, context);
+        calls.push(input);
+        return { content: [{ type: "text", text: "Plugin action complete" }] };
+      },
+    };
+    bridge.setManifestCatalog(builtin);
+    await bridge.start();
+    bridge.bindSession({ sessionId: "author/one", env: {}, tools: author });
+    bridge.bindSession({ sessionId: "other", env: {}, tools: builtin });
+    bridge.bindSession({ sessionId: "disabled", env: {} });
+    try {
+      const registered = new Map<string, V2TestTool>();
+      const hooks: Array<(input: V2TestContext) => Promise<void>> = [];
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform) => {
+              transform({
+                add: (tool) => {
+                  registered.set(tool.name, tool);
+                },
+              });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async ({ sessionID }) => ({
+              parentID: sessionID === "child" ? "author/one" : undefined,
+            }),
+            hook: async (_name, hook) => {
+              hooks.push(hook);
+              return { dispose: async () => undefined };
+            },
+          },
+        },
+        ["author/one", "other", "disabled"],
+      );
+      try {
+        expect([...registered.keys()]).toEqual([
+          "paseo_structured_output",
+          "paseo_echo_context",
+          `paseo_${pluginTool.name}`,
+        ]);
+        const submit = registered.get(`paseo_${pluginTool.name}`)!;
+        expect(submit.input).toEqual(serializePaseoToolInputParameters(pluginTool));
+        const visibleTools = [
+          ["author/one", ["paseo_echo_context", `paseo_${pluginTool.name}`, "native"]],
+          ["child", ["paseo_echo_context", `paseo_${pluginTool.name}`, "native"]],
+          ["other", ["paseo_echo_context", "native"]],
+          ["disabled", ["native"]],
+          ["unrelated", ["native"]],
+        ] as const;
+        for (const [sessionID, expected] of visibleTools) {
+          const input = {
+            sessionID,
+            tools: Object.fromEntries([...registered.keys(), "native"].map((name) => [name, {}])),
+          };
+          for (const hook of hooks) await hook(input);
+          expect(Object.keys(input.tools)).toEqual(expected);
+        }
+        await expect(
+          submit.execute({ value: "revision" }, { sessionID: "author/one" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "Plugin action complete" }] });
+        await expect(
+          submit.execute({ value: "child revision" }, { sessionID: "child" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "Plugin action complete" }] });
+        await expect(submit.execute({}, { sessionID: "other" })).rejects.toThrow(
+          "Paseo tool not found",
+        );
+        await expect(submit.execute({}, { sessionID: "disabled" })).rejects.toThrow(
+          "Paseo tools are disabled",
+        );
+        await expect(submit.execute({}, { sessionID: "unrelated" })).rejects.toThrow("not bound");
+        expect(calls).toEqual([{ value: "revision" }, { value: "child revision" }]);
+        await expect(
+          registered
+            .get("paseo_echo_context")!
+            .execute({ value: "builtin" }, { sessionID: "other" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "builtin" }] });
+      } finally {
+        await dispose();
+      }
+    } finally {
+      await bridge.close();
+    }
+  });
+
   test("advertises agent-scoped schemas that execute through both bridge plugins", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-manifest-"));
     temporaryDirectories.push(paseoHome);

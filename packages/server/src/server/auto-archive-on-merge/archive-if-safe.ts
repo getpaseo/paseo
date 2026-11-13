@@ -29,7 +29,11 @@ export interface AutoArchiveArchiveOptions {
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
-  archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    context?: WorkspaceArchiveContext,
+    archivedAt?: string,
+  ) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -101,10 +105,14 @@ export async function archiveIfSafe(input: {
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
         listActiveWorkspaces: options.listActiveWorkspaces,
-        archiveWorkspaceRecord: (workspaceIdToArchive) =>
-          options.archiveWorkspaceRecord(workspaceIdToArchive, {
-            autoArchivedChangeRequestUrl: pullRequest.url,
-          }),
+        archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
+          options.archiveWorkspaceRecord(
+            workspaceIdToArchive,
+            {
+              autoArchivedChangeRequestUrl: pullRequest.url,
+            },
+            archivedAt,
+          ),
         emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: options.markWorkspaceArchiving,
         clearWorkspaceArchiving: options.clearWorkspaceArchiving,

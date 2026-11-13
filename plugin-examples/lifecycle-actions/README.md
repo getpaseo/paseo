@@ -2,7 +2,7 @@
 
 Small callbacks using the existing SDK:
 
-- Send `Try again.` when the latest output contains `out of credits`.
+- Send `Try again.` when the latest output contains `out of credits`, except to background agents.
 - Decline a shell request matching `rm -rf`; approve exactly `git status`; leave other requests alone.
 - Inject `PASEO_HOOK_CREATE_EXAMPLE=created` on creation and `PASEO_HOOK_OPEN_EXAMPLE=opened` on each session opening.
 - Change requested Codex agents to Claude Haiku before creation.

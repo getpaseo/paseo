@@ -112,6 +112,15 @@ need an artifact. `android:clear` removes the generated Android project.
 
 Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
+With an emulator or device connected, run the hardware keyboard's window-dispatch regression tests
+from `packages/app/android`:
+
+```bash
+./gradlew :paseo-hardware-keyboard:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+These check terminal arrow ownership, held-key repeats and modifiers, and ordinary text-field editing.
+
 ### Diagnostic logs without ADB
 
 In a dogfood build, open Android's Files app → Downloads → **Paseo diagnostics** and share all
