@@ -1634,4 +1634,43 @@ describe("macOS tab relative navigation alias override compatibility", () => {
       ).toBeNull();
     }
   });
+
+  it("allows Cmd+ArrowLeft/Right from an empty message-input while blocking non-empty drafts and generic inputs", () => {
+    for (const platform of [macDesktop, macWeb]) {
+      for (const [key, expectedDelta] of [
+        ["ArrowLeft", -1],
+        ["ArrowRight", 1],
+      ] as const) {
+        const event = { key, code: key, metaKey: true };
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "message-input", messageInputEmpty: true },
+          }).match,
+        ).toMatchObject({
+          action: "workspace.tab.navigate.relative",
+          payload: { delta: expectedDelta },
+        });
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "message-input", messageInputEmpty: false },
+          }).match,
+        ).toBeNull();
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "editable", messageInputEmpty: true },
+          }).match,
+        ).toBeNull();
+      }
+    }
+
+    expect(
+      resolveShortcut({
+        event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "message-input", messageInputEmpty: true },
+      }).match,
+    ).toBeNull();
+  });
 });

@@ -9,7 +9,7 @@ import type { KeyboardSourceInput } from "./sources/contract";
 import type { createOverlayRegistry } from "./overlays";
 
 interface KeyboardPipelineOptions {
-  getContext(): Omit<KeyboardShortcutContext, "focusScope">;
+  getContext(): Omit<KeyboardShortcutContext, "focusScope" | "messageInputEmpty">;
   getBindings(): readonly ParsedShortcutBinding[];
   isCapturing(): boolean;
   dispatch(match: KeyboardShortcutMatch, input: KeyboardSourceInput): boolean;
@@ -42,6 +42,7 @@ export function createKeyboardPipeline(options: KeyboardPipelineOptions) {
         context: {
           ...options.getContext(),
           focusScope: input.focusScope,
+          messageInputEmpty: input.messageInputEmpty,
           overlayOpen: options.overlays.hasActive(),
         },
         bindings: options.getBindings(),

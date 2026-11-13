@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveKeyboardFocusScope } from "./focus-scope";
+import { isMessageInputTargetEmpty, resolveKeyboardFocusScope } from "./focus-scope";
 
 class FakeNode {
   parentElement: FakeElement | null = null;
@@ -8,14 +8,28 @@ class FakeNode {
 class FakeElement extends FakeNode {
   tagName: string;
   isContentEditable = false;
+  value?: string;
+  textContent: string | null = null;
   private selectors: Set<string>;
 
-  constructor(input?: { tagName?: string; selectors?: string[]; isContentEditable?: boolean }) {
+  constructor(input?: {
+    tagName?: string;
+    selectors?: string[];
+    isContentEditable?: boolean;
+    value?: string;
+    textContent?: string | null;
+  }) {
     super();
     this.tagName = (input?.tagName ?? "div").toUpperCase();
     this.selectors = new Set(input?.selectors ?? []);
     if (input?.isContentEditable) {
       this.isContentEditable = true;
+    }
+    if (input?.value !== undefined) {
+      this.value = input.value;
+    }
+    if (input?.textContent !== undefined) {
+      this.textContent = input.textContent;
     }
   }
 
@@ -76,5 +90,23 @@ describe("resolveKeyboardFocusScope", () => {
       commandCenterOpen: false,
     });
     expect(scope).toBe("editable");
+  });
+
+  it("reports whether a focused message-input text control is empty", () => {
+    const root = new FakeElement({ selectors: ["[data-testid='message-input-root']"] });
+    const emptyTextarea = new FakeElement({ tagName: "textarea", value: "" });
+    emptyTextarea.parentElement = root;
+    expect(isMessageInputTargetEmpty(emptyTextarea as unknown as EventTarget)).toBe(true);
+
+    const draftTextarea = new FakeElement({ tagName: "textarea", value: " " });
+    draftTextarea.parentElement = root;
+    expect(isMessageInputTargetEmpty(draftTextarea as unknown as EventTarget)).toBe(false);
+
+    const emptyEditable = new FakeElement({ isContentEditable: true, textContent: "" });
+    emptyEditable.parentElement = root;
+    expect(isMessageInputTargetEmpty(emptyEditable as unknown as EventTarget)).toBe(true);
+
+    const nonComposerInput = new FakeElement({ tagName: "textarea", value: "" });
+    expect(isMessageInputTargetEmpty(nonComposerInput as unknown as EventTarget)).toBe(false);
   });
 });

@@ -79,6 +79,11 @@ export function usePaneHost(): PaneHost | null {
   return useContext(PaneContext)?.host ?? null;
 }
 
+/** The tab id of the pane around this component, or null outside a workspace tab pane. */
+export function useOptionalPaneTabId(): string | null {
+  return useContext(PaneContext)?.tabId ?? null;
+}
+
 export function usePaneFocus(): PaneFocusContextValue {
   const value = useContext(PaneFocusContext);
   invariant(value, "PaneFocusContext is required");

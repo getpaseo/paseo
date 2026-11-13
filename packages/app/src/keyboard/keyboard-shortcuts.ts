@@ -20,6 +20,7 @@ export interface KeyboardShortcutContext {
   isMac: boolean;
   usesDesktopBindings: boolean;
   focusScope: KeyboardFocusScope;
+  messageInputEmpty?: boolean;
   commandCenterOpen: boolean;
   overlayOpen?: boolean;
 }
@@ -74,6 +75,8 @@ interface ShortcutWhen {
   desktopBindings?: boolean;
   /** false = disabled when a text-editing surface is focused */
   editable?: false;
+  /** Allow firing from an empty chat composer even when `editable` is false. */
+  allowEmptyMessageInput?: true;
   /** false = disabled when terminal is focused */
   terminal?: false;
   /** false = disabled when command center is open */
@@ -823,6 +826,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       desktopBindings: true,
       commandCenter: false,
       editable: false,
+      allowEmptyMessageInput: true,
       terminal: false,
       overlay: false,
     },
@@ -838,6 +842,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       desktopBindings: true,
       commandCenter: false,
       editable: false,
+      allowEmptyMessageInput: true,
       terminal: false,
       overlay: false,
     },
@@ -853,6 +858,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       desktopBindings: false,
       commandCenter: false,
       editable: false,
+      allowEmptyMessageInput: true,
       terminal: false,
       overlay: false,
     },
@@ -868,6 +874,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       desktopBindings: false,
       commandCenter: false,
       editable: false,
+      allowEmptyMessageInput: true,
       terminal: false,
       overlay: false,
     },
@@ -1448,7 +1455,7 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
  */
 function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
   if (when?.editable !== false) return when;
-  const { editable: _editable, ...rest } = when;
+  const { editable: _editable, allowEmptyMessageInput: _allowEmptyMessageInput, ...rest } = when;
   return rest;
 }
 
@@ -1526,11 +1533,14 @@ export function matchesKeyboardShortcutContext(
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktopBindings !== undefined && when.desktopBindings !== context.usesDesktopBindings)
     return false;
-  if (
-    when.editable === false &&
-    (context.focusScope === "message-input" || context.focusScope === "editable")
-  ) {
-    return false;
+  if (when.editable === false) {
+    if (context.focusScope === "editable") return false;
+    if (
+      context.focusScope === "message-input" &&
+      !(when.allowEmptyMessageInput && context.messageInputEmpty)
+    ) {
+      return false;
+    }
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;

@@ -1,14 +1,19 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import {
   selectIsExplorerSidebarVisible,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { revealWorkspaceTab } from "./navigation";
+import { revealWorkspaceTab, revealWorkspaceTabPreservingBrowsingFocus } from "./navigation";
 import { openWorkspaceTargetAtLocation } from "./open-beside";
+import {
+  clearWorkspaceTabAutoFocusSuppression,
+  isWorkspaceTabAutoFocusSuppressed,
+} from "./tab-navigation-focus";
 
 const workspaceKey = "server:workspace";
 beforeEach(() => {
+  clearWorkspaceTabAutoFocusSuppression(workspaceKey);
   useWorkspaceLayoutStore.setState({
     layoutMode: "split-panes",
     layoutByWorkspace: {},
@@ -130,3 +135,44 @@ it.each(["agent-list", "file-explorer"] as const)(
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   },
 );
+it("suppresses auto-focus during relative tab cycling and clears suppression on explicit reveal", () => {
+  const store = useWorkspaceLayoutStore.getState();
+  const agentTabId = store.openTab({
+    workspaceKey,
+    target: { kind: "agent", agentId: "root" },
+    intent: "reveal",
+  })!;
+  const fileTabId = store.openTab({
+    workspaceKey,
+    target: { kind: "file", path: "notes.md" },
+    intent: "reveal",
+  })!;
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+
+  const blur = vi.fn();
+  const originalDocument = (globalThis as { document?: unknown }).document;
+  const originalHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;
+  class FakeHTMLElement {
+    blur = blur;
+  }
+  const activeElement = new FakeHTMLElement();
+  (globalThis as { HTMLElement?: unknown }).HTMLElement = FakeHTMLElement;
+  (globalThis as { document?: unknown }).document = {
+    activeElement,
+    body: new FakeHTMLElement(),
+    documentElement: new FakeHTMLElement(),
+  };
+
+  try {
+    revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: agentTabId });
+    expect(blur).toHaveBeenCalledTimes(1);
+    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(true);
+    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
+
+    revealWorkspaceTab(workspaceKey, fileTabId);
+    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+  } finally {
+    (globalThis as { document?: unknown }).document = originalDocument;
+    (globalThis as { HTMLElement?: unknown }).HTMLElement = originalHTMLElement;
+  }
+});
