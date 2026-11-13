@@ -1335,6 +1335,74 @@ test("a fork checked out at a detached HEAD still publishes its parent", async (
   });
 });
 
+test("a parent lookup that finishes during a refresh keeps its answer", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  const lookupStarted = Promise.withResolvers<void>();
+  const releaseLookup = Promise.withResolvers<void>();
+  const statusLoadStarted = Promise.withResolvers<void>();
+  const releaseStatusLoad = Promise.withResolvers<void>();
+  let holdNextStatusLoad = false;
+  let repositoryViews = 0;
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "auth" && args[1] === "status" && holdNextStatusLoad) {
+              holdNextStatusLoad = false;
+              statusLoadStarted.resolve();
+              await releaseStatusLoad.promise;
+            }
+            if (args[0] === "repo" && args[1] === "view" && args[2] === "fork-owner/repo") {
+              repositoryViews += 1;
+              if (repositoryViews === 1) {
+                lookupStarted.resolve();
+                await releaseLookup.promise;
+              }
+              return {
+                stdout: JSON.stringify({
+                  owner: { login: "fork-owner" },
+                  name: "repo",
+                  parent: { owner: { login: "main-owner" }, name: "repo" },
+                }),
+                stderr: "",
+              };
+            }
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      },
+    },
+  });
+  cleanup.push(() => service.dispose());
+
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  await lookupStarted.promise;
+
+  holdNextStatusLoad = true;
+  const second = service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  await statusLoadStarted.promise;
+
+  // The first refresh's lookup finishes while the second refresh is still loading the PR status.
+  releaseLookup.resolve();
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
+  releaseStatusLoad.resolve();
+
+  const snapshot = await second;
+  expect(snapshot.forgeWeb).toEqual({
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
+  expect(repositoryViews).toBe(1);
+}, 30_000);
+
 test("the first snapshot publishes git state and pull request status without waiting for the parent lookup", async () => {
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
   writeFileSync(path.join(repo, "changed.txt"), "dirty\n");

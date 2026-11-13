@@ -3776,12 +3776,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       forgeService.invalidate({ cwd: target.cwd });
     }
 
-    const forgeWeb = forgeWebForResolution({
-      remoteUrl,
-      resolution,
-      previous: target.latestForgeWeb,
-      nowMs: this.deps.now().getTime(),
-    });
     const forgeSnapshot = await loadForgeSnapshot({
       cwd: target.cwd,
       forgeService,
@@ -3795,8 +3789,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
-    // Publish the host with the snapshot; the parent lookup finishes in the background.
-    target.latestForgeWeb = forgeWeb;
+    // Publish the host with the snapshot; the parent lookup finishes in the background. Read the
+    // previous entry after the wait: a lookup for the old entry may have completed meanwhile.
+    target.latestForgeWeb = forgeWebForResolution({
+      remoteUrl,
+      resolution,
+      previous: target.latestForgeWeb,
+      nowMs: this.deps.now().getTime(),
+    });
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
     void this.resolveForgeWebReferenceIfDue(target);
   }
