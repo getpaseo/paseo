@@ -1,24 +1,29 @@
-Regression test command:
-npx vitest run --root packages/app --project browser src/components/tool-call-details.browser.test.tsx --bail=1 --reporter=verbose
+Component regression test:
+Command: npx vitest run --root packages/app --project browser src/components/tool-call-details.browser.test.tsx --bail=1 --reporter=verbose
 
 Before the fix:
-× ToolCallDetailsContent empty state > insets the empty message to align with the tool-call sheet header
+× insets the empty message to align with the tool-call sheet header
   expected '' to be '16px' // Object.is equality
 Test Files 1 failed
 Tests 1 failed
 
 After the fix:
-✓ ToolCallDetailsContent empty state > insets the empty message to align with the tool-call sheet header
+✓ insets the empty message to align with the tool-call sheet header
 Test Files 1 passed
 Tests 1 passed
 
-Repository checks (after `npm run build:server`):
-`npm run typecheck` — exit 0
-`npm run lint` — Found 0 warnings and 0 errors.
-`npm run format:check` — All matched files use the correct format.
-`git diff --check` — exit 0
+Visual app E2E capture:
+Command: npx playwright test --project=browser e2e/browser/tool-call-empty-state.qa.spec.ts --reporter=line
+Before: 1 passed (14.0s), with the inset temporarily removed to capture before.png.
+After: 1 passed (14.0s), with the fix restored to capture after.png.
+The temporary E2E capture harness was removed after the screenshots were saved.
 
-The commit's Lefthook pre-commit checks also passed: format, lint, and full typecheck.
+Repository checks after the fix:
+npm run build:server — passed
+npm run typecheck — passed
+npm run lint — Found 0 warnings and 0 errors.
+npm run format:check — All matched files use the correct format.
+git diff --check — passed
 
-Android device attempt:
-`npm run dev:android` — not completed. The first-run Gradle dependency downloads remained idle for about 20 minutes; the build was stopped before installation. No Android UI verification is claimed.
+Android attempt:
+npm run dev:android — not completed. First-run Gradle dependency downloads remained idle for about 20 minutes; the build was stopped before installation. No Android UI verification is claimed.

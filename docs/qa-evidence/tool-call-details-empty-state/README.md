@@ -1,29 +1,27 @@
 # Tool-call details empty state — #9128
 
-## Scope and provenance
-
-An agent captured these screenshots from the actual `ToolCallDetailsContent` component in the Chromium browser test project. The before image was captured before adding the inset; the after image was captured after the fix. Both use the app's real translation for the empty message. The isolated capture does not render the sheet header; the regression test checks that the message has the same 16px horizontal inset as that header.
-
 ## Before and after
 
-**Before:**
+These screenshots come from the app's Chromium browser E2E flow. The flow opens a real workspace, sends a message to the mock agent, and opens the normal **Read** tool-call details sheet. For this QA scenario, the read result is left without file content so the sheet shows its empty state.
 
-![Empty message flush with the left edge](before.png)
+**Before:** the empty message starts at the sheet edge, while the header has a 16px inset.
 
-**After:**
+![Before: empty message flush with the sheet edge](before.png)
 
-![Empty message inset from the left edge](after.png)
+**After:** the empty message has the same 16px horizontal inset as the sheet header.
+
+![After: empty message inset from the sheet edge](after.png)
 
 ## Verification
 
-[Raw test and check output](validation.txt) records the regression test failing before the fix and passing after it, plus the repository typecheck, lint, and format checks.
+- The browser regression test checks the message and both 16px horizontal paddings. It failed before the fix and passed after it.
+- The app E2E flow opened the real tool-call sheet and captured both visual states in Chromium. Its temporary screenshot harness is not part of the PR changes.
+- Repository typecheck, lint, format check, and server build passed; the captured command results are in [validation.txt](validation.txt).
 
-## Coverage and limits
+## Platform coverage
 
-| Surface                           | Tested                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Chromium browser component render | Yes                                                                                              |
-| Android SM-F741N (API 37)         | Not verified; first-run Gradle dependency downloads did not finish, so the app was not installed |
-| iOS and desktop                   | No                                                                                               |
-
-The test checks the rendered message and both horizontal padding values. It does not claim end-to-end coverage of the tool-call sheet flow.
+| Surface                    | Result                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| App browser UI in Chromium | Verified; before and after screenshots above                                                     |
+| Android SM-F741N (API 37)  | Not verified; first-run Gradle dependency downloads did not finish, so the app was not installed |
+| iOS and desktop            | Not tested                                                                                       |
