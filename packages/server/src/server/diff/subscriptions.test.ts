@@ -530,6 +530,106 @@ test("submodule commits invalidate cached worktree gitlink bodies", async () => 
   }
 });
 
+test("stat-only changes reuse cached bodies and send no body frames", async () => {
+  const { utimes } = await import("node:fs/promises");
+  const cwd = await mkdtemp(join(tmpdir(), "diff-stat-only-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const streams = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root) {
+      return { repoRoot: root, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  const path = join(cwd, "file.txt");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "README"), "base\n");
+    await writeFile(path, "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(path, "changed\n");
+    const subscription = await streams.subscribe(
+      { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+      async (frame) => {
+        frames.push(frame);
+      },
+    );
+    await subscription.start();
+    expect(
+      frames.flatMap((frame) => (frame.opcode === DiffOpcode.Bodies ? frame.files : [])),
+    ).toContainEqual(expect.objectContaining({ path: "file.txt" }));
+    frames.length = 0;
+    for (let index = 0; index < 3; index++) {
+      const ended = frames.filter((frame) => frame.opcode === DiffOpcode.End).length;
+      const timestamp = new Date(Date.now() + 1000 * (index + 1));
+      await utimes(path, timestamp, timestamp);
+      await streams.invalidateForCwd(cwd);
+      await expect
+        .poll(() => frames.filter((frame) => frame.opcode === DiffOpcode.End).length, {
+          timeout: 5000,
+        })
+        .toBeGreaterThanOrEqual(ended + 1);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(frames.filter((frame) => frame.opcode === DiffOpcode.Bodies)).toHaveLength(0);
+    const beginnings = frames.filter((frame) => frame.opcode === DiffOpcode.Begin);
+    expect(beginnings.length).toBeGreaterThanOrEqual(3);
+    for (const begin of beginnings) {
+      expect(begin.entries.find((entry) => entry.path === "file.txt")?.body).toBe(false);
+    }
+    await subscription.release();
+  } finally {
+    await streams.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("staging unchanged worktree content reuses its cached body", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-staging-only-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const streams = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root) {
+      return { repoRoot: root, unsubscribe: async () => {} };
+    },
+  });
+  const frames: DiffFrame[] = [];
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "README"), "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(join(cwd, "staged.ts"), "export const staged = true;\n");
+    const subscription = await streams.subscribe(
+      { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+      async (frame) => {
+        frames.push(frame);
+      },
+    );
+    await subscription.start();
+    expect(
+      frames.flatMap((frame) => (frame.opcode === DiffOpcode.Bodies ? frame.files : [])),
+    ).toContainEqual(expect.objectContaining({ path: "staged.ts" }));
+    frames.length = 0;
+    git("add", "-A");
+    await streams.invalidateForCwd(cwd);
+    await expect
+      .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+      .toBe(true);
+    expect(frames.filter((frame) => frame.opcode === DiffOpcode.Bodies)).toHaveLength(0);
+    expect(frames.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+      entries: [{ path: "staged.ts", change: "added", body: false }],
+    });
+    await subscription.release();
+  } finally {
+    await streams.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test.each([true, false])(
   "tracked=%s timestamp-preserving replacements refresh cached bodies",
   async (tracked) => {

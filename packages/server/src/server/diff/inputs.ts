@@ -13,6 +13,7 @@ export async function readGitInputs(
   paths: string[],
   worktreeFiles: Set<string>,
   options: GitCommandOptions,
+  literalContent: ReadonlyMap<string, string> = new Map(),
 ) {
   const regular = paths.filter((path) => worktreeFiles.has(path));
   const [interpretation, blobs] = await Promise.all([
@@ -34,7 +35,7 @@ export async function readGitInputs(
       fingerprint([
         interpretation.config,
         interpretation.attributes.get(path) ?? [],
-        blobByPath.get(path) ?? null,
+        blobByPath.get(path) ?? literalContent.get(path) ?? null,
       ]),
     ]),
   );
