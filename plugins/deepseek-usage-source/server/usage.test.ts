@@ -190,6 +190,47 @@ describe("DeepSeek usage discovery", () => {
     ]);
   });
 
+  it("uses a session HOME instead of falling back to daemon Pi credentials", async () => {
+    const sessionHome = join(home, "session-home");
+    mkdirSync(join(sessionHome, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      join(sessionHome, ".pi", "agent", "auth.json"),
+      JSON.stringify({ deepseek: { key: "session-home-key" } }),
+    );
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".pi", "agent", "auth.json"),
+      JSON.stringify({ deepseek: { key: "daemon-key" } }),
+    );
+
+    expect(
+      await discover({
+        kind: "session",
+        provider: "pi",
+        model: "deepseek/deepseek-flash",
+        env: { HOME: sessionHome },
+      }),
+    ).toEqual([
+      {
+        key: "default",
+        label: "DeepSeek API",
+        input: { store: "file", locator: join(sessionHome, ".pi", "agent", "auth.json") },
+      },
+    ]);
+  });
+
+  it("does not fall back to a daemon key when a session has no DeepSeek login", async () => {
+    process.env.DEEPSEEK_API_KEY = "daemon-key";
+    expect(
+      await discover({
+        kind: "session",
+        provider: "pi",
+        model: "deepseek/deepseek-flash",
+        env: { HOME: join(home, "empty-session-home") },
+      }),
+    ).toEqual([]);
+  });
+
   it("parses comma and semicolon separated aliases", () => {
     expect(parseModelAliases("claude:sonnet, pi:deepseek-flash;claude:opus")).toEqual([
       { provider: "claude", model: "sonnet" },

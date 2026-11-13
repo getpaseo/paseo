@@ -39,8 +39,15 @@ interface ModelAlias {
   model: string;
 }
 
-function piAuthPath(agentDirectory?: string): string {
-  return join(agentDirectory?.trim() || join(homedir(), ".pi", "agent"), "auth.json");
+function piAgentDirectory(env: Record<string, string | undefined>): string {
+  return (
+    env.PI_CODING_AGENT_DIR?.trim() ||
+    join(env.HOME?.trim() || env.USERPROFILE?.trim() || homedir(), ".pi", "agent")
+  );
+}
+
+function piAuthPath(env: Record<string, string | undefined> = process.env): string {
+  return join(piAgentDirectory(env), "auth.json");
 }
 
 async function readPiKey(path: string): Promise<string | null> {
@@ -66,11 +73,7 @@ async function findKeyLocator(scope: UsageScope): Promise<KeyLocator | null> {
   if (scope.kind === "session") {
     const sessionKey = scope.env.DEEPSEEK_API_KEY?.trim();
     if (sessionKey) return { store: "value", locator: sessionKey };
-    const agentDirectory = scope.env.PI_CODING_AGENT_DIR;
-    if (agentDirectory) {
-      const sessionLogin = await piKeyLocator(piAuthPath(agentDirectory));
-      if (sessionLogin) return sessionLogin;
-    }
+    return piKeyLocator(piAuthPath(scope.env));
   }
 
   if (process.env.DEEPSEEK_API_KEY?.trim()) return { store: "env", locator: "DEEPSEEK_API_KEY" };
