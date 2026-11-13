@@ -466,6 +466,8 @@ interface WorkspaceGitTarget {
   latestForge: WorkspaceGitRuntimeSnapshot["forge"] | null;
   latestForgeLoadedAtMs: number | null;
   latestForgeWeb: ForgeWebEntry | null;
+  /** The remote the forge snapshot was last refreshed for; null until the first forge refresh. */
+  forgeRefreshedForRemote: { remoteUrl: string | null } | null;
   latestSnapshot: WorkspaceGitRuntimeSnapshot | null;
   latestSnapshotLoadedAtMs: number | null;
   latestFacts: CheckoutSnapshotFacts | null;
@@ -1310,6 +1312,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestGitLoadedAtMs: null,
       latestForge: null,
       latestForgeWeb: null,
+      forgeRefreshedForRemote: null,
       latestForgeLoadedAtMs: null,
       latestSnapshot: null,
       latestSnapshotLoadedAtMs: null,
@@ -3577,6 +3580,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     if (request.includeForge) {
       await this.refreshForgeSnapshot(target, request, facts, runRefreshGitCommand);
+    } else if (this.hasRemoteChangedSinceForgeRefresh(target)) {
+      // `git remote set-url` reaches here as a git-only refresh. The forge, its host and the
+      // fork's parent all belong to the old remote, so resolve the new one now.
+      await this.refreshForgeSnapshot(
+        target,
+        { ...request, includeForge: true, force: true },
+        facts,
+        runRefreshGitCommand,
+      );
     }
 
     const snapshot = this.combineSnapshot(target);
@@ -3723,6 +3735,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return facts;
   }
 
+  private hasRemoteChangedSinceForgeRefresh(target: WorkspaceGitTarget): boolean {
+    const refreshedFor = target.forgeRefreshedForRemote;
+    return (
+      refreshedFor !== null &&
+      target.latestGit?.isGit === true &&
+      refreshedFor.remoteUrl !== target.latestGit.remoteUrl
+    );
+  }
+
   private async refreshForgeSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
@@ -3730,6 +3751,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     runRefreshGitCommand: RunGitCommand,
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
+    target.forgeRefreshedForRemote = { remoteUrl };
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which

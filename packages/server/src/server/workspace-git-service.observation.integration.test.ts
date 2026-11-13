@@ -1122,17 +1122,35 @@ test("a remote on no forge publishes no web location", async () => {
   expect(snapshot.forgeWeb).toBeUndefined();
 });
 
-test("changing the origin remote stops publishing the previous remote's web location", async () => {
+test("changing the origin remote publishes the new remote's web location, not the previous one", async () => {
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
   const service = new WorkspaceGitServiceImpl({
     logger: pino({ enabled: false }),
     paseoHome: path.join(path.dirname(repo), "home"),
     deps: {
+      resolveSshHostname: async (host) => (host === "github.com-work" ? "github.com" : null),
       forgeOverrides: {
-        github: createGitHubWithRepositoryView({
-          owner: { login: "fork-owner" },
-          name: "repo",
-          parent: { owner: { login: "main-owner" }, name: "repo" },
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "repo" && args[1] === "view") {
+              const isFork = args[2] === "fork-owner/repo";
+              return {
+                stdout: JSON.stringify(
+                  isFork
+                    ? {
+                        owner: { login: "fork-owner" },
+                        name: "repo",
+                        parent: { owner: { login: "main-owner" }, name: "repo" },
+                      }
+                    : { owner: { login: "acme" }, name: "other" },
+                ),
+                stderr: "",
+              };
+            }
+            return { stdout: "", stderr: "" };
+          },
         }),
       },
     },
@@ -1141,18 +1159,19 @@ test("changing the origin remote stops publishing the previous remote's web loca
   const before = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
   expect(before.forgeWeb?.referenceRepository).toBe("main-owner/repo");
 
-  execFileSync("git", ["remote", "set-url", "origin", "git@github.com:acme/other.git"], {
+  execFileSync("git", ["remote", "set-url", "origin", "git@github.com-work:acme/other.git"], {
     cwd: repo,
   });
+  // The refresh a `.git/config` change schedules does not ask for forge data.
   const after = await service.getSnapshot(repo, {
     force: true,
     includeForge: false,
     reason: "forge-web-test",
   });
 
-  expect(after.git.remoteUrl).toBe("git@github.com:acme/other.git");
-  expect(after.forgeWeb).toBeUndefined();
-});
+  expect(after.git.remoteUrl).toBe("git@github.com-work:acme/other.git");
+  expect(after.forgeWeb).toEqual({ host: "github.com" });
+}, 30_000);
 
 test("a failed parent lookup is retried by the pull request status poll once the retry delay has passed", async () => {
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
