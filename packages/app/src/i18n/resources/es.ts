@@ -186,6 +186,8 @@ export const es: TranslationResources = {
     errors: {
       failedToSend: "No se pudo enviar el mensaje",
       failedToCreateAgent: "No se pudo crear el agente",
+      creationOutcomeUnknown:
+        "El inicio anterior podría seguir en curso. Revisa tus espacios de trabajo y agentes antes de iniciar otro.",
       noHostSelected: "Ningún anfitrión seleccionado",
       initialPromptRequired: "Se requiere aviso inicial",
       alreadyLoading: "Ya cargando",

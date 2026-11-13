@@ -1,6 +1,21 @@
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
+
+export function seedWorkspaceDraftMetadata(input: {
+  serverId: string;
+  draftId: string;
+  metadata: Record<string, JsonValue>;
+}): void {
+  const draftKey = buildDraftStoreKey({
+    serverId: input.serverId,
+    agentId: input.draftId,
+    draftId: input.draftId,
+  });
+  useDraftStore.getState().patchDraftMetadata({ draftKey, patch: input.metadata });
+}
 
 interface WorkspaceDraftCleanupInput {
   draftId?: string;

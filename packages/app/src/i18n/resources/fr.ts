@@ -187,6 +187,8 @@ export const fr: TranslationResources = {
     errors: {
       failedToSend: "Impossible d’envoyer le message",
       failedToCreateAgent: "Impossible de créer l’agent",
+      creationOutcomeUnknown:
+        "Le démarrage précédent est peut-être encore en cours. Vérifiez vos espaces de travail et vos agents avant de relancer.",
       noHostSelected: "Aucun hôte sélectionné",
       initialPromptRequired: "Un prompt initial est requis",
       alreadyLoading: "Chargement déjà en cours",
