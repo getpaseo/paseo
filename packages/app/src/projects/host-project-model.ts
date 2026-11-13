@@ -168,6 +168,19 @@ export function resolveExactHostProjectCandidate(input: {
   projects: readonly HostProjectListItem[];
   serverId: string;
 }): HostProjectListItem | null {
+  // A remembered project starts as one host-local placement. It may now belong to a verified
+  // local-link group, whose view key and project key deliberately differ from the old snapshot.
+  // Resolve that exact source placement before looking for an equivalent on the selected host.
+  const linkedProject = input.projects.find(
+    (project) =>
+      getHostProjectPlacement(project, input.serverId) !== null &&
+      input.candidate.hosts.some(
+        (candidateHost) =>
+          getHostProjectId(project, candidateHost.serverId) === candidateHost.projectId,
+      ),
+  );
+  if (linkedProject) return linkedProject;
+
   const candidatePlacement = getHostProjectId(input.candidate, input.serverId);
   if (candidatePlacement) {
     const exactPlacement = input.projects.find(
