@@ -247,6 +247,12 @@ const GiteaPullRequestApiSchema = z
   })
   .passthrough();
 
+const GiteaRepositoryApiSchema = z
+  .object({
+    parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
+  })
+  .passthrough();
+
 const GiteaCurrentPullRequestApiSchema = z
   .object({
     number: z.number(),
@@ -2005,6 +2011,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       } catch {
         return false;
       }
+    },
+
+    async getReferenceRepository(input): Promise<string | null> {
+      const repo = await resolveCurrentRepoIdentity(input.cwd);
+      if (!repo) {
+        return null;
+      }
+      const repository = await runJson(
+        ["api", `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`],
+        { cwd: input.cwd },
+        GiteaRepositoryApiSchema,
+      );
+      return repository.parent?.full_name ?? null;
     },
 
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {

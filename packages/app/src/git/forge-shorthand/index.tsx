@@ -1,3 +1,4 @@
+import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { createForgeShorthand, type ForgeShorthand } from "./shorthand";
 
@@ -9,13 +10,18 @@ const ForgeShorthandContext = createContext<ForgeShorthand | null>(null);
 export function ForgeShorthandProvider({
   forge,
   remoteUrl,
+  forgeWeb,
   children,
 }: {
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
+  forgeWeb: ForgeWeb | null | undefined;
   children: ReactNode;
 }) {
-  const value = useMemo(() => createForgeShorthand({ forge, remoteUrl }), [forge, remoteUrl]);
+  const value = useMemo(
+    () => createForgeShorthand({ forge, remoteUrl, forgeWeb }),
+    [forge, remoteUrl, forgeWeb],
+  );
   return <ForgeShorthandContext.Provider value={value}>{children}</ForgeShorthandContext.Provider>;
 }
 

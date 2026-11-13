@@ -4328,6 +4328,22 @@ export const WorkspaceScriptPayloadSchema = z.object({
   terminalId: z.string().nullable().optional().default(null),
 });
 
+/**
+ * Where a workspace's forge is on the web, resolved by the daemon so every
+ * client builds the same links.
+ */
+export const ForgeWebSchema = z.object({
+  /** Web host of the forge: the SSH config alias resolved, cloud SSH hosts mapped to their web host. */
+  host: z.string(),
+  /**
+   * Repository path that owns issue and change-request numbers when it is not
+   * the origin repository, such as a fork's parent. Absent: the origin repository.
+   */
+  referenceRepository: z.string().optional(),
+});
+
+export type ForgeWeb = z.infer<typeof ForgeWebSchema>;
+
 const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
@@ -4464,6 +4480,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // until 2027-01-17; remove the consumer fallback once the supported daemon
     // floor is >= v0.2.0.
     forge: z.string().optional(),
+    // Absent from daemons older than v0.16.0; clients then derive links from the origin remote.
+    forgeWeb: ForgeWebSchema.optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
     syncSeq: z.number().int().positive().optional(),
@@ -5697,6 +5715,7 @@ const CheckoutStatusCommonSchema = z.object({
   // upstream branch name is not necessarily currentBranch, so composing one is wrong.
   // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({

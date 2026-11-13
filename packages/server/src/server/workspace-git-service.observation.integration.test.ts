@@ -17,6 +17,7 @@ import {
   type CheckoutSnapshotFacts,
   type CheckoutStatusGit,
 } from "../utils/checkout-git.js";
+import { createGitHubService } from "../services/github-service.js";
 import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { FileChange, FileObserver, SubscribeToFileChanges } from "./file-observer/index.js";
@@ -1019,3 +1020,104 @@ test("a branch switch made before the Git metadata watcher starts still reaches 
     )
     .toBe("feature");
 }, 30_000);
+
+function createCheckoutWithOrigin(origin: string): string {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-forge-web-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  git("remote", "add", "origin", origin);
+  cleanup.push(async () => rmSync(root, { recursive: true, force: true }));
+  return repo;
+}
+
+// The GitHub adapter runs for real; only the `gh` binary it spawns is scripted.
+function createGitHubWithRepositoryView(repositoryView: object) {
+  return createGitHubService({
+    resolveGhPath: async () => "gh",
+    resolveRepoHost: async () => null,
+    runner: async (args) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return { stdout: JSON.stringify(repositoryView), stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    },
+  });
+}
+
+async function snapshotOf(
+  repo: string,
+  deps: ConstructorParameters<typeof WorkspaceGitServiceImpl>[0]["deps"],
+) {
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps,
+  });
+  cleanup.push(() => service.dispose());
+  return service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+}
+
+test("an SSH config alias remote publishes the web host the alias resolves to", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com-work:acme/repo.git");
+
+  const snapshot = await snapshotOf(repo, {
+    resolveSshHostname: async (host) => (host === "github.com-work" ? "github.com" : null),
+    forgeOverrides: { github: createGitHubWithRepositoryView({}) },
+  });
+
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+});
+
+test("a cloud SSH host publishes the forge's web host", async () => {
+  const repo = createCheckoutWithOrigin("ssh://git@ssh.github.com/acme/repo.git");
+
+  const snapshot = await snapshotOf(repo, {
+    forgeOverrides: { github: createGitHubWithRepositoryView({}) },
+  });
+
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+});
+
+test("a fork checkout publishes its parent as the repository that owns issue and pull request numbers", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+
+  const snapshot = await snapshotOf(repo, {
+    forgeOverrides: {
+      github: createGitHubWithRepositoryView({
+        owner: { login: "fork-owner" },
+        name: "repo",
+        parent: { owner: { login: "main-owner" }, name: "repo" },
+      }),
+    },
+  });
+
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+});
+
+test("a plain remote publishes no separate reference repository", async () => {
+  const repo = createCheckoutWithOrigin("https://github.com/acme/repo.git");
+
+  const snapshot = await snapshotOf(repo, {
+    forgeOverrides: {
+      github: createGitHubWithRepositoryView({ owner: { login: "acme" }, name: "repo" }),
+    },
+  });
+
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+});
+
+test("a remote on no forge publishes no web location", async () => {
+  const repo = createCheckoutWithOrigin("git@bitbucket.org:acme/repo.git");
+
+  const snapshot = await snapshotOf(repo, { resolveSshHostname: async () => null });
+
+  expect(snapshot.forgeWeb).toBeUndefined();
+});
