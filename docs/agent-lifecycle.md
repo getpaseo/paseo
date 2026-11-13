@@ -103,12 +103,15 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
-An OpenCode helper server can also stay alive while its HTTP server stops answering. After 60 seconds
-without an event and at least two consecutive failures, the event consumer marks that generation
-unresponsive: it publishes `server-exited`, the manager discards and kills it, and the next operation
-recreates a server from the durable session. If termination cannot be confirmed, recovery fails
-instead of dispatching on the old process. Retry warnings are rate-limited. Replacement happens on
-the next acquisition, not in an automatic restart loop.
+An OpenCode helper server can also stay alive while its HTTP server stops answering. After the event
+stream has failed for 60 seconds and at least two consecutive attempts, the consumer marks that
+generation unresponsive: it publishes `server-exited`, the manager discards and kills it, and the next
+operation recreates a server from the durable session. This is deliberate: the shared event stream is
+gone for every session attached to that helper, so Paseo sacrifices any still-running upstream work to
+regain a usable server. Unfinished work is lost and prompts are not replayed; 60 seconds is a threshold
+tested by the failure budget, not an exact wall-clock deadline. If termination cannot be confirmed,
+recovery fails instead of dispatching on the old process. Retry warnings are rate-limited. Replacement
+happens on the next acquisition, not in an automatic restart loop.
 
 ### Cancellation
 

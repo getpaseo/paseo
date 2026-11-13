@@ -45,7 +45,7 @@ const WATCHDOG_MS = 30_000;
 const MAX_BACKOFF_MS = 5_000;
 const FAILURE_WARNING_ATTEMPT = 4;
 const FAILURE_BUDGET_MS = 60_000;
-const MIN_FAILURES_BEFORE_HEALTH_CHECK = 2;
+const MIN_CONSECUTIVE_FAILURES = 2;
 const WARNING_INTERVAL_MS = 60_000;
 
 type OpenCodeEventStreamPhase = "first-record" | "stream";
@@ -98,7 +98,6 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
   private lastError?: string;
   private connected = false;
   private closed = false;
-  private lastEventAt: number | null = null;
   private failureStartedAt: number | null = null;
   private lastWarningAt: number | null = null;
 
@@ -168,10 +167,6 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
     }
     let reconnectAttempt = 0;
     while (!this.closed) {
-      const attemptStartedAt = this.now();
-      if (this.failureStartedAt === null && this.lastEventAt === null) {
-        this.failureStartedAt = attemptStartedAt;
-      }
       this.attempt += 1;
       this.phase = "first-record";
       const result = await this.consumeConnection(this.connectionAbort.signal);
@@ -182,7 +177,9 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
         this.failureStartedAt = null;
         reconnectAttempt = 0;
       } else {
-        this.failureStartedAt ??= this.lastEventAt ?? attemptStartedAt;
+        // A healthy stream can be idle for a long time, so the last delivered event is not
+        // evidence of a sustained failure. Measure the budget from the first failed observation.
+        this.failureStartedAt ??= this.now();
         reconnectAttempt += 1;
       }
       const delayMs = Math.min(100 * 2 ** Math.max(0, reconnectAttempt - 1), MAX_BACKOFF_MS);
@@ -190,7 +187,7 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       if (
         !result.delivered &&
         this.failureStartedAt !== null &&
-        reconnectAttempt >= MIN_FAILURES_BEFORE_HEALTH_CHECK &&
+        reconnectAttempt >= MIN_CONSECUTIVE_FAILURES &&
         this.now() - this.failureStartedAt >= FAILURE_BUDGET_MS
       ) {
         const error = new Error(
@@ -262,7 +259,6 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
             return { delivered, phase, outcome: "ended" };
           }
           delivered = true;
-          this.lastEventAt = this.now();
           phase = "stream";
           this.phase = phase;
           if (!this.connected && event.payload.type === "server.connected") {

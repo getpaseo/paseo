@@ -248,7 +248,7 @@ describe("OpenCodeEventConsumer", () => {
     expect(upstream.requests).toHaveLength(2);
   });
 
-  test("starts the silence budget at the last delivered event", async () => {
+  test("does not treat idle time since the last event as failure duration", async () => {
     const upstream = await createSseUpstream();
     const timing = new ControlledTiming();
     let now = 0;
@@ -271,20 +271,28 @@ describe("OpenCodeEventConsumer", () => {
     upstream.send(0, connectedRecord("/one"));
     await consumer.ready();
 
-    now = 30_000;
-    timing.expireWatchdog();
+    // The stream was healthy and simply idle; the next failure must not inherit that silence.
+    now = 120_000;
+    upstream.end(0);
     await timing.waiting();
-    now = 45_000;
     timing.advanceWait();
 
     await upstream.connected(2);
     upstream.end(1);
     await timing.waiting();
-    now = 61_000;
+    expect(onSustainedFailure).not.toHaveBeenCalled();
     timing.advanceWait();
 
+    // Two consecutive zero-record failures at the same timestamp must still be inside budget.
     await upstream.connected(3);
     upstream.end(2);
+    await timing.waiting();
+    expect(onSustainedFailure).not.toHaveBeenCalled();
+    now = 180_000;
+    timing.advanceWait();
+
+    await upstream.connected(4);
+    upstream.end(3);
     await eventually(() => expect(onSustainedFailure).toHaveBeenCalledTimes(1));
   });
 

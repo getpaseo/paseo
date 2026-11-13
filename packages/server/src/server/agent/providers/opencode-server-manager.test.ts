@@ -185,6 +185,46 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toHaveLength(0);
   });
 
+  test("resume barrier fails closed while retired termination is unconfirmed", async () => {
+    const { manager, runtime } = createTestManager([4_591], {
+      terminateProcess: async () => "kill-timeout",
+    });
+
+    const acquisition = await manager.acquireCurrent();
+    const url = acquisition.server.url;
+    await expect(acquisition.release()).rejects.toThrow("did not report exit");
+    await expect(manager.awaitRetiredTermination(url)).rejects.toThrow("did not report exit");
+    await expect(manager.awaitRetiredTermination()).rejects.toThrow("did not report exit");
+
+    runtime.processForPort(4_591).exitNormally();
+    await manager.awaitRetiredTermination(url);
+    await manager.awaitRetiredTermination();
+    await manager.shutdown();
+  });
+
+  test("resume barrier waits for an unresponsive generation with retained references", async () => {
+    const sources: FakeEventSource[] = [];
+    const { manager, runtime } = createTestManager([4_592], {
+      terminateProcess: async () => "kill-timeout",
+      createEventSource: (input) => {
+        const source = new FakeEventSource(input.onSustainedFailure);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    const acquisition = await manager.acquireCurrent();
+    await sources[0]?.trigger(new Error("event stream stalled"));
+    await vi.waitFor(() =>
+      expect(manager.awaitRetiredTermination()).rejects.toThrow("did not report exit"),
+    );
+
+    runtime.processForPort(4_592).exitNormally();
+    await manager.awaitRetiredTermination();
+    await acquisition.release();
+    await manager.shutdown();
+  });
+
   test("shutdown keeps a kill-timeout generation unavailable for acquisition", async () => {
     const { manager } = createTestManager([4_581], {
       terminateProcess: async () => "kill-timeout",

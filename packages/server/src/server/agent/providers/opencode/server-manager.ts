@@ -42,6 +42,8 @@ export interface OpenCodeServerManagerLike {
   acquireNew(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
+  /** Wait for a terminal retired generation at this URL, if one is still tracked. */
+  awaitRetiredTermination?(url?: string): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -197,6 +199,20 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   acquireExisting(url: string): OpenCodeServerAcquisition | null {
     const server = this.findLiveServerByUrl(url);
     return server ? this.acquireServer(server) : null;
+  }
+
+  async awaitRetiredTermination(url?: string): Promise<void> {
+    const servers = Array.from(this.retiredServers).filter((server) =>
+      url === undefined
+        ? server.refCount === 0 ||
+          server.unresponsive ||
+          server.termination !== undefined ||
+          server.terminationError !== undefined
+        : server.url === url,
+    );
+    for (const server of servers) {
+      await this.terminateRetired(server);
+    }
   }
 
   private findLiveServerByUrl(url: string): OpenCodeServerGeneration | null {

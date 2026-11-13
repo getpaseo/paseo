@@ -1541,6 +1541,14 @@ export class OpenCodeAgentClient implements AgentClient {
       ? this.serverManager.acquireExisting(registeredServerUrl)
       : null;
     const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
+    try {
+      // A stale URL hint only selects a live helper; it does not prove that every older holder of
+      // this native session is gone. Barrier on the manager's terminal generations before using it.
+      await this.serverManager.awaitRetiredTermination?.();
+    } catch (error) {
+      await registeredAcquisition?.release().catch(() => undefined);
+      throw error;
+    }
     const connection = registeredAcquisition
       ? this.toServerConnection(registeredAcquisition, openCodeConfig.cwd)
       : await connectServer();
@@ -3545,6 +3553,8 @@ class OpenCodeAgentSession implements AgentSession {
     const exited = this.server;
     await exited.release();
     if (this.closed) return;
+    // The old helper is gone; a rejected abort from it must not poison the replacement.
+    this.abortSettlement = Promise.resolve();
 
     const next = await connectServer();
     if (this.closed) {
@@ -3767,8 +3777,12 @@ class OpenCodeAgentSession implements AgentSession {
     });
   }
 
-  private abortSession(turnId: string | null, reason: string): Promise<void> {
-    return this.client.session
+  private abortSession(
+    client: OpencodeClient,
+    turnId: string | null,
+    reason: string,
+  ): Promise<void> {
+    return client.session
       .abort({
         sessionID: this.sessionId,
         directory: this.config.cwd,
@@ -3873,16 +3887,20 @@ class OpenCodeAgentSession implements AgentSession {
     return statusType;
   }
 
-  async startTurn(
-    prompt: AgentPromptInput,
-    options?: AgentRunOptions,
-  ): Promise<{ turnId: string }> {
+  private ensureTurnCanStart(): void {
     if (this.closed) {
       throw new Error("OpenCode session is closed");
     }
     if (this.turnState.status === "running") {
       throw new Error("A foreground turn is already active");
     }
+  }
+
+  async startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
+    this.ensureTurnCanStart();
     await this.reconnectIfServerExited();
     try {
       await this.awaitRunnerQuiescence();
@@ -3915,6 +3933,12 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     await this.awaitEventStreamReady(turnAbortController);
+    if (this.closed || this.serverExited) {
+      if (this.abortController === turnAbortController) this.abortController = null;
+      this.pendingUserMessageText = null;
+      this.pendingClientMessageId = null;
+      throw new Error("OpenCode server exited before the turn was dispatched");
+    }
 
     const turnId = this.createTurnId();
     this.materializedParts.clear();
@@ -3922,6 +3946,9 @@ class OpenCodeAgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+    if (!this.isTurnActive(turnId)) {
+      return { turnId };
+    }
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
         this.activeDispatchMessageId = null;
@@ -4724,6 +4751,10 @@ class OpenCodeAgentSession implements AgentSession {
     return turnId;
   }
 
+  private isTurnActive(turnId: string): boolean {
+    return this.turnState.status === "running" && this.turnState.turnId === turnId;
+  }
+
   private finishForegroundTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
     turnId: string,
@@ -4817,14 +4848,17 @@ class OpenCodeAgentSession implements AgentSession {
    * cancel whichever run happened to be current when it landed.
    */
   private runOwnedAbort(turnId: string | null): Promise<void> {
-    // The turn hop also converts a synchronous SDK throw into a rejection.
+    // Bind both attempts to the generation that started the stop: a retry must not reach the
+    // replacement server's session after reconnection.
+    const client = this.client;
+    const server = this.server;
     return Promise.resolve()
-      .then(() => this.abortSession(turnId, "interrupt"))
+      .then(() => this.abortSession(client, turnId, "interrupt"))
       .catch((error) => {
-        if (this.closed) {
+        if (this.closed || this.server !== server) {
           throw error;
         }
-        return this.abortSession(turnId, "stop_retry");
+        return this.abortSession(client, turnId, "stop_retry");
       });
   }
 
