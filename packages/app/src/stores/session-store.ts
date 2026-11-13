@@ -78,7 +78,8 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
-  backgroundWork?: { count: number };
+  /** `nextWakeAt`: when the provider will wake the idle agent on its own. */
+  backgroundWork?: { count: number; nextWakeAt?: string };
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;

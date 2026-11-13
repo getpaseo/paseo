@@ -857,7 +857,8 @@ test("Claude session started by a control request without a turn can stop its ru
   }
 });
 
-test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+/** A Claude session whose SDK stream is fed by hand; `push` resolves once the frame is consumed. */
+async function createPumpedClaudeSession() {
   let wake: (() => void) | undefined;
   const channel = { closed: false };
   const queue: Array<{ message: SDKMessage; consumed(): void }> = [];
@@ -915,6 +916,11 @@ test("Claude session runtime safety observes pumped background work and autonomo
       return query;
     },
   }).createSession({ provider: "claude", cwd: process.cwd() });
+  return { session, push, connection, nextInput: () => nativeInput.next() };
+}
+
+test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+  const { session, push, connection, nextInput } = await createPumpedClaudeSession();
   const init = {
     type: "system",
     subtype: "init",
@@ -931,7 +937,7 @@ test("Claude session runtime safety observes pumped background work and autonomo
   try {
     await session.startTurn("start background work");
     await connection;
-    const input = await nativeInput.next();
+    const input = await nextInput();
     await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
     await push(init);
     await push(result);
@@ -958,6 +964,85 @@ test("Claude session runtime safety observes pumped background work and autonomo
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
   } finally {
+    await session.close();
+  }
+});
+
+test("Claude session keeps a runtime with a pending wakeup and reports when it wakes", async () => {
+  const { session, push, connection, nextInput } = await createPumpedClaudeSession();
+  const wakes: Array<string | null> = [];
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "scheduled_wakeup") wakes.push(event.nextWakeAt);
+  });
+  const result = {
+    type: "result",
+    subtype: "success",
+    usage: { input_tokens: 1, output_tokens: 1 },
+    total_cost_usd: 0,
+  };
+  try {
+    await session.startTurn("check back in a few minutes");
+    await connection;
+    // Launching a process clears whatever the previous one had scheduled.
+    expect(wakes).toEqual([null]);
+    wakes.length = 0;
+    const input = await nextInput();
+    await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
+    await push({
+      type: "system",
+      subtype: "init",
+      session_id: "scheduled-wakeup",
+      claude_code_version: "2.1.323",
+      permissionMode: "default",
+    });
+    await push({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg-wakeup",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_wake",
+            name: "ScheduleWakeup",
+            input: { delaySeconds: 180, prompt: "Reply only OK.", reason: "test" },
+          },
+        ],
+      },
+    });
+    const before = Date.now();
+    await push({
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_wake",
+            content: "Next wakeup scheduled for 01:58:00 (in 205s).",
+          },
+        ],
+      },
+    });
+    await push(result);
+    expect(wakes).toHaveLength(1);
+    const wakeAt = Date.parse(wakes[0] ?? "");
+    expect(wakeAt).toBeGreaterThanOrEqual(before + 205_000);
+    expect(wakeAt).toBeLessThanOrEqual(Date.now() + 205_000);
+    // An idle process that would wake on its own must not be reclaimed.
+    expect(await session.canStopRuntime!()).toBe(false);
+
+    await push({
+      type: "command_lifecycle",
+      command_uuid: "wakeup-fire",
+      state: "started",
+      wakeup_source: "loop_wakeup",
+    });
+    expect(wakes).toEqual([wakes[0], null]);
+  } finally {
+    unsubscribe();
     await session.close();
   }
 });

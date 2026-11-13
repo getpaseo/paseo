@@ -1359,6 +1359,8 @@ export const fr: TranslationResources = {
         serviceRunning: "Service {{name}} en cours d’exécution",
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création…",
+        wakesIn: "dans {{time}}",
+        wakeScheduled: "Se réveillera tout seul",
       },
       checks: {
         passed: "Réussies : {{count}}",

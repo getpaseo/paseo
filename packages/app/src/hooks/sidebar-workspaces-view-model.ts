@@ -55,6 +55,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  /** When an idle agent of this workspace will wake on its own (ISO time). */
+  nextWakeAt: string | null;
 }
 
 export interface SidebarProjectEntry {
@@ -180,6 +182,7 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    nextWakeAt: effectiveStatus.nextWakeAt,
   };
 }
 

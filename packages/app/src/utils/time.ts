@@ -83,6 +83,23 @@ export function describeCompactTimeAgo(date: Date, now: Date = new Date()): Rela
   return { label: age.value, resolution: age.resolution };
 }
 
+/**
+ * The compact countdown to something that has not happened yet: "<1m", "11m", "3h", "2d".
+ * Minutes round up so it never reads "0m" with time left; a due or overdue time reads "<1m"
+ * because it is about to happen. Under a day the label can flip at any minute, so it ticks
+ * every minute.
+ */
+export function describeCompactTimeUntil(date: Date, now: Date = new Date()): RelativeTimeLabel {
+  const remainingMs = date.getTime() - now.getTime();
+  if (remainingMs < MINUTE_MS) return { label: "<1m", resolution: "minute" };
+  // Rounded up so a countdown never reads lower than the time left, then whole units of that.
+  const minutes = Math.ceil(remainingMs / MINUTE_MS);
+  if (minutes < 60) return { label: `${minutes}m`, resolution: "minute" };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { label: `${hours}h`, resolution: "minute" };
+  return { label: `${Math.floor(hours / 24)}d`, resolution: "hour" };
+}
+
 export function formatCompactTimeAgo(date: Date, now: Date = new Date()): string {
   return describeCompactTimeAgo(date, now).label;
 }

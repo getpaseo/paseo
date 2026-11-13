@@ -15,6 +15,7 @@ function agent(input: {
   archivedAt?: string | null;
   parentAgentId?: string | null;
   background?: boolean;
+  nextWakeAt?: string;
 }): Agent {
   return {
     serverId: "host-a",
@@ -64,10 +65,74 @@ function agent(input: {
     parentAgentId: input.parentAgentId ?? null,
     background: input.background ?? false,
     labels: {},
+    ...(input.nextWakeAt ? { backgroundWork: { count: 0, nextWakeAt: input.nextWakeAt } } : {}),
   };
 }
 
 describe("workspace agent activity index", () => {
+  it("keeps the earliest pending wake among the workspace's root agents", () => {
+    const result = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "latest",
+          agent({
+            id: "latest",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-07-16T12:00:00.000Z",
+            nextWakeAt: "2026-07-16T12:30:00.000Z",
+          }),
+        ],
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-07-16T11:00:00.000Z",
+            nextWakeAt: "2026-07-16T12:10:00.000Z",
+          }),
+        ],
+        [
+          "archived",
+          agent({
+            id: "archived",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-07-16T10:00:00.000Z",
+            archivedAt: "2026-07-16T10:30:00.000Z",
+            nextWakeAt: "2026-07-16T12:01:00.000Z",
+          }),
+        ],
+        [
+          "quiet",
+          agent({ id: "quiet", workspaceId: "workspace-b", updatedAt: "2026-07-16T12:00:00.000Z" }),
+        ],
+      ]),
+    );
+
+    expect(result.get("workspace-a")).toMatchObject({
+      agentId: "latest",
+      status: "done",
+      nextWakeAt: "2026-07-16T12:10:00.000Z",
+    });
+    expect(result.get("workspace-b")?.nextWakeAt).toBeNull();
+  });
+
+  it("replaces a reused entry when only its wake changes", () => {
+    const quiet = agent({
+      id: "a",
+      workspaceId: "workspace-a",
+      updatedAt: "2026-07-16T12:00:00.000Z",
+    });
+    const previous = buildWorkspaceAgentActivityIndex(new Map([["a", quiet]]));
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        ["a", { ...quiet, backgroundWork: { count: 0, nextWakeAt: "2026-07-16T12:30:00.000Z" } }],
+      ]),
+      previous,
+    );
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")?.nextWakeAt).toBe("2026-07-16T12:30:00.000Z");
+  });
+
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([
@@ -148,6 +213,7 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            nextWakeAt: null,
           },
         ],
         [
@@ -156,6 +222,7 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            nextWakeAt: null,
           },
         ],
       ]),
@@ -186,6 +253,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "done",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      nextWakeAt: null,
     });
   });
 
@@ -229,6 +297,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      nextWakeAt: null,
     });
   });
 
@@ -264,6 +333,7 @@ describe("workspace agent activity index", () => {
             agentId: "parent",
             status: "done",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            nextWakeAt: null,
           },
         ],
         [
@@ -272,6 +342,7 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            nextWakeAt: null,
           },
         ],
       ]),
@@ -348,6 +419,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      nextWakeAt: null,
     });
   });
 });

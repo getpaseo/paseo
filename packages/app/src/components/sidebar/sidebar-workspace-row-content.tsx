@@ -1,7 +1,8 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
+import { CircleAlert, Clock, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -42,6 +43,10 @@ const needsInputColorMapping = (theme: Theme) => ({
 });
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+
+const wakeScheduledColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+const ThemedClock = withUnistyles(Clock);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -162,6 +167,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             workspaceKind={workspace.workspaceKind}
             loading={isLoading}
             reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+            wakeScheduled={workspace.nextWakeAt !== null}
           />
         )}
         <View style={styles.workspaceContentColumn}>
@@ -204,12 +210,16 @@ function WorkspaceStatusIndicator({
   workspaceKind,
   loading = false,
   reserveIdleSpace = true,
+  wakeScheduled = false,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
+  /** An idle agent of this workspace will wake on its own (a scheduled wakeup or cron). */
+  wakeScheduled?: boolean;
 }) {
+  const { t } = useTranslation();
   // Busy is the only status that moves, and it is the ring rather than a dot for the same
   // reason it is a dot elsewhere: every status in the sidebar sits in this one slot, so busy
   // has to fill it without displacing anything. A row starting up and a row working are both
@@ -242,6 +252,20 @@ function WorkspaceStatusIndicator({
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-attention">
         <View style={styles.standaloneStatusDot} />
+      </View>
+    );
+  }
+
+  if (bucket === "done" && wakeScheduled) {
+    // Idle, but not finished: the agent left a wakeup or cron behind and will start a turn on
+    // its own. The clock takes the idle dot's place; the countdown sits in the trailing slot.
+    return (
+      <View
+        style={styles.workspaceStatusDot}
+        testID="workspace-status-indicator-wake-scheduled"
+        accessibilityLabel={t("sidebar.workspace.status.wakeScheduled")}
+      >
+        <ThemedClock size={STATUS_INDICATOR_ALERT_SIZE} uniProps={wakeScheduledColorMapping} />
       </View>
     );
   }

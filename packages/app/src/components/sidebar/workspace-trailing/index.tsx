@@ -1,10 +1,12 @@
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { SidebarWorkspaceTrailing } from "@/hooks/use-settings";
-import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import { useCompactTimeAgo, useCompactTimeUntil } from "@/hooks/use-time-ago";
 
 export type { SidebarWorkspaceTrailing };
 
@@ -32,7 +34,9 @@ export function hasSidebarWorkspaceTrailing({
   trailing: SidebarWorkspaceTrailing;
 }): boolean {
   if (trailing === "diff") return workspace.diffStat !== null;
-  if (trailing === "timestamp") return workspace.statusEnteredAt !== null;
+  if (trailing === "timestamp") {
+    return workspace.nextWakeAt !== null || workspace.statusEnteredAt !== null;
+  }
   return false;
 }
 
@@ -48,10 +52,26 @@ export function SidebarWorkspaceTrailingContent({
       <DiffStat additions={workspace.diffStat.additions} deletions={workspace.diffStat.deletions} />
     );
   }
+  // A pending wake is the next thing that will happen to an idle row, so it takes the slot.
+  if (trailing === "timestamp" && workspace.nextWakeAt) {
+    return <WorkspaceWakeCountdown wakeAt={workspace.nextWakeAt} />;
+  }
   if (trailing === "timestamp" && workspace.statusEnteredAt) {
     return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} />;
   }
   return null;
+}
+
+/** Its own component for the same reason as `WorkspaceTimestamp`: the tick stops here. */
+function WorkspaceWakeCountdown({ wakeAt }: { wakeAt: string }) {
+  const { t } = useTranslation();
+  const date = useMemo(() => new Date(wakeAt), [wakeAt]);
+  const label = useCompactTimeUntil(date);
+  return (
+    <Text style={styles.timestamp} numberOfLines={1} testID="sidebar-workspace-wake-countdown">
+      {t("sidebar.workspace.status.wakesIn", { time: label })}
+    </Text>
+  );
 }
 
 /**

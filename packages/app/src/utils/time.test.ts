@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   describeCompactTimeAgo,
+  describeCompactTimeUntil,
   describeTimeAgo,
   formatCompactTimeAgo,
   formatCompactTimeAgoAsProse,
@@ -22,6 +23,24 @@ describe("formatTimeAgo", () => {
     ["2026-01-15T12:00:00.000Z", "Jan 15"],
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
+  });
+});
+
+describe("describeCompactTimeUntil", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  it.each([
+    ["2026-07-16T11:58:00.000Z", "<1m", "minute"],
+    ["2026-07-16T12:00:30.000Z", "<1m", "minute"],
+    ["2026-07-16T12:01:00.000Z", "1m", "minute"],
+    ["2026-07-16T12:10:01.000Z", "11m", "minute"],
+    ["2026-07-16T12:59:30.000Z", "1h", "minute"],
+    ["2026-07-16T13:00:00.000Z", "1h", "minute"],
+    ["2026-07-16T15:30:00.000Z", "3h", "minute"],
+    ["2026-07-17T11:59:30.000Z", "1d", "hour"],
+    ["2026-07-19T13:00:00.000Z", "3d", "hour"],
+  ] as const)("counts down to %s as %s at %s resolution", (date, label, resolution) => {
+    expect(describeCompactTimeUntil(new Date(date), now)).toEqual({ label, resolution });
   });
 });
 

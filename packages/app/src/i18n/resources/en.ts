@@ -1337,6 +1337,8 @@ export const en = {
         serviceRunning: "Service {{name}} running",
         serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
+        wakesIn: "in {{time}}",
+        wakeScheduled: "Wakes up on its own",
       },
       checks: {
         passed: "Passed: {{count}}",

@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { subscribeToRelativeTimeTick, type TickResolution } from "@/utils/relative-time-ticker";
-import { describeCompactTimeAgo, describeTimeAgo, type RelativeTimeLabel } from "@/utils/time";
+import {
+  describeCompactTimeAgo,
+  describeCompactTimeUntil,
+  describeTimeAgo,
+  type RelativeTimeLabel,
+} from "@/utils/time";
 
 /** A prose relative timestamp ("5m ago") that keeps itself current. See `useCompactTimeAgo`. */
 export function useTimeAgo(date: Date | null): string {
@@ -25,6 +30,11 @@ export function useTimeAgo(date: Date | null): string {
  */
 export function useCompactTimeAgo(date: Date | null): string {
   return useRelativeTimeLabel(date, describeCompactTimeAgo);
+}
+
+/** A compact countdown ("11m") that keeps itself current, on the same ticks as `useCompactTimeAgo`. */
+export function useCompactTimeUntil(date: Date | null): string {
+  return useRelativeTimeLabel(date, describeCompactTimeUntil);
 }
 
 function useRelativeTimeLabel(

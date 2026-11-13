@@ -111,7 +111,11 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
-import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
+import {
+  AgentBackgroundWorkStore,
+  type AgentBackgroundWorkItem,
+  type AgentBackgroundWorkSummary,
+} from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
@@ -1438,7 +1442,7 @@ export class AgentManager {
     await agent.session.stopBackgroundWork(itemId);
   }
 
-  getAgentBackgroundWorkSummary(agentId: string): { count: number } | undefined {
+  getAgentBackgroundWorkSummary(agentId: string): AgentBackgroundWorkSummary | undefined {
     return this.backgroundWork.summary(agentId);
   }
 
@@ -4716,6 +4720,16 @@ export class AgentManager {
           ? this.backgroundWork.clear(agent.id)
           : this.backgroundWork.apply(agent.id, event.items);
       if (items) this.dispatch({ type: "background_work", agentId: agent.id, items });
+      return;
+    }
+    if (event.type === "scheduled_wakeup") {
+      // Re-sends the unchanged items so subscribers refresh the agent's summary.
+      if (this.backgroundWork.setNextWakeAt(agent.id, event.nextWakeAt))
+        this.dispatch({
+          type: "background_work",
+          agentId: agent.id,
+          items: this.backgroundWork.list(agent.id),
+        });
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);

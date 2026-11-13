@@ -21,6 +21,7 @@ function workspace(workspaceId: string, projectViewKey: string): SidebarWorkspac
     currentBranch: "main",
     statusBucket: "done",
     statusEnteredAt: null,
+    nextWakeAt: null,
     archivingAt: null,
     diffStat: null,
     prHint: null,

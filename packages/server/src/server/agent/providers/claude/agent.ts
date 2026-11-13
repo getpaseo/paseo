@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
+import { ClaudeScheduledWakeups } from "./scheduled-wakeups.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
@@ -2302,6 +2303,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
+  private readonly scheduledWakeups = new ClaudeScheduledWakeups();
   private readonly backgroundStops = new Map<string, (outcome: string) => void>();
   private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
@@ -3060,7 +3062,9 @@ class ClaudeAgentSession implements AgentSession {
       this.unstartedMessageUuids.size === 0 &&
       this.pendingPermissions.size === 0 &&
       this.processingSdkMessages === 0 &&
-      this.runtimeSafety.canStopRuntime()
+      this.runtimeSafety.canStopRuntime() &&
+      // Stopping the process would silently drop its session crons and pending wakeup.
+      !this.scheduledWakeups.hasPending()
     );
   }
 
@@ -3605,7 +3609,11 @@ class ClaudeAgentSession implements AgentSession {
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
-    this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
+    this.scheduledWakeups.reset();
+    this.dispatchEvents([
+      { type: "background_work", provider: "claude", items: null },
+      { type: "scheduled_wakeup", provider: "claude", nextWakeAt: null },
+    ]);
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
     this.query = claudeQuery(
@@ -4203,12 +4211,15 @@ class ClaudeAgentSession implements AgentSession {
   private failRunningRuntimeTasks(): void {
     for (const finish of this.backgroundStops.values()) finish("connection lost");
     this.runtimeSafety.retire();
+    this.scheduledWakeups.reset();
     this.dispatchEvents([
       ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
       ),
       // The SDK resets its background task set when the CLI process (re)starts.
       { type: "background_work", provider: "claude", items: null },
+      // Session crons and the pending wakeup die with the process.
+      { type: "scheduled_wakeup", provider: "claude", nextWakeAt: null },
     ]);
   }
 
@@ -4278,6 +4289,7 @@ class ClaudeAgentSession implements AgentSession {
       this.processingSdkMessages++;
       try {
         const backgroundWork = this.runtimeSafety.observe(message);
+        const nextWakeAt = this.scheduledWakeups.observe(message);
         if (message.type === "system" && message.subtype === "task_notification")
           this.backgroundStops.get(message.task_id)?.(message.status);
         logRawMessage(message);
@@ -4290,6 +4302,8 @@ class ClaudeAgentSession implements AgentSession {
           this.dispatchEvents([
             { type: "background_work", provider: "claude", items: backgroundWork },
           ]);
+        if (nextWakeAt !== undefined)
+          this.dispatchEvents([{ type: "scheduled_wakeup", provider: "claude", nextWakeAt }]);
         return false;
       } finally {
         this.processingSdkMessages--;
