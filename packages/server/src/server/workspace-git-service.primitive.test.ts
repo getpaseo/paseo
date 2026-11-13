@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createGitHubService } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import { defaultForgeRegistry } from "../services/forge-registry.js";
+import type { SshHostnameResolver } from "../utils/ssh-hostname.js";
 import {
   getCheckoutDiff as getCheckoutDiffUncached,
   getCheckoutSnapshotFacts as getCheckoutSnapshotFactsUncached,
@@ -328,6 +329,7 @@ interface CreateServiceOptions {
   listBranchSuggestions?: ReturnType<typeof vi.fn>;
   listPaseoWorktrees?: ReturnType<typeof vi.fn>;
   github?: ForgeService;
+  resolveSshHostname?: SshHostnameResolver;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
@@ -511,6 +513,42 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
+  });
+
+  test("getSnapshot preserves a resolved SSH host until the remote changes", async () => {
+    let remoteUrl = "git@github.com-work:acme/repo.git";
+    const resolveSshHostname = vi.fn(async () => "github.com");
+    const service = createService({
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) =>
+        createCheckoutFacts(cwd, { remoteUrl }),
+      ),
+      getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { remoteUrl })),
+      resolveSshHostname,
+    });
+
+    try {
+      const initial = await service.getSnapshot(REPO_CWD);
+      expect(initial.git).toMatchObject({ remoteUrl, resolvedRemoteHost: "github.com" });
+      expect(resolveSshHostname).toHaveBeenCalledWith("github.com-work");
+
+      const refreshed = await service.getSnapshot(REPO_CWD, {
+        force: true,
+        includeForge: false,
+        reason: "test-git-refresh",
+      });
+      expect(refreshed.git).toMatchObject({ remoteUrl, resolvedRemoteHost: "github.com" });
+
+      remoteUrl = "https://github.com/acme/other.git";
+      const changed = await service.getSnapshot(REPO_CWD, {
+        force: true,
+        includeForge: false,
+        reason: "test-remote-change",
+      });
+      expect(changed.git.remoteUrl).toBe(remoteUrl);
+      expect(changed.git.resolvedRemoteHost).toBeUndefined();
+    } finally {
+      service.dispose();
+    }
   });
 
   test("getSnapshot reports an unresolved self-hosted remote as neutral unauthenticated", async () => {

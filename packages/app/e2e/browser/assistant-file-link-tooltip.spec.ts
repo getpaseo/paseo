@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -119,3 +120,80 @@ test("assistant directory paths find nested files and preserve exact workspace p
     await agent.cleanup();
   }
 });
+
+const sshAliasTest = test.extend({
+  e2eDaemonEnvironment: [
+    async ({ browserName: _browserName }, provide) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-forge-ssh-"));
+      const locator = process.platform === "win32" ? "where.exe" : "which";
+      const sshPath = execFileSync(locator, ["ssh"], { encoding: "utf8" })
+        .trim()
+        .split(/\r?\n/u)[0];
+      const configPath = path.join(directory, "config");
+      await writeFile(configPath, "Host github.com-work\n  HostName github.com\n");
+      const sshSource = `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const result = spawnSync(${JSON.stringify(sshPath)}, ["-F", ${JSON.stringify(configPath)}, ...process.argv.slice(2)], { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`;
+      try {
+        for (const [command, source] of [
+          ["ssh", sshSource],
+          // Rendering a reference needs no network access to the forge CLI.
+          ["gh", "#!/usr/bin/env node\nprocess.exit(1);\n"],
+        ]) {
+          const commandPath = path.join(directory, command);
+          await writeFile(commandPath, source);
+          await chmod(commandPath, 0o755);
+          if (process.platform === "win32") {
+            await writeFile(`${commandPath}.cmd`, `@node "%~dp0${command}" %*\r\n`);
+          }
+        }
+        await provide({ PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}` });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+
+sshAliasTest(
+  "assistant issue links resolve SSH aliases in their destination and tooltip",
+  async ({ page }, testInfo) => {
+    testInfo.setTimeout(120_000);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "forge-ssh-alias-",
+      repo: { originUrl: "git@github.com-work:acme/repo.git" },
+      title: "SSH alias references",
+      featureValues: {
+        mockStreamingAssistantResponse: "PR #1 is ready. Related: other/tools#2.",
+        mockStreamingAssistantIntervalMs: 5,
+      },
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await agent.client.sendAgentMessage(agent.agentId, "Show the issue links.");
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+
+      const link = page.getByRole("link", { name: "#1", exact: true });
+      await link.hover();
+      await expect(page.getByRole("tooltip")).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("forge-reference-hover.png") });
+      await expect(link).toHaveAttribute("href", "https://github.com/acme/repo/issues/1");
+      await expect(page.getByRole("tooltip")).toHaveText("https://github.com/acme/repo/issues/1");
+      await expect(page.getByRole("link", { name: "other/tools#2", exact: true })).toHaveAttribute(
+        "href",
+        "https://github.com/other/tools/issues/2",
+      );
+
+      await page.reload();
+      await expect(page.getByRole("link", { name: "#1", exact: true })).toHaveAttribute(
+        "href",
+        "https://github.com/acme/repo/issues/1",
+      );
+    } finally {
+      await agent.cleanup();
+    }
+  },
+);

@@ -26,12 +26,15 @@ const REFERENCE = new RegExp(String.raw`^(?:(${REPO}))?([#!])(${NUMBER})$`);
 export function createForgeShorthand(input: {
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
+  resolvedRemoteHost?: string;
 }): ForgeShorthand | null {
   const remoteUrl = input.remoteUrl;
+  const resolvedRemoteHost = input.resolvedRemoteHost;
   const forge = input.forge || forgeFromRemoteUrl(remoteUrl);
   if (!forge || !remoteUrl) return null;
   const sigils = forgeSigils(forge).filter(
-    (sigil) => buildForgeReferenceUrl(forge, { remoteUrl, sigil, number: 1 }) !== null,
+    (sigil) =>
+      buildForgeReferenceUrl(forge, { remoteUrl, resolvedRemoteHost, sigil, number: 1 }) !== null,
   );
   if (sigils.length === 0) return null;
   return {
@@ -41,6 +44,7 @@ export function createForgeShorthand(input: {
       if (!match) return null;
       return buildForgeReferenceUrl(forge, {
         remoteUrl,
+        resolvedRemoteHost,
         repo: match[1] ?? null,
         sigil: match[2] as ForgeReferenceSigil,
         number: Number(match[3]),

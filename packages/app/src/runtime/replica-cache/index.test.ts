@@ -371,6 +371,30 @@ describe("ReplicaCache", () => {
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
   });
 
+  it("preserves resolved SSH hosts and raw remotes across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      gitRuntime: {
+        remoteUrl: "git@github.com-work:acme/repo.git",
+        resolvedRemoteHost: "github.com",
+      },
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect(
+      (await reader.readDirectory(SERVER_ID)).workspaces.get(workspace.id)?.gitRuntime,
+    ).toEqual(workspace.gitRuntime);
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.gitRuntime).toEqual(
+      workspace.gitRuntime,
+    );
+  });
+
   it.each(["createdAt", "lastUserMessageAt"])(
     "refetches workspaces cached without %s",
     async (field) => {

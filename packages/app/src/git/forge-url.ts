@@ -30,6 +30,8 @@ export interface ForgeBranchTreeUrlInput {
 
 export interface ForgeReferenceUrlInput {
   remoteUrl: string | null | undefined;
+  /** SSH HostName resolved by the daemon; does not replace an HTTP(S) origin. */
+  resolvedRemoteHost?: string;
   /** Repository path of a cross-repository reference; the remote's repository when absent. */
   repo?: string | null;
   sigil: ForgeReferenceSigil;
@@ -79,8 +81,9 @@ function isValidRepoPath(path: string): boolean {
 
 function resolveForgeWebLocation(
   forge: string,
-  remoteUrl: string | null | undefined,
+  input: Pick<ForgeReferenceUrlInput, "remoteUrl" | "resolvedRemoteHost">,
 ): ForgeWebLocation | null {
+  const { remoteUrl } = input;
   if (!remoteUrl) {
     return null;
   }
@@ -88,9 +91,12 @@ function resolveForgeWebLocation(
   if (!location || !isValidRepoPath(location.path)) {
     return null;
   }
+  const isSshRemote = location.transport === "scp" || location.transport === "ssh";
+  const resolvedHost = isSshRemote ? input.resolvedRemoteHost : undefined;
+  const host = resolvedHost ? normalizeHost(resolvedHost) : location.host;
   const cloudHosts = (getForgeDefinition(forge)?.cloudHosts ?? []).map(normalizeHost);
-  const isCloudHost = cloudHosts.includes(location.host);
-  const webHost = isCloudHost ? cloudHosts[0] : location.host;
+  const isCloudHost = cloudHosts.includes(host);
+  const webHost = isCloudHost ? cloudHosts[0] : host;
   // Carry a non-default port only for a self-hosted http(s) origin (e.g.
   // `:60443`): the web UI shares that origin. An SSH/scp remote's port is not the
   // web port, and a canonicalized cloud host always serves on the default port.
@@ -139,7 +145,7 @@ export function buildForgeBranchTreeUrl(
   input: ForgeBranchTreeUrlInput,
 ): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const location = resolveForgeWebLocation(forge, input);
   const branch = input.branch?.trim();
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
@@ -149,7 +155,7 @@ export function buildForgeBranchTreeUrl(
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const location = resolveForgeWebLocation(forge, input);
   const branch = input.branch?.trim();
   const filePath = normalizeBlobPath(input.path);
   if (!grammar || !location || !branch || branch === "HEAD" || !filePath) {
@@ -175,7 +181,7 @@ export function buildForgeReferenceUrl(
   const referencePath = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths?.find(
     (path) => path.sigil === input.sigil,
   );
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const location = resolveForgeWebLocation(forge, input);
   const repo = input.repo ?? location?.repo;
   if (
     !referencePath ||

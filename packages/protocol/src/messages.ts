@@ -4332,6 +4332,8 @@ const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
     remoteUrl: z.string().nullable().optional(),
+    /** SSH HostName when it differs from the host in remoteUrl. */
+    resolvedRemoteHost: z.string().optional(),
     isPaseoOwnedWorktree: z.boolean().optional(),
     isDirty: z.boolean().nullable().optional(),
     aheadBehind: z

@@ -1,0 +1,28 @@
+The committed Playwright regression runs with the normal browser test job.
+It creates a temporary Git remote and an OpenSSH config mapping github.com-work to github.com.
+A PATH wrapper calls the installed real ssh binary with -F <temporary config>; gh is disabled.
+The daemon, Git, OpenSSH, WebSocket client and Markdown renderer are real. The agent provider
+is the existing deterministic mock provider, which emits the issue-reference sentence.
+
+For the macOS Electron recordings, the same regression ran against the real desktop main
+and preload with isolated userData and the same dedicated test daemon. To repeat:
+1. npm ci; npm run build:app-deps; npm run build:server
+2. npm run build:main --workspace=@getpaseo/desktop
+3. Copy electron-fixture.txt to packages/app/e2e/support/9437-electron-qa.ts.
+4. In assistant-file-link-tooltip.spec.ts, temporarily replace the fixtures import with
+   ../support/9437-electron-qa. The test itself is unchanged.
+5. Run the Electron command from commands.log.txt. PASEO_E2E_ELECTRON_BINARY can select
+   an installed Electron 44.2.0 binary; otherwise the installed electron package is used.
+6. Restore the normal fixtures import and remove the temporary fixture.
+
+The launcher clears Playwright loader arguments before loading the real desktop main,
+waits for its initial document, and supplies an absolute base URL for page.goto.
+No production code is patched by this launcher.
+
+Before recordings used the production source at 536846eb6 with the new regression test.
+After recordings used the proposed fix. Screenshots were captured while hovering #1.
+The regression asserts the href, tooltip, cross-repository href and href after reload.
+The main daemon on port 6767 and the user's SSH config were untouched.
+
+Tested: Web Chromium on macOS; real development Electron app on macOS.
+Not tested: iOS, Android, Windows desktop, Linux desktop, packaged installers.
