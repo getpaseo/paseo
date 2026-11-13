@@ -9,13 +9,18 @@ const ForgeShorthandContext = createContext<ForgeShorthand | null>(null);
 export function ForgeShorthandProvider({
   forge,
   remoteUrl,
+  resolvedRemoteHost,
   children,
 }: {
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
+  resolvedRemoteHost?: string;
   children: ReactNode;
 }) {
-  const value = useMemo(() => createForgeShorthand({ forge, remoteUrl }), [forge, remoteUrl]);
+  const value = useMemo(
+    () => createForgeShorthand({ forge, remoteUrl, resolvedRemoteHost }),
+    [forge, remoteUrl, resolvedRemoteHost],
+  );
   return <ForgeShorthandContext.Provider value={value}>{children}</ForgeShorthandContext.Provider>;
 }
 

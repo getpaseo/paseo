@@ -36,6 +36,7 @@ import type {
   PullRequestMergeable,
 } from "../services/forge-service.js";
 import { createForgeService } from "../services/forge-registry.js";
+import type { SshHostnameResolver } from "../utils/ssh-hostname.js";
 import {
   createForgeResolver,
   type ForgeResolution,
@@ -158,6 +159,8 @@ export interface WorkspaceGitRuntimeSnapshot {
     currentBranch: string | null;
     headSha?: string;
     remoteUrl: string | null;
+    /** SSH HostName when it differs from the host in remoteUrl. */
+    resolvedRemoteHost?: string;
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
     baseRef: string | null;
@@ -406,6 +409,7 @@ interface WorkspaceGitServiceDependencies {
    * fakes. Any forge not listed here is built (and cached once) by the registry.
    */
   forgeOverrides?: Record<string, ForgeService>;
+  resolveSshHostname?: SshHostnameResolver;
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
   hasOriginRemote: (cwd: string) => Promise<boolean>;
   runGitFetch: (
@@ -691,6 +695,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
     this.forgeResolver = createForgeResolver({
       createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+      resolveSshHostname: this.deps.resolveSshHostname,
     });
   }
 
@@ -3682,6 +3687,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           .catch(() => null)
       : (target.latestGit?.diffStat ?? null);
 
+    const previousGit = target.latestGit;
+    const remoteUnchanged = previousGit?.remoteUrl === checkoutStatus.remoteUrl;
+    const resolvedRemoteHost = remoteUnchanged ? previousGit?.resolvedRemoteHost : undefined;
     target.latestGit = {
       isGit: true,
       repoRoot: checkoutStatus.repoRoot,
@@ -3689,6 +3697,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       currentBranch: checkoutStatus.currentBranch,
       headSha: facts.isGit ? facts.pullRequestLookupTarget?.headSha : undefined,
       remoteUrl: checkoutStatus.remoteUrl,
+      resolvedRemoteHost,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
       isDirty: refreshWorktree
         ? checkoutStatus.isDirty
@@ -3721,6 +3730,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+    if (target.latestGit) {
+      const remoteHost = remoteUrl ? parseGitRemoteLocation(remoteUrl)?.host : undefined;
+      const resolvedHost = resolution?.host;
+      const resolvedRemoteHost = resolvedHost !== remoteHost ? resolvedHost : undefined;
+      target.latestGit = { ...target.latestGit, resolvedRemoteHost };
+    }
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated

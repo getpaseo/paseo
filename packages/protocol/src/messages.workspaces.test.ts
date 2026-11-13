@@ -1026,7 +1026,8 @@ describe("workspace message schemas", () => {
             },
             gitRuntime: {
               currentBranch: "main",
-              remoteUrl: "https://github.com/acme/repo.git",
+              remoteUrl: "git@github.com-work:acme/repo.git",
+              resolvedRemoteHost: "github.com",
               isPaseoOwnedWorktree: false,
               isDirty: true,
               aheadBehind: {
@@ -1063,6 +1064,8 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("fetch_workspaces_response");
     expect(parsed.payload.entries[0]?.gitRuntime).toMatchObject({
       currentBranch: "main",
+      remoteUrl: "git@github.com-work:acme/repo.git",
+      resolvedRemoteHost: "github.com",
       isDirty: true,
       aheadOfOrigin: 2,
     });

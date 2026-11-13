@@ -22,6 +22,17 @@ describe("createForgeShorthand", () => {
     expect(gitlab.resolve("g/sub/q#3")).toBe("https://gitlab.com/g/sub/q/-/issues/3");
   });
 
+  it("resolves references against the daemon's SSH hostname instead of the remote alias", () => {
+    const shorthand = createForgeShorthand({
+      forge: "github",
+      remoteUrl: "git@github.com-work:acme/repo.git",
+      resolvedRemoteHost: "github.com",
+    });
+
+    expect(shorthand?.resolve("#1")).toBe("https://github.com/acme/repo/issues/1");
+    expect(shorthand?.resolve("other/tools#2")).toBe("https://github.com/other/tools/issues/2");
+  });
+
   it("only recognizes the sigils the forge declares", () => {
     expect(matches(github, "see #1 and !2")).toEqual(["#1"]);
     expect(github.resolve("!2")).toBeNull();

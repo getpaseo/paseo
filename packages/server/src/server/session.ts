@@ -6143,6 +6143,7 @@ export class Session {
     return {
       currentBranch: snapshot.git.currentBranch,
       remoteUrl: snapshot.git.remoteUrl,
+      resolvedRemoteHost: snapshot.git.resolvedRemoteHost,
       isPaseoOwnedWorktree: snapshot.git.isPaseoOwnedWorktree,
       isDirty: snapshot.git.isDirty,
       aheadBehind: snapshot.git.aheadBehind,

@@ -68,6 +68,58 @@ describe("buildForgeReferenceUrl", () => {
     expect(buildForgeReferenceUrl(forge, { remoteUrl, repo, sigil, number: 12 })).toBe(expected);
   });
 
+  it.each([
+    [
+      "github",
+      "git@github.com-work:acme/repo.git",
+      "github.com",
+      "#",
+      "https://github.com/acme/repo/issues/12",
+    ],
+    [
+      "github",
+      "ssh://git@github-work:2222/acme/repo.git",
+      "ssh.github.com",
+      "#",
+      "https://github.com/acme/repo/issues/12",
+    ],
+    [
+      "github",
+      "git@work:team/repo.git",
+      "github.acme.internal",
+      "#",
+      "https://github.acme.internal/team/repo/issues/12",
+    ],
+    [
+      "gitlab",
+      "ssh://git@work:2222/group/sub/repo.git",
+      "gitlab.corp",
+      "!",
+      "https://gitlab.corp/group/sub/repo/-/merge_requests/12",
+    ],
+    [
+      "gitea",
+      "http://forge.test:3000/team/repo.git",
+      "github.com",
+      "#",
+      "http://forge.test:3000/team/repo/issues/12",
+    ],
+    [
+      "gitlab",
+      "https://gitlab.corp:8443/group/sub/repo.git",
+      "gitlab.com",
+      "!",
+      "https://gitlab.corp:8443/group/sub/repo/-/merge_requests/12",
+    ],
+  ] as const)(
+    "uses resolved SSH hosts without changing HTTP origins (%s, %s)",
+    (forge, remoteUrl, resolvedRemoteHost, sigil, expected) => {
+      expect(
+        buildForgeReferenceUrl(forge, { remoteUrl, resolvedRemoteHost, sigil, number: 12 }),
+      ).toBe(expected);
+    },
+  );
+
   it("rejects non-positive numbers", () => {
     const remoteUrl = "git@github.com:acme/repo.git";
     expect(buildForgeReferenceUrl("github", { remoteUrl, sigil: "#", number: 0 })).toBeNull();

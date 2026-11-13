@@ -7157,6 +7157,8 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
   const runtimeSnapshot = createWorkspaceRuntimeSnapshot(REPO_CWD, {
     git: {
       currentBranch: "runtime-branch",
+      remoteUrl: "git@github.com-work:acme/repo.git",
+      resolvedRemoteHost: "github.com",
       isDirty: true,
       aheadBehind: { ahead: 3, behind: 1 },
       aheadOfOrigin: 3,
@@ -7242,7 +7244,8 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
       id: "ws-runtime-fetch",
       gitRuntime: {
         currentBranch: "runtime-branch",
-        remoteUrl: "https://github.com/acme/repo.git",
+        remoteUrl: "git@github.com-work:acme/repo.git",
+        resolvedRemoteHost: "github.com",
         isPaseoOwnedWorktree: false,
         isDirty: true,
         aheadBehind: { ahead: 3, behind: 1 },
