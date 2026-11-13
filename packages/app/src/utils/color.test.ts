@@ -103,6 +103,14 @@ describe("stepContrast", () => {
   });
 });
 
+describe("colours with an alpha channel", () => {
+  it("are compared and stepped as the opaque colour", () => {
+    expect(contrastRatio("#1e1e2eff", "#ffffff")).toBe(contrastRatio("#1e1e2e", "#ffffff"));
+    expect(contrastRatio("#fffe", "#000")).toBeCloseTo(21, 5);
+    expect(stepContrast("#1e1e2e80", "#cdd6f4", 1.8)).toBe(stepContrast("#1e1e2e", "#cdd6f4", 1.8));
+  });
+});
+
 describe("mixHexColors", () => {
   it("blends by the given fraction", () => {
     expect(mixHexColors("#000000", "#ffffff", 0)).toBe("#000000");

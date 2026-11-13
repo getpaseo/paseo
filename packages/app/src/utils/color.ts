@@ -109,8 +109,16 @@ function relativeLuminance([r, g, b]: [number, number, number]): number {
   return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
 }
 
+// Derivation compares opaque colors. `#rgba` and `#rrggbbaa` are valid theme input, so their alpha
+// channel is dropped here and the colour is read as the opaque one it sits on.
+function withoutAlpha(hex: string): string {
+  if (/^#[0-9a-fA-F]{4}$/.test(hex)) return hex.slice(0, 4);
+  if (/^#[0-9a-fA-F]{8}$/.test(hex)) return hex.slice(0, 7);
+  return hex;
+}
+
 function requireRgb(hex: string): [number, number, number] {
-  const rgb = parseHexColor(hex);
+  const rgb = parseHexColor(withoutAlpha(hex));
   if (!rgb) throw new TypeError(`Expected a hex color, received ${hex}`);
   return rgb;
 }

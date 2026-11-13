@@ -211,6 +211,18 @@ describe("plugin theme roles", () => {
     expect(changed.surface4).toBe(base.surface4);
   });
 
+  it("builds a theme from colors that carry an alpha channel", () => {
+    const theme = buildPluginTheme(
+      withColors(MOCHA, {
+        background: "#1e1e2eff",
+        foreground: "#cdd6f4ff",
+        mutedForeground: "#a6adc8ff",
+      }),
+    );
+
+    expect(theme.colors.surface3).toBe(buildPluginTheme(MOCHA).colors.surface3);
+  });
+
   it("paints the sidebar with `sidebar` when the theme gives one", () => {
     const withSidebar = buildPluginTheme(withColors(MOCHA, { sidebar: "#11111b" })).colors;
 
