@@ -1149,4 +1149,43 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(summarizeEvents(events)).toEqual(["turn_completed"]);
     expect(await session.canStopRuntime()).toBe(true);
   });
+
+  test("malformed hook-state.json falls back to transcript heuristics without ending an active turn", async () => {
+    const { session, brainDir, sessionId, events, answer, writeTranscript } = createHarness();
+    const logsDir = path.join(brainDir, sessionId, ".system_generated", "logs");
+    const nowIso = new Date().toISOString();
+
+    writeTranscript([
+      { step_index: 1, type: "USER_INPUT", status: "DONE", created_at: nowIso, content: "run" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        tool_calls: [{ id: "call-1", name: "run_command", args: '{"CommandLine":"sleep 5"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "RUNNING",
+        created_at: nowIso,
+        content: `Tool is running as a background task with task id: ${sessionId}/task-3`,
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Started background task.",
+        tool_calls: [],
+      },
+    ]);
+    writeFileSync(path.join(logsDir, "hook-state.json"), "{partial-json", "utf8");
+
+    await session.startTurn("run");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+  });
 });

@@ -1089,16 +1089,24 @@ function hasIncompletePlannerToolCalls({
   return false;
 }
 
-async function readAntigravityHookState(logsDir: string): Promise<AntigravityHookState | null> {
+async function readAntigravityHookState(
+  logsDir: string,
+  logger: Logger,
+): Promise<AntigravityHookState | null> {
+  const hookStatePath = path.join(logsDir, "hook-state.json");
   try {
-    const raw = await fs.readFile(path.join(logsDir, "hook-state.json"), "utf8");
+    const raw = await fs.readFile(hookStatePath, "utf8");
     const parsed = AntigravityHookStateSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
-    throw error;
+    logger.warn(
+      { err: error, hookStatePath },
+      "Failed to read Antigravity hook-state.json; falling back to transcript heuristics",
+    );
+    return null;
   }
 }
 
@@ -1156,6 +1164,7 @@ async function hasActiveAntigravityBackgroundWork({
   sessionId,
   sessionBrainDir,
   logsDir,
+  logger,
 }: {
   rows: readonly AntigravityTranscriptRow[];
   lastUserIndex: number;
@@ -1164,11 +1173,12 @@ async function hasActiveAntigravityBackgroundWork({
   sessionId: string;
   sessionBrainDir: string;
   logsDir: string;
+  logger: Logger;
 }): Promise<boolean> {
   if (lastUserIndex < 0) {
     return false;
   }
-  const hookState = await readAntigravityHookState(logsDir);
+  const hookState = await readAntigravityHookState(logsDir, logger);
   const lastRow = rows[rows.length - 1];
   if (isAntigravityHookStateBusy({ hookState, lastRow })) {
     return true;
@@ -4751,6 +4761,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: this.sessionId,
         sessionBrainDir,
         logsDir,
+        logger: this.logger,
       });
       if (this.closed) {
         this.antigravityBackgroundBusy = false;
