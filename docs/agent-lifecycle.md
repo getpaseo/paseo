@@ -122,6 +122,12 @@ own interrupt RPC and any bounded cleanup before acknowledging cancellation. Pos
 settlement still waits two seconds. Waiting for a starting run before replacement uses the same
 outer budget; it cannot hold later interruption requests indefinitely.
 
+Codex retires its app-server when `turn/interrupt` times out. It confirms process exit before
+settling cancellation; the next prompt resumes the saved thread in a fresh process. A failed
+termination retains foreground ownership, and Stop retries termination. Retirement dismisses
+pending native and asynchronous questions before publishing cancellation so reopening cannot
+restore a question from the canceled runtime. Other provider errors retain their refusal behavior.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
