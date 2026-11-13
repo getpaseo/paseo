@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import type { LongTimelineAgent } from "./timeline-pagination";
 import {
@@ -240,4 +241,81 @@ export async function restoreUnchangedViewedTimeline(
 ): Promise<void> {
   gate.restore();
   await expectReconnectingToastGone(page);
+}
+
+export interface StreamingReplyAgent extends MockAgentWorkspace {
+  prompt: string;
+  reply: string;
+}
+
+/** A mock agent with no history whose reply streams one word every 100 ms. */
+export async function seedStreamingReplyAgent(): Promise<StreamingReplyAgent> {
+  const reply = Array.from({ length: 80 }, (_unused, index) => `word${index}`).join(" ");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "reply-reconnect-",
+    title: "Reply through reconnect",
+    featureValues: {
+      mockStreamingAssistantResponse: reply,
+      mockStreamingAssistantIntervalMs: 100,
+    },
+  });
+  return { ...agent, prompt: "stream through a reconnect", reply };
+}
+
+interface TimelineReader {
+  fetchAgentTimeline(
+    agentId: string,
+    request: { direction: "tail"; limit: number },
+  ): Promise<{ entries: Array<{ item: { type: string; text?: string } }> }>;
+}
+
+async function readDaemonReply(agent: StreamingReplyAgent): Promise<string> {
+  const timeline = await (agent.client as unknown as TimelineReader).fetchAgentTimeline(
+    agent.agentId,
+    { direction: "tail", limit: 0 },
+  );
+  return timeline.entries
+    .map(({ item }) => (item.type === "assistant_message" ? (item.text ?? "") : ""))
+    .join("");
+}
+
+/** Waits for the empty chat's first catch-up, so the chat is synced with no range. */
+export async function expectEmptyChatSynced(page: Page, gate: DaemonWebSocketGate): Promise<void> {
+  await gate.waitForServerMessage(TIMELINE_RESPONSE);
+  await expect(page.getByTestId("agent-chat-scroll").filter({ visible: true })).toHaveCount(1, {
+    timeout: 30_000,
+  });
+}
+
+/** Another client sends the prompt, and the reply starts, while the chat is away. */
+export async function sendPromptWhileDisconnected(agent: StreamingReplyAgent): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, agent.prompt);
+  await expect.poll(() => readDaemonReply(agent), { timeout: 30_000 }).toContain("word10");
+}
+
+/** Reconnects with live reply chunks reaching the chat before the catch-up page that holds them. */
+export async function restoreViewedTimelineWithLiveRowsFirst(
+  gate: DaemonWebSocketGate,
+): Promise<void> {
+  gate.holdNextClientRequest(TIMELINE_REQUEST);
+  const chunksBeforeReconnect = gate.getAgentStreamItemCount("assistant_message");
+  gate.restore();
+  await gate.waitForHeldClientRequest();
+  await gate.waitForAgentStreamItem("assistant_message", chunksBeforeReconnect + 5);
+  gate.releaseHeldClientRequest();
+}
+
+export async function expectPromptAndWholeReply(
+  page: Page,
+  agent: StreamingReplyAgent,
+): Promise<void> {
+  const chat = page.getByTestId("agent-chat-scroll").filter({ visible: true }).first();
+  await expect(chat.getByText(agent.prompt, { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () =>
+        (await chat.getByTestId("assistant-message").allInnerTexts()).map((text) => text.trim()),
+      { timeout: 30_000 },
+    )
+    .toEqual([agent.reply]);
 }

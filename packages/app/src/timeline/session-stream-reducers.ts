@@ -289,7 +289,10 @@ function classifySessionTimelineSeq({
   seq: number;
 }): SessionTimelineSeqDecision {
   if (!cursor) {
-    return "init";
+    // A synced chat without coverage was empty when it last caught up. Only an epoch's
+    // first row can start coverage; a later row means rows before it were missed, for
+    // example while offline, and a cursor started there would hide them from catch-up.
+    return seq === 1 ? "init" : "gap";
   }
   if (cursor.epoch !== epoch) {
     return "drop_epoch";
@@ -1543,14 +1546,14 @@ function processTimelineSequencingGate(input: {
     return {
       ...base,
       shouldApplyStreamEvent: false,
-      sideEffects: currentCursor
-        ? [
-            {
-              type: "catch_up",
-              cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
-            },
-          ]
-        : [],
+      sideEffects: [
+        {
+          type: "catch_up",
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : { epoch, endSeq: 0 },
+        },
+      ],
     };
   }
   if (decision === "drop_epoch" && seq === 1) {

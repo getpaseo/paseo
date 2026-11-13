@@ -53,6 +53,7 @@ it.each([false, true])(
   (hasAuthoritativeBaseline) => {
     let head: StreamItem[] = [];
     let tail: StreamItem[] = [];
+    let cursor: TimelineCursor | undefined;
     for (const [index, turnId] of ["turn-1", "turn-2"].entries()) {
       const result = processAgentStreamEvent({
         event: {
@@ -65,12 +66,13 @@ it.each([false, true])(
         epoch: "epoch-1",
         currentTail: tail,
         currentHead: head,
-        currentCursor: undefined,
+        currentCursor: cursor,
         timestamp: new Date(1000),
         hasAuthoritativeBaseline,
       });
       head = result.head;
       tail = result.tail;
+      cursor = result.cursor ?? cursor;
     }
     expect([...tail, ...head]).toMatchObject([
       { kind: "thought", text: "turn-1", turnId: "turn-1" },
@@ -2848,7 +2850,7 @@ describe("processTimelineResponse", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 60, endSeq: 79 },
     });
     expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
       "First paragraph.\n\nSecond paragraph.",
@@ -3677,6 +3679,7 @@ describe("processAgentStreamEvent", () => {
       event: makeAssistantTimelineEvent("[System Error] failed"),
       epoch: "timeline-1",
       seq: 42,
+      currentCursor: { epoch: "timeline-1", startSeq: 1, endSeq: 41 },
     });
 
     expect(result.head).toEqual([
@@ -3897,6 +3900,24 @@ describe("processAgentStreamEvent", () => {
     });
   });
 
+  it("catches up from the first row when a chat that was empty receives a later row", () => {
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("word3"),
+      seq: 6,
+      epoch: "epoch-1",
+      currentCursor: undefined,
+    });
+
+    expect(result).toMatchObject({
+      head: [],
+      changedHead: false,
+      cursor: null,
+      cursorChanged: false,
+      sideEffects: [{ type: "catch_up", cursor: { epoch: "epoch-1", endSeq: 0 } }],
+    });
+  });
+
   it("renders a live row over painted items without creating an authoritative cursor", () => {
     const result = processAgentStreamEvent({
       ...baseStreamInput,
@@ -4087,7 +4108,7 @@ describe("processAgentStreamEvents", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 237 },
     });
 
     expect(result.changedTail).toBe(false);
@@ -4261,6 +4282,7 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
       timestamp: new Date("2026-05-02T10:00:00.186Z"),
     });
 
@@ -4462,7 +4484,7 @@ describe("createAgentStreamReducerQueue", () => {
     const scheduler = createManualScheduler();
     let currentTail: StreamItem[] = [];
     let currentHead: StreamItem[] = [];
-    let currentCursor: TimelineCursor | undefined;
+    let currentCursor: TimelineCursor | undefined = { epoch: "epoch-1", startSeq: 1, endSeq: 1 };
 
     const queue = createAgentStreamReducerQueue({
       getSnapshot: () => ({
@@ -4505,7 +4527,7 @@ describe("createAgentStreamReducerQueue", () => {
     expect(getAssistantTexts(currentHead)).toEqual(["This is a paragraph continues."]);
     expect(currentCursor).toEqual({
       epoch: "epoch-1",
-      startSeq: 2,
+      startSeq: 1,
       endSeq: 4,
     });
   });
