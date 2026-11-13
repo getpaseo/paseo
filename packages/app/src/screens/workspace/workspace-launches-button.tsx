@@ -82,7 +82,7 @@ export function useWorkspaceLaunchErrors(workspaceId: string): WorkspaceLaunchEr
     (launchName: string) => {
       setErrorsByWorkspace((current) => {
         const workspaceErrors = current[workspaceId];
-        if (!workspaceErrors?.[launchName]) return current;
+        if (!workspaceErrors || !Object.hasOwn(workspaceErrors, launchName)) return current;
 
         const nextWorkspaceErrors = { ...workspaceErrors };
         delete nextWorkspaceErrors[launchName];
@@ -661,7 +661,11 @@ export function WorkspaceLaunchesSection({
           activeConnection={activeConnection}
           pendingStartLaunchName={pendingStartLaunchName}
           pendingStopLaunchName={pendingStopLaunchName}
-          launchError={launchErrors[launch.launchName] ?? null}
+          launchError={
+            Object.hasOwn(launchErrors, launch.launchName)
+              ? (launchErrors[launch.launchName] ?? null)
+              : null
+          }
           onStart={handleStart}
           onStop={handleStop}
           onClearLaunchError={onClearLaunchError}

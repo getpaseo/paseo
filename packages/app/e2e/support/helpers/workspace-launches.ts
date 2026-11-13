@@ -12,6 +12,8 @@ import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import { getServerId } from "./server-id";
 
 const configuredLaunches = {
+  constructor: { command: "node -e 'process.exit(0)'" },
+  toString: { command: "node -e 'process.exit(0)'" },
   worker: { command: 'node -e "setInterval(() => {}, 60_000)"' },
   dev: {
     command:
@@ -107,6 +109,11 @@ async function expectConfiguredLaunchMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-scripts-scripts-section")).toBeVisible();
   await expect(page.getByTestId("workspace-launches-item-dev")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start dev", exact: true })).toBeVisible();
+  for (const name of ["constructor", "toString"]) {
+    await expect(page.getByTestId(`workspace-launches-item-${name}`)).toBeVisible();
+    await expect(page.getByTestId(`workspace-launches-error-${name}`)).toHaveCount(0);
+    await expect(page.getByTestId(`workspace-launches-retry-${name}`)).toHaveCount(0);
+  }
 }
 
 async function startLaunch(
