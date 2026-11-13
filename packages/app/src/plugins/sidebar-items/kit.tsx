@@ -1,5 +1,5 @@
 import type { SidebarRowProps } from "@getpaseo/plugin/client/ui";
-import { isValidElement, useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
@@ -46,9 +46,10 @@ export function SidebarRow({ id, icon, label, onPress, active, trailing }: Sideb
     if (!iconComponent) return null;
     return <DensityIcon icon={iconComponent} size="sm" color="foregroundMuted" />;
   }, [iconComponent]);
+  // MenuItem takes one element. Group the row's ReactNode so an array of badges still renders.
   const menuTrailing = useMemo(() => {
-    if (!isValidElement(trailing)) return null;
-    return trailing;
+    if (trailing == null) return null;
+    return <View style={styles.menuTrailing}>{trailing}</View>;
   }, [trailing]);
   if (frame.menu) {
     return (
@@ -91,6 +92,11 @@ export function SidebarSeparator() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  menuTrailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   // Header rows fill the sidebar width; the gap between them is 2px.
   header: {
     marginVertical: theme.spacing[1],

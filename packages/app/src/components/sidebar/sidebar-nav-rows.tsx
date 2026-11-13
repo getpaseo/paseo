@@ -72,10 +72,10 @@ export function SidebarNavRows({
       ? visibleItems.length
       : Math.max(0, maxRows - 1);
   const overflowItems = visibleItems.slice(rowLimit);
-  const closeOverflowAndNavigate = () => {
+  const closeOverflowAndNavigate = useCallback(() => {
     setOverflowOpen(false);
     onBeforeNavigate?.();
-  };
+  }, [onBeforeNavigate]);
 
   if (visibleItems.length === 0 && !firstRowTrailing) return null;
 
