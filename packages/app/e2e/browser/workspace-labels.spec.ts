@@ -144,6 +144,26 @@ async function createLabel(
 test.describe("Workspace labels", () => {
   test.describe.configure({ timeout: 180_000 });
 
+  test("keeps typing in the create-label field while hovering a menu row", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "workspace-label-hover-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openWorkspaceLabels(page, seeded.workspaceId);
+      await page.getByTestId("workspace-label-picker-create").click();
+      const name = page.getByTestId("workspace-label-picker-create-name");
+      await name.fill("Work");
+      await page.getByTestId("workspace-label-picker-create-submit").hover();
+      await expect(name).toBeFocused();
+      await page.keyboard.type(" in progress");
+      await expect(name).toHaveValue("Work in progress");
+      await page.getByTestId("workspace-label-picker-create-submit").click();
+      await expectAssigned(page, "Work in progress", true);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
   test("keeps label filters reachable when no workspaces match", async ({ page }) => {
     const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-no-matches-" });
     try {
