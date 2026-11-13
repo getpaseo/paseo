@@ -694,7 +694,11 @@ export function ProviderDiagnosticSheet({
         })}
         snapPoints={MAIN_SNAP_POINTS}
       >
-        <ProviderInstallationSection state={installation.state} updates={installation.updates} />
+        <ProviderInstallationSection
+          state={installation.state}
+          updates={installation.updates}
+          action={installation.action}
+        />
         <ProviderModalBody
           discoveredCount={discoveredModels.length}
           additionalCount={additionalModels.length}

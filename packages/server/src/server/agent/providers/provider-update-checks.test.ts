@@ -7,6 +7,7 @@ import type { AgentClient } from "../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./claude/agent.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import type { LatestReleaseLookup } from "./release-check.js";
+import type { ProviderUpdateReport } from "@getpaseo/plugin/server/provider";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -20,6 +21,44 @@ async function versionCommand(banner: string): Promise<[string, string]> {
   const script = path.join(root, "cli.mjs");
   await fs.writeFile(script, `console.log(${JSON.stringify(banner)});\n`);
   return [process.execPath, script];
+}
+
+/**
+ * A command that, for `update`, writes `stdout` and `stderr` and exits with `exitCode`. Its
+ * arguments are recorded so the test can see which updater ran.
+ */
+async function updaterCommand(input: {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}): Promise<{ argv: [string, string]; recordedArgs: () => Promise<string[]> }> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-updater-"));
+  roots.push(root);
+  const script = path.join(root, "cli.mjs");
+  const record = path.join(root, "args.json");
+  await fs.writeFile(
+    script,
+    [
+      `import { writeFileSync } from "node:fs";`,
+      `writeFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)));`,
+      `process.stdout.write(${JSON.stringify(input.stdout)});`,
+      `process.stderr.write(${JSON.stringify(input.stderr)});`,
+      `process.exitCode = ${input.exitCode};`,
+    ].join("\n"),
+  );
+  return {
+    argv: [process.execPath, script],
+    recordedArgs: async () => JSON.parse(await fs.readFile(record, "utf8")) as string[],
+  };
+}
+
+async function runUpdate(client: AgentClient) {
+  const output: ProviderUpdateReport[] = [];
+  const result = await client.installation?.update?.({
+    signal: new AbortController().signal,
+    report: (event) => output.push(event),
+  });
+  return { result, output };
 }
 
 function releases(latest: string) {
@@ -57,6 +96,52 @@ const providers = [
       }),
   },
 ];
+
+describe.each(providers)("$name update", ({ client }) => {
+  test("runs the CLI's own update command and passes its output through", async () => {
+    const updater = await updaterCommand({
+      stdout: "Updating via `npm install -g`...\nadded 1 package\n",
+      stderr: "npm warn deprecated\n",
+      exitCode: 0,
+    });
+    const { result, output } = await runUpdate(client(updater.argv, releases("9.9.9").lookup));
+    expect(await updater.recordedArgs()).toEqual(["update"]);
+    expect(result).toEqual({ status: "succeeded", message: expect.stringContaining("updated") });
+    expect(output[0]).toEqual({
+      type: "message",
+      text: `Running ${updater.argv.join(" ")} update\n`,
+    });
+    expect(
+      output
+        .filter((event) => event.type === "stdout")
+        .map((event) => event.text)
+        .join(""),
+    ).toBe("Updating via `npm install -g`...\nadded 1 package\n");
+    expect(
+      output
+        .filter((event) => event.type === "stderr")
+        .map((event) => event.text)
+        .join(""),
+    ).toBe("npm warn deprecated\n");
+  });
+
+  test("fails with the exit code and keeps the updater's output", async () => {
+    const updater = await updaterCommand({
+      stdout: "",
+      stderr: "Could not detect the installation method\n",
+      exitCode: 3,
+    });
+    const { result, output } = await runUpdate(client(updater.argv, releases("9.9.9").lookup));
+    expect(result).toEqual({
+      status: "failed",
+      message: `${updater.argv.join(" ")} update exited with code 3`,
+    });
+    expect(output).toContainEqual({
+      type: "stderr",
+      text: "Could not detect the installation method\n",
+    });
+  });
+});
 
 describe.each(providers)("$name update check", ({ banner, client }) => {
   test("reports the newer release as available, version as published", async () => {

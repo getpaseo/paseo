@@ -1,9 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type {
   ProviderInstallation,
+  ProviderInstallationUpdate,
   ProviderInstallationUpdateCheck,
 } from "@getpaseo/protocol/messages";
 import { Button } from "@/components/ui/button";
@@ -30,12 +31,25 @@ export type ProviderUpdatesState =
   | { status: "ready"; updateCheck: ProviderInstallationUpdateCheck }
   | { status: "error"; message: string };
 
+/** Running the provider's own update. Absent when the host cannot report updates. */
+export interface ProviderUpdateAction {
+  /** The provider's latest update since the host started, or null. */
+  current: ProviderInstallationUpdate | null;
+  /** The request to start an update is in flight. */
+  starting: boolean;
+  /** Why the host did not start the update. */
+  startError: string | null;
+  start(): void;
+}
+
 export function ProviderInstallationSection({
   state,
   updates,
+  action,
 }: {
   state: ProviderInstallationState;
   updates: ProviderUpdatesState;
+  action?: ProviderUpdateAction;
 }) {
   const { t } = useTranslation();
   if (state.status === "unsupported") return null;
@@ -56,7 +70,17 @@ export function ProviderInstallationSection({
       <View style={settingsStyles.card}>
         <InstallationRow state={state} />
         {updates.status !== "hidden" && state.status === "ready" ? (
-          <UpdatesRow updates={updates} updateUrl={state.installation?.updateUrl} />
+          <UpdatesRow
+            updates={updates}
+            updateUrl={state.installation?.updateUrl}
+            action={state.installation?.canUpdate ? action : undefined}
+          />
+        ) : null}
+        {action && (action.current || action.startError) ? (
+          <UpdateRunRow
+            action={action}
+            updateUrl={state.status === "ready" ? state.installation?.updateUrl : undefined}
+          />
         ) : null}
       </View>
     </View>
@@ -157,14 +181,14 @@ function InstallationRow({ state }: { state: ProviderInstallationState }) {
 function UpdatesRow({
   updates,
   updateUrl,
+  action,
 }: {
   updates: Exclude<ProviderUpdatesState, { status: "hidden" }>;
   updateUrl: string | undefined;
+  /** Present when the provider runs its own update. */
+  action: ProviderUpdateAction | undefined;
 }) {
   const { t } = useTranslation();
-  const handleUpdate = useCallback(() => {
-    if (updateUrl) void openExternalUrl(updateUrl);
-  }, [updateUrl]);
 
   if (updates.status === "loading") {
     return (
@@ -212,11 +236,7 @@ function UpdatesRow({
             <Text style={settingsStyles.rowHint}>{updateCheck.message}</Text>
           ) : null}
         </View>
-        {updateUrl ? (
-          <Button variant="outline" onPress={handleUpdate}>
-            {t("settings.providers.installation.updateInstructions")}
-          </Button>
-        ) : null}
+        <AvailableUpdateButton action={action} updateUrl={updateUrl} />
       </View>
     );
   }
@@ -245,7 +265,129 @@ function UpdatesRow({
   );
 }
 
+/** Update runs the provider's updater; without one, the provider's update guide opens. */
+function AvailableUpdateButton({
+  action,
+  updateUrl,
+}: {
+  action: ProviderUpdateAction | undefined;
+  updateUrl: string | undefined;
+}) {
+  const { t } = useTranslation();
+  const handleOpenInstructions = useCallback(() => {
+    if (updateUrl) void openExternalUrl(updateUrl);
+  }, [updateUrl]);
+  if (action)
+    return (
+      <Button
+        variant="outline"
+        onPress={action.start}
+        loading={action.starting || action.current?.operation.status === "running"}
+        testID="provider-update-start"
+      >
+        {t("settings.providers.installation.update")}
+      </Button>
+    );
+  if (!updateUrl) return null;
+  return (
+    <Button variant="outline" onPress={handleOpenInstructions}>
+      {t("settings.providers.installation.updateInstructions")}
+    </Button>
+  );
+}
+
+function UpdateRunRow({
+  action,
+  updateUrl,
+}: {
+  action: ProviderUpdateAction;
+  updateUrl: string | undefined;
+}) {
+  const { t } = useTranslation();
+  const scroll = useRef<ScrollView>(null);
+  const followOutput = useCallback(() => scroll.current?.scrollToEnd({ animated: false }), []);
+  // A refused start replaces the previous update's result.
+  const update = action.startError ? null : action.current;
+  const status = update?.operation.status ?? "failed";
+  let title = t("settings.providers.installation.updateFailed");
+  if (status === "running") title = t("settings.providers.installation.updating");
+  else if (status === "succeeded") title = t("settings.providers.installation.updated");
+  let message = action.startError ?? undefined;
+  if (update && update.operation.status !== "running") message = update.operation.message;
+  const output = update?.output.map((entry) => entry.text).join("") ?? "";
+
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-update-run">
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.trailing}>
+          {status === "running" ? (
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          ) : null}
+          <Text style={settingsStyles.rowTitle} testID="provider-update-status">
+            {title}
+          </Text>
+        </View>
+        {message ? (
+          <Text style={settingsStyles.rowHint} selectable testID="provider-update-message">
+            {message}
+          </Text>
+        ) : null}
+        {output ? (
+          <ScrollView
+            ref={scroll}
+            style={styles.output}
+            contentContainerStyle={styles.outputContent}
+            onContentSizeChange={followOutput}
+          >
+            {update?.truncated ? (
+              <Text style={styles.outputNote}>
+                {t("settings.providers.installation.outputTruncated")}
+              </Text>
+            ) : null}
+            <Text
+              style={styles.outputText}
+              selectable
+              dataSet={CODE_SURFACE_DATASET}
+              testID="provider-update-output"
+            >
+              {output}
+            </Text>
+          </ScrollView>
+        ) : null}
+        {status === "failed" && updateUrl ? (
+          <View style={styles.link}>
+            <ExternalLink
+              href={updateUrl}
+              label={t("settings.providers.installation.updateInstructions")}
+            />
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  output: {
+    maxHeight: 240,
+    marginTop: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface0,
+  },
+  outputContent: {
+    padding: theme.spacing[3],
+  },
+  outputText: {
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.code,
+    lineHeight: 20,
+    color: theme.colors.foreground,
+  },
+  outputNote: {
+    marginBottom: theme.spacing[1],
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
   trailing: {
     flexDirection: "row",
     alignItems: "center",

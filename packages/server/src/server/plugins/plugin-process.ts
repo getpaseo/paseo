@@ -31,6 +31,8 @@ import {
   ProviderStatusSchema,
   ProviderInspectionSchema,
   ProviderUpdateCheckSchema,
+  ProviderUpdateReportSchema,
+  ProviderUpdateResultSchema,
 } from "@getpaseo/plugin/server/provider";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -69,6 +71,8 @@ function validateProviderInstallation(
     typeof installation.checkForUpdates !== "function"
   )
     throw new Error(`Invalid installation checkForUpdates callback for plugin provider ${id}`);
+  if (installation.update !== undefined && typeof installation.update !== "function")
+    throw new Error(`Invalid installation update callback for plugin provider ${id}`);
 }
 
 export interface PluginWorkerChannel {
@@ -239,6 +243,7 @@ export function createPluginWorker(options: {
             updateUrl: provider.installation.updateUrl,
             hasInspect: provider.installation.inspect !== undefined,
             hasCheckForUpdates: provider.installation.checkForUpdates !== undefined,
+            hasUpdate: provider.installation.update !== undefined,
           }
         : undefined,
       command: provider.command,
@@ -255,7 +260,8 @@ export function createPluginWorker(options: {
     }
     if (
       message.type !== "provider.installation.inspect" &&
-      message.type !== "provider.installation.check_updates"
+      message.type !== "provider.installation.check_updates" &&
+      message.type !== "provider.installation.update"
     )
       return false;
     const controller = new AbortController();
@@ -263,6 +269,27 @@ export function createPluginWorker(options: {
     const context = { launch: message.request.launch, signal: controller.signal };
     void (async () => {
       const installation = providers.get(message.providerId)?.installation;
+      if (message.type === "provider.installation.update") {
+        if (!installation?.update)
+          throw new Error(`Provider has no update capability: ${message.providerId}`);
+        let settled = false;
+        const report = (event: unknown) => {
+          const parsed = ProviderUpdateReportSchema.safeParse(event);
+          if (settled || !parsed.success) return;
+          send({
+            type: "provider.installation.report",
+            requestId: message.requestId,
+            report: parsed.data,
+          });
+        };
+        try {
+          return ProviderUpdateResultSchema.parse(
+            await installation.update({ ...context, report }),
+          );
+        } finally {
+          settled = true;
+        }
+      }
       if (message.type === "provider.installation.inspect") {
         if (!installation?.inspect)
           throw new Error(`Provider has no inspect capability: ${message.providerId}`);
@@ -481,6 +508,7 @@ export function createPluginWorker(options: {
       message.type === "provider.status" ||
       message.type === "provider.installation.inspect" ||
       message.type === "provider.installation.check_updates" ||
+      message.type === "provider.installation.update" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover" ||
@@ -558,6 +586,7 @@ export function createPluginWorker(options: {
         | "provider.catalog_key"
         | "provider.installation.inspect"
         | "provider.installation.check_updates"
+        | "provider.installation.update"
         | "provider.installation.cancel";
     }
   > {

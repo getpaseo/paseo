@@ -6,6 +6,7 @@ import { i18n as testI18n } from "@/i18n/i18next";
 import {
   ProviderInstallationSection,
   type ProviderInstallationState,
+  type ProviderUpdateAction,
   type ProviderUpdatesState,
 } from "./provider-installation-section";
 
@@ -29,11 +30,14 @@ const UPDATE_URL = "https://example.com/update";
 function mount(
   state: ProviderInstallationState,
   updates: ProviderUpdatesState = { status: "hidden" },
+  action?: ProviderUpdateAction,
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(<ProviderInstallationSection state={state} updates={updates} />));
+  act(() =>
+    root.render(<ProviderInstallationSection state={state} updates={updates} action={action} />),
+  );
   mounted.push({ root, container });
   const view = within(container);
   return {
@@ -143,5 +147,126 @@ describe("update check", () => {
   it("shows up to date only when the provider says so", () => {
     const section = mount(installed, { status: "ready", updateCheck: { status: "current" } });
     expect(section.view.getByText("Up to date")).toBeTruthy();
+  });
+});
+
+describe("update action", () => {
+  const installed = (canUpdate: boolean) =>
+    ready({
+      status: "ready",
+      installation: {
+        updateUrl: UPDATE_URL,
+        inspection: { status: "installed", version: "1.0.0" },
+        ...(canUpdate ? { canUpdate: true } : {}),
+      },
+    });
+  const available: ProviderUpdatesState = {
+    status: "ready",
+    updateCheck: { status: "available", versions: ["2.0.0"] },
+  };
+  function action(overrides: Partial<ProviderUpdateAction> = {}) {
+    let starts = 0;
+    const value: ProviderUpdateAction = {
+      current: null,
+      starting: false,
+      startError: null,
+      start: () => {
+        starts += 1;
+      },
+      ...overrides,
+    };
+    return { value, starts: () => starts };
+  }
+  const operation = { id: "op", startedAt: "2026-11-13T00:00:00.000Z" };
+  const finishedAt = "2026-11-13T00:01:00.000Z";
+
+  it("offers Update when an update is available and the provider runs its own", () => {
+    const control = action();
+    const section = mount(installed(true), available, control.value);
+    const button = section.view.getByRole("button", { name: "Update" });
+    act(() => button.click());
+    expect(control.starts()).toBe(1);
+    expect(section.view.queryByRole("button", { name: "Update instructions" })).toBeNull();
+  });
+
+  it("keeps Update instructions when the provider does not run its own update", () => {
+    const section = mount(installed(false), available, action().value);
+    expect(section.view.queryByRole("button", { name: "Update" })).toBeNull();
+    expect(section.view.getByRole("button", { name: "Update instructions" })).toBeTruthy();
+  });
+
+  it("shows a running update with its output so far", () => {
+    const section = mount(
+      installed(true),
+      available,
+      action({
+        current: {
+          operation: { ...operation, status: "running" },
+          output: [
+            { type: "message", text: "Running codex update\n" },
+            { type: "stdout", text: "added 1 package\n" },
+          ],
+        },
+      }).value,
+    );
+    expect(section.view.getByTestId("provider-update-status").textContent).toBe("Updating…");
+    expect(section.view.getByTestId("provider-update-output").textContent).toBe(
+      "Running codex update\nadded 1 package\n",
+    );
+  });
+
+  it("shows the provider's success message as written", () => {
+    const section = mount(
+      installed(true),
+      { status: "ready", updateCheck: { status: "current" } },
+      action({
+        current: {
+          operation: {
+            ...operation,
+            status: "succeeded",
+            finishedAt,
+            message: " Restart agents \n",
+          },
+          output: [],
+        },
+      }).value,
+    );
+    expect(section.view.getByTestId("provider-update-status").textContent).toBe("Updated");
+    expect(section.view.getByTestId("provider-update-message").textContent).toBe(
+      " Restart agents \n",
+    );
+    expect(section.view.queryByTestId("provider-update-output")).toBeNull();
+  });
+
+  it("shows a failure with its message, its output and the update instructions", () => {
+    const section = mount(
+      installed(true),
+      available,
+      action({
+        current: {
+          operation: { ...operation, status: "failed", finishedAt, message: "exited with code 1" },
+          output: [{ type: "stderr", text: "npm error EACCES\n" }],
+          truncated: true,
+        },
+      }).value,
+    );
+    expect(section.view.getByTestId("provider-update-status").textContent).toBe("Update failed");
+    expect(section.view.getByText("exited with code 1")).toBeTruthy();
+    expect(section.view.getByTestId("provider-update-output").textContent).toBe(
+      "npm error EACCES\n",
+    );
+    expect(section.view.getByText("Earlier output was dropped.")).toBeTruthy();
+    expect(section.view.getByRole("link", { name: "Update instructions" })).toBeTruthy();
+    expect(section.view.getByRole("button", { name: "Update" })).toBeTruthy();
+  });
+
+  it("shows why the host refused to start the update", () => {
+    const section = mount(
+      installed(true),
+      available,
+      action({ startError: "Provider codex cannot update itself" }).value,
+    );
+    expect(section.view.getByTestId("provider-update-status").textContent).toBe("Update failed");
+    expect(section.view.getByText("Provider codex cannot update itself")).toBeTruthy();
   });
 });

@@ -14,6 +14,7 @@ import {
   type ProviderStatus,
   type ProviderInspection,
   type ProviderUpdateCheck,
+  type ProviderUpdateResult,
   type ProviderInstallationLaunch,
   type ProviderLaunch,
   requireProviderCapabilities,
@@ -35,6 +36,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentClientInstallation,
+  AgentClientUpdateContext,
   AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
@@ -203,6 +205,14 @@ class ProviderRuntime {
     const launch = await this.resolveEffectiveLaunch();
     signal.throwIfAborted();
     return await checkForUpdates.call(this.registration.installation, { launch, signal });
+  }
+
+  async update(context: AgentClientUpdateContext): Promise<ProviderUpdateResult> {
+    const update = this.registration.installation?.update;
+    if (!update) throw new Error("Provider does not update itself");
+    const launch = await this.resolveEffectiveLaunch();
+    context.signal.throwIfAborted();
+    return await update.call(this.registration.installation, { ...context, launch });
   }
 
   async status(): Promise<ProviderStatus> {
@@ -1013,6 +1023,7 @@ class PluginAgentClient implements AgentClient {
         checkForUpdates: installation.checkForUpdates
           ? ({ signal }) => this.runtime.checkForUpdates(signal)
           : undefined,
+        update: installation.update ? (context) => this.runtime.update(context) : undefined,
       };
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }

@@ -64,6 +64,7 @@ interface PluginRuntimePort {
   getProviderStatus?: PluginRuntime["getProviderStatus"];
   inspectProviderInstallation?: PluginRuntime["inspectProviderInstallation"];
   checkProviderUpdates?: PluginRuntime["checkProviderUpdates"];
+  updateProvider?: PluginRuntime["updateProvider"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -765,6 +766,13 @@ export class PluginService {
             if (!this.runtime.checkProviderUpdates)
               throw new Error("Plugin runtime cannot check provider updates");
             return this.runtime.checkProviderUpdates(pluginId, providerId, context);
+          }
+        : undefined,
+      update: metadata.hasUpdate
+        ? (context) => {
+            if (!this.runtime.updateProvider)
+              throw new Error("Plugin runtime cannot update providers");
+            return this.runtime.updateProvider(pluginId, providerId, context);
           }
         : undefined,
     };

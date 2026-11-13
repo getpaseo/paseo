@@ -428,3 +428,94 @@ test("provider update checks reach the client: versions unchanged, failures inco
     await daemon.close();
   }
 }, 60000);
+
+test("a provider update outlives the client that started it and a new client reads it", async () => {
+  let version = "1.0.0";
+  let updates = 0;
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+      async update({ report }: { report: (event: { type: "stdout"; text: string }) => void }) {
+        updates += 1;
+        report({ type: "stdout", text: " step 1\r\n" });
+        await finished;
+        report({ type: "stdout", text: " step 2\n" });
+        version = "2.0.0";
+        return { status: "succeeded" as const, message: " Restart agents \n" };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, []),
+  });
+  const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await first.connect();
+    await expect(first.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { canUpdate: true, inspection: { version: "1.0.0" } },
+    });
+    const firstObservation = first.observeProviderUpdates("codex");
+    const firstOutput: string[] = [];
+    firstObservation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type === "provider.installation.update.progress")
+          firstOutput.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(firstObservation.ready).resolves.toMatchObject({ update: null });
+    const started = await first.updateProvider("codex");
+    expect(started).toMatchObject({ error: null, update: { operation: { status: "running" } } });
+    await expect.poll(() => firstOutput).toEqual([" step 1\r\n"]);
+    await first.close();
+
+    await second.connect();
+    const joined = await second.updateProvider("codex");
+    expect(joined.update?.operation.id).toBe(started.update?.operation.id);
+    expect(updates).toBe(1);
+
+    const observation = second.observeProviderUpdates("codex");
+    let latest: { status: string; message?: string } | null = null;
+    const output: string[] = [];
+    observation.subscribe({
+      snapshot: (snapshot) => {
+        latest = snapshot.update?.operation ?? null;
+        output.splice(0, output.length, ...(snapshot.update?.output ?? []).map((e) => e.text));
+      },
+      update: (message) => {
+        if (message.type !== "provider.installation.update.progress") return;
+        latest = message.payload.operation;
+        output.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(observation.ready).resolves.toMatchObject({
+      update: {
+        operation: { status: "running" },
+        output: [{ type: "stdout", text: " step 1\r\n" }],
+      },
+    });
+    finish();
+    await expect
+      .poll(() => latest)
+      .toMatchObject({ status: "succeeded", message: " Restart agents \n" });
+    expect(output).toEqual([" step 1\r\n", " step 2\n"]);
+    await expect(second.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { inspection: { version: "2.0.0" } },
+    });
+    await observation.release();
+  } finally {
+    finish();
+    await first.close().catch(() => undefined);
+    await second.close();
+    await daemon.close();
+  }
+}, 60000);

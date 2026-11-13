@@ -100,6 +100,7 @@ import {
   resolveExecutablePath,
   type LatestReleaseLookup,
 } from "../release-check.js";
+import { runUpdateCommand } from "../update-command.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -1641,6 +1642,21 @@ export class ClaudeAgentClient implements AgentClient {
       });
       return compareWithLatestRelease({ installed: probe.version, latest });
     },
+    // `claude update` updates native installs itself and package-manager installs through the
+    // package manager.
+    update: async (context) => {
+      const installed = await resolveInstalledClaude(this.runtimeSettings);
+      if (!installed) return { status: "failed", message: "Claude Code is not installed" };
+      return runUpdateCommand(
+        {
+          command: installed.executable,
+          args: [...installed.args, "update"],
+          env: createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+          successMessage: CLAUDE_UPDATED,
+        },
+        context,
+      );
+    },
   };
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
@@ -1967,6 +1983,8 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 const CLAUDE_INSTALL_URL = "https://code.claude.com/docs/en/setup#install-claude-code";
 const CLAUDE_UPDATE_URL = "https://code.claude.com/docs/en/setup#update-claude-code";
+const CLAUDE_UPDATED =
+  "Claude Code is updated. New agents use the new version; running agents keep theirs until restarted.";
 
 type ClaudeCodeVersionRead =
   | { status: "not_installed" }
@@ -2023,18 +2041,27 @@ export async function resolveClaudeCodeVersion(
   return read.version;
 }
 
-async function readClaudeCodeVersion(
+/** The executable and arguments a session would launch, or null when Claude Code is missing. */
+async function resolveInstalledClaude(
   runtimeSettings: ProviderRuntimeSettings | undefined,
-  signal: AbortSignal | undefined,
-): Promise<ClaudeCodeVersionRead> {
+): Promise<{ executable: string; args: string[] } | null> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
     defaultBinary: "claude",
   });
   const availability = await checkProviderLaunchAvailable(launch);
-  if (!availability.available) return { status: "not_installed" };
-  const executable = availability.resolvedPath ?? launch.command;
-  const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
+  if (!availability.available) return null;
+  return { executable: availability.resolvedPath ?? launch.command, args: [...launch.args] };
+}
+
+async function readClaudeCodeVersion(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  signal: AbortSignal | undefined,
+): Promise<ClaudeCodeVersionRead> {
+  const installed = await resolveInstalledClaude(runtimeSettings);
+  if (!installed) return { status: "not_installed" };
+  const { executable } = installed;
+  const { stdout, stderr } = await execCommand(executable, [...installed.args, "--version"], {
     ...createProviderEnvSpec({ runtimeSettings }),
     timeout: 5_000,
     signal,

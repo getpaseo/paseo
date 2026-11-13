@@ -69,6 +69,7 @@ import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
+  createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -127,6 +128,7 @@ import {
   resolveExecutablePath,
   type LatestReleaseLookup,
 } from "./release-check.js";
+import { runUpdateCommand } from "./update-command.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
@@ -7763,6 +7765,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 }
 
 const CODEX_INSTALL_URL = "https://developers.openai.com/codex/cli";
+const CODEX_UPDATED =
+  "Codex is updated. New agents use the new version; running agents keep theirs until restarted.";
 
 /** `codex --version` prints `codex-cli <version>`; report the version part. */
 function readCodexVersionLabel(output: string): string | undefined {
@@ -7809,6 +7813,21 @@ export class CodexAppServerAgentClient implements AgentClient {
       const latest = await lookup({ executablePath: installed.executablePath, signal });
       return compareWithLatestRelease({ installed: installed.version, latest });
     },
+    // `codex update` picks the updater for the install method: npm, bun, pnpm, Homebrew or the
+    // standalone installer, and exits non-zero with a reason when it cannot tell.
+    update: async (context) => {
+      const command = await this.resolveInstalledCommand();
+      if (!command) return { status: "failed", message: "Codex is not installed" };
+      return runUpdateCommand(
+        {
+          command: command.command,
+          args: [...command.args, "update"],
+          env: createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+          successMessage: CODEX_UPDATED,
+        },
+        context,
+      );
+    },
   };
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
@@ -7820,21 +7839,36 @@ export class CodexAppServerAgentClient implements AgentClient {
   ) {}
 
   private async readInstalledCodex(signal: AbortSignal): Promise<InstalledCodex> {
-    const launch = await resolveCodexLaunch(this.runtimeSettings);
-    const availability = await checkCodexLaunchAvailable(launch);
-    if (!availability.available) return { status: "not_installed" };
-    const command =
-      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command);
+    const installed = await this.resolveInstalledCommand();
+    if (!installed) return { status: "not_installed" };
     const output = await readCommandVersionOutput({
-      command,
-      args: [...launch.args, "--version"],
+      command: installed.command,
+      args: [...installed.args, "--version"],
       env: this.runtimeSettings?.env,
       signal,
     });
     return {
       status: "installed",
       version: readCodexVersionLabel(output),
-      executablePath: await resolveExecutablePath(availability.resolvedPath ?? command),
+      executablePath: await resolveExecutablePath(installed.executable),
+    };
+  }
+
+  /** The command a session would launch, or null when Codex is not installed. */
+  private async resolveInstalledCommand(): Promise<{
+    command: string;
+    args: string[];
+    executable: string;
+  } | null> {
+    const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const availability = await checkCodexLaunchAvailable(launch);
+    if (!availability.available) return null;
+    const command =
+      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command);
+    return {
+      command,
+      args: [...launch.args],
+      executable: availability.resolvedPath ?? command,
     };
   }
 
