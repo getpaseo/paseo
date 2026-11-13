@@ -1645,6 +1645,29 @@ test("request outcomes for import and attention reach only their requesting sock
   }
 });
 
+test("clearing a closed agent's attention does not resume its provider session", async () => {
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await daemon.daemon.agentManager.markAgentUnread(agent.id);
+    await client.clearAgentAttention(agent.id);
+    expect(daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("SDK import failure settles without waiting for the request timeout", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
