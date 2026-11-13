@@ -1,7 +1,9 @@
 import {
+  diffFindHeaderMatchesForFile,
   diffFindRectanglesForRowRange,
   type DiffFindHighlightState,
   type DiffFindRectangle,
+  type DiffHeaderFindSpan,
 } from "./find";
 import { selectionRectangles } from "./hit-testing";
 import {
@@ -123,6 +125,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
       viewportWidth: input.viewportWidth,
       y: file.top - input.scrollTop,
       activePath: input.activeHeaderPath,
+      find: input.find,
     });
   }
 
@@ -138,6 +141,7 @@ export function paintWebFileHeader(input: {
   viewportWidth: number;
   y: number;
   activePath: string | null;
+  find?: DiffFindHighlightState | null;
 }): void {
   const { context, file, palette, typography, viewportWidth, y } = input;
   context.fillStyle =
@@ -176,21 +180,98 @@ export function paintWebFileHeader(input: {
   // directory Text node. Canvas does not, so paint only the visible glyphs.
   const directory = directorySuffix(file.path).trimStart();
   const fitted = fitHeaderText(context, name, directory, available);
+  const directoryX =
+    DIFF_FILE_HEADER_LEFT + context.measureText(fitted.name).width + DIFF_FILE_HEADER_TEXT_GAP;
+  const headerMatches = diffFindHeaderMatchesForFile(input.find, file.fileIndex);
   context.save();
   context.beginPath();
   context.rect(DIFF_FILE_HEADER_LEFT, y, available, DIFF_FILE_HEADER_CONTENT_HEIGHT);
   context.clip();
+  if (headerMatches.length > 0) {
+    paintHeaderFindHighlights({
+      context,
+      palette,
+      typography,
+      path: file.path,
+      name,
+      fittedName: fitted.name,
+      directory,
+      fittedDirectory: fitted.directory,
+      directoryX,
+      y,
+      spans: headerMatches,
+    });
+  }
   context.fillStyle = palette.foreground;
   context.fillText(fitted.name, DIFF_FILE_HEADER_LEFT, textBaseline);
   if (fitted.directory) {
     context.fillStyle = palette.foregroundMuted;
-    context.fillText(
-      fitted.directory,
-      DIFF_FILE_HEADER_LEFT + context.measureText(fitted.name).width + DIFF_FILE_HEADER_TEXT_GAP,
-      textBaseline,
-    );
+    context.fillText(fitted.directory, directoryX, textBaseline);
   }
   context.restore();
+}
+
+function visibleFittedLength(fullText: string, fittedText: string): number {
+  if (!fittedText) return 0;
+  if (fittedText === fullText) return fullText.length;
+  return fittedText.endsWith("…") ? Math.max(0, fittedText.length - 1) : fittedText.length;
+}
+
+function paintHeaderFindHighlights(input: {
+  context: CanvasRenderingContext2D;
+  palette: DiffPalette;
+  typography: DiffHeaderTypography;
+  path: string;
+  name: string;
+  fittedName: string;
+  directory: string;
+  fittedDirectory: string;
+  directoryX: number;
+  y: number;
+  spans: readonly DiffHeaderFindSpan[];
+}): void {
+  const { context, palette, typography, path, spans, y } = input;
+  const slashIndex = path.lastIndexOf("/");
+  const namePathStart = slashIndex >= 0 ? slashIndex + 1 : 0;
+  const visibleNameLength = visibleFittedLength(input.name, input.fittedName);
+  const visibleDirLength = visibleFittedLength(input.directory, input.fittedDirectory);
+  const height = Math.min(
+    DIFF_FILE_HEADER_CONTENT_HEIGHT - 6,
+    Math.max(12, Math.round(typography.size * 1.35)),
+  );
+  const boxY = y + Math.round((DIFF_FILE_HEADER_CONTENT_HEIGHT - height) / 2);
+
+  const paintSubSpan = (
+    fullText: string,
+    visibleLength: number,
+    pathStart: number,
+    originX: number,
+    span: DiffHeaderFindSpan,
+  ) => {
+    const localStart = Math.max(0, span.start - pathStart);
+    const localEnd = Math.min(visibleLength, span.end - pathStart);
+    if (localEnd <= localStart) return;
+    const x = originX + context.measureText(fullText.slice(0, localStart)).width;
+    const width = Math.max(1, context.measureText(fullText.slice(localStart, localEnd)).width);
+    context.save();
+    context.fillStyle = palette.statusWarning;
+    context.globalAlpha = span.active ? 0.42 : 0.22;
+    context.fillRect(x, boxY, width, height);
+    if (span.active && typeof context.strokeRect === "function") {
+      context.globalAlpha = 0.95;
+      context.strokeStyle = palette.statusWarning;
+      context.lineWidth = 1;
+      context.strokeRect(x + 0.5, boxY + 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
+    }
+    context.restore();
+  };
+
+  for (const span of spans) {
+    paintSubSpan(input.name, visibleNameLength, namePathStart, DIFF_FILE_HEADER_LEFT, span);
+    if (input.fittedDirectory && slashIndex > 0) {
+      paintSubSpan(input.directory, visibleDirLength, 0, input.directoryX, span);
+    }
+  }
 }
 
 function centeredTextBaseline(context: CanvasRenderingContext2D, centerY: number): number {

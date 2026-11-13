@@ -258,6 +258,141 @@ describe("web diff text shaping", () => {
     expect(events).toEqual(["find-fill", "find-fill", "find-stroke", "text", "text"]);
   });
 
+  it("paints find match highlights beneath file header name and directory spans", () => {
+    const warningFills: Array<{
+      alpha: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+    const strokes: Array<{
+      color: string;
+      alpha: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+    let fillStyle = "";
+    let strokeStyle = "";
+    let globalAlpha = 1;
+    const stateStack: Array<{ fillStyle: string; strokeStyle: string; globalAlpha: number }> = [];
+    const context = {
+      setTransform() {},
+      clearRect() {},
+      fillRect(x: number, y: number, width: number, height: number) {
+        if (fillStyle === "warning") {
+          warningFills.push({ alpha: globalAlpha, x, y, width, height });
+        }
+      },
+      strokeRect(x: number, y: number, width: number, height: number) {
+        strokes.push({ color: strokeStyle, alpha: globalAlpha, x, y, width, height });
+      },
+      save() {
+        stateStack.push({ fillStyle, strokeStyle, globalAlpha });
+      },
+      restore() {
+        const previous = stateStack.pop();
+        if (!previous) return;
+        fillStyle = previous.fillStyle;
+        strokeStyle = previous.strokeStyle;
+        globalAlpha = previous.globalAlpha;
+      },
+      beginPath() {},
+      rect() {},
+      clip() {},
+      translate() {},
+      scale() {},
+      roundRect() {},
+      moveTo() {},
+      lineTo() {},
+      stroke() {},
+      measureText(text: string) {
+        return {
+          width: text.length * 6,
+          actualBoundingBoxAscent: 8,
+          actualBoundingBoxDescent: 2,
+        } as TextMetrics;
+      },
+      fillText() {},
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string | CanvasGradient | CanvasPattern) {
+        fillStyle = String(value);
+      },
+      get strokeStyle() {
+        return strokeStyle;
+      },
+      set strokeStyle(value: string | CanvasGradient | CanvasPattern) {
+        strokeStyle = String(value);
+      },
+      get globalAlpha() {
+        return globalAlpha;
+      },
+      set globalAlpha(value: number) {
+        globalAlpha = value;
+      },
+      lineWidth: 1,
+      lineCap: "butt",
+      lineJoin: "miter",
+      font: "",
+      textBaseline: "alphabetic",
+    } as unknown as CanvasRenderingContext2D;
+
+    paintWebViewport({
+      context,
+      model: {
+        ...model,
+        files: [
+          {
+            ...model.files[0]!,
+            headerHeight: 30,
+            bodyTop: 30,
+            bodyHeight: 18,
+            bottom: 48,
+          },
+        ],
+        height: 48,
+      },
+      palette,
+      typography: { family: "monospace", size: 12, lineHeight: 18 },
+      headerTypography: { family: "system-ui", size: 14, statSize: 12 },
+      measureText: { measure: () => 0 },
+      scrollTop: 0,
+      viewportWidth: 200,
+      viewportHeight: 100,
+      horizontalOffsets: new Map(),
+      selection: null,
+      find: {
+        matches: [
+          {
+            kind: "header",
+            fileIndex: 0,
+            path: "src/a.ts",
+            rowIndex: 0,
+            cellIndex: -1,
+            side: "new",
+            sourceIdentity: { hunkIndex: -1, lineIndex: -1, side: "new" },
+            start: 0,
+            end: 8,
+          },
+        ],
+        activeIndex: 0,
+      },
+      activeHeaderPath: null,
+      devicePixelRatio: 1,
+    });
+
+    // "a.ts" starts at x=12 (width 24) and "src" starts at x=40 (width 18)
+    expect(warningFills).toEqual([
+      { alpha: 0.42, x: 12, y: 5, width: 24, height: 19 },
+      { alpha: 0.42, x: 40, y: 5, width: 18, height: 19 },
+    ]);
+    expect(strokes).toHaveLength(2);
+  });
+
   it("paints review space with the surface color and continues the gutter divider", () => {
     const fills: Array<{ color: string; x: number; y: number; width: number; height: number }> = [];
     let fillStyle = "";

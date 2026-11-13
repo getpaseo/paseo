@@ -34,6 +34,75 @@ export interface DiffFindHost {
 
 const BOTTOM_EDGE_MARGIN = 16;
 
+interface SearchContentSignature {
+  query: string;
+  limit: number;
+  layout: DiffDocumentModel["layout"];
+  rowCount: number;
+  files: ReadonlyArray<{
+    file: DiffDocumentModel["files"][number]["file"];
+    path: string;
+    headerHeight: number;
+    isCollapsed: boolean;
+    rowStart: number;
+    rowEnd: number;
+  }>;
+}
+
+function buildSearchContentSignature(
+  model: DiffDocumentModel,
+  query: string,
+  limit: number,
+): SearchContentSignature {
+  return {
+    query,
+    limit,
+    layout: model.layout,
+    rowCount: model.rows.length,
+    files: model.files.map((section) => ({
+      file: section.file,
+      path: section.path,
+      headerHeight: section.headerHeight,
+      isCollapsed: section.isCollapsed,
+      rowStart: section.rowStart,
+      rowEnd: section.rowEnd,
+    })),
+  };
+}
+
+function matchesSearchContentSignature(
+  signature: SearchContentSignature | null,
+  model: DiffDocumentModel | null,
+  query: string,
+  limit: number,
+): boolean {
+  if (!signature || !model) return false;
+  if (
+    signature.query !== query ||
+    signature.limit !== limit ||
+    signature.layout !== model.layout ||
+    signature.rowCount !== model.rows.length ||
+    signature.files.length !== model.files.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < signature.files.length; index += 1) {
+    const left = signature.files[index]!;
+    const right = model.files[index]!;
+    if (
+      left.file !== right.file ||
+      left.path !== right.path ||
+      left.headerHeight !== right.headerHeight ||
+      left.isCollapsed !== right.isCollapsed ||
+      left.rowStart !== right.rowStart ||
+      left.rowEnd !== right.rowEnd
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class DiffFindModel {
   private listeners = new Set<() => void>();
   private widget: HTMLElement | null = null;
@@ -42,6 +111,7 @@ export class DiffFindModel {
   private limited = false;
   private activeIndex = -1;
   private pendingExactReveal = false;
+  private lastSearchSignature: SearchContentSignature | null = null;
   private snapshot: DiffFindSnapshot = {
     open: false,
     placement: "top",
@@ -119,6 +189,7 @@ export class DiffFindModel {
     this.limited = false;
     this.activeIndex = -1;
     this.pendingExactReveal = false;
+    this.lastSearchSignature = null;
     if (hadHighlights) this.host.requestPaint();
     this.commitSnapshot({
       open: false,
@@ -170,6 +241,23 @@ export class DiffFindModel {
   readonly onModelUpdated = () => {
     if (!this.snapshot.open) return;
     if (!this.snapshot.query) return;
+    const model = this.host.getModel();
+    if (
+      matchesSearchContentSignature(
+        this.lastSearchSignature,
+        model,
+        this.snapshot.query,
+        this.limit,
+      )
+    ) {
+      if (this.pendingExactReveal) {
+        this.revealAndReposition();
+      } else {
+        this.reposition();
+      }
+      this.host.requestPaint();
+      return;
+    }
     this.recompute({
       open: this.snapshot.open,
       placement: this.snapshot.placement,
@@ -189,9 +277,13 @@ export class DiffFindModel {
     const model = this.host.getModel();
     const previousActive = this.matches[this.activeIndex] ?? null;
     const result =
-      model && options.open
+      model && options.open && options.query
         ? findDiffMatches(model, options.query, this.limit)
         : { matches: [], limited: false };
+    this.lastSearchSignature =
+      model && options.open && options.query
+        ? buildSearchContentSignature(model, options.query, this.limit)
+        : null;
     this.matches = result.matches;
     this.limited = result.limited;
 
@@ -225,6 +317,10 @@ export class DiffFindModel {
     if (!model || !scroll || scroll.scrollTop <= 1) return 0;
     const minTop = scroll.scrollTop + FILE_HEADER_HEIGHT;
     const found = matches.findIndex((match) => {
+      if (match.kind === "header") {
+        const file = model.files[match.fileIndex];
+        return file ? file.top + file.headerHeight > scroll.scrollTop : false;
+      }
       const row = model.rows[match.rowIndex];
       return row ? row.top + row.height > minTop : false;
     });

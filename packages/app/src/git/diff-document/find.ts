@@ -1,3 +1,4 @@
+import { DIFF_FILE_HEADER_LEFT, DIFF_FILE_HEADER_RIGHT } from "@/git/file-header-presentation";
 import { selectedSourceText } from "./hit-testing";
 import { fragmentWidthForRange } from "./model";
 import type { DiffCell, DiffDocumentModel, DiffSelection, DiffSourceIdentity } from "./types";
@@ -6,6 +7,7 @@ export const DIFF_FIND_MATCH_LIMIT = 10_000;
 const CODE_LEFT_PADDING = 8;
 
 export interface DiffFindMatch {
+  kind?: "cell" | "header";
   fileIndex: number;
   path: string;
   rowIndex: number;
@@ -14,6 +16,12 @@ export interface DiffFindMatch {
   sourceIdentity: DiffSourceIdentity;
   start: number;
   end: number;
+}
+
+export interface DiffHeaderFindSpan {
+  start: number;
+  end: number;
+  active: boolean;
 }
 
 export interface DiffFindMatchesResult {
@@ -42,9 +50,68 @@ function escapeLiteralPattern(query: string): string {
   return query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const HEADER_SOURCE_IDENTITY: DiffSourceIdentity = {
+  hunkIndex: -1,
+  lineIndex: -1,
+  side: "new",
+};
+
+function appendHeaderMatches(
+  file: DiffDocumentModel["files"][number],
+  expression: RegExp,
+  matches: DiffFindMatch[],
+  limit: number,
+): boolean {
+  if (file.headerHeight <= 0 || !file.path) return false;
+  for (const match of file.path.matchAll(expression)) {
+    if (match[0].length === 0) continue;
+    if (matches.length === limit) return true;
+    matches.push({
+      kind: "header",
+      fileIndex: file.fileIndex,
+      path: file.path,
+      rowIndex: file.rowStart,
+      cellIndex: -1,
+      side: "new",
+      sourceIdentity: HEADER_SOURCE_IDENTITY,
+      start: match.index,
+      end: match.index + match[0].length,
+    });
+  }
+  return false;
+}
+
+function appendRowMatches(
+  row: Extract<DiffDocumentModel["rows"][number], { kind: "line" }>,
+  expression: RegExp,
+  matches: DiffFindMatch[],
+  limit: number,
+): boolean {
+  for (let cellIndex = 0; cellIndex < row.cells.length; cellIndex += 1) {
+    const cell = row.cells[cellIndex];
+    if (!cell || !cell.content) continue;
+    for (const match of cell.content.matchAll(expression)) {
+      if (match[0].length === 0) continue;
+      if (matches.length === limit) return true;
+      matches.push({
+        kind: "cell",
+        fileIndex: row.fileIndex,
+        path: row.path,
+        rowIndex: row.index,
+        cellIndex,
+        side: cell.reviewTarget?.side ?? (cellIndex === 0 ? "old" : "new"),
+        sourceIdentity: cell.sourceIdentity,
+        start: match.index,
+        end: match.index + match[0].length,
+      });
+    }
+  }
+  return false;
+}
+
 /**
- * Literal case-insensitive search across all loaded diff line cells in reading order.
- * Operates on `cell.content` directly so offscreen unmaterialized rows are counted immediately.
+ * Literal case-insensitive search across all file headers and loaded diff line cells in reading order.
+ * Operates on `file.path` and `cell.content` directly so collapsed headers and offscreen unmaterialized rows are counted immediately.
  */
 export function findDiffMatches(
   model: DiffDocumentModel,
@@ -55,26 +122,15 @@ export function findDiffMatches(
   const expression = new RegExp(escapeLiteralPattern(query), "giu");
   const matches: DiffFindMatch[] = [];
 
-  for (const row of model.rows) {
-    if (row.kind !== "line") continue;
-    for (let cellIndex = 0; cellIndex < row.cells.length; cellIndex += 1) {
-      const cell = row.cells[cellIndex];
-      if (!cell || !cell.content) continue;
-      for (const match of cell.content.matchAll(expression)) {
-        if (match[0].length === 0) continue;
-        if (matches.length === limit) {
-          return { matches, limited: true };
-        }
-        matches.push({
-          fileIndex: row.fileIndex,
-          path: row.path,
-          rowIndex: row.index,
-          cellIndex,
-          side: cell.reviewTarget?.side ?? (cellIndex === 0 ? "old" : "new"),
-          sourceIdentity: cell.sourceIdentity,
-          start: match.index,
-          end: match.index + match[0].length,
-        });
+  for (const file of model.files) {
+    if (appendHeaderMatches(file, expression, matches, limit)) {
+      return { matches, limited: true };
+    }
+    for (let rowIndex = file.rowStart; rowIndex < file.rowEnd; rowIndex += 1) {
+      const row = model.rows[rowIndex];
+      if (!row || row.kind !== "line") continue;
+      if (appendRowMatches(row, expression, matches, limit)) {
+        return { matches, limited: true };
       }
     }
   }
@@ -114,6 +170,42 @@ function lowerBoundMatchByRow(matches: readonly DiffFindMatch[], rowStart: numbe
   return low;
 }
 
+function lowerBoundMatchByFile(matches: readonly DiffFindMatch[], fileIndex: number): number {
+  let low = 0;
+  let high = matches.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (matches[mid]!.fileIndex < fileIndex) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+/**
+ * Returns header path match spans for `fileIndex`.
+ */
+export function diffFindHeaderMatchesForFile(
+  find: DiffFindHighlightState | null | undefined,
+  fileIndex: number,
+): DiffHeaderFindSpan[] {
+  if (!find || find.matches.length === 0) return [];
+  const spans: DiffHeaderFindSpan[] = [];
+  for (
+    let matchIndex = lowerBoundMatchByFile(find.matches, fileIndex);
+    matchIndex < find.matches.length;
+    matchIndex += 1
+  ) {
+    const match = find.matches[matchIndex]!;
+    if (match.fileIndex !== fileIndex || match.kind !== "header") break;
+    spans.push({
+      start: match.start,
+      end: match.end,
+      active: matchIndex === find.activeIndex,
+    });
+  }
+  return spans;
+}
+
 /**
  * Computes Canvas highlight rectangles for matches within `[rowStart, rowEnd)`.
  */
@@ -134,6 +226,7 @@ export function diffFindRectanglesForRowRange(input: {
   ) {
     const match = find.matches[matchIndex]!;
     if (match.rowIndex >= rowEnd) break;
+    if (match.kind === "header") continue;
     const row = model.rows[match.rowIndex];
     if (!row || row.kind !== "line") continue;
     const file = model.files[row.fileIndex];
@@ -195,6 +288,23 @@ export function resolveDiffMatchGeometry(
   screenRight: (horizontalOffset: number) => number;
   desiredHorizontalOffset: (currentOffset: number) => number;
 } | null {
+  if (match.kind === "header") {
+    const file = model.files[match.fileIndex];
+    if (!file || file.headerHeight <= 0) return null;
+    const estimatedRight = Math.min(
+      Math.max(DIFF_FILE_HEADER_LEFT + 1, model.viewportWidth - DIFF_FILE_HEADER_RIGHT),
+      DIFF_FILE_HEADER_LEFT + Math.max(24, file.path.length * 8),
+    );
+    return {
+      top: file.top,
+      bottom: file.top + file.headerHeight,
+      materialized: true,
+      screenLeft: () => DIFF_FILE_HEADER_LEFT,
+      screenRight: () => estimatedRight,
+      desiredHorizontalOffset: (currentOffset) => currentOffset,
+    };
+  }
+
   const row = model.rows[match.rowIndex];
   if (!row || row.kind !== "line") return null;
   const file = model.files[row.fileIndex];
@@ -256,6 +366,7 @@ export function resolveDiffMatchGeometry(
 
 export function sameDiffMatchIdentity(left: DiffFindMatch, right: DiffFindMatch): boolean {
   return (
+    (left.kind ?? "cell") === (right.kind ?? "cell") &&
     left.path === right.path &&
     left.side === right.side &&
     left.sourceIdentity.hunkIndex === right.sourceIdentity.hunkIndex &&

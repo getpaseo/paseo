@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import * as findModule from "./find";
 import {
+  diffFindHeaderMatchesForFile,
   diffFindRectanglesForRowRange,
   findDiffMatches,
   resolveDiffMatchGeometry,
@@ -172,5 +174,134 @@ describe("diff-document find", () => {
     expect(findModel.getHighlightState()).toBeNull();
 
     unsubscribe();
+  });
+
+  it("matches file header paths (including collapsed files) in reading order before file rows", () => {
+    const model = createModel({
+      files: [
+        {
+          path: "src/example.ts",
+          isNew: false,
+          isDeleted: false,
+          additions: 1,
+          deletions: 0,
+          hunks: [
+            {
+              oldStart: 1,
+              oldCount: 1,
+              newStart: 1,
+              newCount: 1,
+              lines: [
+                { type: "header", content: "@@ -1,1 +1,1 @@" },
+                { type: "add", content: "// see example.ts" },
+              ],
+            },
+          ],
+        },
+        {
+          path: "docs/collapsed-example.md",
+          isNew: true,
+          isDeleted: false,
+          additions: 1,
+          deletions: 0,
+          hunks: [
+            {
+              oldStart: 0,
+              oldCount: 0,
+              newStart: 1,
+              newCount: 1,
+              lines: [{ type: "add", content: "hidden example body" }],
+            },
+          ],
+        },
+      ],
+      collapsedFilePaths: new Set(["docs/collapsed-example.md"]),
+    });
+
+    const result = findDiffMatches(model, "example");
+    expect(
+      result.matches.map((match) => ({
+        kind: match.kind,
+        fileIndex: match.fileIndex,
+        path: match.path,
+        start: match.start,
+        end: match.end,
+      })),
+    ).toEqual([
+      { kind: "header", fileIndex: 0, path: "src/example.ts", start: 4, end: 11 },
+      { kind: "cell", fileIndex: 0, path: "src/example.ts", start: 7, end: 14 },
+      { kind: "header", fileIndex: 1, path: "docs/collapsed-example.md", start: 15, end: 22 },
+    ]);
+
+    expect(diffFindHeaderMatchesForFile({ matches: result.matches, activeIndex: 2 }, 1)).toEqual([
+      { start: 15, end: 22, active: true },
+    ]);
+
+    const collapsedHeaderGeo = resolveDiffMatchGeometry(model, result.matches[2]!);
+    expect(collapsedHeaderGeo).toMatchObject({
+      top: model.files[1]!.top,
+      bottom: model.files[1]!.top + model.files[1]!.headerHeight,
+      materialized: true,
+    });
+  });
+
+  it("skips rescanning diff text on scroll/materialization model rebuilds until content or collapse state changes", () => {
+    const files: BuildDiffDocumentModelInput["files"] = [
+      {
+        path: "src/example.ts",
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 0,
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 0,
+            newStart: 1,
+            newCount: 1,
+            lines: [{ type: "add", content: "const needle = 1;" }],
+          },
+        ],
+      },
+    ];
+    let currentDoc = createModel({
+      files,
+      materializationWindow: { top: 0, height: 10 },
+    });
+    const spy = vi.spyOn(findModule, "findDiffMatches");
+    const findModel = new DiffFindModel({
+      getModel: () => currentDoc,
+      getSelection: () => null,
+      getRoot: () => null,
+      getScroll: () => null,
+      setScrollTop: () => undefined,
+      getHorizontalOffset: () => 0,
+      setHorizontalOffset: () => undefined,
+      requestPaint: () => undefined,
+    });
+
+    findModel.open();
+    findModel.setSearch("needle");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(findModel.getSnapshot()).toMatchObject({ current: 1, total: 1 });
+
+    // Rebuild with a different materializationWindow (simulating scroll) — same file refs & collapse state
+    currentDoc = createModel({
+      files,
+      materializationWindow: { top: 0, height: 400 },
+    });
+    findModel.onModelUpdated();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Collapsing the file changes searchable content -> triggers rescan
+    currentDoc = createModel({
+      files,
+      collapsedFilePaths: new Set(["src/example.ts"]),
+    });
+    findModel.onModelUpdated();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(findModel.getSnapshot()).toMatchObject({ current: 0, total: 0 });
+
+    spy.mockRestore();
   });
 });

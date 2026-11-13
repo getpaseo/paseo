@@ -15,6 +15,7 @@ import { InlineReviewAddButton, InlineReviewThread } from "@/review";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
+import { diffFindHeaderMatchesForFile } from "./find";
 import { DiffFindModel } from "./find-model.web";
 import { DiffFindOverlay } from "./find-overlay.web";
 import {
@@ -63,6 +64,7 @@ interface StickyHeaderCanvasSlot {
   canvas: HTMLCanvasElement | null;
   file: DiffFileSection | null;
   active: boolean;
+  findKey: string;
   width: number;
   ratio: number;
   palette: DiffSurfaceProps["palette"] | null;
@@ -75,6 +77,7 @@ function emptyStickyHeaderCanvasSlot(): StickyHeaderCanvasSlot {
     canvas: null,
     file: null,
     active: false,
+    findKey: "",
     width: 0,
     ratio: 0,
     palette: null,
@@ -259,6 +262,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
           )
         : [];
       const ratio = window.devicePixelRatio || 1;
+      const find = findModel.getHighlightState();
 
       for (const [slotIndex, slot] of stickyHeaderSlotsRef.current.entries()) {
         const file = pooledFiles.find((candidate) => candidate.fileIndex % 2 === slotIndex) ?? null;
@@ -267,6 +271,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         if (!file) {
           section.style.display = "none";
           slot.file = null;
+          slot.findKey = "";
           continue;
         }
 
@@ -275,9 +280,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
         section.style.height = `${file.bottom - file.top}px`;
         section.dataset.diffStickyHeaderPath = file.path;
         const active = activeHeaderPathRef.current === file.path;
+        const findKey = diffFindHeaderMatchesForFile(find, file.fileIndex)
+          .map((span) => `${span.start}:${span.end}:${span.active ? 1 : 0}`)
+          .join(",");
         const canReusePaint =
           slot.file === file &&
           slot.active === active &&
+          slot.findKey === findKey &&
           slot.width === viewport.width &&
           slot.ratio === ratio &&
           slot.palette === props.palette &&
@@ -302,16 +311,18 @@ export function DiffSurface(props: DiffSurfaceProps) {
           viewportWidth: viewport.width,
           y: 0,
           activePath: activeHeaderPathRef.current,
+          find,
         });
         slot.file = file;
         slot.active = active;
+        slot.findKey = findKey;
         slot.width = viewport.width;
         slot.ratio = ratio;
         slot.palette = props.palette;
         slot.typography = props.headerTypography;
       }
     },
-    [props.headerTypography, props.palette, viewport.height, viewport.width],
+    [findModel, props.headerTypography, props.palette, viewport.height, viewport.width],
   );
 
   const paint = useCallback(() => {
@@ -368,6 +379,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       ratio,
       canReuse: !forceFullPaint && !resized && currentWindow.height === canvasHeight,
     });
+    paintStickyHeaderPool(currentModel, viewportTop);
     paintWebViewport({
       context,
       model: currentModel,
@@ -390,6 +402,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     findModel,
     loadedTypography,
     measurement,
+    paintStickyHeaderPool,
     props.headerTypography,
     props.palette,
     viewport.height,
