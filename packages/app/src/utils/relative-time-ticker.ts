@@ -1,4 +1,8 @@
-import type { RelativeTimeResolution } from "./time";
+import {
+  formatCompactTimeUntil,
+  nextCompactTimeUntilChange,
+  type RelativeTimeResolution,
+} from "./time";
 
 /**
  * The shared clock behind relative timestamps.
@@ -86,6 +90,35 @@ export function subscribeToRelativeTimeTick(
   return () => {
     tier.listeners.delete(listener);
     if (tier.listeners.size === 0) stop(resolution);
+  };
+}
+
+/** `setTimeout` runs longer delays at once; a capped wait just schedules again. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
+ * Reports a countdown's label now and each time it changes, until it reads "<1m" for good.
+ *
+ * A countdown cannot share a tier's tick. It changes when the time left reaches a whole minute,
+ * which the target sets, not the wall clock: on the minute tier a wake due at 03:04:00.3 would read
+ * "2m" until 03:04:00. So each countdown holds one timer, set for its own next change. Only rows
+ * with a pending wake have one.
+ */
+export function followCompactTimeUntil(date: Date, listener: (label: string) => void): () => void {
+  let handle: ReturnType<typeof setTimeout> | null = null;
+
+  function update(): void {
+    handle = null;
+    const now = new Date();
+    listener(formatCompactTimeUntil(date, now));
+    const next = nextCompactTimeUntilChange(date, now);
+    if (next === null) return;
+    handle = setTimeout(update, Math.min(next.getTime() - now.getTime(), MAX_TIMEOUT_MS));
+  }
+
+  update();
+  return () => {
+    if (handle !== null) clearTimeout(handle);
   };
 }
 

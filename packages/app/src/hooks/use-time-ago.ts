@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
-import { subscribeToRelativeTimeTick, type TickResolution } from "@/utils/relative-time-ticker";
+import {
+  followCompactTimeUntil,
+  subscribeToRelativeTimeTick,
+  type TickResolution,
+} from "@/utils/relative-time-ticker";
 import {
   describeCompactTimeAgo,
-  describeCompactTimeUntil,
   describeTimeAgo,
+  formatCompactTimeUntil,
   type RelativeTimeLabel,
 } from "@/utils/time";
 
@@ -32,9 +36,21 @@ export function useCompactTimeAgo(date: Date | null): string {
   return useRelativeTimeLabel(date, describeCompactTimeAgo);
 }
 
-/** A compact countdown ("11m") that keeps itself current, on the same ticks as `useCompactTimeAgo`. */
+/** A compact countdown ("11m") that keeps itself current. See `followCompactTimeUntil`. */
 export function useCompactTimeUntil(date: Date | null): string {
-  return useRelativeTimeLabel(date, describeCompactTimeUntil);
+  const [label, setLabel] = useState(() => (date ? formatCompactTimeUntil(date) : ""));
+
+  const time = date === null ? null : date.getTime();
+
+  useEffect(() => {
+    if (time === null) {
+      setLabel("");
+      return undefined;
+    }
+    return followCompactTimeUntil(new Date(time), setLabel);
+  }, [time]);
+
+  return label;
 }
 
 function useRelativeTimeLabel(
