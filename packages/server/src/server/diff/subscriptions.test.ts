@@ -630,6 +630,122 @@ test("staging unchanged worktree content reuses its cached body", async () => {
   }
 });
 
+test.skipIf(process.platform === "win32")(
+  "untracked bodies use the same patch conversion as tracked files",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-textconv-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root) {
+        return { repoRoot: root, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(join(cwd, ".gitattributes"), "*.dat diff=upper\n");
+      git("config", "diff.upper.textconv", "sed s/hello/HELLO/");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+      await writeFile(join(cwd, "x.dat"), "hello\n");
+      const subscription = await streams.subscribe(
+        { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await subscription.start();
+      const initial = frames
+        .flatMap((frame) => (frame.opcode === DiffOpcode.Bodies ? frame.files : []))
+        .find((file) => file.path === "x.dat");
+      expect(initial?.hunks.flatMap((hunk) => hunk.lines)).toContainEqual({
+        type: "add",
+        content: "hello",
+      });
+      frames.length = 0;
+      git("add", "x.dat");
+      await streams.invalidateForCwd(cwd);
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toBe(true);
+      expect(frames.filter((frame) => frame.opcode === DiffOpcode.Bodies)).toHaveLength(0);
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "comparison-side file type changes refresh cached bodies",
+  async () => {
+    const { symlink } = await import("node:fs/promises");
+    const cwd = await mkdtemp(join(tmpdir(), "diff-base-mode-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root) {
+        return { repoRoot: root, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    const path = join(cwd, "x");
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      await writeFile(path, "target");
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "regular");
+      git("branch", "compare");
+      await rm(path);
+      await symlink("target", path);
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "symlink");
+      const moved = git("rev-parse", "HEAD");
+      await rm(path);
+      await writeFile(path, "target\n");
+      const compare = {
+        cwd,
+        base: { kind: "rev" as const, rev: "refs/heads/compare" },
+        head: { kind: "worktree" as const },
+      };
+      const subscription = await streams.subscribe(compare, async (frame) => {
+        frames.push(frame);
+      });
+      await subscription.start();
+      expect(
+        frames.flatMap((frame) => (frame.opcode === DiffOpcode.Bodies ? frame.files : [])),
+      ).toContainEqual(expect.objectContaining({ path: "x" }));
+      frames.length = 0;
+      git("update-ref", "refs/heads/compare", moved);
+      await streams.invalidateForCwd(cwd);
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toBe(true);
+      const bodies = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(bodies).toContainEqual(expect.objectContaining({ path: "x" }));
+      const { listComparison } = await import("./git.js");
+      const fresh = await listComparison(compare);
+      try {
+        const record = await fresh.read(fresh.files[0]);
+        if (record.kind !== "ready") throw new Error("Expected readable type change");
+        expect(bodies).toContainEqual(record.body);
+      } finally {
+        await fresh.close();
+      }
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each([true, false])(
   "tracked=%s timestamp-preserving replacements refresh cached bodies",
   async (tracked) => {

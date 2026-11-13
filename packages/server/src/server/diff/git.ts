@@ -27,6 +27,8 @@ export interface ListedFile {
   source: { kind: "tracked" } | { kind: "untracked"; size: number };
 }
 interface WorktreeInput {
+  /** Comparison-side mode, or null when the file is added/untracked on this side. */
+  oldMode: string | null;
   /** Comparison-side blob, or null when the file is added/untracked on this side. */
   oldBlob: string | null;
   /** A regular file whose bytes readGitInputs blob-hashes. */
@@ -220,17 +222,18 @@ async function readComparisonList(
       input.literal === null ? [] : [[path, input.literal] as const],
     ),
   );
-  const gitInputs = await readGitInputs(
-    [...tracked.interpretationPaths].sort(),
+  const gitInputs = await readGitInputs({
+    paths: [...tracked.interpretationPaths].sort(),
     hashedPaths,
     options,
     literalContent,
-  );
+  });
   for (const file of files) {
     if (compare.head.kind === "worktree") {
       const input = worktreeInputs.get(file.entry.path);
       if (!input) throw new Error(`Missing worktree identity for ${file.entry.path}`);
       file.identity = JSON.stringify([
+        input.oldMode,
         input.oldBlob,
         gitInputs.identities.get(file.entry.path) ?? null,
         gitInputs.identities.get(file.entry.oldPath ?? file.entry.path) ?? null,
@@ -270,7 +273,15 @@ async function readComparisonList(
       const result =
         file.source.kind === "untracked"
           ? await runGitCommand(
-              ["diff", "--no-index", ...GIT_PATCH_FORMAT_ARGS, "--", "/dev/null", file.entry.path],
+              [
+                "diff",
+                "--no-index",
+                "--no-textconv",
+                ...GIT_PATCH_FORMAT_ARGS,
+                "--",
+                "/dev/null",
+                file.entry.path,
+              ],
               {
                 ...options,
                 acceptExitCodes: [0, 1],
@@ -364,12 +375,18 @@ async function readTrackedFiles(
     let identity = header.join(" ");
     if (compare.head.kind === "worktree") {
       const input: WorktreeInput = {
+        oldMode: code === "A" ? null : header[0],
         oldBlob: code === "A" ? null : absentBlob(header[2]),
         hashed: false,
         literal: null,
       };
       if (code !== "D") {
-        const worktree = await readWorktreeContent(path, header, !counts.binary, options);
+        const worktree = await readWorktreeContent({
+          path,
+          header,
+          text: !counts.binary,
+          options,
+        });
         input.hashed = worktree.hashed;
         input.literal = worktree.literal;
       }
@@ -394,12 +411,17 @@ async function readTrackedFiles(
   return { files, worktreeInputs, interpretationPaths };
 }
 
-async function readWorktreeContent(
-  path: string,
-  header: string[],
-  text: boolean,
-  options: GitCommandOptions,
-): Promise<{ hashed: boolean; literal: string | null }> {
+async function readWorktreeContent({
+  path,
+  header,
+  text,
+  options,
+}: {
+  path: string;
+  header: string[];
+  text: boolean;
+  options: GitCommandOptions;
+}): Promise<{ hashed: boolean; literal: string | null }> {
   const absolutePath = resolve(options.cwd, path);
   const value = await lstat(absolutePath, { bigint: true });
   if (value.isSymbolicLink())
@@ -461,6 +483,7 @@ async function listUntrackedFiles(
         ? 0
         : content.toString("utf8").split("\n").length - Number(content.at(-1) === 10);
     worktreeInputs.set(path, {
+      oldMode: null,
       oldBlob: null,
       hashed: !symlink && !binary && !omitted,
       literal: symlink ? `symlink:${content.toString("utf8")}` : null,
