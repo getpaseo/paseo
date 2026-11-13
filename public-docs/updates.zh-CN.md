@@ -50,19 +50,20 @@ v0.1.92-beta.3
 
 ### 如何加入测试版渠道 {#how-to-join-the-beta-channel}
 
-在桌面应用中：
+| 平台          | 获取测试版的方式                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| iOS 和 iPadOS | 加入 [Paseo TestFlight 测试版](https://testflight.apple.com/join/Y5HpSQjJ)。                     |
+| Android       | 从 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)的预发布版本下载 APK。      |
+| 桌面端        | 打开 **设置 → 关于**，在 **发布通道** 下选择 **Beta**。                                          |
+| CLI           | 运行 `npm install -g @getpaseo/cli@beta`。直接运行 `npm install -g @getpaseo/cli` 仍使用稳定版。 |
 
-1. 打开 **设置**
-2. 进入 **关于**
-3. 在 **发布通道** 下选择 **Beta**
-
-之后应用就会检查测试版更新。
+在桌面应用中选择 **Beta** 后，应用就会检查测试版更新。
 
 ## 应用商店 {#app-stores}
 
 桌面端版本和 CLI 通常最先提供。App Store 和 Play Store 的版本需要经过审核，可能会滞后。
 
-应用商店目前没有测试版渠道，只提交稳定版构建。如果你想提前使用 Android 构建，请从 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载 APK。
+App Store 和 Play Store 的商店页面只提供稳定版构建。在 iOS 上，[TestFlight 测试版](https://testflight.apple.com/join/Y5HpSQjJ)就是测试版渠道。每个测试版都会在通过 Apple 的测试版审核后上传到 TestFlight，稳定版也会上传到那里，所以 TestFlight 测试者始终使用最新构建。Android 没有 Play Store 测试版，请从 GitHub 安装测试版 APK。
 
 ## 出现问题怎么办 {#what-to-do-if-something-breaks}
 
