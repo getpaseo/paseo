@@ -166,7 +166,12 @@ export class ProviderInstallations {
     const cached = this.updateChecks.get(client);
     if (cached && knownVersion && !options.refresh && this.isFresh(cached)) {
       const version = await knownVersion;
-      if (version !== undefined && this.checkedVersions.get(cached) !== version)
+      // Another request may already have replaced the stale entry; share its check.
+      if (
+        version !== undefined &&
+        this.checkedVersions.get(cached) !== version &&
+        this.updateChecks.get(client) === cached
+      )
         this.updateChecks.delete(client);
     }
     const check = this.read(provider, client, this.updateChecks, options, {
