@@ -872,8 +872,9 @@ the workspace:
 | `tone`               | `"muted"` (default), `"success"`, `"warning"`, `"danger"`, or `"info"`.        |
 | `accessibilityLabel` | Defaults to `label`, then the item's `title`.                                  |
 
-The badge draws the line's `·` separator itself, so returning `null` leaves no gap. Render at most
-one `WorkspaceRowBadge` per item. Every row
+The badge draws the line's `·` separator before itself when the row has items of its own or an
+earlier plugin item precedes it, so returning `null` leaves no gap. Render as many badges as you
+like. Every row
 renders the component, so share one query across rows instead of fetching per workspace: the
 plugin's React Query client is shared by all of its components on a host.
 

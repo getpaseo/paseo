@@ -35,10 +35,10 @@ function Broken() {
 }
 
 export default function contribute(client) {
-  client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
-  client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
   client.addWorkspaceRowBadgeItem({ id: "review", title: "Review state", icon: "Eye", Component: Review });
   client.addWorkspaceRowBadgeItem({ id: "docs", title: "Docs state", icon: "BookOpen", Component: Docs });
+  client.addWorkspaceRowBadgeItem({ id: "quiet", title: "Quiet state", icon: "Moon", Component: Quiet });
+  client.addWorkspaceRowBadgeItem({ id: "broken", title: "Broken state", icon: "Bug", Component: Broken });
   return () => {};
 }
 `;
@@ -87,8 +87,8 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
     await test.step("the badge draws on the row; a null item and a throwing item draw nothing", async () => {
       await expect(badge(page, "review")).toBeVisible();
       await expect(badge(page, "review")).toContainText("In review");
-      // The badge sits behind two items that drew nothing and the row has none of its own, so
-      // the line starts with the badge and no stray "·".
+      // The row has none of its own items, so the line starts with the badge, no leading "·", and
+      // the second badge is set off from it by one.
       await expect(badgeLine(page, "review")).toHaveText("In review·Docs");
       await expect(badge(page, "quiet")).toHaveCount(0);
       await expect(badge(page, "broken")).toHaveCount(0);
@@ -105,7 +105,7 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
       await page.getByRole("menuitem", { name: "Review state", exact: true }).click();
       await closeSidebarDisplayPreferences(page);
       await expect(badge(page, "review")).toHaveCount(0);
-      // The first drawn badge is gone, so the next one leads the line without a "·".
+      // The first badge is gone, so the next one leads the line without a "·".
       await expect(badgeLine(page, "docs")).toHaveText("Docs");
       await toggleShowItem(page, "Review state", false);
       await expect(badge(page, "review")).toBeVisible();

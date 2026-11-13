@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useInstalledPlugins } from "../registry";
@@ -9,7 +9,6 @@ import { PluginEnvironmentProvider } from "../popover";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
 import { WorkspaceRowBadgeItemFrameContext, type WorkspaceRowBadgeItemFrame } from "./frame";
-import { withDrawn, withoutDrawn, type DrawnPositions } from "./line";
 import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
 export { WorkspaceRowBadge } from "./kit";
@@ -59,20 +58,12 @@ export function PluginWorkspaceRowBadgeItems({
   /** The row drew items of its own, so the first plugin item leads with a separator. */
   separated: boolean;
 }) {
-  const [drawn, setDrawn] = useState<DrawnPositions>([]);
-  const markDrawn = useCallback((position: number) => {
-    setDrawn((current) => withDrawn(current, position));
-    return () => setDrawn((current) => withoutDrawn(current, position));
-  }, []);
-  return targets.map((target, position) => (
+  return targets.map((target, index) => (
     <ThemedRowBadgeItemHost
       key={workspaceRowBadgeItemKey(target.plugin.id, target.item.id)}
       target={target}
       workspaceId={workspaceId}
-      leading={separated}
-      position={position}
-      drawn={drawn}
-      markDrawn={markDrawn}
+      separated={separated || index > 0}
       uniProps={pluginThemeMapping}
     />
   ));
@@ -81,18 +72,12 @@ export function PluginWorkspaceRowBadgeItems({
 function RowBadgeItemHost({
   target: { plugin, item },
   workspaceId,
-  leading,
-  position,
-  drawn,
-  markDrawn,
+  separated,
   theme,
 }: {
   target: RowBadgeItemTarget;
   workspaceId: string;
-  leading: boolean;
-  position: number;
-  drawn: DrawnPositions;
-  markDrawn: (position: number) => () => void;
+  separated: boolean;
   theme: PluginTheme;
 }) {
   const { environment, props: hostProps } = usePluginItemHost(plugin, theme);
@@ -101,12 +86,9 @@ function RowBadgeItemHost({
     () => ({
       title,
       testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`,
-      leading,
-      position,
-      drawn,
-      markDrawn,
+      separated,
     }),
-    [drawn, item.id, leading, markDrawn, plugin.id, position, title],
+    [item.id, plugin.id, separated, title],
   );
   const props = useMemo<PluginWorkspaceRowBadgeItemProps>(
     () => ({ ...hostProps, workspaceId }),

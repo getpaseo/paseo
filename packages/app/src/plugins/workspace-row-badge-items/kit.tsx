@@ -1,12 +1,11 @@
 import type { WorkspaceRowBadgeProps, WorkspaceRowBadgeTone } from "@getpaseo/plugin/client/ui";
-import { useLayoutEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import type { Theme } from "@/styles/theme";
 import { parsePluginIcon, PluginIconView } from "../icons";
 import { useWorkspaceRowBadgeItemFrame } from "./frame";
-import { needsSeparator } from "./line";
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 
@@ -28,8 +27,8 @@ const TONE_MAPPINGS: Record<WorkspaceRowBadgeTone, (theme: Theme) => { color: st
 
 /**
  * A plugin's item on the line under a workspace title, drawn like the row's own peers: one glyph at
- * the line's size and a short word, in the color of the state it reports. It brings its own
- * separator because only the badge knows whether the plugin drew anything at all.
+ * the line's size and a short word, in the color of the state it reports. It draws its own
+ * separator, so an item that renders nothing leaves no dot behind.
  */
 export function WorkspaceRowBadge({
   icon,
@@ -43,14 +42,10 @@ export function WorkspaceRowBadge({
     () => (icon === undefined ? null : parsePluginIcon("Workspace row badge", icon)),
     [icon],
   );
-  const draws = Boolean(parsedIcon || label);
-  const { markDrawn, position } = frame;
-  // A layout effect, so the line settles before the first paint.
-  useLayoutEffect(() => (draws ? markDrawn(position) : undefined), [draws, markDrawn, position]);
-  if (!draws) return null;
+  if (!parsedIcon && !label) return null;
   return (
     <>
-      {needsSeparator(frame) ? <Text style={styles.separator}>·</Text> : null}
+      {frame.separated ? <Text style={styles.separator}>·</Text> : null}
       <View
         style={styles.item}
         accessibilityLabel={accessibilityLabel ?? label ?? frame.title}
