@@ -3416,7 +3416,8 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
-    return this.replaceRunInForegroundLane(this.requireSessionAgent(agentId), prompt, options);
+    this.requireSessionAgent(agentId);
+    return this.replaceRunInForegroundLane(agentId, prompt, options);
   }
 
   async steerAgentRun(
@@ -3571,8 +3572,8 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-    return this.replaceRunInForegroundLane(agent, prompt, options, () =>
-      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId),
+    return this.replaceRunInForegroundLane(agent.id, prompt, options, (live) =>
+      this.assertSteerAdmissionOwnsTurn(live, expectedTurnId),
     );
   }
 
@@ -3581,27 +3582,29 @@ export class AgentManager {
    * concurrent replacement or Stop cannot land between the cancel and the new run's start.
    */
   private async replaceRunInForegroundLane(
-    agent: ActiveManagedAgent,
+    agentId: string,
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
-    assertAdmission?: () => void,
+    assertAdmission?: (agent: ActiveManagedAgent) => void,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     // Replacements queue in arrival order; each one holds the foreground lane only while
     // it cancels and reserves, so Stop is never stuck behind a replacement that is waiting.
-    return this.runQueuedMutation(this.replacementMutationTails, agent.id, () =>
-      this.replaceRunWhenAdmitted(agent, prompt, options, assertAdmission),
+    return this.runQueuedMutation(this.replacementMutationTails, agentId, () =>
+      this.replaceRunWhenAdmitted(agentId, prompt, options, assertAdmission),
     );
   }
 
   private async replaceRunWhenAdmitted(
-    agent: ActiveManagedAgent,
+    agentId: string,
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
-    assertAdmission?: () => void,
+    assertAdmission?: (agent: ActiveManagedAgent) => void,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     let stalledStart: PendingForegroundRun | null = null;
     for (;;) {
-      const admission = await this.runForegroundMutation(agent.id, async () => {
+      const admission = await this.runForegroundMutation(agentId, async () => {
+        // Resolve the agent inside the lane: a reload while this send waited replaces it.
+        const agent = this.requireSessionAgent(agentId);
         // A run that is still starting has no turn to interrupt yet. Canceling it would drop
         // its prompt, so wait for it outside the lane, where Stop can still reach it. A start
         // that outlasts the rescue timeout is canceled like any other run.
@@ -3609,7 +3612,7 @@ export class AgentManager {
         if (starting && starting.start.status !== "started" && starting !== stalledStart) {
           return { status: "starting" as const, run: starting };
         }
-        assertAdmission?.();
+        assertAdmission?.(agent);
         if (!this.hasInFlightRun(agent.id)) {
           return {
             status: "reserved" as const,
