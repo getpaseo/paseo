@@ -128,7 +128,7 @@ interface FontSizeRowProps {
   draft: string;
   withBorder?: boolean;
   onChangeDraft: (value: string) => void;
-  onCommit: () => void;
+  onCommit: () => string;
 }
 
 function FontSizeRow({
@@ -140,6 +140,12 @@ function FontSizeRow({
   onChangeDraft,
   onCommit,
 }: FontSizeRowProps) {
+  const inputRef = useRef<EditingTextInputHandle>(null);
+  const handleCommit = useCallback(() => {
+    const committed = onCommit();
+    inputRef.current?.replaceText(committed);
+  }, [onCommit]);
+
   return (
     <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
@@ -148,10 +154,11 @@ function FontSizeRow({
       </View>
       <View style={styles.sizeField}>
         <TextInput
+          ref={inputRef}
           initialValue={draft}
           onChangeText={onChangeDraft}
-          onBlur={onCommit}
-          onSubmitEditing={onCommit}
+          onBlur={handleCommit}
+          onSubmitEditing={handleCommit}
           keyboardType="number-pad"
           inputMode="numeric"
           selectTextOnFocus
@@ -394,6 +401,7 @@ export function AppearanceSection() {
     if (next !== settings.uiBaseFontSize) {
       void updateSettings({ uiBaseFontSize: next });
     }
+    return String(next);
   }, [settings.uiBaseFontSize, uiBaseSizeDraft, updateSettings]);
 
   const commitCodeSize = useCallback(() => {
@@ -406,6 +414,7 @@ export function AppearanceSection() {
     if (next !== settings.codeFontSize) {
       void updateSettings({ codeFontSize: next });
     }
+    return String(next);
   }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
 
   const commitContentSize = useCallback(() => {
@@ -418,6 +427,7 @@ export function AppearanceSection() {
     if (next !== settings.contentFontSize) {
       void updateSettings({ contentFontSize: next });
     }
+    return String(next);
   }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
 
   // Live-while-typing: the in-progress drafts drive the preview without
