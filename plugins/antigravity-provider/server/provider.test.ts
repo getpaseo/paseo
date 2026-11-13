@@ -395,7 +395,29 @@ it("fails a turn that goes silent while agy retries an exhausted quota, then rec
     state: "failed",
     error: { code: "TURN_STALLED" },
   });
-  await h.completed(await h.prompt("HELLO"));
+  const recovery = await h.prompt("HELLO");
+  expect(await h.completed(recovery)).toMatchObject({ state: "completed" });
+});
+
+it("keeps a turn alive while a silent subagent child is still writing", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "agy-child-"));
+  const childLog = path.join(dir, "transcript.jsonl");
+  await writeFile(childLog, "");
+  // Real time: the watchdog reads child-transcript mtime across processes, so fake timers cannot drive it.
+  const keepFresh = setInterval(() => void writeFile(childLog, "x"), 100);
+  try {
+    const h = await harness({
+      PASEO_ANTIGRAVITY_TURN_IDLE_MS: "300",
+      AGY_TEST_CHILD_LOG: childLog,
+      AGY_TEST_SILENT_MS: "900",
+    });
+    await h.open();
+    const message = await h.prompt("SUBAGENT_WAIT");
+    expect(await h.completed(message)).toMatchObject({ state: "completed" });
+  } finally {
+    clearInterval(keepFresh);
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 it("stops an unresponsive driver and still respawns the conversation", async () => {

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type {
   ProviderCatalog,
@@ -26,6 +28,7 @@ interface Turn {
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
+  childLogs: Set<string>;
   usage: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
 }
 type State =
@@ -95,6 +98,7 @@ export class Session {
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
+      childLogs: new Set(),
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     };
     this.state = { type: "running", driver, turn };
@@ -309,6 +313,11 @@ export class Session {
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {
+      if (step.step_type === "subagent") {
+        for (const child of step.subagent_info?.subagents ?? []) {
+          if (child.log_uri.startsWith("file:")) turn.childLogs.add(child.log_uri);
+        }
+      }
       const item = toolItem(step, id);
       turn.tools.set(id, item);
       this.item(item);
@@ -354,17 +363,42 @@ export class Session {
 
   private onWatchdog(idleMs: number): void {
     if (this.state.type !== "running") return;
-    // A running tool or subagent legitimately stays quiet; only a silent model call is suspect.
-    if ([...this.state.turn.tools.values()].some((item) => item.status === "running")) {
+    const turn = this.state.turn;
+    // A running tool legitimately stays quiet; only a silent model call is suspect.
+    if ([...turn.tools.values()].some((item) => item.status === "running")) {
       this.armWatchdog();
       return;
     }
+    void this.failIfIdle(turn, idleMs);
+  }
+
+  private async failIfIdle(turn: Turn, idleMs: number): Promise<void> {
+    if (await this.childActive(turn, idleMs)) {
+      if (this.state.type === "running" && this.state.turn === turn) this.armWatchdog();
+      return;
+    }
+    if (this.state.type !== "running" || this.state.turn !== turn) return;
     this.failTurn(
       new AntigravityError(
         `Antigravity produced no output for ${Math.round(idleMs / 1000)}s. Its model quota may be exhausted and it is retrying; check the reset time with agy, then retry.`,
         "TURN_STALLED",
       ),
     );
+  }
+
+  // invoke_subagent reports DONE before the child finishes, so the parent can stay quiet while a
+  // child works and no frames arrive. A child transcript written recently means real work.
+  private async childActive(turn: Turn, idleMs: number): Promise<boolean> {
+    const cutoff = Date.now() - idleMs;
+    for (const log of turn.childLogs) {
+      try {
+        const { mtimeMs } = await stat(fileURLToPath(log));
+        if (mtimeMs > cutoff) return true;
+      } catch {
+        // A missing or unreadable transcript says nothing about the child; treat it as idle.
+      }
+    }
+    return false;
   }
 
   private retire(driver: Driver): void {

@@ -75,6 +75,31 @@ lines.on("line", (line) => {
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
   if (text.includes("QUOTA_STALL")) return;
+  if (text.includes("SUBAGENT_WAIT")) {
+    const childLog = process.env.AGY_TEST_CHILD_LOG;
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 0,
+        state: "DONE",
+        step_type: "subagent",
+        tool_name: "invoke_subagent",
+        subagent_info: {
+          subagents: [{ type_name: "child", log_uri: childLog ? `file://${childLog}` : "" }],
+        },
+      },
+    });
+    setTimeout(
+      () =>
+        emit({
+          event: "result",
+          result: { conversation_id: conversationId, status: "SUCCESS", response: "done" },
+        }),
+      Number(process.env.AGY_TEST_SILENT_MS || 800),
+    );
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];
