@@ -1,24 +1,34 @@
+import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type {
   ProviderInstallation,
   ProviderInstallationInspection,
+  ProviderInstallationUpdate,
   ProviderInstallationUpdateCheck,
+  ProviderInstallationUpdateProgress,
 } from "@getpaseo/protocol/messages";
 import {
   ProviderInspectionSchema,
   ProviderUpdateCheckSchema,
+  ProviderUpdateReportSchema,
+  ProviderUpdateResultSchema,
+  type ProviderUpdateResult,
 } from "@getpaseo/plugin/server/provider";
 import type {
   AgentClient,
   AgentClientInstallationContext,
+  AgentClientUpdateContext,
   AgentProvider,
 } from "../agent-sdk-types.js";
+import { ProviderUpdateOperation } from "./provider-update-operation.js";
 
 const DEFAULT_INSPECT_TIMEOUT_MS = 20_000;
 const DEFAULT_INSPECT_CACHE_MS = 30_000;
 // Below the plugin RPC timeout, so a slow plugin check reports this deadline.
 const DEFAULT_UPDATE_CHECK_TIMEOUT_MS = 25_000;
 const DEFAULT_UPDATE_CHECK_CACHE_MS = 60 * 60_000;
+/** Characters of updater output kept per update; older output is dropped first. */
+export const DEFAULT_UPDATE_OUTPUT_LIMIT = 64 * 1024;
 
 export interface ProviderInstallationsOptions {
   logger: Logger;
@@ -29,8 +39,13 @@ export interface ProviderInstallationsOptions {
   updateCheckTimeoutMs?: number;
   /** How long a conclusive update check is reused. Failed checks use `inspectCacheMs`. */
   updateCheckCacheMs?: number;
+  /** Rediscovers the provider after a successful update. A failure is logged, not reported. */
+  refreshProvider?(provider: AgentProvider): Promise<void>;
+  updateOutputLimit?: number;
   now?: () => number;
 }
+
+export type ProviderUpdateListener = (progress: ProviderInstallationUpdateProgress) => void;
 
 export interface InspectProviderInstallationOptions {
   /** Skip the settled-result cache. Joins a call that is already running. */
@@ -73,7 +88,12 @@ export class ProviderInstallations {
   private readonly inspectCacheMs: number;
   private readonly updateCheckTimeoutMs: number;
   private readonly updateCheckCacheMs: number;
+  private readonly refreshProvider: ProviderInstallationsOptions["refreshProvider"];
+  private readonly updateOutputLimit: number;
   private readonly now: () => number;
+  private readonly updates = new Map<AgentProvider, ProviderUpdateOperation>();
+  private readonly updateListeners = new Map<AgentProvider, Set<ProviderUpdateListener>>();
+  private readonly runningUpdates = new Set<AbortController>();
   private readonly inspections = new WeakMap<
     AgentClient,
     CachedRead<ProviderInstallationInspection>
@@ -90,6 +110,8 @@ export class ProviderInstallations {
     this.inspectCacheMs = options.inspectCacheMs ?? DEFAULT_INSPECT_CACHE_MS;
     this.updateCheckTimeoutMs = options.updateCheckTimeoutMs ?? DEFAULT_UPDATE_CHECK_TIMEOUT_MS;
     this.updateCheckCacheMs = options.updateCheckCacheMs ?? DEFAULT_UPDATE_CHECK_CACHE_MS;
+    this.refreshProvider = options.refreshProvider;
+    this.updateOutputLimit = options.updateOutputLimit ?? DEFAULT_UPDATE_OUTPUT_LIMIT;
     this.now = options.now ?? Date.now;
   }
 
@@ -104,6 +126,7 @@ export class ProviderInstallations {
     const result: ProviderInstallation = {};
     if (installation.installUrl) result.installUrl = installation.installUrl;
     if (installation.updateUrl) result.updateUrl = installation.updateUrl;
+    if (installation.update) result.canUpdate = true;
     const inspect = installation.inspect;
     if (inspect) {
       result.inspection = await this.read(provider, client, this.inspections, options, {
@@ -142,6 +165,104 @@ export class ProviderInstallations {
       run: (context) => checkForUpdates.call(installation, context),
       failed: (message) => ({ status: "error" as const, message }),
     });
+  }
+
+  /**
+   * Starts the provider's update, or returns the one already running. The update runs until the
+   * provider settles it, independent of any client; only `close` aborts it. Throws when the
+   * provider declares no `update`.
+   */
+  update(provider: AgentProvider): ProviderInstallationUpdate {
+    const running = this.updates.get(provider);
+    if (running?.running) return running.snapshot();
+    const client = this.requireClient(provider);
+    const installation = client.installation;
+    const update = installation?.update;
+    if (!installation || !update) throw new Error(`Provider ${provider} cannot update itself`);
+    const operation = new ProviderUpdateOperation({
+      id: randomUUID(),
+      provider,
+      startedAt: this.timestamp(),
+      outputLimit: this.updateOutputLimit,
+      publish: (progress) => {
+        for (const listener of this.updateListeners.get(provider) ?? []) listener(progress);
+      },
+    });
+    this.updates.set(provider, operation);
+    void this.runUpdate(provider, client, operation, (context) =>
+      update.call(installation, context),
+    );
+    return operation.snapshot();
+  }
+
+  /** The latest update of the provider since the daemon started, or null. */
+  getUpdate(provider: AgentProvider): ProviderInstallationUpdate | null {
+    return this.updates.get(provider)?.snapshot() ?? null;
+  }
+
+  /** Calls `listener` when an update of the provider starts, reports output or settles. */
+  observeUpdates(provider: AgentProvider, listener: ProviderUpdateListener): () => void {
+    let listeners = this.updateListeners.get(provider);
+    if (!listeners) {
+      listeners = new Set();
+      this.updateListeners.set(provider, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.updateListeners.delete(provider);
+    };
+  }
+
+  /** Aborts running updates. Each settles as failed with the provider's answer to the abort. */
+  close(): void {
+    for (const controller of this.runningUpdates)
+      controller.abort(new Error("The daemon is stopping"));
+  }
+
+  private async runUpdate(
+    provider: AgentProvider,
+    client: AgentClient,
+    operation: ProviderUpdateOperation,
+    run: (context: AgentClientUpdateContext) => Promise<unknown>,
+  ): Promise<void> {
+    const controller = new AbortController();
+    this.runningUpdates.add(controller);
+    let result: ProviderUpdateResult;
+    try {
+      const answer = await run({
+        signal: controller.signal,
+        report: (event) => {
+          const parsed = ProviderUpdateReportSchema.safeParse(event);
+          if (parsed.success) operation.append(parsed.data);
+          else this.logger.warn({ provider }, "Ignored invalid provider update output");
+        },
+      });
+      result = ProviderUpdateResultSchema.parse(answer);
+    } catch (error) {
+      this.logger.warn({ err: error, provider }, "Provider update failed");
+      result = {
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      this.runningUpdates.delete(controller);
+    }
+    if (result.status === "succeeded") {
+      // The installed version and update state are now stale; read them again on next request.
+      this.inspections.delete(client);
+      this.updateChecks.delete(client);
+    }
+    operation.settle(result, this.timestamp());
+    if (result.status === "succeeded" && this.refreshProvider) {
+      await this.refreshProvider(provider).catch((error: unknown) => {
+        this.logger.warn({ err: error, provider }, "Provider refresh after update failed");
+      });
+    }
+  }
+
+  private timestamp(): string {
+    return new Date(this.now()).toISOString();
   }
 
   private requireClient(provider: AgentProvider): AgentClient {

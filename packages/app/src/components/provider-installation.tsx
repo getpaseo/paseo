@@ -1,18 +1,38 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type {
+  ProviderInstallationUpdate,
+  ProviderInstallationUpdateProgress,
+} from "@getpaseo/protocol/messages";
 import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import type {
   ProviderInstallationState,
+  ProviderUpdateAction,
   ProviderUpdatesState,
 } from "./provider-installation-section";
 
 export interface ProviderInstallationRead {
   state: ProviderInstallationState;
   updates: ProviderUpdatesState;
+  /** Absent when the host cannot report provider installations. */
+  action: ProviderUpdateAction | undefined;
   /** Ask the provider again, skipping the host's caches. */
   refresh: () => void;
+}
+
+/** Folds a progress message into the update it belongs to; a new operation starts empty. */
+function applyProgress(
+  current: ProviderInstallationUpdate | null,
+  progress: ProviderInstallationUpdateProgress,
+): ProviderInstallationUpdate {
+  const previous = current?.operation.id === progress.operation.id ? current : null;
+  return {
+    operation: progress.operation,
+    output: [...(previous?.output ?? []), ...progress.output],
+    ...(previous?.truncated ? { truncated: true } : {}),
+  };
 }
 
 /**
@@ -77,6 +97,61 @@ export function useProviderInstallation(input: {
     mutationFn: () => checkForUpdates(true),
     onSuccess: (updateCheck) => queryClient.setQueryData(updatesKey, updateCheck),
   });
+  // The host owns the update; this view follows it while open and catches up on reopen.
+  const [currentUpdate, setCurrentUpdate] = useState<ProviderInstallationUpdate | null>(null);
+  useEffect(() => {
+    if (!enabled || !client) return;
+    const subscription = client.observeProviderUpdates(provider);
+    const detach = subscription.subscribe({
+      snapshot: (response) => setCurrentUpdate(response.update),
+      update: (message) => {
+        if (message.type !== "provider.installation.update.progress") return;
+        setCurrentUpdate((current) => applyProgress(current, message.payload));
+        // The host dropped its cached answers; read the new version and update state.
+        if (message.payload.operation.status === "succeeded") {
+          void queryClient.invalidateQueries({
+            queryKey: ["provider-installation", serverId, provider],
+          });
+          void queryClient.invalidateQueries({
+            queryKey: ["provider-updates", serverId, provider],
+          });
+        }
+      },
+      error: (failure) => console.warn("Failed to observe provider updates", failure),
+    });
+    return () => {
+      detach();
+      void subscription
+        .release()
+        .catch((failure) => console.warn("Failed to release provider update observation", failure));
+    };
+  }, [client, enabled, provider, queryClient, serverId]);
+  const startUpdate = useMutation({
+    mutationFn: async () => {
+      if (!client) throw new Error("Host is not connected");
+      const result = await client.updateProvider(provider);
+      if (result.error) throw new Error(result.error);
+      return result.update;
+    },
+    onSuccess: (update) => {
+      if (!update) return;
+      // Progress for this operation may already have arrived; keep the further-along copy.
+      setCurrentUpdate((current) =>
+        current?.operation.id === update.operation.id ? current : update,
+      );
+    },
+  });
+  const { mutate: mutateStartUpdate } = startUpdate;
+  const start = useCallback(() => mutateStartUpdate(), [mutateStartUpdate]);
+  const action: ProviderUpdateAction | undefined = supported
+    ? {
+        current: currentUpdate,
+        starting: startUpdate.isPending,
+        startError: startUpdate.error?.message ?? null,
+        start,
+      }
+    : undefined;
+
   const { mutate: mutateInstallation } = refreshInstallation;
   const { mutate: mutateUpdates } = refreshUpdates;
   const refresh = useCallback(() => {
@@ -100,5 +175,5 @@ export function useProviderInstallation(input: {
   else if (updatesQuery.data) updates = { status: "ready", updateCheck: updatesQuery.data };
   else updates = { status: "hidden" };
 
-  return { state, updates, refresh };
+  return { state, updates, action, refresh };
 }

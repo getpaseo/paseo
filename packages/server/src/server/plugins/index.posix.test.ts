@@ -309,6 +309,81 @@ describe("PluginService", () => {
   );
 
   it.each(["subprocess", "builtin"] as const)(
+    "carries a provider update's output and result through the %s plugin runtime",
+    async (runtime) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-update",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        installation: {
+          async update({ launch, report }) {
+            report({ type: "message", text: "Running " + launch.command + " update\\n" });
+            report({ type: "stdout", text: " added 1 package\\r\\n" });
+            report({ type: "bogus", text: "dropped" });
+            report({ type: "stderr", text: "warn \\u001b[33mold\\u001b[0m\\n" });
+            if (launch.env.MODE === "throw") throw new Error(" updater crashed \\n");
+            if (launch.env.MODE === "fail") return { status: "failed", message: " exit 3 \\n" };
+            return { status: "succeeded", message: " Restart agents \\n" };
+          },
+        },
+        async connect() { throw new Error("not connected by this test"); },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-update"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-update"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        const update = registration!.installation!.update!;
+        const run = async (env: Record<string, string>) => {
+          const output: unknown[] = [];
+          const result = await update({
+            launch: { command: "/bin/agent", args: [], env, resolved: true },
+            signal: new AbortController().signal,
+            report: (event) => output.push(event),
+          }).catch((error: Error) => ({ thrown: error.message }));
+          return { result, output };
+        };
+        const output = [
+          { type: "message", text: "Running /bin/agent update\n" },
+          { type: "stdout", text: " added 1 package\r\n" },
+          { type: "stderr", text: "warn \u001b[33mold\u001b[0m\n" },
+        ];
+        await expect(run({})).resolves.toEqual({
+          result: { status: "succeeded", message: " Restart agents \n" },
+          output,
+        });
+        await expect(run({ MODE: "fail" })).resolves.toEqual({
+          result: { status: "failed", message: " exit 3 \n" },
+          output,
+        });
+        await expect(run({ MODE: "throw" })).resolves.toEqual({
+          result: { thrown: " updater crashed \n" },
+          output,
+        });
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
+  it.each(["subprocess", "builtin"] as const)(
     "carries provider installation links, inspect and update checks through the %s plugin runtime",
     async (runtime) => {
       const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));

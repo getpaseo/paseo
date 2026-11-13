@@ -57,7 +57,32 @@ export interface ProviderInstallation {
    * Runs only when a user asks, never before a session.
    */
   checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
+  /**
+   * Update the provider, usually by running its CLI's own updater. Paseo shows everything passed
+   * to `report` while it runs, then the returned message. A throw is a failure with its message.
+   * Runs only when a user asks. Paseo sets no deadline; `signal` aborts when the daemon stops.
+   */
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
 }
+
+export interface ProviderUpdateContext extends ProviderInstallationContext {
+  /** Shows output to the user as it happens, unchanged and in order. */
+  report(event: ProviderUpdateReport): void;
+}
+
+export const ProviderUpdateReportSchema = z
+  .object({ type: z.enum(["stdout", "stderr", "message"]), text: z.string() })
+  .strip();
+
+export type ProviderUpdateReport = z.infer<typeof ProviderUpdateReportSchema>;
+
+export const ProviderUpdateResultSchema = z.discriminatedUnion("status", [
+  /** `message` is shown as written, such as which version is now installed. */
+  z.object({ status: z.literal("succeeded"), message: z.string().optional() }).strip(),
+  z.object({ status: z.literal("failed"), message: z.string() }).strip(),
+]);
+
+export type ProviderUpdateResult = z.infer<typeof ProviderUpdateResultSchema>;
 
 export interface ProviderInstallationContext {
   /** The launch a session would use. Absent when the provider declares no `command`. */

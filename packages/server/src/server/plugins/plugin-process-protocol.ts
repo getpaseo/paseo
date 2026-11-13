@@ -8,8 +8,10 @@ import type {
   ProviderInput,
   ProviderInstallationLaunch,
   ProviderStatusRequest,
+  ProviderUpdateReport,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderUpdateReportSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderLaunchSchema,
@@ -33,6 +35,7 @@ export interface PluginProviderInstallationMetadata {
   updateUrl?: string;
   hasInspect: boolean;
   hasCheckForUpdates: boolean;
+  hasUpdate?: boolean;
 }
 
 export interface PluginUsageSourceMetadata {
@@ -52,7 +55,10 @@ export type PluginProcessRequest =
       request: ProviderStatusRequest;
     }
   | {
-      type: "provider.installation.inspect" | "provider.installation.check_updates";
+      type:
+        | "provider.installation.inspect"
+        | "provider.installation.check_updates"
+        | "provider.installation.update";
       requestId: string;
       providerId: string;
       request: { launch?: ProviderInstallationLaunch };
@@ -115,6 +121,7 @@ export type PluginProcessMessage =
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
+  | { type: "provider.installation.report"; requestId: string; report: ProviderUpdateReport }
   | { type: "fatal"; error: string }
   | { type: "subscription.event"; subscriptionId: string; event: unknown }
   | { type: "subscription.closed"; subscriptionId: string; error?: string }
@@ -154,6 +161,7 @@ const providerMetadataSchema = z
         updateUrl: z.string().optional(),
         hasInspect: z.boolean(),
         hasCheckForUpdates: z.boolean(),
+        hasUpdate: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -214,7 +222,11 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
-        type: z.enum(["provider.installation.inspect", "provider.installation.check_updates"]),
+        type: z.enum([
+          "provider.installation.inspect",
+          "provider.installation.check_updates",
+          "provider.installation.update",
+        ]),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         request: z
@@ -345,6 +357,13 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .strict(),
     z
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.report"),
+        requestId: z.string().min(1),
+        report: ProviderUpdateReportSchema,
+      })
       .strict(),
     z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
     z

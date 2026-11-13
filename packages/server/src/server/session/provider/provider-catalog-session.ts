@@ -542,6 +542,28 @@ export class ProviderCatalogSession {
     }
   }
 
+  async handleUpdateProviderRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.installation.update.request" }>,
+  ): Promise<void> {
+    const response = { provider: msg.provider, requestId: msg.requestId };
+    try {
+      const update = this.providerSnapshotManager.installations.update(msg.provider);
+      this.host.emit({
+        type: "provider.installation.update.response",
+        payload: { ...response, update, error: null },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "provider.installation.update.response",
+        payload: {
+          ...response,
+          update: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
   async handleCheckProviderUpdatesRequest(
     msg: Extract<SessionInboundMessage, { type: "provider.installation.check_updates.request" }>,
   ): Promise<void> {

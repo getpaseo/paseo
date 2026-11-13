@@ -3,7 +3,12 @@ import type {
   ProviderInstallation,
   ProviderInstallationContext,
   ProviderRegistration,
+  ProviderUpdateResult,
 } from "@getpaseo/plugin/server/provider";
+import type {
+  ProviderInstallationUpdate,
+  ProviderInstallationUpdateProgress,
+} from "@getpaseo/protocol/messages";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentClient, AgentClientInstallation } from "../agent-sdk-types.js";
@@ -494,5 +499,270 @@ describe("ProviderInstallations", () => {
       inspection: { status: "error", message: "Timed out after 10ms" },
     });
     expect(aborted).toBe(true);
+  });
+});
+
+describe("provider updates", () => {
+  function updating(
+    update: NonNullable<AgentClientInstallation["update"]>,
+    options: {
+      inspect?: AgentClientInstallation["inspect"];
+      refreshProvider?: (provider: string) => Promise<void>;
+      updateOutputLimit?: number;
+    } = {},
+  ) {
+    let calls = 0;
+    const client = builtinClient({
+      updateUrl: "https://example.com/update",
+      inspect: options.inspect,
+      update(context) {
+        calls += 1;
+        return update(context);
+      },
+    });
+    const installations = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: (provider) => (provider === "codex" ? client : null),
+      refreshProvider: options.refreshProvider,
+      updateOutputLimit: options.updateOutputLimit,
+    });
+    const progress: ProviderInstallationUpdateProgress[] = [];
+    installations.observeUpdates("codex", (event) => progress.push(event));
+    return { installations, progress, calls: () => calls };
+  }
+
+  function settled(installations: ProviderInstallations): Promise<ProviderInstallationUpdate> {
+    return new Promise((resolve) => {
+      const stop = installations.observeUpdates("codex", (event) => {
+        if (event.operation.status === "running") return;
+        stop();
+        resolve(installations.getUpdate("codex")!);
+      });
+    });
+  }
+
+  test("passes output and the success message through unchanged, in order", async () => {
+    const { installations, progress } = updating(async ({ report }) => {
+      report({ type: "message", text: OPAQUE_MESSAGE });
+      report({ type: "stdout", text: "  added 1 package\r\n" });
+      report({ type: "stderr", text: "npm warn \u001b[33mdeprecated\u001b[0m\n" });
+      report({ type: "stdout", text: "" });
+      return { status: "succeeded", message: OPAQUE_MESSAGE };
+    });
+    const done = settled(installations);
+    const started = installations.update("codex");
+    expect(started.operation.status).toBe("running");
+
+    const update = await done;
+    const output = [
+      { type: "message", text: OPAQUE_MESSAGE },
+      { type: "stdout", text: "  added 1 package\r\n" },
+      { type: "stderr", text: "npm warn \u001b[33mdeprecated\u001b[0m\n" },
+      { type: "stdout", text: "" },
+    ];
+    expect(update).toEqual({
+      operation: {
+        status: "succeeded",
+        id: started.operation.id,
+        startedAt: expect.any(String),
+        finishedAt: expect.any(String),
+        message: OPAQUE_MESSAGE,
+      },
+      output,
+    });
+    expect(progress.map((event) => event.operation.status)).toEqual([
+      "running",
+      "running",
+      "running",
+      "running",
+      "running",
+      "succeeded",
+    ]);
+    expect(progress.flatMap((event) => event.output)).toEqual(output);
+  });
+
+  test("reports a failure with the provider's message and keeps its output", async () => {
+    const { installations } = updating(async ({ report }) => {
+      report({ type: "stdout", text: "Updating Codex via `npm install -g @openai/codex`...\n" });
+      report({ type: "stderr", text: "npm error code EACCES\n" });
+      return { status: "failed", message: OPAQUE_MESSAGE };
+    });
+    const done = settled(installations);
+    installations.update("codex");
+    await expect(done).resolves.toEqual({
+      operation: expect.objectContaining({ status: "failed", message: OPAQUE_MESSAGE }),
+      output: [
+        { type: "stdout", text: "Updating Codex via `npm install -g @openai/codex`...\n" },
+        { type: "stderr", text: "npm error code EACCES\n" },
+      ],
+    });
+  });
+
+  test("turns a throw into a failure with its message and keeps earlier output", async () => {
+    const { installations } = updating(async ({ report }) => {
+      report({ type: "stdout", text: "step 1\n" });
+      throw new Error(OPAQUE_MESSAGE);
+    });
+    const done = settled(installations);
+    installations.update("codex");
+    await expect(done).resolves.toEqual({
+      operation: expect.objectContaining({ status: "failed", message: OPAQUE_MESSAGE }),
+      output: [{ type: "stdout", text: "step 1\n" }],
+    });
+  });
+
+  test("a second request while an update runs joins it instead of starting another", async () => {
+    let finish!: () => void;
+    const { installations, calls } = updating(async ({ report }) => {
+      report({ type: "stdout", text: "working\n" });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { status: "succeeded" };
+    });
+    const first = installations.update("codex");
+    const second = installations.update("codex");
+    expect(second.operation.id).toBe(first.operation.id);
+    expect(second.output).toEqual([{ type: "stdout", text: "working\n" }]);
+    expect(calls()).toBe(1);
+
+    const done = settled(installations);
+    finish();
+    await expect(done).resolves.toMatchObject({ operation: { status: "succeeded" } });
+    const third = installations.update("codex");
+    expect(third.operation.id).not.toBe(first.operation.id);
+    expect(calls()).toBe(2);
+  });
+
+  test("after success the next read asks the provider again and discovery refreshes", async () => {
+    let version = "1.0.0";
+    const refreshed: string[] = [];
+    const { installations } = updating(
+      async () => {
+        version = "2.0.0";
+        return { status: "succeeded" };
+      },
+      {
+        inspect: async () => ({ status: "installed", version }),
+        refreshProvider: async (provider) => {
+          refreshed.push(provider);
+        },
+      },
+    );
+    await expect(installations.inspect("codex")).resolves.toMatchObject({
+      inspection: { version: "1.0.0" },
+    });
+    const done = settled(installations);
+    installations.update("codex");
+    await done;
+    await expect(installations.inspect("codex")).resolves.toMatchObject({
+      inspection: { version: "2.0.0" },
+    });
+    expect(refreshed).toEqual(["codex"]);
+  });
+
+  test("a failed refresh after success still reports success; a failure keeps the caches", async () => {
+    let version = "1.0.0";
+    let result: "succeeded" | "failed" = "failed";
+    const { installations } = updating(
+      async () => {
+        version = "2.0.0";
+        return result === "succeeded" ? { status: result } : { status: result, message: "no" };
+      },
+      {
+        inspect: async () => ({ status: "installed", version }),
+        refreshProvider: async () => {
+          throw new Error("discovery failed");
+        },
+      },
+    );
+    await installations.inspect("codex");
+    let done = settled(installations);
+    installations.update("codex");
+    await done;
+    await expect(installations.inspect("codex")).resolves.toMatchObject({
+      inspection: { version: "1.0.0" },
+    });
+
+    result = "succeeded";
+    done = settled(installations);
+    installations.update("codex");
+    await expect(done).resolves.toMatchObject({ operation: { status: "succeeded" } });
+  });
+
+  test("retains the most recent output within the limit and marks the drop", async () => {
+    const { installations, progress } = updating(
+      async ({ report }) => {
+        report({ type: "stdout", text: "aaaa" });
+        report({ type: "stdout", text: "bbbb" });
+        report({ type: "stderr", text: "cccc" });
+        report({ type: "stdout", text: "0123456789XYZ" });
+        return { status: "succeeded" };
+      },
+      { updateOutputLimit: 10 },
+    );
+    const done = settled(installations);
+    installations.update("codex");
+    const update = await done;
+    expect(update.output).toEqual([{ type: "stdout", text: "3456789XYZ" }]);
+    expect(update.truncated).toBe(true);
+    expect(progress.flatMap((event) => event.output).at(-1)).toEqual({
+      type: "stdout",
+      text: "3456789XYZ",
+    });
+
+    const partial = updating(
+      async ({ report }) => {
+        report({ type: "stdout", text: "aaaa" });
+        report({ type: "stdout", text: "bbbb" });
+        report({ type: "stderr", text: "cccc" });
+        return { status: "succeeded" };
+      },
+      { updateOutputLimit: 10 },
+    );
+    const partialDone = settled(partial.installations);
+    partial.installations.update("codex");
+    await expect(partialDone).resolves.toMatchObject({
+      output: [
+        { type: "stdout", text: "bbbb" },
+        { type: "stderr", text: "cccc" },
+      ],
+      truncated: true,
+    });
+  });
+
+  test("advertises the update only when the provider declares one", async () => {
+    const { installations } = updating(async () => ({ status: "succeeded" }));
+    await expect(installations.inspect("codex")).resolves.toEqual({
+      updateUrl: "https://example.com/update",
+      canUpdate: true,
+    });
+
+    const plain = new ProviderInstallations({
+      logger: createTestLogger(),
+      resolveClient: () => builtinClient({ updateUrl: "https://example.com/update" }),
+    });
+    await expect(plain.inspect("codex")).resolves.toEqual({
+      updateUrl: "https://example.com/update",
+    });
+    expect(() => plain.update("codex")).toThrow("Provider codex cannot update itself");
+    expect(plain.getUpdate("codex")).toBeNull();
+  });
+
+  test("close aborts a running update, which settles with the provider's answer", async () => {
+    function failOnAbort(signal: AbortSignal): Promise<ProviderUpdateResult> {
+      return new Promise((resolve) => {
+        const stopped = () =>
+          resolve({ status: "failed", message: `stopped: ${String(signal.reason)}` });
+        signal.addEventListener("abort", stopped);
+      });
+    }
+    const { installations } = updating(({ signal }) => failOnAbort(signal));
+    const done = settled(installations);
+    installations.update("codex");
+    installations.close();
+    await expect(done).resolves.toMatchObject({
+      operation: { status: "failed", message: "stopped: Error: The daemon is stopping" },
+    });
   });
 });

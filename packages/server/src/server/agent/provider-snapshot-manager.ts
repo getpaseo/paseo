@@ -291,6 +291,7 @@ export class ProviderSnapshotManager {
         const definition = this.generation.definitions[provider];
         return definition ? this.ensureClient(provider, definition) : null;
       },
+      refreshProvider: (provider) => this.refreshSettingsSnapshot({ providers: [provider] }),
     });
   }
 
@@ -705,6 +706,7 @@ export class ProviderSnapshotManager {
 
   async shutdown(): Promise<void> {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
@@ -715,6 +717,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     this.catalogs.clear();
     this.targets.clear();
