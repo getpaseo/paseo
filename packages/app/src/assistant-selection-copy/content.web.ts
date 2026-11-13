@@ -81,7 +81,8 @@ turndown.addRule("compactListItem", {
     const item = content
       .replace(/^\n+/, "")
       .replace(/\n+$/, "\n")
-      .replace(/\n(?=\S)/g, "\n    ");
+      // Every non-empty line, so indented code lines stay inside the item.
+      .replace(/\n(?=[^\n])/g, "\n    ");
     const parent = node.parentElement;
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;
