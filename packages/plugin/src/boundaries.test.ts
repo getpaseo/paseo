@@ -435,7 +435,9 @@ describe("lifecycle hook SDK types", () => {
           const turn = await paseo.agents
             .ref(agent.id)
             .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
-          const items: readonly AgentTimelineItem[] = turn.entries.map(({ item }) => item);
+          const items: readonly AgentTimelineItem[] = turn.entries
+            .filter((entry) => entry.turnId === event.turnId)
+            .map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });

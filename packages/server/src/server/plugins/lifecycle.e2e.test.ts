@@ -167,7 +167,9 @@ export default function contribute(server) {
     const page = await context.paseo.agents
       .ref(event.agent.id)
       .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
-    const turn = page.entries.map(({ item }) => item.type);
+    const turn = page.entries
+      .filter((entry) => entry.turnId === event.turnId)
+      .map(({ item }) => item.type);
     console.log(JSON.stringify({ hook: "agent.turn.after", event, turn }));
   });
   server.addHook("agent.permission.before", async (event, context) => {

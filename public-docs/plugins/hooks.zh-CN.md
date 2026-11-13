@@ -514,7 +514,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after {#agentturnafter}
 
-实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
+实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。只保留 `turnId` 等于 `event.turnId` 的条目：如果在读取前已有新一轮开始（例如另一个插件发送的后续消息），最近一轮就不再是本轮。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
 
 ### 在轮次结束时发送后续消息 {#send-a-follow-up-when-a-turn-ends}
 
@@ -531,8 +531,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const turn = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
-    const text = latestOutputText(turn.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }

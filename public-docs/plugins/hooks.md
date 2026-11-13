@@ -525,7 +525,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Plugins built against an older SDK that read `event.timeline` get an empty array.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Keep the entries whose `turnId` equals `event.turnId`, because a turn that starts before your read, such as a follow-up another plugin sent, replaces this one as the latest. Plugins built against an older SDK that read `event.timeline` get an empty array.
 
 ### Send a follow-up when a turn ends
 
@@ -545,8 +545,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const turn = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
-    const text = latestOutputText(turn.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }

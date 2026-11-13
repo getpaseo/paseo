@@ -216,8 +216,10 @@ A plugin that reads `event.timeline` now fails typecheck. Read the turn from the
 const turn = await context.paseo.agents
   .ref(event.agent.id)
   .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
-const items = turn.entries.map(({ item }) => item);
+const items = turn.entries.filter((entry) => entry.turnId === event.turnId).map(({ item }) => item);
 ```
+
+The filter drops entries from a turn that started after this one ended, such as a follow-up another plugin sent.
 
 Plugins built against an older SDK keep receiving `timeline: []` until removal after 2027-05-31.
 
