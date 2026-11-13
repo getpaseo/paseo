@@ -71,7 +71,7 @@ describe("plugin scaffold", () => {
     });
     // npm 11 and earlier print an array of packed packages, npm 12 an object keyed by package name.
     const packed = JSON.parse(stdout) as PackedArtifact[] | Record<string, PackedArtifact>;
-    const [artifact] = Array.isArray(packed) ? packed : Object.values(packed);
+    const [artifact] = Object.values(packed);
     expect(artifact.files.map((file) => file.path)).toEqual(
       expect.arrayContaining(["OVERVIEW.md", "OVERVIEW.zh-CN.md", "paseo-plugin.json"]),
     );
