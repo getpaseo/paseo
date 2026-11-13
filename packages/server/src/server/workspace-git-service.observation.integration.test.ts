@@ -1062,13 +1062,28 @@ async function snapshotOf(
     deps,
   });
   cleanup.push(() => service.dispose());
-  return service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  return {
+    service,
+    snapshot: await service.getSnapshot(repo, { force: true, reason: "forge-web-test" }),
+  };
+}
+
+async function expectForgeWebEventually(
+  service: WorkspaceGitServiceImpl,
+  repo: string,
+  expected: { host: string; referenceRepository?: string },
+) {
+  await expect
+    .poll(async () => (await service.getSnapshot(repo, { includeForge: false })).forgeWeb, {
+      timeout: 10_000,
+    })
+    .toEqual(expected);
 }
 
 test("an SSH config alias remote publishes the web host the alias resolves to", async () => {
   const repo = createCheckoutWithOrigin("git@github.com-work:acme/repo.git");
 
-  const snapshot = await snapshotOf(repo, {
+  const { snapshot } = await snapshotOf(repo, {
     resolveSshHostname: async (host) => (host === "github.com-work" ? "github.com" : null),
     forgeOverrides: { github: createGitHubWithRepositoryView({}) },
   });
@@ -1079,7 +1094,7 @@ test("an SSH config alias remote publishes the web host the alias resolves to", 
 test("a cloud SSH host publishes the forge's web host", async () => {
   const repo = createCheckoutWithOrigin("ssh://git@ssh.github.com/acme/repo.git");
 
-  const snapshot = await snapshotOf(repo, {
+  const { snapshot } = await snapshotOf(repo, {
     forgeOverrides: { github: createGitHubWithRepositoryView({}) },
   });
 
@@ -1089,7 +1104,7 @@ test("a cloud SSH host publishes the forge's web host", async () => {
 test("a fork checkout publishes its parent as the repository that owns issue and pull request numbers", async () => {
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
 
-  const snapshot = await snapshotOf(repo, {
+  const { service, snapshot } = await snapshotOf(repo, {
     forgeOverrides: {
       github: createGitHubWithRepositoryView({
         owner: { login: "fork-owner" },
@@ -1099,25 +1114,31 @@ test("a fork checkout publishes its parent as the repository that owns issue and
     },
   });
 
-  expect(snapshot.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+  // The host is available with the first snapshot; the parent follows in a background update.
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
 });
 
 test("a plain remote publishes no separate reference repository", async () => {
   const repo = createCheckoutWithOrigin("https://github.com/acme/repo.git");
 
-  const snapshot = await snapshotOf(repo, {
+  const { service, snapshot } = await snapshotOf(repo, {
     forgeOverrides: {
       github: createGitHubWithRepositoryView({ owner: { login: "acme" }, name: "repo" }),
     },
   });
 
   expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+  await expectForgeWebEventually(service, repo, { host: "github.com" });
 });
 
 test("a remote on no forge publishes no web location", async () => {
   const repo = createCheckoutWithOrigin("git@bitbucket.org:acme/repo.git");
 
-  const snapshot = await snapshotOf(repo, { resolveSshHostname: async () => null });
+  const { snapshot } = await snapshotOf(repo, { resolveSshHostname: async () => null });
 
   expect(snapshot.forgeWeb).toBeUndefined();
 });
@@ -1157,7 +1178,10 @@ test("changing the origin remote publishes the new remote's web location, not th
   });
   cleanup.push(() => service.dispose());
   const before = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
-  expect(before.forgeWeb?.referenceRepository).toBe("main-owner/repo");
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
 
   execFileSync("git", ["remote", "set-url", "origin", "git@github.com-work:acme/other.git"], {
     cwd: repo,
@@ -1171,18 +1195,21 @@ test("changing the origin remote publishes the new remote's web location, not th
 
   expect(after.git.remoteUrl).toBe("git@github.com-work:acme/other.git");
   expect(after.forgeWeb).toEqual({ host: "github.com" });
+  expect(before.forgeWeb).toEqual({ host: "github.com" });
 }, 30_000);
 
 test("a failed parent lookup is retried by the pull request status poll, keeping the host an SSH alias resolves to", async () => {
   const repo = createCheckoutWithOrigin("git@github.com-work:fork-owner/repo.git");
   let nowMs = Date.parse("2026-01-01T00:00:00Z");
   let ghAnswers = false;
+  let lookups = 0;
   let pollStatus: ((status: null) => void) | undefined;
   const github = createGitHubService({
     resolveGhPath: async () => "gh",
     resolveRepoHost: async () => null,
     runner: async (args) => {
       if (args[0] === "repo" && args[1] === "view") {
+        lookups += 1;
         if (!ghAnswers) {
           throw new GitHubCommandError({
             args,
@@ -1229,16 +1256,18 @@ test("a failed parent lookup is retried by the pull request status poll, keeping
   const failed = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
   expect(failed.forgeWeb).toEqual({ host: "github.com" });
   await expect.poll(() => pollStatus, { timeout: 10_000 }).toBeDefined();
+  await expect.poll(() => lookups, { timeout: 10_000 }).toBe(1);
+  // Let the failed lookup record its retry time before advancing the clock.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
   ghAnswers = true;
   nowMs += 61_000;
   pollStatus?.(null);
 
-  await expect
-    .poll(async () => (await service.getSnapshot(repo, { includeForge: false })).forgeWeb, {
-      timeout: 10_000,
-    })
-    .toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
   const forced = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
   expect(forced.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
 }, 30_000);
@@ -1276,9 +1305,12 @@ test("a successful parent lookup is reused across forced refreshes of the same r
   cleanup.push(() => service.dispose());
 
   await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
-  const second = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
 
-  expect(second.forgeWeb?.referenceRepository).toBe("main-owner/repo");
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
   expect(repositoryViews).toBe(1);
 });
 
@@ -1286,7 +1318,7 @@ test("a fork checked out at a detached HEAD still publishes its parent", async (
   const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
   execFileSync("git", ["checkout", "--detach"], { cwd: repo, stdio: "pipe" });
 
-  const snapshot = await snapshotOf(repo, {
+  const { service, snapshot } = await snapshotOf(repo, {
     forgeOverrides: {
       github: createGitHubWithRepositoryView({
         owner: { login: "fork-owner" },
@@ -1296,5 +1328,124 @@ test("a fork checked out at a detached HEAD still publishes its parent", async (
     },
   });
 
-  expect(snapshot.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com" });
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
 });
+
+test("the first snapshot publishes git state and pull request status without waiting for the parent lookup", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  writeFileSync(path.join(repo, "changed.txt"), "dirty\n");
+  const lookupStarted = Promise.withResolvers<void>();
+  const releaseLookup = Promise.withResolvers<void>();
+  const pullRequestStatusLoaded = Promise.withResolvers<void>();
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "repo" && args[1] === "view" && args[2] === "fork-owner/repo") {
+              lookupStarted.resolve();
+              await releaseLookup.promise;
+              return {
+                stdout: JSON.stringify({
+                  owner: { login: "fork-owner" },
+                  name: "repo",
+                  parent: { owner: { login: "main-owner" }, name: "repo" },
+                }),
+                stderr: "",
+              };
+            }
+            if (args[0] === "pr" && args[1] === "view") {
+              pullRequestStatusLoaded.resolve();
+              return {
+                stdout: JSON.stringify({
+                  number: 42,
+                  url: "https://github.com/fork-owner/repo/pull/42",
+                  title: "Already known pull request",
+                  state: "OPEN",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  mergedAt: null,
+                }),
+                stderr: "",
+              };
+            }
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      },
+    },
+  });
+  cleanup.push(() => service.dispose());
+
+  let snapshot: Awaited<ReturnType<typeof service.getSnapshot>> | null = null;
+  const pending = service
+    .getSnapshot(repo, { force: true, reason: "forge-web-test" })
+    .then((value) => {
+      snapshot = value;
+      return value;
+    });
+
+  await pullRequestStatusLoaded.promise;
+  // The forge lookup is still held here; the snapshot must not wait for it.
+  await expect.poll(() => snapshot !== null, { timeout: 5_000 }).toBe(true);
+  expect(snapshot).not.toBeNull();
+  expect(snapshot!.git.currentBranch).toBe("main");
+  expect(snapshot!.git.isDirty).toBe(true);
+  expect(snapshot!.forge.pullRequest?.number).toBe(42);
+  expect(snapshot!.forgeWeb).toEqual({ host: "github.com" });
+
+  await lookupStarted.promise;
+  releaseLookup.resolve();
+  await pending;
+  await expectForgeWebEventually(service, repo, {
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
+}, 30_000);
+
+test("a failed parent lookup is not repeated by forced refreshes before the retry delay", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  let lookups = 0;
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "repo" && args[1] === "view" && args[2] === "fork-owner/repo") {
+              lookups += 1;
+              throw new GitHubCommandError({
+                args,
+                cwd: repo,
+                exitCode: 1,
+                stderr: "error connecting to api.github.com",
+              });
+            }
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      },
+    },
+  });
+  cleanup.push(() => service.dispose());
+
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  await expect.poll(() => lookups, { timeout: 10_000 }).toBe(1);
+  // Let the failed lookup record its retry time.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+
+  expect(lookups).toBe(1);
+}, 30_000);

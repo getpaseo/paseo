@@ -134,10 +134,12 @@ GitLab reads `forked_from_project` from `glab api`, and the Gitea family reads
 `parent` from `tea api`. The lookup always names the `origin` repository
 explicitly, so it does not depend on `gh`'s default-repository choice, and it
 rejects on any CLI failure. `packages/server/src/server/forge-web.ts` keeps a
-successful answer for as long as the remote stays the same, including across
-forced refreshes. A failed lookup (signed out, network down) leaves links on
-`origin` and is retried by the next forced refresh, or by the pull request status
-poll once a minute has passed.
+successful answer for as long as the remote stays the same. The first snapshot
+publishes `{ host }` immediately and the reference repository follows in a later
+update, so a slow or signed-out forge CLI never holds back the checkout's git
+state or pull request status. A failed lookup (signed out, network down) leaves
+links on `origin` and is retried by the next refresh or pull request status poll
+once a minute has passed.
 
 Daemons older than v0.16.0 omit the field; the app then derives the host from the
 remote and links `#N` to `origin`. That fallback is tagged `COMPAT(forgeWeb)` in

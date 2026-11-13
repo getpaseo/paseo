@@ -71,7 +71,11 @@ import {
   type SubscribeToFileChanges,
   createFileObserver,
 } from "./file-observer/index.js";
-import { resolveForgeWeb, type ForgeWebEntry } from "./forge-web.js";
+import {
+  forgeWebForResolution,
+  resolveForgeWebReference,
+  type ForgeWebEntry,
+} from "./forge-web.js";
 import type { SshHostnameResolver } from "../utils/ssh-hostname.js";
 import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import { createWatcherLivenessCanary } from "./watcher-liveness-canary.js";
@@ -466,6 +470,8 @@ interface WorkspaceGitTarget {
   latestForge: WorkspaceGitRuntimeSnapshot["forge"] | null;
   latestForgeLoadedAtMs: number | null;
   latestForgeWeb: ForgeWebEntry | null;
+  /** The entry whose reference repository is being looked up, so one remote costs one call. */
+  forgeWebLookupEntry: ForgeWebEntry | null;
   /** The remote the forge snapshot was last refreshed for; null until the first forge refresh. */
   forgeRefreshedForRemote: { remoteUrl: string | null } | null;
   latestSnapshot: WorkspaceGitRuntimeSnapshot | null;
@@ -1312,6 +1318,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestGitLoadedAtMs: null,
       latestForge: null,
       latestForgeWeb: null,
+      forgeWebLookupEntry: null,
       forgeRefreshedForRemote: null,
       latestForgeLoadedAtMs: null,
       latestSnapshot: null,
@@ -3769,6 +3776,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       forgeService.invalidate({ cwd: target.cwd });
     }
 
+    const forgeWeb = forgeWebForResolution({
+      remoteUrl,
+      resolution,
+      previous: target.latestForgeWeb,
+      nowMs: this.deps.now().getTime(),
+    });
     const forgeSnapshot = await loadForgeSnapshot({
       cwd: target.cwd,
       forgeService,
@@ -3782,15 +3795,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
-    target.latestForgeWeb = await resolveForgeWeb({
-      cwd: target.cwd,
-      remoteUrl,
-      resolution,
-      previous: target.latestForgeWeb,
-      force: forceForge,
-      nowMs: this.deps.now().getTime(),
-    });
+    // Publish the host with the snapshot; the parent lookup finishes in the background.
+    target.latestForgeWeb = forgeWeb;
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
+    void this.resolveForgeWebReferenceIfDue(target);
   }
 
   private combineSnapshot(target: WorkspaceGitTarget): WorkspaceGitRuntimeSnapshot {
@@ -3846,39 +3854,52 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       forceEmit: false,
     });
-    void this.retryForgeWebIfDue(target);
+    void this.resolveForgeWebReferenceIfDue(target);
   }
 
   // The status poll is the only periodic work an idle workspace has, so it also
   // retries a parent lookup that failed or ran before the forge CLI was signed in.
-  private async retryForgeWebIfDue(target: WorkspaceGitTarget): Promise<void> {
+  private async resolveForgeWebReferenceIfDue(target: WorkspaceGitTarget): Promise<void> {
     const entry = target.latestForgeWeb;
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const nowMs = this.deps.now().getTime();
-    if (!entry || !remoteUrl || entry.retryAtMs === null || nowMs < entry.retryAtMs) {
+    if (
+      !entry ||
+      !remoteUrl ||
+      entry.remoteUrl !== remoteUrl ||
+      entry.retryAtMs === null ||
+      nowMs < entry.retryAtMs ||
+      target.forgeWebLookupEntry === entry
+    ) {
       return;
     }
-    // The async resolver, like the forge refresh: only it reports the `ssh -G` host for an alias.
-    const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
-    if (!resolution) {
-      return;
+    target.forgeWebLookupEntry = entry;
+    try {
+      // The async resolver, like the forge refresh: only it reports the `ssh -G` host for an alias.
+      const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+      if (!resolution) {
+        return;
+      }
+      const next = await resolveForgeWebReference({
+        cwd: target.cwd,
+        resolution,
+        entry,
+        nowMs,
+      });
+      if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+        return;
+      }
+      // The origin can change while the lookup runs; the old remote's answer is not ours to publish.
+      if (target.latestForgeWeb !== entry || target.latestGit?.remoteUrl !== entry.remoteUrl) {
+        return;
+      }
+      target.latestForgeWeb = next;
+      this.rememberSnapshot(target, this.combineSnapshot(target), { forceEmit: false });
+    } finally {
+      if (target.forgeWebLookupEntry === entry) {
+        target.forgeWebLookupEntry = null;
+      }
     }
-    const next = await resolveForgeWeb({
-      cwd: target.cwd,
-      remoteUrl,
-      resolution,
-      previous: entry,
-      force: false,
-      nowMs,
-    });
-    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
-      return;
-    }
-    if (target.latestForgeWeb !== entry) {
-      return;
-    }
-    target.latestForgeWeb = next;
-    this.rememberSnapshot(target, this.combineSnapshot(target), { forceEmit: false });
   }
 
   private rememberSnapshot(
