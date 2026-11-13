@@ -198,6 +198,23 @@ describe("local project links", () => {
     });
   });
 
+  test("keeps literal backslashes distinct from separators in POSIX subdirectories", () => {
+    const literalBackslash = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app/foo\\bar",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "https://git.example.test/team/app.git",
+    });
+    const directorySeparator = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app/foo/bar",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "https://git.example.test/team/app.git",
+    });
+
+    expect(literalBackslash).toMatchObject({ subdirectory: "foo\\bar" });
+    expect(directorySeparator).toMatchObject({ subdirectory: "foo/bar" });
+    expect(sameLocalProjectLinkIdentity(literalBackslash!, directorySeparator!)).toBe(false);
+  });
+
   test("uses the main checkout when resolving a managed worktree project", () => {
     const descriptor = project({ id: "prj-managed", root: "/repos/app/packages/web" });
     expect(

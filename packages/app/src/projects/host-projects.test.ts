@@ -8,6 +8,7 @@ import {
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   resolveEquivalentHostProjectCandidate,
+  resolveInitialWorkspaceProject,
 } from "./host-project-model";
 import { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 
@@ -60,6 +61,48 @@ describe("host project lookups", () => {
     } finally {
       if (descriptor) Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
     }
+  });
+
+  test("resolves a remembered placement through a linked group on another host", () => {
+    const linkedProject = project();
+    linkedProject.viewKey = "local-project-link:app";
+    linkedProject.projectKey = null;
+    linkedProject.hosts.push({
+      serverId: "host-c",
+      projectId: "prj_c",
+      iconWorkingDir: "/repo/c",
+      worktreeSupport: "supported",
+    });
+    const rememberedProject: HostProjectListItem = {
+      ...linkedProject,
+      viewKey: JSON.stringify(["host-b", "prj_b"]),
+      projectKey: "remote:github.com/acme/app",
+      hosts: [linkedProject.hosts[1]!],
+    };
+    const unrelatedProject: HostProjectListItem = {
+      ...project(),
+      viewKey: "view:unrelated",
+      projectKey: "remote:github.com/acme/other",
+      projectName: "Other",
+      hosts: [
+        {
+          serverId: "host-c",
+          projectId: "prj_other",
+          iconWorkingDir: "/repo/other",
+          worktreeSupport: "supported",
+        },
+      ],
+    };
+
+    expect(
+      resolveInitialWorkspaceProject({
+        routeProject: null,
+        lastActiveProject: rememberedProject,
+        projects: [unrelatedProject, linkedProject],
+        serverId: "host-c",
+        allowAllProjects: false,
+      }),
+    ).toBe(linkedProject);
   });
 
   test("returns host-local ids and roots without falling back to the grouping key", () => {
