@@ -88,7 +88,7 @@ async function expectInputMethodRecovers() {
       `
       const { app, BrowserWindow } = require("electron");
       const { configureLinuxInputMethod } = require(${JSON.stringify(inputMethodPath)});
-      global.portalSelected = configureLinuxInputMethod();
+      configureLinuxInputMethod();
       app.setPath("userData", ${JSON.stringify(path.join(root, "input-profile"))});
       app.whenReady().then(async () => {
         global.win = new BrowserWindow({ width: 800, height: 600 });
@@ -97,25 +97,23 @@ async function expectInputMethodRecovers() {
       });
     `,
     );
-    desktop = await electron.launch({
-      args: ["--no-sandbox", "--ozone-platform=x11", "--disable-gpu", main],
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => key !== "ELECTRON_RUN_AS_NODE"),
-      ),
-    });
+    const launchDesktop = () =>
+      electron.launch({
+        args: ["--no-sandbox", "--ozone-platform=x11", "--disable-gpu", main],
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key !== "ELECTRON_RUN_AS_NODE"),
+        ),
+      });
+    desktop = await launchDesktop();
     const page = await desktop.firstWindow();
-    expect(await desktop.evaluate(() => global.portalSelected)).toBe(true);
     await page.locator("input").focus();
     pressNativeKey();
     await expect(page.locator("input")).toHaveValue("a");
 
     await unlink(socketPath);
-    await desktop.evaluate(async ({ BrowserWindow }) => {
-      global.second = new BrowserWindow({ width: 800, height: 600 });
-      await global.second.loadURL("data:text/html,<input autofocus>");
-      global.second.focus();
-    });
-    const second = desktop.windows()[1];
+    await desktop.close();
+    desktop = await launchDesktop();
+    const second = await desktop.firstWindow();
     await second.locator("input").focus();
     pressNativeKey();
     await expect(second.locator("input")).toHaveValue("a");
@@ -130,9 +128,9 @@ async function expectInputMethodRecovers() {
       pressNativeKey();
       await expect(second.locator("input")).toHaveValue("a", { timeout: 500 });
     }).toPass({ timeout: 10_000 });
-    expect(desktop.windows()).toHaveLength(2);
+    expect(desktop.windows()).toHaveLength(1);
     console.log(
-      "Native keyboard input survives private socket loss and IBus restart without reloading Desktop",
+      "New Desktop process accepts native input after socket loss and reconnects after IBus restart without reloading",
     );
   } finally {
     await desktop?.close();

@@ -118,6 +118,6 @@ has a one-second deadline. This setting only affects libibus clients; other inpu
 method implementations are unchanged.
 
 `test:e2e:window-startup` verifies native X11 keyboard events before socket loss,
-in a new window after socket deletion, and after IBus returns, using a private
+in a new Desktop process after socket deletion, and after IBus returns, using a private
 D-Bus session and temporary configuration. Its Linux dependencies are `ibus`,
 `dbus-x11`, `python3`, `libxtst6`, and Xvfb.
