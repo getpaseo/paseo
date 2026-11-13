@@ -1413,12 +1413,17 @@ function resolveOperationBaseRef(input: {
   return input.storedBaseRef ?? input.requestedBaseRef ?? input.resolvedBaseRef;
 }
 
+// Untracked files count whatever `status.showUntrackedFiles` says: archive warns from this before
+// it removes a worktree, and a file nobody added yet is still work to lose.
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
-  const { stdout } = await getRunGitCommand(context)(["status", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-    logger: context?.logger,
-  });
+  const { stdout } = await getRunGitCommand(context)(
+    ["status", "--porcelain", "--untracked-files=normal"],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    },
+  );
   return stdout.trim().length > 0;
 }
 

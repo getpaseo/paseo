@@ -30,6 +30,7 @@ import {
   getCheckoutShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
+  getCheckoutWorktreeState,
   checkoutResolvedBranch,
   listBranchSuggestions,
   setCheckoutBaseBranch,
@@ -570,6 +571,15 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("counts untracked files as dirty when the repository hides them from status", async () => {
+    execFileSync("git", ["config", "status.showUntrackedFiles", "no"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "new-file.txt"), "not yet added\n");
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe("");
+
+    expect((await getCheckoutStatus(repoDir)).isDirty).toBe(true);
+    expect((await getCheckoutWorktreeState(repoDir, {})).isDirty).toBe(true);
   });
 
   it("honors commit signing configuration", async () => {
