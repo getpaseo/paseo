@@ -442,6 +442,7 @@ is never inline SVG or a URL.
 
 #### Provider installation
 
+**Requires Paseo 0.17.** Older versions ignore `installation`.
 `ProviderRegistration.installation` fills the **Installation** section of the provider's settings.
 Every member is optional. Paseo hides the section when you declare neither `inspect` nor
 `installUrl`. [Report installation and updates](/docs/plugins/providers#report-installation-and-updates)

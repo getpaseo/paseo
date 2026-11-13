@@ -369,7 +369,7 @@ Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前
 
 #### Provider 安装 {#provider-installation}
 
-`ProviderRegistration.installation` 填充 Provider 设置中的 **安装** 部分。每个成员都是可选的。`inspect` 和 `installUrl` 都没有声明时，Paseo 会隐藏这个部分。完整示例见[报告安装与更新](/docs/plugins/providers#report-installation-and-updates)。类型从 `@getpaseo/plugin/server/provider` 导入。
+**需要 Paseo 0.17**。较旧的版本会忽略 `installation`。`ProviderRegistration.installation` 填充 Provider 设置中的 **安装** 部分。每个成员都是可选的。`inspect` 和 `installUrl` 都没有声明时，Paseo 会隐藏这个部分。完整示例见[报告安装与更新](/docs/plugins/providers#report-installation-and-updates)。类型从 `@getpaseo/plugin/server/provider` 导入。
 
 ```ts
 interface ProviderInstallation {

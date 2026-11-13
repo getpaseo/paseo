@@ -3950,7 +3950,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
-        // COMPAT(providerInstallation): added in v0.13.3, remove gate after 2027-05-13.
+        // COMPAT(providerInstallation): added in v0.17.0, remove gate after 2027-05-13.
         providerInstallation: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
