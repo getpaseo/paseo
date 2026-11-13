@@ -817,6 +817,7 @@ describe("GitHub comment HTML normalization", () => {
   it.each([
     "<details><summary>Results</summary>\n\n| A | B |\n| - | - |\n| 1<br>2 | 3 |\n</details>",
     "<details><summary>Results</summary>| A | B |\n| - | - |\n| 1<br>2 | 3 |</details>",
+    "<details><summary>Results</summary><div>| A | B |\n| - | - |\n| 1<br>2 | 3 |</div></details>",
   ])("keeps table <br> inside wrapped table cells: %s", async (source) => {
     const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
       hardSoftBreaks: true,
