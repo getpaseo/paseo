@@ -3,10 +3,21 @@ import type {
   AgentTimelineControls,
   AgentTimelineProps,
 } from "@getpaseo/plugin/client/ui";
-import { useRef } from "react";
-import { AgentEmbed, type AgentEmbedComposer } from "@/agent-embed";
+import { lazy, Suspense, useRef } from "react";
+import type { AgentEmbedComposer } from "@/agent-embed";
+import { FilePanelLoading } from "@/file-panels/loading";
 import type { ComposerControlsScope, ComposerItemsScope } from "@/composer/controls-scope";
 import { usePluginInstallation } from "../installation-provider";
+
+/**
+ * The embed renders the agent tab's chain, composer included. Every plugin loads this module's
+ * siblings with the plugin runtime, and the plugin runtime loads with the host runtime, so a static
+ * import would put the whole chat surface in the host runtime's import graph. Only the first
+ * timeline of a session waits for it.
+ */
+const AgentEmbed = lazy(async () => ({ default: (await import("@/agent-embed")).AgentEmbed }));
+
+const LOADING = <FilePanelLoading />;
 
 const NO_CONTROLS: ComposerControlsScope = {
   model: false,
@@ -101,11 +112,13 @@ export function AgentTimeline({ agentId, serverId, composer, testID }: AgentTime
   const embedComposer = useStableComposer(resolveComposer(composer, plugin.id));
 
   return (
-    <AgentEmbed
-      serverId={serverId ?? plugin.serverId}
-      agentId={agentId}
-      composer={embedComposer}
-      testID={testID}
-    />
+    <Suspense fallback={LOADING}>
+      <AgentEmbed
+        serverId={serverId ?? plugin.serverId}
+        agentId={agentId}
+        composer={embedComposer}
+        testID={testID}
+      />
+    </Suspense>
   );
 }
