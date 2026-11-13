@@ -2562,9 +2562,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           if (!repo) {
             return null;
           }
-          const view = await getGitHubRepoView({ cwd: input.cwd, repo, run });
-          const parentOwner = view?.parent?.owner?.login;
-          const parentName = view?.parent?.name;
+          // A failed lookup must reject: "no parent" is cached as a final answer.
+          const view = await readGitHubRepoView({ cwd: input.cwd, repo, run });
+          const parentOwner = view.parent?.owner?.login;
+          const parentName = view.parent?.name;
           return parentOwner && parentName ? `${parentOwner}/${parentName}` : null;
         },
       });
@@ -3266,12 +3267,16 @@ async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> 
   return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
 }
 
-async function getGitHubRepoView(options: {
+interface GitHubRepoViewOptions {
   cwd: string;
   /** owner/name to ask about; `gh` picks the default repository for the directory when absent. */
   repo?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
-}): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
+}
+
+async function readGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema>> {
   const args = [
     "repo",
     "view",
@@ -3279,15 +3284,21 @@ async function getGitHubRepoView(options: {
     "--json",
     "owner,name,parent",
   ];
+  const stdout = await options.run(args, {
+    cwd: options.cwd,
+  });
+  return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
+    args,
+    cwd: options.cwd,
+    emptyFallback: "{}",
+  });
+}
+
+async function getGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
   try {
-    const stdout = await options.run(args, {
-      cwd: options.cwd,
-    });
-    return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
-      args,
-      cwd: options.cwd,
-      emptyFallback: "{}",
-    });
+    return await readGitHubRepoView(options);
   } catch (error) {
     // A missing CLI or an auth failure must surface as its typed class so the
     // caller reports the real problem; only a genuine "not a resolvable repo"

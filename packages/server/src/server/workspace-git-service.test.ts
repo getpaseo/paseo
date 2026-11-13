@@ -93,6 +93,8 @@ function createSnapshot(
       pullRequest: resolveSnapshotPullRequest(base, overrides),
       error: resolveSnapshotError(base, overrides),
     },
+    // Every remote these fixtures use is on github.com.
+    ...(forgeName ? { forgeWeb: { host: "github.com" } } : {}),
   };
 }
 

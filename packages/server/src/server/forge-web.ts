@@ -12,6 +12,7 @@ const REFERENCE_REPOSITORY_RETRY_MS = 60_000;
  * failed lookup.
  */
 export interface ForgeWebEntry {
+  remoteUrl: string;
   remoteKey: string;
   forgeWeb: ForgeWeb;
   retryAtMs: number | null;
@@ -40,10 +41,11 @@ export async function resolveForgeWeb(input: {
 
   const lookup = input.resolution.service.getReferenceRepository;
   if (!lookup) {
-    return { remoteKey, forgeWeb: { host }, retryAtMs: null };
+    return { remoteUrl: input.remoteUrl, remoteKey, forgeWeb: { host }, retryAtMs: null };
   }
   if (!input.authenticated) {
     return {
+      remoteUrl: input.remoteUrl,
       remoteKey,
       forgeWeb: { host },
       retryAtMs: input.nowMs + REFERENCE_REPOSITORY_RETRY_MS,
@@ -53,12 +55,14 @@ export async function resolveForgeWeb(input: {
   try {
     const referenceRepository = await lookup.call(input.resolution.service, { cwd: input.cwd });
     return {
+      remoteUrl: input.remoteUrl,
       remoteKey,
       forgeWeb: referenceRepository ? { host, referenceRepository } : { host },
       retryAtMs: null,
     };
   } catch {
     return {
+      remoteUrl: input.remoteUrl,
       remoteKey,
       forgeWeb: { host },
       retryAtMs: input.nowMs + REFERENCE_REPOSITORY_RETRY_MS,

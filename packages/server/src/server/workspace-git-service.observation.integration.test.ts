@@ -17,7 +17,7 @@ import {
   type CheckoutSnapshotFacts,
   type CheckoutStatusGit,
 } from "../utils/checkout-git.js";
-import { createGitHubService } from "../services/github-service.js";
+import { createGitHubService, GitHubCommandError } from "../services/github-service.js";
 import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { FileChange, FileObserver, SubscribeToFileChanges } from "./file-observer/index.js";
@@ -1121,3 +1121,102 @@ test("a remote on no forge publishes no web location", async () => {
 
   expect(snapshot.forgeWeb).toBeUndefined();
 });
+
+test("changing the origin remote stops publishing the previous remote's web location", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubWithRepositoryView({
+          owner: { login: "fork-owner" },
+          name: "repo",
+          parent: { owner: { login: "main-owner" }, name: "repo" },
+        }),
+      },
+    },
+  });
+  cleanup.push(() => service.dispose());
+  const before = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  expect(before.forgeWeb?.referenceRepository).toBe("main-owner/repo");
+
+  execFileSync("git", ["remote", "set-url", "origin", "git@github.com:acme/other.git"], {
+    cwd: repo,
+  });
+  const after = await service.getSnapshot(repo, {
+    force: true,
+    includeForge: false,
+    reason: "forge-web-test",
+  });
+
+  expect(after.git.remoteUrl).toBe("git@github.com:acme/other.git");
+  expect(after.forgeWeb).toBeUndefined();
+});
+
+test("a failed parent lookup is retried by the pull request status poll once the retry delay has passed", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  let nowMs = Date.parse("2026-01-01T00:00:00Z");
+  let ghAnswers = false;
+  let pollStatus: ((status: null) => void) | undefined;
+  const github = createGitHubService({
+    resolveGhPath: async () => "gh",
+    resolveRepoHost: async () => null,
+    runner: async (args) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        if (!ghAnswers) {
+          throw new GitHubCommandError({
+            args,
+            cwd: repo,
+            exitCode: 1,
+            stderr: "error connecting to api.github.com",
+          });
+        }
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "fork-owner" },
+            name: "repo",
+            parent: { owner: { login: "main-owner" }, name: "repo" },
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    },
+  });
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      now: () => new Date(nowMs),
+      forgeOverrides: {
+        // The adapter is real; only the poll is driven by the test instead of a timer.
+        github: Object.assign(Object.create(github), {
+          retainCurrentPullRequestStatusPoll: (options: { onStatus?: (status: null) => void }) => {
+            pollStatus = options.onStatus;
+            return { unsubscribe: () => {} };
+          },
+        }),
+      },
+    },
+  });
+  const subscription = service.registerWorkspace({ cwd: repo }, () => {});
+  cleanup.push(async () => {
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  const failed = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  expect(failed.forgeWeb).toEqual({ host: "github.com" });
+  await expect.poll(() => pollStatus, { timeout: 10_000 }).toBeDefined();
+
+  ghAnswers = true;
+  nowMs += 61_000;
+  pollStatus?.(null);
+
+  await expect
+    .poll(async () => (await service.getSnapshot(repo, { includeForge: false })).forgeWeb, {
+      timeout: 10_000,
+    })
+    .toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+}, 30_000);

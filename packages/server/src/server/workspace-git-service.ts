@@ -3781,7 +3781,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: target.cwd,
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
-      ...(target.latestForgeWeb ? { forgeWeb: target.latestForgeWeb.forgeWeb } : {}),
+      // Only the remote it was resolved for: after `git remote set-url` the old host and
+      // parent are wrong until the next forge refresh resolves the new remote.
+      ...(target.latestForgeWeb?.remoteUrl === target.latestGit.remoteUrl
+        ? { forgeWeb: target.latestForgeWeb.forgeWeb }
+        : {}),
     };
   }
 
@@ -3821,6 +3825,42 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       forceEmit: false,
     });
+    void this.retryForgeWebIfDue(target, github.authState === "authenticated");
+  }
+
+  // The status poll is the only periodic work an idle workspace has, so it also
+  // retries a parent lookup that failed or ran before the forge CLI was signed in.
+  private async retryForgeWebIfDue(
+    target: WorkspaceGitTarget,
+    authenticated: boolean,
+  ): Promise<void> {
+    const entry = target.latestForgeWeb;
+    const remoteUrl = target.latestGit?.remoteUrl ?? null;
+    const nowMs = this.deps.now().getTime();
+    if (!entry || !remoteUrl || entry.retryAtMs === null || nowMs < entry.retryAtMs) {
+      return;
+    }
+    const resolution = this.forgeResolver.resolveFromRemoteUrl(remoteUrl);
+    if (!resolution) {
+      return;
+    }
+    const next = await resolveForgeWeb({
+      cwd: target.cwd,
+      remoteUrl,
+      resolution,
+      authenticated,
+      previous: entry,
+      force: false,
+      nowMs,
+    });
+    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+      return;
+    }
+    if (target.latestForgeWeb !== entry) {
+      return;
+    }
+    target.latestForgeWeb = next;
+    this.rememberSnapshot(target, this.combineSnapshot(target), { forceEmit: false });
   }
 
   private rememberSnapshot(

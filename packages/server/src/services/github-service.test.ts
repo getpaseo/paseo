@@ -556,6 +556,25 @@ describe("ForgeService", () => {
       ]);
     });
 
+    it("rejects when gh cannot answer, so a failed lookup is not mistaken for a repository without a parent", async () => {
+      const service = createGitHubService({
+        runner: async () => {
+          throw new GitHubCommandError({
+            args: ["repo", "view"],
+            cwd: "/tmp/repo",
+            exitCode: 1,
+            stderr: "error connecting to api.github.com",
+          });
+        },
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "fork-owner/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).rejects.toBeInstanceOf(
+        GitHubCommandError,
+      );
+    });
+
     it("is null for a repository that is not a fork", async () => {
       const runner = createRunner([JSON.stringify({ owner: { login: "acme" }, name: "repo" })]);
       const service = createGitHubService({
