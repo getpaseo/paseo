@@ -613,3 +613,19 @@ export async function expectRestartRecoveryPrompt(page: Page, prompt: string) {
   await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(sheet).toHaveCount(0);
 }
+
+export async function dragSettingsSidebarResizeHandle(page: Page, targetX: number): Promise<void> {
+  const handle = page.getByTestId("settings-sidebar-resize-handle");
+  await expect(handle).toBeVisible();
+  const box = await handle.boundingBox();
+  if (!box) throw new Error("Expected the pointer resize target to be visible.");
+  const startX = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(startX, y);
+  await page.mouse.down();
+  const initialStep =
+    targetX > startX ? Math.min(startX + 30, targetX) : Math.max(startX - 30, targetX);
+  await page.mouse.move(initialStep, y);
+  await page.mouse.move(targetX, y, { steps: 8 });
+  await page.mouse.up();
+}

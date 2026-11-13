@@ -890,6 +890,7 @@ function DesktopSidebar({
           {!overlay && divisionLayout === null ? (
             <SidebarResizeHandle
               edge="right"
+              prominent
               gesture={resizeGesture}
               pressed={resizePressed}
               testID="left-sidebar-resize-handle"
