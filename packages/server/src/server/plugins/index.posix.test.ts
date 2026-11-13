@@ -308,6 +308,74 @@ describe("PluginService", () => {
     },
   );
 
+  it.each(["subprocess", "builtin"] as const)(
+    "carries provider installation links and inspect through the %s plugin runtime",
+    async (runtime) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-installation",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent"],
+        installation: {
+          installUrl: "https://example.com/install",
+          updateUrl: "https://example.com/update",
+          async inspect({ launch, signal }) {
+            if (launch.env.HANG === "yes")
+              return await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+            if (!launch.resolved) return { status: "not_installed" };
+            return { status: "installed", version: launch.command + " " + launch.env.VERSION };
+          },
+        },
+        async connect() { throw new Error("not connected by this test"); },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-installation"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-installation"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        const installation = registration!.installation!;
+        expect(installation).toMatchObject({
+          installUrl: "https://example.com/install",
+          updateUrl: "https://example.com/update",
+        });
+        const signal = new AbortController().signal;
+        const launch = { command: "/bin/agent", args: [], env: { VERSION: " 1.0 (beta)\n" } };
+        await expect(
+          installation.inspect!({ launch: { ...launch, resolved: true }, signal }),
+        ).resolves.toEqual({ status: "installed", version: "/bin/agent  1.0 (beta)\n" });
+        await expect(
+          installation.inspect!({ launch: { ...launch, resolved: false }, signal }),
+        ).resolves.toEqual({ status: "not_installed" });
+
+        const abort = new AbortController();
+        const hanging = installation.inspect!({
+          launch: { ...launch, env: { HANG: "yes" }, resolved: true },
+          signal: abort.signal,
+        });
+        abort.abort(new Error("stop waiting"));
+        await expect(hanging).rejects.toThrow("stop waiting");
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

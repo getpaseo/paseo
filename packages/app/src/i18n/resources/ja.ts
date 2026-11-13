@@ -3139,6 +3139,15 @@ export const ja: TranslationResources = {
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
       },
+      installation: {
+        title: "インストール",
+        version: "バージョン",
+        installed: "インストール済み",
+        notInstalled: "未インストール",
+        install: "インストール",
+        checking: "確認中…",
+        failed: "インストールを確認できませんでした",
+      },
       diagnostic: {
         title: "診断",
         button: "診断",

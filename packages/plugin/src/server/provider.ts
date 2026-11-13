@@ -39,8 +39,39 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** How users install the provider's CLI and which version they run. Every member is optional. */
+  installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
+
+export interface ProviderInstallation {
+  /** http(s) page that explains how to install the provider. Paseo opens it; it never installs. */
+  installUrl?: string;
+  /** http(s) page that explains how to update the provider. */
+  updateUrl?: string;
+  /** Report whether the provider is installed and which version. Runs only when a user asks. */
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+}
+
+export interface ProviderInstallationContext {
+  /** The launch a session would use. Absent when the provider declares no `command`. */
+  launch?: ProviderInstallationLaunch;
+  /** Aborted when Paseo stops waiting for the result. */
+  signal: AbortSignal;
+}
+
+export interface ProviderInstallationLaunch extends ProviderLaunch {
+  /** False when the executable was not found; `command` is then the configured command as written. */
+  resolved: boolean;
+}
+
+export const ProviderInspectionSchema = z.discriminatedUnion("status", [
+  /** `version` is shown as written; Paseo does not parse or compare it. */
+  z.object({ status: z.literal("installed"), version: z.string().optional() }).strip(),
+  z.object({ status: z.literal("not_installed") }).strip(),
+]);
+
+export type ProviderInspection = z.infer<typeof ProviderInspectionSchema>;
 
 export type ProviderCatalogOptions =
   | { scope: "global"; force?: boolean; launch?: ProviderLaunch }

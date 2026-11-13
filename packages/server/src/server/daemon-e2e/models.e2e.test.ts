@@ -9,6 +9,7 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { execFileSync } from "node:child_process";
 import { createDaemonTestContext } from "../test-utils/index.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 
 function isBinaryInstalled(binary: string): boolean {
   try {
@@ -331,5 +332,47 @@ test("bundled Hoplite requires a config entry and removal survives restart", asy
     await daemon.close();
     await rm(root, { recursive: true, force: true });
     await rm(daemon.staticDir, { recursive: true, force: true });
+  }
+}, 60000);
+
+test("provider installation reaches the client: version unchanged, Install link when missing", async () => {
+  const version = "  codex-cli 0.200.0-alpha+local (build 7)\n";
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      installUrl: "https://example.com/codex/install",
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    expect(client.getLastServerInfoMessage()?.features?.providerInstallation).toBe(true);
+    await expect(client.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      installation: {
+        installUrl: "https://example.com/codex/install",
+        inspection: { status: "installed", version },
+      },
+    });
+    await expect(client.inspectProviderInstallation("muse")).resolves.toMatchObject({
+      provider: "muse",
+      error: null,
+      installation: {
+        installUrl: "https://paseo.sh/docs/muse-code",
+        inspection: { status: "not_installed" },
+      },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
   }
 }, 60000);

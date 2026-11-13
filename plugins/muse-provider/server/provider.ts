@@ -35,6 +35,14 @@ export function createMuseProvider(usage: Usage): ProviderRegistration {
     label: "Muse Code",
     icon: "icon.svg",
     command: ["muse"],
+    installation: {
+      installUrl: "https://paseo.sh/docs/muse-code",
+      async inspect({ launch, signal }) {
+        if (!launch?.resolved) return { status: "not_installed" };
+        const version = await readVersion(launch, signal);
+        return version ? { status: "installed", version: version.text } : { status: "installed" };
+      },
+    },
     async getCatalogCacheKey(options) {
       return launchKey(requireLaunch(options.launch));
     },
@@ -60,24 +68,35 @@ function requireLaunch(launch: ProviderLaunch | undefined): ProviderLaunch {
   if (!launch) throw new MuseError("missingLaunch", "Muse requires a daemon-resolved executable");
   return launch;
 }
+interface MuseVersion {
+  text: string;
+  major: number;
+  minor: number;
+}
+/** The `x.y.z` that `muse --version` prints, or null when the output has none. */
+async function readVersion(
+  launch: ProviderLaunch,
+  signal?: AbortSignal,
+): Promise<MuseVersion | null> {
+  const { stdout } = await execCommand(launch.command, [...launch.args, "--version"], {
+    env: launch.env,
+    timeout: 3000,
+    maxBuffer: 8192,
+    signal,
+  });
+  const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(stdout);
+  return match ? { text: match[0], major: Number(match[1]), minor: Number(match[2]) } : null;
+}
 async function status(launch: ProviderLaunch): Promise<ProviderStatus> {
   let host: MspConnection | undefined;
   try {
-    const { stdout: versionText } = await execCommand(
-      launch.command,
-      [...launch.args, "--version"],
-      {
-        env: launch.env,
-        timeout: 3000,
-        maxBuffer: 8192,
-      },
-    );
-    const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(versionText);
-    if (!match) return { available: false, diagnostic: "Muse returned an unrecognized version." };
-    const major = Number(match[1]);
-    const minor = Number(match[2]);
-    if (major < 1 || (major === 1 && minor < 3))
-      return { available: false, diagnostic: `Update Muse Code: found ${match[0]}, need ≥1.3.0` };
+    const version = await readVersion(launch);
+    if (!version) return { available: false, diagnostic: "Muse returned an unrecognized version." };
+    if (version.major < 1 || (version.major === 1 && version.minor < 3))
+      return {
+        available: false,
+        diagnostic: `Update Muse Code: found ${version.text}, need ≥1.3.0`,
+      };
     // Leave room for the version probe, account read and cleanup within the status RPC deadline.
     host = new MspConnection({ launch, timeoutMs: 3000, startupTimeoutMs: 20000 });
     await host.initialize();
