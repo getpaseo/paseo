@@ -36,6 +36,12 @@ import type { WorkspaceRuntimeEnvironmentService } from "../../workspace-runtime
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
+interface WorkspaceScriptsProjectionInput {
+  workspace: PersistedWorkspaceRecord;
+  project: PersistedProjectRecord | null;
+  suppressedScriptNames: ReadonlySet<string>;
+}
+
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
  * snapshot, publish a script_status_update to every client, and start a script.
@@ -127,11 +133,24 @@ export function createWorkspaceScriptsService(deps: {
     if (!serviceProxy || !scriptRuntimeStore) {
       return [];
     }
+    return projectScripts({
+      workspace,
+      project,
+      suppressedScriptNames: await getProjectLaunchNames(workspace, project),
+    });
+  }
+
+  async function projectScripts({
+    workspace,
+    project,
+    suppressedScriptNames,
+  }: WorkspaceScriptsProjectionInput): Promise<WorkspaceScriptsPayload> {
+    if (!serviceProxy || !scriptRuntimeStore) return [];
     return buildWorkspaceScriptPayloads({
       workspaceId: workspace.workspaceId,
       workspaceDirectory: workspace.cwd,
       paseoConfig: await readPaseoConfigForProjection(workspace.cwd, logger),
-      suppressedScriptNames: await getProjectLaunchNames(workspace, project),
+      suppressedScriptNames,
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
@@ -254,9 +273,10 @@ export function createWorkspaceScriptsService(deps: {
     // The launcher's terminal exit listener owns route removal and runtime state updates.
     await available.terminalManager.killTerminalAndWait(runtime.terminalId);
 
-    const script = (await buildSnapshot(workspace, project)).find(
-      (entry) => entry.scriptName === input.scriptName,
-    );
+    const suppressedScriptNames = await getProjectLaunchNames(workspace, project);
+    suppressedScriptNames.delete(input.scriptName);
+    const scripts = await projectScripts({ workspace, project, suppressedScriptNames });
+    const script = scripts.find((entry) => entry.scriptName === input.scriptName);
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }

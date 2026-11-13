@@ -435,6 +435,7 @@ describe("stop", () => {
       exitCode: 143,
       terminalId: "terminal-dev",
     });
+    expect(await service.buildSnapshot(workspace, project)).toEqual([]);
   });
 });
 
