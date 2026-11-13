@@ -47,7 +47,7 @@ import {
 } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
-import { draftCreationKey } from "@/composer/draft/creation-key";
+import { draftCreations } from "@/composer/draft/creation-attempts";
 
 interface AutoSubmitConfig {
   provider: string;
@@ -105,6 +105,7 @@ function resolveDraftModeId(input: {
 }
 
 async function submitDraftCreateRequest(input: {
+  serverId: string;
   draftId: string;
   attempt: { clientMessageId: string };
   text: string;
@@ -174,9 +175,12 @@ async function submitDraftCreateRequest(input: {
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
-  const result = await client.createAgent({
-    ...request,
-    idempotencyKey: draftCreationKey(input.draftId, request),
+  const result = await draftCreations.submit({
+    serverId: input.serverId,
+    draftId: input.draftId,
+    kind: "agent",
+    request,
+    send: (options) => client.createAgent({ ...request, ...options }),
   });
 
   return {
@@ -449,6 +453,7 @@ export function WorkspaceDraftComposer({
           return { agentId: result.id, result };
         }
         return submitDraftCreateRequest({
+          serverId,
           draftId,
           attempt,
           text,

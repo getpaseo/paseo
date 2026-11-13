@@ -1,5 +1,6 @@
 import { useAddHost } from "@/hosts/add-host";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import { draftCreations } from "@/composer/draft/creation-attempts";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -313,10 +314,8 @@ async function createMultiplicityWorkspace(input: {
     prompt: input.prompt,
     attachments: input.attachments,
   });
-  const payload = await input.client.createWorkspace({
-    idempotencyKey: input.idempotencyKey,
+  const request: CreateWorkspaceRequestOptions = {
     agent: input.agent,
-    onEvent: input.onEvent,
     source: isWorktree
       ? {
           kind: "worktree",
@@ -335,6 +334,14 @@ async function createMultiplicityWorkspace(input: {
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
+  };
+  const payload = await draftCreations.submit({
+    serverId: input.serverId,
+    draftId: input.idempotencyKey,
+    kind: "workspace",
+    request,
+    onEvent: input.onEvent,
+    send: (options) => input.client.createWorkspace({ ...request, ...options }),
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);

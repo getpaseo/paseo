@@ -1,4 +1,5 @@
 import { KeyboardTranslateView } from "@/keyboard/shift";
+import { draftCreations } from "@/composer/draft/creation-attempts";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -84,25 +85,33 @@ function buildChatDraftComposerArgs({
 }
 
 async function callWorkspaceCreation({
+  serverId,
   creationMethod,
   connectedClient,
   creationId,
   worktreeSlug,
   input,
 }: {
+  serverId: string;
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
   creationId: string;
   worktreeSlug: string;
   input: { cwd: string; agent?: CreateWorkspaceRequestOptions["agent"] };
 }) {
-  return connectedClient.createWorkspace({
-    idempotencyKey: creationId,
+  const request: CreateWorkspaceRequestOptions = {
     agent: input.agent,
     source:
       creationMethod === "create_worktree"
         ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
         : { kind: "directory", path: input.cwd },
+  };
+  return draftCreations.submit({
+    serverId,
+    draftId: creationId,
+    kind: "workspace",
+    request,
+    send: (options) => connectedClient.createWorkspace({ ...request, ...options }),
   });
 }
 
@@ -259,6 +268,7 @@ export function WorkspaceSetupDialog() {
 
       const connectedClient = withConnectedClient();
       const payload = await callWorkspaceCreation({
+        serverId: pendingWorkspaceSetup.serverId,
         creationMethod: pendingWorkspaceSetup.creationMethod,
         creationId: pendingWorkspaceSetup.creationId,
         worktreeSlug: pendingWorkspaceSetup.worktreeSlug,
