@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import pino from "pino";
 import { expect, test } from "vitest";
+import { DiffOpcode } from "@getpaseo/protocol/binary-frames/index";
 import { CheckoutDiffManager, type CheckoutDiffSnapshotPayload } from "./checkout-diff-manager.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createFileObserver } from "./file-observer/index.js";
@@ -132,6 +133,84 @@ test("cancelling a legacy subscriber during a shared revision does not revive it
       });
       await result.unsubscribe();
     } finally {
+      await modern.release();
+    }
+  });
+}, 30_000);
+
+test("legacy subscribers are not re-sent a snapshot that did not change", async () => {
+  await withCheckout(async ({ cwd, manager }) => {
+    await writeFile(join(cwd, ".gitignore"), "*.log\n");
+    await writeFile(join(cwd, "x.ts"), "const value = 1;\n");
+    let revisions = 0;
+    const modern = await manager.streams.subscribe(
+      { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+      async (frame) => {
+        if (frame.opcode === DiffOpcode.End) revisions++;
+      },
+    );
+    await modern.start();
+    const updates: CheckoutDiffSnapshotPayload[] = [];
+    const legacy = await manager.subscribe({ cwd, compare: { mode: "uncommitted" } }, (snapshot) =>
+      updates.push(snapshot),
+    );
+    try {
+      expect(legacy.initial.files.map((file) => file.path)).toEqual([".gitignore", "x.ts"]);
+      await waitForSubscriberCount(manager, 2);
+      const before = revisions;
+      await writeFile(join(cwd, "app.log"), "ignored\n");
+      await writeFile(join(cwd, "README"), "base\n");
+      await writeFile(join(cwd, "x.ts"), "const value = 1;\n");
+      await manager.scheduleRefreshForCwd(cwd);
+      await expect.poll(() => revisions, { timeout: 10_000 }).toBeGreaterThan(before);
+      expect(updates).toHaveLength(0);
+      await writeFile(join(cwd, "x.ts"), "const value = 2;\n");
+      await expect.poll(() => updates.length, { timeout: 10_000 }).toBe(1);
+      expect(updates[0].files[1].hunks[0].lines).toContainEqual(
+        expect.objectContaining({ type: "add", content: "const value = 2;" }),
+      );
+    } finally {
+      await legacy.unsubscribe();
+      await modern.release();
+    }
+  });
+}, 30_000);
+
+test("legacy All subscribers are not re-sent the snapshot when a commit only moves HEAD", async () => {
+  await withCheckout(async ({ cwd, manager, git }) => {
+    git("checkout", "-b", "feature");
+    await writeFile(join(cwd, "x.ts"), "const value = 1;\n");
+    const endedHeads: string[] = [];
+    let beganHead = "";
+    const modern = await manager.streams.subscribe(
+      {
+        cwd,
+        base: { kind: "rev", rev: "main" },
+        checkoutBase: { compare: { mode: "all", baseRef: "main" }, paseoHome: cwd },
+        head: { kind: "worktree" },
+        mergeBase: true,
+      },
+      async (frame) => {
+        if (frame.opcode === DiffOpcode.Begin) beganHead = frame.headSha;
+        if (frame.opcode === DiffOpcode.End) endedHeads.push(beganHead);
+      },
+    );
+    await modern.start();
+    const updates: CheckoutDiffSnapshotPayload[] = [];
+    const legacy = await manager.subscribe(
+      { cwd, compare: { mode: "all", baseRef: "main" } },
+      (snapshot) => updates.push(snapshot),
+    );
+    try {
+      expect(legacy.initial.files.map((file) => file.path)).toEqual(["x.ts"]);
+      await waitForSubscriberCount(manager, 2);
+      git("add", ".");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "feature");
+      const head = git("rev-parse", "HEAD");
+      await expect.poll(() => endedHeads.at(-1), { timeout: 10_000 }).toBe(head);
+      expect(updates).toHaveLength(0);
+    } finally {
+      await legacy.unsubscribe();
       await modern.release();
     }
   });
