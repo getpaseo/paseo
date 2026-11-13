@@ -796,6 +796,7 @@ test("a workspace handle marks the workspace read and unread", async () => {
     providersSnapshotCwd: true,
     ownedSubscriptions: true,
     backgroundWorkspaces: true,
+    workspaceMarkUnread: true,
   });
 
   const reading = workspace.markRead();
@@ -838,6 +839,22 @@ test("a workspace handle marks the workspace read and unread", async () => {
     }),
   );
   await expect(unreading).resolves.toBeUndefined();
+  await client.close();
+});
+
+test("marking a workspace unread fails before sending on a host without mark unread", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+  const sentBefore = ws.sent.length;
+
+  await expect(workspace.markUnread()).rejects.toThrow(
+    "Update the host to mark workspaces unread.",
+  );
+  expect(ws.sent).toHaveLength(sentBefore);
   await client.close();
 });
 
