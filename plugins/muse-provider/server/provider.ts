@@ -53,7 +53,11 @@ export function createMuseProvider(
       async inspect({ launch, signal }) {
         if (!launch?.resolved) return { status: "not_installed" };
         const version = await readVersion(launch, signal);
-        return version ? { status: "installed", version: version.text } : { status: "installed" };
+        // Report the build the update check compares, so a new build of the same x.y.z reads as
+        // a different version and Paseo drops the update check it cached for the old one.
+        return version
+          ? { status: "installed", version: version.build ?? version.text }
+          : { status: "installed" };
       },
       async checkForUpdates({ launch, signal }) {
         if (!launch?.resolved) return { status: "unknown", message: "Muse Code is not installed" };
