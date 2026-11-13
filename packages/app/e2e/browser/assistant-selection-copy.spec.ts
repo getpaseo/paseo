@@ -212,6 +212,8 @@ async function dragAssistantTextTo(
   const end = await blocks.getByText(endText).boundingBox();
   if (!end) throw new Error(`Expected rendered ending text: ${endText}`);
   const start = await assistantTextPoint(page, startText);
+  // A later iteration must start a new selection, rather than drag the previous highlight.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(start.x + 35, start.y, { steps: 5 });
@@ -235,7 +237,8 @@ async function assistantTextPoint(page: Page, text: string): Promise<{ x: number
       range.setStart(node, 1);
       range.setEnd(node, Math.min(2, node.textContent.length));
       const rect = range.getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      // Exact fractional glyph midpoints can leave native Chromium drags collapsed.
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     }, text);
 }
 
