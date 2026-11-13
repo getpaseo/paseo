@@ -639,9 +639,10 @@ function handleHttpRequest(
     });
   });
   res.on("error", () => {});
-  res.on("close", () => {
-    if (!res.writableFinished) upstream.destroy();
-  });
+  // Release the stream once the browser has the whole response, or has gone away.
+  // The host's server may keep its side open despite the Connection: close it was
+  // sent, and the tunnel would otherwise hold a stream slot until it does.
+  res.on("close", () => upstream.destroy());
   req.on("error", () => upstream.destroy());
   req.pipe(upstream);
 }

@@ -283,6 +283,16 @@ function unfinishedResponseConnection(
   };
 }
 
+/** Sends a complete response, then ignores the Connection: close it was sent. */
+function keptOpenResponseConnection(state: { closed: boolean }): (socket: Socket) => void {
+  return (socket) => {
+    socket.on("close", () => {
+      state.closed = true;
+    });
+    socket.once("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"));
+  };
+}
+
 async function startProxy(
   openStream: OpenTunnelStream,
   options: Pick<LocalBrowserProxyOptions, "log"> = {},
@@ -731,6 +741,21 @@ describe("local browser proxy: plain HTTP", () => {
     expect(events).toContain("http.response-refused");
     await waitFor(() => originState.closed);
     expect(events).not.toContain("http.upstream-error");
+  });
+
+  test("closes the stream once the response is complete, even if the host's server keeps its side open", async () => {
+    const originState = { closed: false };
+    const origin = await startRawOrigin(keptOpenResponseConnection(originState));
+    const proxy = await startProxy(tcpTunnel());
+
+    const response = await requestThroughProxy({
+      proxyPort: proxy.port,
+      url: `http://127.0.0.1:${listenPort(origin)}/kept-open`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("done");
+    await waitFor(() => originState.closed);
   });
 
   test("answers the warm-up host locally without opening a stream", async () => {
