@@ -169,6 +169,18 @@ describe.each(themes.filter(({ name }) => name.startsWith("plugin ")))(
   },
 );
 
+describe("a plugin theme whose own text is quiet", () => {
+  it("still separates the neutral fill from the page", () => {
+    const { colors } = buildPluginTheme({
+      ...MOCHA,
+      colors: { ...MOCHA.colors, background: "#202020", foreground: "#6a6a6a" },
+    });
+    expect(contrastRatio(colors.surface0, colors.surface3)).toBeGreaterThanOrEqual(
+      NEUTRAL_FILL_STEP,
+    );
+  });
+});
+
 describe("built-in themes", () => {
   it.each(themes.filter(({ name }) => !name.startsWith("plugin ")))(
     "$name keeps a control hover visible on the workspace surface",

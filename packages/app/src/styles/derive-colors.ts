@@ -29,6 +29,8 @@ const NEUTRAL_FILL_STEPS = {
 // the contrast the theme gives its own text: foreground stays at least this readable on it. The
 // margin over 3:1 absorbs the rounding of the fill to 8-bit channels.
 const NEUTRAL_FILL_TEXT_FLOOR = 3.05;
+// A theme whose own text is quieter than that still gets a fill that separates from the page.
+const NEUTRAL_FILL_MIN_STEP = 1.25;
 
 // Tertiary text: muted text, that fraction of the way toward the background, but never quieter
 // than this contrast against it (or than the muted text itself, when that is already quieter). The
@@ -63,7 +65,11 @@ export function deriveNeutralFills(
   // Foreground on the fill is about (foreground on background) / step.
   const textBound = contrastRatio(background, foreground) / NEUTRAL_FILL_TEXT_FLOOR;
   return {
-    surface3: stepContrast(background, foreground, Math.min(steps.surface3, textBound)),
+    surface3: stepContrast(
+      background,
+      foreground,
+      Math.max(NEUTRAL_FILL_MIN_STEP, Math.min(steps.surface3, textBound)),
+    ),
     surface4: stepContrast(background, foreground, steps.surface4),
   };
 }
