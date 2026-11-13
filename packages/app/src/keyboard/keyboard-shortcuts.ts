@@ -721,7 +721,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-cmd-shift-left-mac",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+Shift+[",
-    when: { mac: true, desktop: true, commandCenter: false },
+    when: { mac: true, desktopBindings: true, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
       id: "workspace-tab-prev",
@@ -733,7 +733,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-cmd-shift-right-mac",
     action: "workspace.tab.navigate.relative",
     combo: "Cmd+Shift+]",
-    when: { mac: true, desktop: true, commandCenter: false },
+    when: { mac: true, desktopBindings: true, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
       id: "workspace-tab-next",
@@ -769,7 +769,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
-    when: { mac: true, desktop: false, commandCenter: false },
+    when: { mac: true, desktopBindings: false, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
       id: "workspace-tab-prev",
@@ -781,7 +781,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+]",
-    when: { mac: true, desktop: false, commandCenter: false },
+    when: { mac: true, desktopBindings: false, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
       id: "workspace-tab-next",
