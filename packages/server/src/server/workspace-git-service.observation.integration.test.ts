@@ -1034,7 +1034,9 @@ function createCheckoutWithOrigin(origin: string): string {
   git("add", ".");
   git("commit", "-m", "base");
   git("remote", "add", "origin", origin);
-  cleanup.push(async () => rmSync(root, { recursive: true, force: true }));
+  cleanup.push(async () =>
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+  );
   return repo;
 }
 
@@ -1208,7 +1210,8 @@ test("a failed parent lookup is retried by the pull request status poll, keeping
     resolveGhPath: async () => "gh",
     resolveRepoHost: async () => null,
     runner: async (args) => {
-      if (args[0] === "repo" && args[1] === "view") {
+      // The reference lookup names the origin repository; the PR status load asks for the cwd repo.
+      if (args[0] === "repo" && args[1] === "view" && args[2] === "fork-owner/repo") {
         lookups += 1;
         if (!ghAnswers) {
           throw new GitHubCommandError({
