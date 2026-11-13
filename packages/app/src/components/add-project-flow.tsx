@@ -64,6 +64,7 @@ import {
   pathBaseName,
   type AddProjectMethodId,
 } from "@/add-project-flow/options";
+import { useTypedFilePath } from "@/add-project-flow/typed-file-path";
 import {
   buildProjectPickerOptions,
   type ProjectPickerOption,
@@ -165,6 +166,7 @@ function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
 
 function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string): string | null {
   if (option.kind === "path") return "Open this path";
+  if (option.kind === "file-directory") return `Directory containing ${option.fileName}`;
   if (shortPath === option.path) return null;
   return option.path;
 }
@@ -546,14 +548,21 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     () => (directoryQuery.data?.query === query ? directoryQuery.data.paths : EMPTY_PATHS),
     [directoryQuery.data, query],
   );
+  const typedFileLookup = useTypedFilePath({
+    client,
+    hostId,
+    query: debouncedQuery,
+    enabled: page.kind === "directory-search",
+  });
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
         recommendedPaths,
         serverPaths: directoryPaths,
         query,
+        typedFile: debouncedQuery === query ? typedFileLookup.file : null,
       }),
-    [directoryPaths, query, recommendedPaths],
+    [debouncedQuery, directoryPaths, query, recommendedPaths, typedFileLookup.file],
   );
   const cloneRepository = useCallback(
     async (locationPage: GithubLocationPage, parentPath: string) => {
@@ -838,7 +847,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? githubQuery.data.payload
       : null;
   const loading =
-    (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
+    (searchesDirectories &&
+      (query !== debouncedQuery || directoryQuery.isFetching || typedFileLookup.isFetching)) ||
     (page.kind === "github-search" &&
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));
