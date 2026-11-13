@@ -61,6 +61,7 @@ describe("quote body copy", () => {
 describe("rendered quote copy", () => {
   let root: Root | undefined;
   let host: HTMLDivElement;
+  let clipboardEnvironment: MarkdownClipboardEnvironment | undefined;
 
   afterEach(() => {
     if (root) {
@@ -68,7 +69,15 @@ describe("rendered quote copy", () => {
     }
     root = undefined;
     host?.remove();
+    clipboardEnvironment = undefined;
   });
+
+  function StableBlockquote(props: BlockquoteRendererProps) {
+    return React.createElement(WebBlockquote, {
+      ...props,
+      ...(clipboardEnvironment ? { clipboardEnvironment } : {}),
+    });
+  }
 
   function renderQuote(markdown: string, environment?: MarkdownClipboardEnvironment) {
     if (!root) {
@@ -76,11 +85,7 @@ describe("rendered quote copy", () => {
       document.body.append(host);
       root = createRoot(host);
     }
-    const blockquote = (props: BlockquoteRendererProps) =>
-      React.createElement(WebBlockquote, {
-        ...props,
-        ...(environment ? { clipboardEnvironment: environment } : {}),
-      });
+    clipboardEnvironment = environment;
     flushSync(() =>
       root!.render(
         React.createElement(
@@ -90,7 +95,7 @@ describe("rendered quote copy", () => {
             markdown,
             md4cFlags: { latexMath: false },
             markdownStyle: { paragraph: { marginBottom: 16 } },
-            renderers: { blockquote },
+            renderers: { blockquote: StableBlockquote },
           }),
         ),
       ),
@@ -119,16 +124,29 @@ describe("rendered quote copy", () => {
     await vi.waitFor(() =>
       expect(within(host).getByText("First draft").textContent).toBe("First draft"),
     );
+    const firstQuote = fixtureElement(host, "blockquote");
+    const firstButton = within(firstQuote).getByRole("button", {
+      name: "Copy quote",
+    });
+
     renderQuote("> Updated **draft**\n>\n> > Nested reply", clipboard.environment);
     await vi.waitFor(() => expect(host.textContent).toContain("Updated"));
+    const updatedQuote = fixtureElement(host, "blockquote");
+    expect(updatedQuote).toBe(firstQuote);
+    expect(updatedQuote.contains(firstButton)).toBe(true);
+    expect(firstQuote.textContent).toContain("Updated");
+    const controls = within(updatedQuote).getAllByRole("button", {
+      name: "Copy quote",
+    });
+    expect(controls[0]).toBe(firstButton);
+    const nested = controls[1]!;
 
-    const [outer, nested] = quoteButtons();
-    outer!.focus();
+    firstButton.focus();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(clipboard.plainTexts).toHaveLength(1));
     expect(clipboard.plainTexts[0]).toBe("Updated **draft**\n\n> Nested reply");
 
-    nested!.focus();
+    nested.focus();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(clipboard.plainTexts).toHaveLength(2));
     expect(clipboard.plainTexts[1]).toBe("Nested reply");
