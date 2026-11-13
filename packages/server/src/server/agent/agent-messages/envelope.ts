@@ -156,6 +156,10 @@ export function prepareAgentMessage(
   };
 }
 
+export function agentMessageTimelineId(messageId: string): string {
+  return `paseo-agent-message:${messageId}`;
+}
+
 /** The same projection owns provider echoes, acceptance, import, and replay. */
 export function projectAgentMessages(item: AgentTimelineItem): AgentTimelineItem[] {
   if (item.type === "user_message") {
@@ -194,7 +198,7 @@ function projectAgentMessage(item: AgentTimelineItem): AgentTimelineItem | null 
   }
   return {
     type: "tool_call",
-    callId: `paseo-agent-message:${message.id}`,
+    callId: agentMessageTimelineId(message.id),
     agentMessage: {
       event: source.kind === "agent-message" ? "message" : source.event,
       sender: {

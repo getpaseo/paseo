@@ -8959,10 +8959,11 @@ export class Session {
           );
         }
       };
-      const sent = msg.messageId
+      const messageId = msg.messageId;
+      const sent = messageId
         ? this.messageReceipts.send({
             agentId,
-            messageId: msg.messageId,
+            messageId,
             request: {
               prompt,
               sourceAgentId: msg.sourceAgentId,
@@ -8973,6 +8974,22 @@ export class Session {
             },
             prepare: async () => {
               if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+            },
+            isAccepted: async () => {
+              try {
+                await ensureAgentLoaded(agentId, {
+                  agentManager: this.agentManager,
+                  agentStorage: this.agentStorage,
+                  logger: this.sessionLogger,
+                });
+                return await this.agentManager.hasAcceptedSubmittedMessage(agentId, messageId);
+              } catch (error) {
+                this.sessionLogger.warn(
+                  { err: error, agentId, messageId },
+                  "Could not reconcile message delivery",
+                );
+                return false;
+              }
             },
             send,
           })
