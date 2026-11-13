@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
@@ -16,6 +17,10 @@ import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
+
+function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
 
 const RED_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
@@ -141,6 +146,102 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  for (const width of [390, 1280]) {
+    test(`copies linked file paths from the viewer at ${width}px`, async ({ page, context }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      const session = await seedAgentWithFileLink({
+        target: "report%20draft.md:2",
+        fileName: "report%20draft.md",
+        content: "# Report\n\nA draft report.",
+      });
+      try {
+        await openAgentRoute(page, session);
+        await page.getByText("report%20draft.md:2", { exact: true }).click();
+        await expect(page.getByTestId("file-source-editor")).toBeVisible();
+        const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+        const targetSize = width === 390 ? "32px" : "20px";
+        await expect(trigger).toHaveCSS("width", targetSize);
+        await expect(trigger).toHaveCSS("height", targetSize);
+        await trigger.click();
+        await page.getByTestId("file-path-actions-copy-path").click();
+        await expect
+          .poll(() => readClipboard(page))
+          .toBe(path.join(session.cwd, "report%20draft.md"));
+        await expect(page.getByText("Copied File path", { exact: true })).toBeVisible();
+
+        await selectFileView(page, "Preview");
+        await trigger.click();
+        await page.getByTestId("file-path-actions-copy-relative-path").click();
+        await expect.poll(() => readClipboard(page)).toBe("report%20draft.md");
+        await expect(page.getByTestId("markdown-preview-frame")).toBeVisible();
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+
+  test("copies an outside-workspace link without offering a misleading relative path", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const outside = await withWorkspace({ prefix: "outside-file-path-" });
+    const absolutePath = path.join(outside.repoPath, "external.md");
+    await writeFile(absolutePath, "# External report", "utf8");
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "linked-external-file-",
+      title: "External file link",
+      initialPrompt: "Show the external report",
+      featureValues: { mockAssistantResponse: `[External report](${absolutePath})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "External report");
+      const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+      await trigger.click();
+      await expect(page.getByTestId("file-path-actions-copy-relative-path")).toHaveCount(0);
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(absolutePath);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("copies a home-relative link without offering a workspace-relative path", async ({
+    page,
+    context,
+    projectPickerFixture,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const absolutePath = path.join(projectPickerFixture.projectPath, "home-report.md");
+    const target = `~/${path.relative(homedir(), absolutePath).split(path.sep).join("/")}`;
+    await writeFile(absolutePath, "# Home report", "utf8");
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "linked-home-file-",
+      title: "Home file link",
+      initialPrompt: "Show the home report",
+      featureValues: { mockAssistantResponse: `[Home report](${target})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "Home report");
+      await expect(page.getByTestId("markdown-preview-frame")).toBeVisible();
+      const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+      await trigger.click();
+      await expect(page.getByTestId("file-path-actions-copy-relative-path")).toHaveCount(0);
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(target);
+      await selectFileView(page, "Source");
+      await trigger.click();
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(target);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",
