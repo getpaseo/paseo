@@ -72,6 +72,9 @@ export function PlanFirst() {
 /** Works the same in the agent, draft and New workspace composers. */
 export function Checklist() {
   const composer = useComposer();
-  const insert = useCallback(() => composer.insertText("- [ ] Tests\n- [ ] Docs\n"), [composer]);
+  const insert = useCallback(async () => {
+    composer.insertText("- [ ] Tests\n- [ ] Docs\n");
+    await composer.focus();
+  }, [composer]);
   return <Action title="Insert checklist" icon="ListChecks" onPress={insert} />;
 }

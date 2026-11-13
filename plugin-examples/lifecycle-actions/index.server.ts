@@ -18,7 +18,8 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.addHook("agent.turn.after", async (event, context) => {
-    if (event.outcome.kind === "canceled") {
+    // A background agent reports to the agent that created it, which decides whether to retry.
+    if (event.outcome.kind === "canceled" || event.agent.background) {
       return;
     }
     const agent = context.paseo.agents.ref(event.agent.id);

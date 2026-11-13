@@ -8,13 +8,14 @@ import {
   resolveAgentModelSelection,
   resolveProviderSnapshotEntry,
 } from "@/composer/agent-controls/utils";
-import type { ComposerModel, ComposerState } from "@/composer/model";
+import type { ComposerFocusOptions, ComposerModel, ComposerState } from "@/composer/model";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady, type DraftRecord } from "@/stores/draft-store/state";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { UserComposerAttachment } from "@/attachments/types";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 /** The mounted composer's input. While attached, prompt commands go through it. */
 export interface MountedComposerInput {
@@ -23,6 +24,9 @@ export interface MountedComposerInput {
   setText(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
+  /** On screen and able to take the keyboard: `focus` needs nothing revealed first. */
+  isRevealed(): boolean;
+  focus(options?: ComposerFocusOptions): Promise<void>;
 }
 
 /**
@@ -41,6 +45,20 @@ interface AgentComposerDeps {
   cache?: ProviderSnapshotCache;
   /** The last watcher or mounted composer let go, so the composer may be releasable. */
   onUnheld?: () => void;
+  /** Brings the agent's composer on screen, wherever the user is. */
+  reveal: () => void;
+}
+
+// Long enough for a cold workspace to load its chat over a relay.
+const REVEAL_TIMEOUT_MS = 15_000;
+
+/** A focus waiting for the revealed input to come on screen. */
+interface PendingFocus {
+  /** Which `focus()` call this is; a later call decides where the cursor goes. */
+  call: number;
+  options: ComposerFocusOptions | undefined;
+  settle: { resolve: () => void; reject: (error: Error) => void };
+  timeout: ReturnType<typeof setTimeout>;
 }
 
 type Catalog = { status: "loading" } | { status: "ready"; entries: ProviderSnapshotEntry[] | null };
@@ -66,6 +84,9 @@ export function createAgentComposer(
   // One pair of store subscriptions serves every listener, from the first to the last.
   let stopWatchingStores: (() => void) | null = null;
   let mounted: MountedComposerInput | null = null;
+  let pendingFocus: PendingFocus | null = null;
+  let focusCalls = 0;
+  let latestFocus: Promise<void> = Promise.resolve();
   let last: {
     agent: Agent | null;
     draft: DraftRecord | undefined;
@@ -209,6 +230,25 @@ export function createAgentComposer(
     return last.state;
   }
 
+  function takePendingFocus(): PendingFocus | null {
+    const pending = pendingFocus;
+    pendingFocus = null;
+    if (pending) clearTimeout(pending.timeout);
+    return pending;
+  }
+
+  function focusIfRevealed(input: MountedComposerInput) {
+    if (!pendingFocus || !input.isRevealed()) return;
+    const { call, options, settle } = takePendingFocus()!;
+    // Attaching runs in a commit's effects, and a prompt set alongside this request can be applied
+    // by a later effect in that commit. A selection has to see that text.
+    queueMicrotask(() => {
+      // A call made since then, such as from a mounting item, decides; this one ends with it.
+      const outcome = call === focusCalls ? input.focus(options) : latestFocus;
+      outcome.then(settle.resolve, settle.reject);
+    });
+  }
+
   function unheld() {
     if (listeners.size === 0 && mounted === null) deps.onUnheld?.();
   }
@@ -237,6 +277,7 @@ export function createAgentComposer(
     },
     attachInput(input) {
       mounted = input;
+      focusIfRevealed(input);
       return () => {
         if (mounted === input) mounted = null;
         unheld();
@@ -252,6 +293,34 @@ export function createAgentComposer(
         const current = useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
         useDraftStore.getState().replaceDraftText({ draftKey, text: current + text });
       }
+    },
+    focus(options) {
+      const agent = readAgent();
+      if (!agent || agent.archivedAt != null) {
+        return Promise.reject(new Error("The agent is gone or archived."));
+      }
+      const call = ++focusCalls;
+      if (mounted?.isRevealed()) {
+        latestFocus = mounted.focus(options);
+        return latestFocus;
+      }
+      const replaced = takePendingFocus();
+      const request = new Promise<void>((resolve, reject) => {
+        pendingFocus = {
+          call,
+          options,
+          settle: { resolve, reject },
+          timeout: setTimeout(() => {
+            takePendingFocus();
+            reject(new Error("The composer did not come on screen."));
+          }, REVEAL_TIMEOUT_MS),
+        };
+        deps.reveal();
+      });
+      // The latest request decides where the cursor goes, and the one it replaced ends with it.
+      if (replaced) request.then(replaced.settle.resolve, replaced.settle.reject);
+      latestFocus = request;
+      return request;
     },
     changeAttachments(updater) {
       useDraftStore.getState().updateDraftInput({
@@ -304,6 +373,7 @@ export function agentComposer(serverId: string, agentId: string): AgentComposer 
     composer = createAgentComposer(serverId, agentId, {
       queryClient: singletonQueryClient,
       onUnheld: releaseReleasableComposers,
+      reveal: () => navigateToAgent({ serverId, agentId, asTab: true }),
     });
     composers.set(key, composer);
   }

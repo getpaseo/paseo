@@ -1188,6 +1188,8 @@ export const en = {
     title: "What's new",
     installed: "Installed",
     showMore: "Show more",
+    showAllChanges: "Show all changes",
+    hideAllChanges: "Hide all changes",
     openWebsite: "Full changelog",
     error: {
       title: "Unable to load the changelog",

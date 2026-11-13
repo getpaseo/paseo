@@ -81,7 +81,8 @@ turndown.addRule("compactListItem", {
     const item = content
       .replace(/^\n+/, "")
       .replace(/\n+$/, "\n")
-      .replace(/\n(?=\S)/g, "\n    ");
+      // Every non-empty line, so indented code lines stay inside the item.
+      .replace(/\n(?=[^\n])/g, "\n    ");
     const parent = node.parentElement;
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;
@@ -359,6 +360,9 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
   }
+  if (isCrossBoundaryCodeElement(range, element, tag)) {
+    return true;
+  }
   const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
   if (
     (isSelectableSemantic || element.tagName === "A") &&
@@ -384,6 +388,11 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
       return false;
   }
   return hasSelectedAllContents(range, element, tag === "li");
+}
+
+function isCrossBoundaryCodeElement(range: Range, element: Element, tag: string | null): boolean {
+  const isCode = tag === "pre" || (tag === "code" && Boolean(element.closest(CODE_BLOCK_SELECTOR)));
+  return isCode && !selectionStaysInsideElement(range, element);
 }
 
 function selectionStaysInsideElement(range: Range, element: Element): boolean {

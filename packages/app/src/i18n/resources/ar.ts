@@ -1180,6 +1180,8 @@ export const ar: TranslationResources = {
     title: "ما الجديد",
     installed: "مثبّت",
     showMore: "عرض المزيد",
+    showAllChanges: "عرض كل التغييرات",
+    hideAllChanges: "إخفاء كل التغييرات",
     openWebsite: "سجل التغييرات الكامل",
     error: {
       title: "تعذّر تحميل سجل التغييرات",

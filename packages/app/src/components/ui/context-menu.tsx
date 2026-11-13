@@ -165,7 +165,9 @@ export function ContextMenuTrigger({
 
   const handleContextMenu = useCallback(
     (event: unknown) => {
-      if (isNative) return;
+      // A trigger with no menu of its own leaves the browser's menu alone, e.g. copy and paste
+      // in a field rendered inside it.
+      if (isNative || !shouldEnableOnThisPlatform) return;
       if (typeof event === "object" && event !== null) {
         const preventDefault = Reflect.get(event, "preventDefault");
         const stopPropagation = Reflect.get(event, "stopPropagation");
@@ -175,7 +177,7 @@ export function ContextMenuTrigger({
       onContextMenu?.(event);
       openAtEvent(event);
     },
-    [onContextMenu, openAtEvent],
+    [onContextMenu, openAtEvent, shouldEnableOnThisPlatform],
   );
 
   const resolveDynamicStyle = useCallback(

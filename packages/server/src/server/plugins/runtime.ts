@@ -247,8 +247,9 @@ function spawnPluginChild(): PluginChild {
   }) as PluginChild;
 }
 
+// Kill only. Node never emits "close" for a child whose IPC channel the parent disconnected, and
+// "close" is how the runtime learns that a plugin exited; the channel closes with the process.
 function terminatePluginChild(child: PluginChild): void {
-  if (child.connected) child.disconnect();
   if (!child.killed) child.kill();
 }
 
