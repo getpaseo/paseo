@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { RowBadgeLine } from "./line";
+import type { DrawnPositions } from "./line";
 
 /** What the host tells `WorkspaceRowBadge` about the row item it renders in. */
 export interface WorkspaceRowBadgeItemFrame {
@@ -9,7 +9,10 @@ export interface WorkspaceRowBadgeItemFrame {
   leading: boolean;
   /** This item's place among the row's plugin items. */
   position: number;
-  line: RowBadgeLine;
+  /** The items on the line that have drawn so far. */
+  drawn: DrawnPositions;
+  /** Record that the item at `position` drew; the returned function takes it back. */
+  markDrawn: (position: number) => () => void;
 }
 
 export const WorkspaceRowBadgeItemFrameContext = createContext<WorkspaceRowBadgeItemFrame | null>(

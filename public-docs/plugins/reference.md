@@ -872,7 +872,8 @@ the workspace:
 | `tone`               | `"muted"` (default), `"success"`, `"warning"`, `"danger"`, or `"info"`.        |
 | `accessibilityLabel` | Defaults to `label`, then the item's `title`.                                  |
 
-The badge draws the line's `·` separator itself, so returning `null` leaves no gap. Every row
+The badge draws the line's `·` separator itself, so returning `null` leaves no gap. Render at most
+one `WorkspaceRowBadge` per item. Every row
 renders the component, so share one query across rows instead of fetching per workspace: the
 plugin's React Query client is shared by all of its components on a host.
 
@@ -902,7 +903,7 @@ client.addWorkspaceRowBadgeItem({
 });
 ```
 
-Hosts older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
+Apps older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
 
 See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
 

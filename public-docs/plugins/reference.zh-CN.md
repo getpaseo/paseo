@@ -718,7 +718,7 @@ function hideAlerts() {
 | `tone`               | `"muted"`（默认）、`"success"`、`"warning"`、`"danger"` 或 `"info"`。 |
 | `accessibilityLabel` | 默认为 `label`，其次是该项的 `title`。                                |
 
-徽章自行绘制该行的 `·` 分隔符，因此返回 `null` 不会留下空隙。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
+徽章自行绘制该行的 `·` 分隔符，因此返回 `null` 不会留下空隙。每个项最多渲染一个 `WorkspaceRowBadge`。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
 
 ```tsx
 import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
@@ -746,7 +746,7 @@ client.addWorkspaceRowBadgeItem({
 });
 ```
 
-早于此 API 的主机没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
+早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
 
 参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
 

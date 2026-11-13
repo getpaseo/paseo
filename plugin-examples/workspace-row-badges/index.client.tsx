@@ -17,6 +17,8 @@ function WorkspaceAttention({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
 }
 
 export default function contribute(client: PluginClientContext) {
+  // Apps older than this API do not have the method, and requirements.paseo cannot exclude them.
+  if (!client.addWorkspaceRowBadgeItem) return () => {};
   client.addWorkspaceRowBadgeItem({
     id: "attention",
     title: "Workspace attention",

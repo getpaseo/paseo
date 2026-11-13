@@ -1,21 +1,15 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { useToast } from "@/contexts/toast-context";
 import { useAppSettings } from "@/hooks/use-settings";
-import { useHosts } from "@/runtime/host-runtime";
-import type { Theme } from "@/styles/theme";
-import { createPluginClientStateSource } from "../client-state/source";
-import { resolvePluginPlatform } from "../platform";
-import { PluginEnvironmentProvider, type PluginEnvironment } from "../popover";
 import { useInstalledPlugins } from "../registry";
+import { pluginThemeMapping, renderNothing, usePluginItemHost } from "../item-host";
+import { PluginEnvironmentProvider } from "../popover";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
-import { toPluginTheme } from "../theme";
 import type { InstalledPlugin, PluginWorkspaceRowBadgeItemContribution } from "../types";
 import { WorkspaceRowBadgeItemFrameContext, type WorkspaceRowBadgeItemFrame } from "./frame";
-import { createRowBadgeLine, type RowBadgeLine } from "./line";
+import { withDrawn, withoutDrawn, type DrawnPositions } from "./line";
 import { isWorkspaceRowBadgeItemVisible, workspaceRowBadgeItemKey } from "./model";
 
 export { WorkspaceRowBadge } from "./kit";
@@ -24,12 +18,6 @@ export {
   isWorkspaceRowBadgeItemVisible,
   type PluginWorkspaceRowBadgeItemGroup,
 } from "./model";
-
-const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-
-function renderNothing() {
-  return null;
-}
 
 interface RowBadgeItemTarget {
   plugin: InstalledPlugin;
@@ -71,7 +59,11 @@ export function PluginWorkspaceRowBadgeItems({
   /** The row drew items of its own, so the first plugin item leads with a separator. */
   separated: boolean;
 }) {
-  const [line] = useState(createRowBadgeLine);
+  const [drawn, setDrawn] = useState<DrawnPositions>([]);
+  const markDrawn = useCallback((position: number) => {
+    setDrawn((current) => withDrawn(current, position));
+    return () => setDrawn((current) => withoutDrawn(current, position));
+  }, []);
   return targets.map((target, position) => (
     <ThemedRowBadgeItemHost
       key={workspaceRowBadgeItemKey(target.plugin.id, target.item.id)}
@@ -79,7 +71,8 @@ export function PluginWorkspaceRowBadgeItems({
       workspaceId={workspaceId}
       leading={separated}
       position={position}
-      line={line}
+      drawn={drawn}
+      markDrawn={markDrawn}
       uniProps={pluginThemeMapping}
     />
   ));
@@ -90,29 +83,19 @@ function RowBadgeItemHost({
   workspaceId,
   leading,
   position,
-  line,
+  drawn,
+  markDrawn,
   theme,
 }: {
   target: RowBadgeItemTarget;
   workspaceId: string;
   leading: boolean;
   position: number;
-  line: RowBadgeLine;
+  drawn: DrawnPositions;
+  markDrawn: (position: number) => () => void;
   theme: PluginTheme;
 }) {
-  const toast = useToast();
-  const hosts = useHosts();
-  const compact = useIsCompactFormFactor();
-  const hostLabel =
-    hosts.find((host) => host.serverId === plugin.serverId)?.label ?? plugin.serverId;
-  const environment = useMemo<PluginEnvironment>(
-    () => ({
-      installation: plugin,
-      toast,
-      state: createPluginClientStateSource(plugin.serverId),
-    }),
-    [plugin, toast],
-  );
+  const { environment, props: hostProps } = usePluginItemHost(plugin, theme);
   const title = plugin.i18n.resolve(item.title, plugin.locale);
   const frame = useMemo<WorkspaceRowBadgeItemFrame>(
     () => ({
@@ -120,18 +103,14 @@ function RowBadgeItemHost({
       testID: `plugin-workspace-row-badge-${plugin.id}-${item.id}`,
       leading,
       position,
-      line,
+      drawn,
+      markDrawn,
     }),
-    [item.id, plugin.id, leading, position, line, title],
+    [drawn, item.id, leading, markDrawn, plugin.id, position, title],
   );
   const props = useMemo<PluginWorkspaceRowBadgeItemProps>(
-    () => ({
-      theme,
-      host: { id: plugin.serverId, label: hostLabel },
-      layout: { compact, platform: resolvePluginPlatform() },
-      workspaceId,
-    }),
-    [compact, hostLabel, plugin.serverId, theme, workspaceId],
+    () => ({ ...hostProps, workspaceId }),
+    [hostProps, workspaceId],
   );
   const Item = item.Component;
   return (

@@ -77,6 +77,9 @@ test("a plugin badge shows on workspace rows, hides quietly, and follows its Sho
     await test.step("the badge draws on the row; a null item and a throwing item draw nothing", async () => {
       await expect(badge(page, "review")).toBeVisible();
       await expect(badge(page, "review")).toContainText("In review");
+      // The badge sits behind two items that drew nothing and the row has none of its own, so
+      // the line starts with the badge and no stray "·".
+      await expect(badge(page, "review").locator("xpath=..")).toHaveText("In review");
       await expect(badge(page, "quiet")).toHaveCount(0);
       await expect(badge(page, "broken")).toHaveCount(0);
       await expect(page.getByText(TITLE).first()).toBeVisible();

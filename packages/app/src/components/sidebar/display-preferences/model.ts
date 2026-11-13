@@ -15,7 +15,7 @@ import {
   groupPluginWorkspaceRowBadgeItems,
   isWorkspaceRowBadgeItemVisible,
   type PluginWorkspaceRowBadgeItemGroup,
-} from "@/plugins/workspace-row-badge-items/model";
+} from "@/plugins/workspace-row-badge-items";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 

@@ -1,5 +1,5 @@
 import type { WorkspaceRowBadgeProps, WorkspaceRowBadgeTone } from "@getpaseo/plugin/client/ui";
-import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
@@ -44,15 +44,13 @@ export function WorkspaceRowBadge({
     [icon],
   );
   const draws = Boolean(parsedIcon || label);
-  const { line, position } = frame;
-  useLayoutEffect(() => (draws ? line.markDrawn(position) : undefined), [draws, line, position]);
-  const drawn = useSyncExternalStore(line.subscribe, line.getDrawn);
+  const { markDrawn, position } = frame;
+  // A layout effect, so the line settles before the first paint.
+  useLayoutEffect(() => (draws ? markDrawn(position) : undefined), [draws, markDrawn, position]);
   if (!draws) return null;
   return (
     <>
-      {needsSeparator({ leading: frame.leading, position, drawn }) ? (
-        <Text style={styles.separator}>·</Text>
-      ) : null}
+      {needsSeparator(frame) ? <Text style={styles.separator}>·</Text> : null}
       <View
         style={styles.item}
         accessibilityLabel={accessibilityLabel ?? label ?? frame.title}
