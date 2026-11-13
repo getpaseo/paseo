@@ -3020,6 +3020,37 @@ test("opening during reload waits for the replacement", async () => {
   }
 });
 
+test("clearing attention during reload waits for the replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-clear-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.markAgentUnread(created.id);
+    const reloading = manager.reloadAgentSession(created.id);
+    await client.waitForCloseToStart();
+    let cleared = false;
+    const clearing = manager.clearAgentAttention(created.id).then(() => {
+      cleared = true;
+      return true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cleared).toBe(false);
+    client.finishClosing();
+    await Promise.all([reloading, clearing]);
+    expect(manager.getAgent(created.id)?.attention.requiresAttention).toBe(false);
+    expect((await storage.get(created.id))?.requiresAttention).toBe(false);
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("closing during reload leaves the replacement closed", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-race-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
