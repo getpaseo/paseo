@@ -171,6 +171,8 @@ export class ClaudeScheduledWakeups {
   }
 
   private nextRun(expression: string, after: number): number | null {
+    // The expression is whatever Claude was asked to schedule; computeNextRunAt throws when it does
+    // not parse or has no run within a year. Then there is no time to show.
     try {
       return computeNextRunAt(
         { type: "cron", expression, timezone: this.timeZone },
@@ -218,25 +220,21 @@ function parseNextRun(text: string, now: number, timeZone: string): number | nul
 
 /** Milliseconds the zone's wall clock is ahead of UTC around `instant`. */
 function zoneOffset(instant: number, timeZone: string): number {
-  try {
-    const parts: Record<string, number> = {};
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-    });
-    for (const part of formatter.formatToParts(instant)) {
-      if (part.type !== "literal") parts[part.type] = Number(part.value);
-    }
-    const wall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
-    return wall - Math.floor(instant / MINUTE_MS) * MINUTE_MS;
-  } catch {
-    return 0;
+  const parts: Record<string, number> = {};
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+  });
+  for (const part of formatter.formatToParts(instant)) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
   }
+  const wall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+  return wall - Math.floor(instant / MINUTE_MS) * MINUTE_MS;
 }
 
 function contentBlocks(message: Record<string, unknown>): Record<string, unknown>[] {

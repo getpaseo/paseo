@@ -4,29 +4,34 @@ import { ClaudeScheduledWakeups } from "./scheduled-wakeups.js";
 // Frames captured from claude 2.1.323 (stream-json, SDK entrypoint) in Asia/Bangkok (UTC+7).
 const TIME_ZONE = "Asia/Bangkok";
 
-const toolUse = (id: string, name: string, input: unknown, parent: string | null = null) => ({
-  type: "assistant",
-  message: { content: [{ type: "tool_use", id, name, input, caller: { type: "direct" } }] },
-  parent_tool_use_id: parent,
-});
+function toolUse(id: string, name: string, input: unknown, parent: string | null = null) {
+  return {
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id, name, input, caller: { type: "direct" } }] },
+    parent_tool_use_id: parent,
+  };
+}
 
-const toolResult = (id: string, content: unknown, isError = false) => ({
-  type: "user",
-  message: {
-    role: "user",
-    content: [
-      { tool_use_id: id, type: "tool_result", content, ...(isError ? { is_error: true } : {}) },
-    ],
-  },
-  parent_tool_use_id: null,
-});
+function toolResult(id: string, content: unknown, isError = false) {
+  const error = isError ? { is_error: true } : {};
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ tool_use_id: id, type: "tool_result", content, ...error }],
+    },
+    parent_tool_use_id: null,
+  };
+}
 
-const fire = (wakeupSource: string | null) => ({
-  type: "command_lifecycle",
-  command_uuid: "0bf4465e-22d2-4213-a3cc-ae5bc18a2d15",
-  state: "started",
-  wakeup_source: wakeupSource,
-});
+function fire(wakeupSource: string | null) {
+  return {
+    type: "command_lifecycle",
+    command_uuid: "0bf4465e-22d2-4213-a3cc-ae5bc18a2d15",
+    state: "started",
+    wakeup_source: wakeupSource,
+  };
+}
 
 const WAKEUP_RESULT =
   "Next wakeup scheduled for 01:58:00 (in 205s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.";
