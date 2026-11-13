@@ -1173,8 +1173,8 @@ test("changing the origin remote publishes the new remote's web location, not th
   expect(after.forgeWeb).toEqual({ host: "github.com" });
 }, 30_000);
 
-test("a failed parent lookup is retried by the pull request status poll once the retry delay has passed", async () => {
-  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+test("a failed parent lookup is retried by the pull request status poll, keeping the host an SSH alias resolves to", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com-work:fork-owner/repo.git");
   let nowMs = Date.parse("2026-01-01T00:00:00Z");
   let ghAnswers = false;
   let pollStatus: ((status: null) => void) | undefined;
@@ -1208,6 +1208,7 @@ test("a failed parent lookup is retried by the pull request status poll once the
     paseoHome: path.join(path.dirname(repo), "home"),
     deps: {
       now: () => new Date(nowMs),
+      resolveSshHostname: async (host) => (host === "github.com-work" ? "github.com" : null),
       forgeOverrides: {
         // The adapter is real; only the poll is driven by the test instead of a timer.
         github: Object.assign(Object.create(github), {
@@ -1238,6 +1239,8 @@ test("a failed parent lookup is retried by the pull request status poll once the
       timeout: 10_000,
     })
     .toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+  const forced = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  expect(forced.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
 }, 30_000);
 
 test("a successful parent lookup is reused across forced refreshes of the same remote", async () => {

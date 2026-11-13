@@ -3858,7 +3858,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!entry || !remoteUrl || entry.retryAtMs === null || nowMs < entry.retryAtMs) {
       return;
     }
-    const resolution = this.forgeResolver.resolveFromRemoteUrl(remoteUrl);
+    // The async resolver, like the forge refresh: only it reports the `ssh -G` host for an alias.
+    const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
     if (!resolution) {
       return;
     }
