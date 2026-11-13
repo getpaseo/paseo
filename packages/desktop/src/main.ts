@@ -47,6 +47,7 @@ import {
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
 import { showWindowWhenReady } from "./window/show-when-ready.js";
+import { configureDesktopGraphics } from "./window/graphics.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -345,6 +346,13 @@ if (electronFlags) {
   }
   log.info("[electron-flags]", electronFlags);
 }
+
+configureDesktopGraphics({
+  argv: [...process.argv, ...(electronFlags?.split(/\s+/) ?? [])],
+  platform: process.platform,
+  display: process.env.DISPLAY,
+  commandLine: app.commandLine,
+});
 
 if (process.platform === "linux") {
   // Keep the desktop/dock identity independent of the wrapped Electron filename.

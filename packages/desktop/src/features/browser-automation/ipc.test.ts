@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
-import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
+import { adaptWebContents as adaptContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
@@ -11,6 +11,10 @@ class FakeImage implements TabImage {
   public getSize(): { width: number; height: number } {
     return { width: 640, height: 480 };
   }
+}
+
+function adaptWebContents(contents: FakeWebContents) {
+  return adaptContents(contents, { decodeImage: () => new FakeImage() });
 }
 
 class FakeDebugger {
@@ -61,6 +65,9 @@ class FakeDebugger {
       }
       return { result: { value: true } };
     }
+    if (command === "Page.getLayoutMetrics")
+      return { cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 640, clientHeight: 480 } };
+    if (command === "Page.captureScreenshot") return { data: "iVBORw==" };
     return { ok: true };
   }
 
@@ -87,6 +94,7 @@ class FakeDebugger {
   public emitDetach(): void {
     this.attachedProtocolVersions.length = 0;
     this.detachListener?.();
+    for (const finish of this.blockedCommands.splice(0)) finish();
   }
 
   public finishNextCommand(): void {
@@ -118,8 +126,6 @@ class FakeWebContents {
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
-  public frameListener: ((image: TabImage) => void) | null = null;
-  public endedFrameSubscriptions = 0;
   public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
   public readonly destroyedListeners = new Set<() => void>();
@@ -172,16 +178,6 @@ class FakeWebContents {
 
   public reload(): void {}
 
-  public beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void {
-    expect(onlyDirty).toBe(false);
-    this.frameListener = callback;
-  }
-
-  public endFrameSubscription(): void {
-    this.frameListener = null;
-    this.endedFrameSubscriptions += 1;
-  }
-
   public invalidate(): void {
     this.invalidations.push("invalidate");
   }
@@ -222,7 +218,6 @@ class FakeWebContents {
   public destroy(): void {
     this.destroyed = true;
     this.debugger.emitDetach();
-    this.frameListener = null;
     for (const listener of this.destroyedListeners) {
       this.destroyedListeners.delete(listener);
       listener();
@@ -255,21 +250,29 @@ describe("browser automation IPC adapter", () => {
     ]);
   });
 
-  test("captures one rendered frame and releases the subscription", async () => {
+  test("captures viewport pixels through CDP without waiting for another compositor paint", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
     const controller = new AbortController();
     const capture = tab.captureFrame(controller.signal);
-    contents.frameListener?.(new FakeImage());
-
     expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
-    expect(contents.frameListener).toBeNull();
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.getLayoutMetrics", params: {} },
+      {
+        command: "Page.captureScreenshot",
+        params: {
+          format: "png",
+          captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width: 640, height: 480, scale: 1 },
+        },
+      },
+    ]);
     controller.abort();
-    expect(contents.endedFrameSubscriptions).toBe(1);
   });
 
-  test("cancels a pending frame subscription when the capture budget expires", async () => {
+  test("cancels a pending capture when its budget expires", async () => {
     const contents = new FakeWebContents(2001);
+    contents.debugger.blockCommands = true;
     const tab = adaptWebContents(contents);
     const controller = new AbortController();
     const capture = tab.captureFrame(controller.signal);
@@ -277,14 +280,35 @@ describe("browser automation IPC adapter", () => {
     controller.abort(new Error("capture deadline"));
 
     await failure;
-    expect(contents.frameListener).toBeNull();
-    expect(contents.endedFrameSubscriptions).toBe(1);
+    expect(contents.destroyedListeners.size).toBe(1);
+  });
+
+  test("a cancelled screenshot does not block subsequent CDP commands", async () => {
+    const contents = new FakeWebContents(2004);
+    contents.debugger.blockedCommandNames.add("Page.captureScreenshot");
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const captured = tab.captureFrame(controller.signal);
+    await flushMicrotasks();
+    const failure = expect(captured).rejects.toThrow("capture deadline");
+    controller.abort(new Error("capture deadline"));
+    await failure;
+    let completed = false;
+    const next = tab.sendDebugCommand!("Runtime.enable").then((result) => {
+      completed = true;
+      return result;
+    });
+    await flushMicrotasks();
+    expect(completed).toBe(true);
+    contents.debugger.finishNextCommand();
+    await next;
   });
 
   test("closing a guest settles its screenshot and releases the next queued capture", async () => {
     vi.useFakeTimers();
     try {
       const closing = new FakeWebContents(2002);
+      closing.debugger.blockedCommandNames.add("Page.captureScreenshot");
       const next = new FakeWebContents(2003);
       const tabs = new Map([
         ["closing", adaptWebContents(closing)],
@@ -313,7 +337,7 @@ describe("browser automation IPC adapter", () => {
       });
       const nextCapture = capture("next");
       await vi.advanceTimersByTimeAsync(0);
-      expect(closing.frameListener).not.toBeNull();
+      expect(closedResult).toBeUndefined();
       closing.destroy();
       await vi.advanceTimersByTimeAsync(0);
       expect(closedResult).toEqual({
@@ -326,8 +350,6 @@ describe("browser automation IPC adapter", () => {
         },
       });
       expect(closing.destroyedListeners.size).toBe(0);
-      expect(next.frameListener).not.toBeNull();
-      next.frameListener?.(new FakeImage());
       await expect(nextCapture).resolves.toMatchObject({ ok: true });
       await closedCapture;
       expect(next.destroyedListeners.size).toBe(1);
@@ -371,7 +393,7 @@ describe("browser automation IPC adapter", () => {
       format: "png",
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ data: "iVBORw==" });
     expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
     expect(contents.debugger.commands).toEqual([
       { command: "Page.captureScreenshot", params: { format: "png" } },
@@ -401,7 +423,7 @@ describe("browser automation IPC adapter", () => {
 
     contents.debugger.finishNextCommand();
     await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ data: "iVBORw==" });
   });
 
   test("handles JavaScript dialogs through the per-tab CDP queue", async () => {

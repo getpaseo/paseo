@@ -116,8 +116,15 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
 Screenshot capture temporarily enables frame production inside the shared serialized queue,
 restores the previous throttling policy on success or failure, and retains a 5-second capture budget.
-The browser tool takes one viewport frame through Electron's frame subscription and releases the
-subscription on completion or cancellation. A resized resident guest can produce fresh pixels
-while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or
-retrying the copy does not repair that state. Full-page screenshots retain the CDP path with layout
-metrics and screenshot clip.
+Viewport screenshots use CDP with an explicit visual-viewport clip, including its scroll coordinates.
+The clip stays bounded to the viewport while `captureBeyondViewport` lets Chromium render it without
+waiting for another compositor paint. Frame subscriptions can stall on static hidden guests even when
+JavaScript and animation callbacks are running. Full-page screenshots use the same CDP path with the
+page content bounds.
+
+The startup E2E also creates a never-shown window and checks animation callbacks, repeated viewport
+captures, viewport resizing, and scrolled pixel content. Run it with:
+
+```bash
+xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
+```

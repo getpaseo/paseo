@@ -341,7 +341,13 @@ it did not start while every process is alive. `showWindowWhenReady`
 the document finishes loading if the event has not arrived. The fallback is
 Linux-only; macOS and Windows keep waiting for `ready-to-show`.
 
-Run the startup regression on Linux with an isolated display:
+Desktop selects X11 when an X display is available, including XWayland in a Wayland session.
+Native Wayland can stop producing frames for hidden windows even with background throttling disabled,
+which stalls browser animation callbacks and screenshots. Explicit `--ozone-platform` and
+`--ozone-platform-hint` arguments, including those in `PASEO_ELECTRON_FLAGS`, retain the requested
+backend. A session without an X display keeps Electron's native backend selection.
+
+Run the startup and background-browser regressions on Linux with an isolated display:
 
 ```bash
 xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
