@@ -1022,15 +1022,17 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     await answer({ stopReason: "end_turn" });
     expect(summarizeEvents(events)).toEqual([]);
 
-    // 1) SYSTEM_MESSAGE arrives while the model is still thinking before step 6 is written.
+    // 1) SYSTEM_MESSAGE arrives while the model is still thinking before step 6 is written,
+    // including across slow (>90s) thinking windows.
+    const slowWakeupIso = new Date(Date.now() - 120_000).toISOString();
     const afterWakeupRows = [
       ...baseRows,
       {
         step_index: 5,
         type: "SYSTEM_MESSAGE",
         status: "DONE",
-        created_at: nowIso,
-        content: `[Message] timestamp=${nowIso} sender=session-agy-1/task-3 content=Task id "session-agy-1/task-3" finished`,
+        created_at: slowWakeupIso,
+        content: `[Message] timestamp=${slowWakeupIso} sender=session-agy-1/task-3 content=Task id "session-agy-1/task-3" finished`,
       },
     ];
     writeTranscript(afterWakeupRows);

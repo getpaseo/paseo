@@ -355,7 +355,6 @@ const COMMAND_INVENTORY_POLL_MS = 25;
 const ANTIGRAVITY_BACKGROUND_POLL_MS = 1_500;
 const ANTIGRAVITY_SUBSCRIBE_CATCHUP_MS = 200;
 const ANTIGRAVITY_WAKEUP_TIMESTAMP_SKEW_MS = 1_500;
-const ANTIGRAVITY_MID_STEP_STALE_MS = 90_000;
 const ANTIGRAVITY_HOOK_STATE_SKEW_MS = 5_000;
 
 const AntigravityHookStateSchema = z
@@ -1095,8 +1094,11 @@ async function readAntigravityHookState(logsDir: string): Promise<AntigravityHoo
     const raw = await fs.readFile(path.join(logsDir, "hook-state.json"), "utf8");
     const parsed = AntigravityHookStateSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -1123,11 +1125,9 @@ function isAntigravityHookStateBusy({
 function isAntigravityWakeupMidStep({
   lastRow,
   hookState,
-  nowMs,
 }: {
   lastRow: AntigravityTranscriptRow | undefined;
   hookState: AntigravityHookState | null;
-  nowMs: number;
 }): boolean {
   if (!lastRow) {
     return false;
@@ -1145,12 +1145,6 @@ function isAntigravityWakeupMidStep({
   ) {
     return false;
   }
-  if (
-    !Number.isNaN(lastRowTimestampMs) &&
-    nowMs - lastRowTimestampMs > ANTIGRAVITY_MID_STEP_STALE_MS
-  ) {
-    return false;
-  }
   return true;
 }
 
@@ -1162,7 +1156,6 @@ async function hasActiveAntigravityBackgroundWork({
   sessionId,
   sessionBrainDir,
   logsDir,
-  nowMs = Date.now(),
 }: {
   rows: readonly AntigravityTranscriptRow[];
   lastUserIndex: number;
@@ -1171,7 +1164,6 @@ async function hasActiveAntigravityBackgroundWork({
   sessionId: string;
   sessionBrainDir: string;
   logsDir: string;
-  nowMs?: number;
 }): Promise<boolean> {
   if (lastUserIndex < 0) {
     return false;
@@ -1206,7 +1198,7 @@ async function hasActiveAntigravityBackgroundWork({
     const lastStepIndex = lastRow?.step_index ?? rows.length - 1;
     if (
       (syncedStepIndex !== undefined && syncedStepIndex < lastStepIndex) ||
-      isAntigravityWakeupMidStep({ lastRow, hookState, nowMs }) ||
+      isAntigravityWakeupMidStep({ lastRow, hookState }) ||
       hasIncompletePlannerToolCalls({ rows, scanStart: firstWakeupIndex })
     ) {
       return true;
