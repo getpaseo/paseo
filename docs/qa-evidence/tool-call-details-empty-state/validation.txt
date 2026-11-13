@@ -19,3 +19,6 @@ Repository checks (after `npm run build:server`):
 `git diff --check` — exit 0
 
 The commit's Lefthook pre-commit checks also passed: format, lint, and full typecheck.
+
+Android device attempt:
+`npm run dev:android` — not completed. The first-run Gradle dependency downloads remained idle for about 20 minutes; the build was stopped before installation. No Android UI verification is claimed.

@@ -20,10 +20,10 @@ An agent captured these screenshots from the actual `ToolCallDetailsContent` com
 
 ## Coverage and limits
 
-| Surface                           | Tested                                                  |
-| --------------------------------- | ------------------------------------------------------- |
-| Chromium browser component render | Yes                                                     |
-| Android SM-F741N (API 37)         | Development build is still running; UI not verified yet |
-| iOS and desktop                   | No                                                      |
+| Surface                           | Tested                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Chromium browser component render | Yes                                                                                              |
+| Android SM-F741N (API 37)         | Not verified; first-run Gradle dependency downloads did not finish, so the app was not installed |
+| iOS and desktop                   | No                                                                                               |
 
 The test checks the rendered message and both horizontal padding values. It does not claim end-to-end coverage of the tool-call sheet flow.
