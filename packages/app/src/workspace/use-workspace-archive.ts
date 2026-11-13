@@ -12,7 +12,10 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceWithUndo, supportsWorkspaceArchiveUndo } from "@/workspace/archive-undo";
-import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
+import {
+  archiveWorkspaceOptimistically,
+  type WorkspaceArchiveTarget,
+} from "@/workspace/workspace-archive";
 
 function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
@@ -30,7 +33,8 @@ export interface ArchiveWorkspaceInput {
   /** Labels the warning's line counts. Whether to warn comes from the host's git state. */
   diffStat?: { additions: number; deletions: number } | null;
   warningLabels?: WorktreeArchiveWarningLabels;
-  onArchiveStarted: () => void;
+  /** Runs once the archive starts, with the workspace being archived. */
+  onArchiveStarted: (workspace: WorkspaceArchiveTarget) => void;
   onSetHiding?: (hiding: boolean) => void;
 }
 
@@ -53,6 +57,10 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
   const { t } = useTranslation();
   const toast = useToast();
   const confirmingRef = useRef(false);
+  // The archive starts after the host answers and you confirm. By then you may have opened another
+  // workspace, so the redirect reads the selection from the latest render.
+  const onArchiveStartedRef = useRef(onArchiveStarted);
+  onArchiveStartedRef.current = onArchiveStarted;
 
   const archiveWorkspaceRecord = useCallback(async () => {
     const client = getHostRuntimeStore().getClient(serverId);
@@ -63,7 +71,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     const workspace = { serverId, workspaceId };
     onSetHiding?.(true);
     try {
-      onArchiveStarted();
+      onArchiveStartedRef.current(workspace);
       if (supportsWorkspaceArchiveUndo(serverId)) {
         await archiveWorkspaceWithUndo({
           client,
@@ -83,7 +91,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     } finally {
       onSetHiding?.(false);
     }
-  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId]);
+  }, [onSetHiding, serverId, t, toast, workspaceId]);
 
   // The host removes a worktree it archives, uncommitted work included. Ask it what that would
   // lose: the sidebar row's git status is empty until the row receives it.

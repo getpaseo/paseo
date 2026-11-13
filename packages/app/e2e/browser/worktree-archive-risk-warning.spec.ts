@@ -12,17 +12,23 @@ import {
   createWorktreeViaDaemon,
   openProjectViaDaemon,
 } from "../support/helpers/new-workspace";
+import { expectAppRoute } from "../support/helpers/route-assertions";
 import { getServerId } from "../support/helpers/server-id";
 import {
   clickArchiveWorkspaceMenuItem,
   expectWorkspaceAbsentFromSidebar,
 } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { rowArchiveButton, workspaceRow } from "../support/helpers/workspace-archive-undo";
+import {
+  rowArchiveButton,
+  undoButton,
+  workspaceRow,
+} from "../support/helpers/workspace-archive-undo";
 import {
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 type DaemonClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 
@@ -82,6 +88,11 @@ async function answerArchiveWarning(
   return await warning;
 }
 
+// A clean Paseo worktree's primary git action in the workspace header is Archive.
+function gitActionsArchiveButton(page: Page) {
+  return page.getByTestId("changes-primary-cta").and(page.getByLabel("Archive workspace"));
+}
+
 async function clickRowArchiveButton(page: Page, workspaceId: string): Promise<void> {
   await workspaceRow(page, workspaceId).hover();
   await rowArchiveButton(page, workspaceId).click();
@@ -89,7 +100,12 @@ async function clickRowArchiveButton(page: Page, workspaceId: string): Promise<v
 
 interface SessionEnvelope {
   type?: unknown;
-  message?: { type?: unknown; workspaceId?: unknown; payload?: Record<string, unknown> };
+  message?: {
+    type?: unknown;
+    workspaceId?: unknown;
+    cwd?: unknown;
+    payload?: Record<string, unknown>;
+  };
 }
 
 function parseSessionEnvelope(message: string): SessionEnvelope | null {
@@ -191,6 +207,42 @@ async function relayDaemon(
   };
 }
 
+/**
+ * Holds the app's next checkout status request for `directory` once armed, so a test can act
+ * while the archive waits for the host's answer.
+ */
+async function holdCheckoutStatusRequest(page: Page, directory: string) {
+  let armed = false;
+  let held: (() => void) | null = null;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => {
+      const request = typeof message === "string" ? parseSessionEnvelope(message)?.message : null;
+      if (
+        armed &&
+        !held &&
+        request?.type === "checkout_status_request" &&
+        request.cwd === directory
+      ) {
+        held = () => server.send(message);
+        return;
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => browser.send(message));
+  });
+  return {
+    arm: () => {
+      armed = true;
+    },
+    waitForHeld: () => expect.poll(() => held !== null).toBe(true),
+    release: () => {
+      if (!held) throw new Error("No checkout status request is held");
+      held();
+    },
+  };
+}
+
 test.describe("Workspace archive risk warning for worktree backing", () => {
   let client: DaemonClient;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
@@ -213,14 +265,14 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
   });
 
   async function createWorktree(slug: string) {
-    await openProjectViaDaemon(client, tempRepo.path);
+    const project = await openProjectViaDaemon(client, tempRepo.path);
     const worktree = await createWorktreeViaDaemon(client, {
       cwd: tempRepo.path,
       slug: `${slug}-${Date.now()}`,
     });
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
-    return worktree;
+    return { ...worktree, project };
   }
 
   async function openSidebarRow(page: Page, workspaceId: string): Promise<void> {
@@ -231,6 +283,11 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
 
   async function expectWorktreeKept(page: Page, worktree: { workspaceId: string }) {
     await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible({ timeout: 10_000 });
+  }
+
+  async function hostListsWorkspace(workspaceId: string): Promise<boolean> {
+    const { entries } = await client.fetchWorkspaces();
+    return entries.some((entry) => entry.id === workspaceId);
   }
 
   test("a risky workspace archive is gated by confirmation and removes its worktree after acceptance", async ({
@@ -320,5 +377,72 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     await expectWorktreeKept(page, worktree);
     expect(relay.archiveRequests()).toBe(0);
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
+  });
+
+  // Archives the open worktree with `startArchive`, opens the project's main workspace while the
+  // host's checkout status answer is held, then lets the answer through.
+  async function archiveWhileOpeningAnotherWorkspace(
+    page: Page,
+    slug: string,
+    startArchive: (worktree: { workspaceId: string }) => Promise<void>,
+  ): Promise<string> {
+    const serverId = getServerId();
+    const worktree = await createWorktree(slug);
+    const statusRequest = await holdCheckoutStatusRequest(page, worktree.workspaceDirectory);
+    await openSidebarRow(page, worktree.workspaceId);
+    await workspaceRow(page, worktree.workspaceId).click();
+    await expectAppRoute(page, buildHostWorkspaceRoute(serverId, worktree.workspaceId));
+
+    statusRequest.arm();
+    await startArchive(worktree);
+    await statusRequest.waitForHeld();
+    await workspaceRow(page, worktree.project.workspaceId).click();
+    const openedRoute = buildHostWorkspaceRoute(serverId, worktree.project.workspaceId);
+    await expectAppRoute(page, openedRoute);
+
+    statusRequest.release();
+    await expect(undoButton(page)).toBeVisible();
+    // The redirect runs before the archive request, so once the host has archived the worktree
+    // any redirect has already happened.
+    await expect
+      .poll(() => hostListsWorkspace(worktree.workspaceId), { timeout: 30_000 })
+      .toBe(false);
+    return openedRoute;
+  }
+
+  test("opening another workspace while the host answers keeps it open after a row archive", async ({
+    page,
+  }) => {
+    const openedRoute = await archiveWhileOpeningAnotherWorkspace(
+      page,
+      "archive-risk-switch-row",
+      (worktree) => clickRowArchiveButton(page, worktree.workspaceId),
+    );
+    await expectAppRoute(page, openedRoute);
+  });
+
+  test("opening another workspace while the host answers keeps it open after a git actions archive", async ({
+    page,
+  }) => {
+    const openedRoute = await archiveWhileOpeningAnotherWorkspace(
+      page,
+      "archive-risk-switch-git",
+      () => gitActionsArchiveButton(page).click(),
+    );
+    await expectAppRoute(page, openedRoute);
+  });
+
+  test("archiving the open worktree from its git actions leaves it for a new workspace", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-git-redirect");
+    await openSidebarRow(page, worktree.workspaceId);
+    await workspaceRow(page, worktree.workspaceId).click();
+    await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), worktree.workspaceId));
+
+    await gitActionsArchiveButton(page).click();
+
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/new");
+    await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
   });
 });
