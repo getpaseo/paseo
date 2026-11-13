@@ -1595,6 +1595,44 @@ test("Stop can cancel startup while an interrupting send waits behind it", async
   }
 });
 
+test("an interrupting send replaces a turn whose start never finishes", async () => {
+  class StalledStartSession extends SteeringTestSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (prompt === "stalled start") {
+        this.startPrompts.push(prompt);
+        return new Promise(() => {});
+      }
+      return super.startTurn(prompt);
+    }
+  }
+  const session = new StalledStartSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stalled-start-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await startAgentRun(manager, agent.id, "stalled start", logger, { replaceRunning: true });
+    await startAgentRun(manager, agent.id, "recovery", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "interrupt",
+    });
+    expect(session.startPrompts).toEqual(["stalled start", "recovery"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("steers a tracked autonomous turn without creating a replacement run", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-steer-"));

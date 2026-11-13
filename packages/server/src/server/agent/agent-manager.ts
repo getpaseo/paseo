@@ -3599,12 +3599,14 @@ export class AgentManager {
     options: AgentRunOptions | undefined,
     assertAdmission?: () => void,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
+    let stalledStart: PendingForegroundRun | null = null;
     for (;;) {
       const admission = await this.runForegroundMutation(agent.id, async () => {
         // A run that is still starting has no turn to interrupt yet. Canceling it would drop
-        // its prompt, so wait for it outside the lane, where Stop can still reach it.
+        // its prompt, so wait for it outside the lane, where Stop can still reach it. A start
+        // that outlasts the rescue timeout is canceled like any other run.
         const starting = this.runs.getPendingRun(agent.id);
-        if (starting && starting.start.status !== "started") {
+        if (starting && starting.start.status !== "started" && starting !== stalledStart) {
           return { status: "starting" as const, run: starting };
         }
         assertAdmission?.();
@@ -3635,7 +3637,13 @@ export class AgentManager {
       if (admission.status === "reserved") {
         return admission.iterator;
       }
-      await Promise.race([admission.run.turnStartedPromise, admission.run.settledPromise]);
+      const started = await this.waitWithTimeout({
+        operation: Promise.race([admission.run.turnStartedPromise, admission.run.settledPromise]),
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      });
+      if (started === "timed_out") {
+        stalledStart = admission.run;
+      }
     }
   }
 
