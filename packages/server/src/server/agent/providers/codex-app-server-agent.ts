@@ -6669,7 +6669,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (stopped()) return "stopped";
     if (
       !limits ||
-      !lunaReserveCovers(model, limits) ||
+      !lunaReserveCovers({ model, limits }) ||
       this.closed ||
       this.activeForegroundTurnId !== foregroundTurnId
     ) {

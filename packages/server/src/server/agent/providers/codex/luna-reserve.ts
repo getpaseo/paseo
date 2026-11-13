@@ -83,7 +83,11 @@ export function isCodexUsageLimitError(codexErrorInfo: unknown): boolean {
  * its quota is named after; an agent on any other model keeps failing at the limit
  * rather than silently moving to a smaller model.
  */
-export function lunaReserveCovers(model: string, limits: CodexAccountRateLimits): boolean {
+export function lunaReserveCovers(input: {
+  model: string;
+  limits: CodexAccountRateLimits;
+}): boolean {
+  const { model, limits } = input;
   if (limits.ordinaryUsageAllowed !== false) return false;
   const banner = RateLimitUpsellSchema.safeParse(limits.rateLimitUpsell);
   if (!banner.success || banner.data.banner_type !== LUNA_RESERVE_BANNER) return false;

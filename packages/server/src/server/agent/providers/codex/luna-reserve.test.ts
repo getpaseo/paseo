@@ -45,31 +45,40 @@ function ordinaryAllowed(overrides: Record<string, unknown> = {}): CodexAccountR
 
 describe("lunaReserveCovers", () => {
   test("covers the model the reserve quota is named after", () => {
-    expect(lunaReserveCovers("gpt-5.6-luna", reserveOffered())).toBe(true);
+    expect(lunaReserveCovers({ model: "gpt-5.6-luna", limits: reserveOffered() })).toBe(true);
   });
 
   test("never covers another model", () => {
-    expect(lunaReserveCovers("gpt-5.6-sol", reserveOffered())).toBe(false);
+    expect(lunaReserveCovers({ model: "gpt-5.6-sol", limits: reserveOffered() })).toBe(false);
   });
 
   test("needs the backend to say ordinary usage is blocked", () => {
-    expect(lunaReserveCovers("gpt-5.6-luna", reserveOffered({ ordinaryUsageAllowed: true }))).toBe(
-      false,
-    );
-    expect(lunaReserveCovers("gpt-5.6-luna", reserveOffered({ ordinaryUsageAllowed: null }))).toBe(
-      false,
-    );
+    expect(
+      lunaReserveCovers({
+        model: "gpt-5.6-luna",
+        limits: reserveOffered({ ordinaryUsageAllowed: true }),
+      }),
+    ).toBe(false);
+    expect(
+      lunaReserveCovers({
+        model: "gpt-5.6-luna",
+        limits: reserveOffered({ ordinaryUsageAllowed: null }),
+      }),
+    ).toBe(false);
   });
 
   test("needs the Luna Reserve offer", () => {
-    expect(lunaReserveCovers("gpt-5.6-luna", reserveOffered({ rateLimitUpsell: null }))).toBe(
-      false,
-    );
     expect(
-      lunaReserveCovers(
-        "gpt-5.6-luna",
-        reserveOffered({ rateLimitUpsell: { banner_type: "add_credits" } }),
-      ),
+      lunaReserveCovers({
+        model: "gpt-5.6-luna",
+        limits: reserveOffered({ rateLimitUpsell: null }),
+      }),
+    ).toBe(false);
+    expect(
+      lunaReserveCovers({
+        model: "gpt-5.6-luna",
+        limits: reserveOffered({ rateLimitUpsell: { banner_type: "add_credits" } }),
+      }),
     ).toBe(false);
   });
 
@@ -78,14 +87,19 @@ describe("lunaReserveCovers", () => {
       reserveOffered({
         rateLimitUpsell: { banner_type: "luna_reserve", blocked_model_slug: blocked },
       });
-    expect(lunaReserveCovers("gpt-5.6-luna", offer("gpt-5.6-terra"))).toBe(false);
-    expect(lunaReserveCovers("gpt-5.6-luna", offer("gpt-5.6-luna"))).toBe(true);
+    expect(lunaReserveCovers({ model: "gpt-5.6-luna", limits: offer("gpt-5.6-terra") })).toBe(
+      false,
+    );
+    expect(lunaReserveCovers({ model: "gpt-5.6-luna", limits: offer("gpt-5.6-luna") })).toBe(true);
   });
 
   test("needs a reserve quota", () => {
-    expect(lunaReserveCovers("gpt-5.6-luna", reserveOffered({ rateLimitsByLimitId: {} }))).toBe(
-      false,
-    );
+    expect(
+      lunaReserveCovers({
+        model: "gpt-5.6-luna",
+        limits: reserveOffered({ rateLimitsByLimitId: {} }),
+      }),
+    ).toBe(false);
   });
 
   test("falls back to the Luna model name when the quota does not name its model", () => {
@@ -94,8 +108,8 @@ describe("lunaReserveCovers", () => {
         base_model_inference: { limitId: "base_model_inference", limitName: "gpt-reserve" },
       },
     });
-    expect(lunaReserveCovers("gpt-5.6-luna", unnamed)).toBe(true);
-    expect(lunaReserveCovers("gpt-5.6-sol", unnamed)).toBe(false);
+    expect(lunaReserveCovers({ model: "gpt-5.6-luna", limits: unnamed })).toBe(true);
+    expect(lunaReserveCovers({ model: "gpt-5.6-sol", limits: unnamed })).toBe(false);
   });
 });
 

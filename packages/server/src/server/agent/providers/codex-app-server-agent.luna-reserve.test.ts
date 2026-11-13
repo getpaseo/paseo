@@ -95,10 +95,14 @@ function startReserveTest(model: string): ReserveTest {
   };
 }
 
-function echoUserMessage(
-  appServer: FakeCodexAppServer,
-  input: { id: string; text: string; turnId: string; clientId?: unknown },
-): void {
+function echoUserMessage(input: {
+  appServer: FakeCodexAppServer;
+  id: string;
+  text: string;
+  turnId: string;
+  clientId?: unknown;
+}): void {
+  const { appServer } = input;
   appServer.child.stdout.write(
     `${JSON.stringify({
       method: "item/started",
@@ -343,7 +347,12 @@ describe("Luna Reserve fallback", () => {
     try {
       await t.session.startTurn("refactor the parser");
       t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-1" });
-      echoUserMessage(t.appServer, { id: "m1", text: "refactor the parser", turnId: "native-1" });
+      echoUserMessage({
+        appServer: t.appServer,
+        id: "m1",
+        text: "refactor the parser",
+        turnId: "native-1",
+      });
       t.appServer.completeTurn({ status: "failed", error: USAGE_LIMIT });
       await t.waitForTurnStarts(2);
       const clientId = t.turnStarts()[1].clientUserMessageId;
@@ -351,7 +360,13 @@ describe("Luna Reserve fallback", () => {
 
       const terminal = t.nextTerminal();
       t.appServer.startsTurn({ threadId: "thread-1", turnId: "native-2" });
-      echoUserMessage(t.appServer, { id: "m2", text: "Continue.", turnId: "native-2", clientId });
+      echoUserMessage({
+        appServer: t.appServer,
+        id: "m2",
+        text: "Continue.",
+        turnId: "native-2",
+        clientId,
+      });
       t.appServer.completeTurn({ status: "completed" });
       await terminal;
 
