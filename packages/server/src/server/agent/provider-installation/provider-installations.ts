@@ -159,11 +159,16 @@ export class ProviderInstallations {
     const checkForUpdates = installation?.checkForUpdates;
     if (!installation || !checkForUpdates) return null;
     // A cached check answers only for the version it was computed against, so a CLI updated
-    // outside Paseo is not offered the update it already has.
-    const version = await this.installedVersion(provider, client);
+    // outside Paseo is not offered the update it already has. The version comes from an
+    // inspection that is cached or already running; a check never starts one or waits for one
+    // when it asks the provider itself.
+    const knownVersion = this.knownInstalledVersion(client);
     const cached = this.updateChecks.get(client);
-    if (cached && version !== undefined && this.checkedVersions.get(cached) !== version)
-      this.updateChecks.delete(client);
+    if (cached && knownVersion && !options.refresh && this.isFresh(cached)) {
+      const version = await knownVersion;
+      if (version !== undefined && this.checkedVersions.get(cached) !== version)
+        this.updateChecks.delete(client);
+    }
     const check = this.read(provider, client, this.updateChecks, options, {
       name: "update check",
       parse: (value) => ProviderUpdateCheckSchema.parse(value),
@@ -177,8 +182,8 @@ export class ProviderInstallations {
       failed: (message) => ({ status: "error" as const, message }),
     });
     const entry = this.updateChecks.get(client);
-    if (entry && version !== undefined && !this.checkedVersions.has(entry))
-      this.checkedVersions.set(entry, version);
+    if (entry && knownVersion && !this.checkedVersions.has(entry))
+      void this.recordCheckedVersion(entry, knownVersion);
     return check;
   }
 
@@ -236,17 +241,28 @@ export class ProviderInstallations {
   }
 
   /**
-   * The version the provider reports now, shared with any inspection in flight. Undefined when
-   * the provider cannot inspect or the inspection failed, which says nothing about the version.
+   * The installed version from an inspection that is fresh or still running, or undefined when
+   * there is none. Resolves to undefined when the inspection failed, which says nothing about
+   * the version.
    */
-  private async installedVersion(
-    provider: AgentProvider,
+  private knownInstalledVersion(
     client: AgentClient,
-  ): Promise<string | null | undefined> {
-    if (!client.installation?.inspect) return undefined;
-    const inspection = (await this.inspect(provider))?.inspection;
-    if (!inspection || inspection.status === "error") return undefined;
-    return inspection.status === "installed" ? (inspection.version ?? null) : null;
+  ): Promise<string | null | undefined> | undefined {
+    const read = this.inspections.get(client);
+    if (!read || (read.settledAt !== null && !this.isFresh(read))) return undefined;
+    return read.promise.then((inspection) => {
+      if (inspection.status === "error") return undefined;
+      return inspection.status === "installed" ? (inspection.version ?? null) : null;
+    });
+  }
+
+  private async recordCheckedVersion(
+    entry: CachedRead<ProviderInstallationUpdateCheck>,
+    knownVersion: Promise<string | null | undefined>,
+  ): Promise<void> {
+    const version = await knownVersion;
+    if (version !== undefined && !this.checkedVersions.has(entry))
+      this.checkedVersions.set(entry, version);
   }
 
   private async runUpdate(
