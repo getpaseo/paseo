@@ -227,3 +227,25 @@ test("a phone-width embed without the model picker keeps its other controls", as
     },
   );
 });
+
+test("a phone-width embed's control sheet shows only the items the plugin named", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await withEmbeds(
+    page,
+    {
+      agents: [{ title: "Items agent", model: "e2e-fast-stream", prompt: "Say hello." }],
+      composer: { items: ["alpha"] },
+    },
+    async ({ agents: [agent], embed }) => {
+      await page.setViewportSize(PHONE);
+      const toolbar = embed(agent.agentId).getByTestId("agent-controls-toolbar");
+      await toolbar.getByRole("button", { name: /^Select model/ }).click();
+      const list = page.getByTestId("agent-controls-settings-list");
+      await expect(list.getByRole("button", { name: "Alpha flag", exact: true })).toBeVisible();
+      await expect(list.getByRole("button", { name: "Beta flag", exact: true })).toHaveCount(0);
+    },
+  );
+});
