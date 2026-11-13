@@ -2149,6 +2149,68 @@ describe("HostRuntimeController", () => {
     });
   });
 
+  it("wakes an active routed client before an unrelated direct probe settles", async () => {
+    useHostRuntimeClock();
+    const route: HostConnection = {
+      id: "via:srv_parent",
+      type: "routed",
+      originServerId: "srv_parent",
+    };
+    const host = makeHost({ connections: [route] });
+    const client = makeConnectedProbeClient(5);
+    const directProbeStarted = createDeferred<void>();
+    const directProbe = createDeferred<void>();
+    let directProbeCalls = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        getClientId: async () => "blocked-direct-probe",
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            directProbeCalls += 1;
+            directProbeStarted.resolve();
+            await directProbe.promise;
+            throw new Error("Direct connection unavailable");
+          }
+          return {
+            client: client as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+      },
+    });
+    await controller.start({ autoProbe: false });
+    client.setConnectionState({
+      status: "disconnected",
+      reason: "origin offline",
+      nextRetryAt: new Date(Date.now() + 12000).toISOString(),
+    });
+    const probing = controller.updateHost({
+      ...host,
+      connections: [
+        route,
+        { id: "direct:unreachable", type: "directTcp", endpoint: "unreachable:6767" },
+      ],
+    });
+    await directProbeStarted.promise;
+    const recovering = controller.reconnectVia("srv_parent");
+    try {
+      expect(client.ensureConnectedCalls).toBe(1);
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+      expect(directProbeCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.ensureConnectedCalls).toBe(1);
+      expect(directProbeCalls).toBe(1);
+    } finally {
+      directProbe.resolve();
+      await Promise.all([probing, recovering]);
+      await controller.stop();
+    }
+    expect(directProbeCalls).toBe(1);
+  });
+
   it("keeps active client generation stable during background probe cycles", async () => {
     useHostRuntimeClock();
     const host = makeHost({

@@ -876,12 +876,12 @@ export class HostRuntimeController {
         connection.originServerId === originServerId &&
         !this.authRejectedConnectionIds.has(connection.id),
     );
-    if (routes.length === 0) return;
+    if (routes.length === 0 || !this.started || isHostRuntimeConnected(this.snapshot)) return;
+    if (routes.some((route) => route.id === this.snapshot.activeConnectionId))
+      this.ensureConnected();
     await this.probeCycleInFlight;
     if (!this.started || this.snapshot.connectionStatus === "online") return;
     for (const route of routes) this.connectionLastProbedAt.delete(route.id);
-    if (routes.some((route) => route.id === this.snapshot.activeConnectionId))
-      this.ensureConnected();
     await this.runProbeCycleNow();
   }
 
