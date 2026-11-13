@@ -585,6 +585,40 @@ describe("checkout git utilities", () => {
     expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBeNull();
   });
 
+  it("keeps the local default when main tracks an unrelated local branch", async () => {
+    execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "unrelated"],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    execFileSync("git", ["branch", "--set-upstream-to=feature/unrelated", "main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "work"], { cwd: repoDir });
+    execFileSync("git", ["branch", "--set-upstream-to=main", "work"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.currentBranch).toBe("work");
+    expect(status.upstreamRef).toBe("refs/heads/main");
+    expect(status.defaultBranchRef).toBe("refs/heads/main");
+  });
+
+  it("uses a non-origin remote-tracking upstream when remote HEAD is unavailable", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "--no-deref", "-d", "refs/remotes/company/HEAD"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "local only"],
+      { cwd: repoDir },
+    );
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/remotes/company/main");
+  });
+
   it.each(["upstream", "company"])("uses the default on a remote named %s", async (remote) => {
     execFileSync("git", ["update-ref", `refs/remotes/${remote}/trunk`, "HEAD"], { cwd: repoDir });
     execFileSync(

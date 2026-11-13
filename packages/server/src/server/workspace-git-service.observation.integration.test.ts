@@ -1581,8 +1581,12 @@ test.each([false, true])(
     const repo = path.join(root, "repo");
     const worktree = path.join(root, "worktree");
     mkdirSync(repo);
-    const git = (...args: string[]) =>
-      execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+    function git(...args: string[]) {
+      return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+        cwd: repo,
+        stdio: "pipe",
+      });
+    }
     git("init", "-b", ambiguous ? "integration" : "main");
     git(
       "-c",
@@ -1647,8 +1651,12 @@ test("default branch ref cache invalidates when observed remote HEAD changes", a
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-watch-")));
   const repo = path.join(root, "repo");
   mkdirSync(repo);
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  function git(...args: string[]) {
+    return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+  }
   git("init", "-b", "main");
   git(
     "-c",

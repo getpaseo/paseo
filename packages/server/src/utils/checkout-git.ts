@@ -1724,8 +1724,9 @@ export async function resolveRepositoryDefaultBranchRef({
   );
   const refs = new Map<string, string>();
   const upstreams = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    if (!line) continue;
+  const lines = stdout.split("\n");
+  const refLines = lines.filter(Boolean);
+  for (const line of refLines) {
     const [ref, target = "", upstream = ""] = line.split("\0");
     refs.set(ref, target);
     upstreams.set(ref, upstream);
@@ -1750,7 +1751,7 @@ export async function resolveRepositoryDefaultBranchRef({
   const originRef = `refs/remotes/origin/${branch}`;
   if (refs.has(originRef)) return originRef;
   const upstream = upstreams.get(localDefault);
-  if (upstream && refs.has(upstream)) return upstream;
+  if (upstream?.startsWith("refs/remotes/") && refs.has(upstream)) return upstream;
   return localDefault;
 }
 
