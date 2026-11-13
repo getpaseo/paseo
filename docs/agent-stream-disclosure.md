@@ -154,6 +154,12 @@ in the detached state LegendList uses the same native correction, and a history 
 mid-drag needs it. They key on the drag, not the touch, so a tap or long press while following
 keeps following.
 
+An expanded tool detail viewport owns drags that start inside it. Keep its body
+wrapper a `View`, not a hover-only `Pressable`: `Pressable` takes the JS responder
+even without `onPress`, and iOS then prevents descendant scroll views from
+cancelling touches. Press handling belongs on the disclosure header; body hover
+handlers are web-only. Do not disable timeline scrolling to make details draggable.
+
 Following resumes only for a gesture that ends within 1 px of the end, either when the finger lifts
 or when momentum stops. A release past the end counts: iOS bounces back to the end, and lines that
 land during the bounce must keep scrolling in. A release anywhere short of the end stays detached
