@@ -351,6 +351,103 @@ export default function contribute(client: PluginClientContext) {
 
 同一个渲染器可以显示由 Provider、客户端时间线转换器或 daemon 时间线追加发出的条目。渲染器并不需要 Provider 实现。
 
+## 报告安装与更新 {#report-installation-and-updates}
+
+在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：
+
+| 成员              | 用户看到的内容                                    | 何时声明                                |
+| ----------------- | ------------------------------------------------- | --------------------------------------- |
+| `installUrl`      | **安装说明**，未安装时还有 **安装**               | 用户需要安装 CLI                        |
+| `updateUrl`       | **更新说明**                                      | 你的文档说明了如何更新                  |
+| `inspect`         | **版本**，或 **未安装**                           | CLI 会报告自己的版本                    |
+| `checkForUpdates` | **已是最新**、**有可用更新** 或 **无法检查更新**  | 你能询问 CLI 自带更新程序所用的发布来源 |
+| `update`          | 有可用更新时显示 **更新**，随后显示更新程序的输出 | CLI 能用一条命令更新自己                |
+
+这个 `example-agent` 会打印自己的版本，用 `self-update --check --json` 检查发布，并用 `self-update` 更新：
+
+```ts
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import type {
+  ProviderInstallation,
+  ProviderInstallationLaunch,
+} from "@getpaseo/plugin/server/provider";
+
+async function run(launch: ProviderInstallationLaunch, args: string[], signal: AbortSignal) {
+  const { stdout } = await execCommand(launch.command, [...launch.args, ...args], {
+    env: launch.env,
+    timeout: 20_000,
+    signal,
+  });
+  return stdout.trim();
+}
+
+export const installation: ProviderInstallation = {
+  installUrl: "https://example.com/docs/install",
+  updateUrl: "https://example.com/docs/update",
+
+  async inspect({ launch, signal }) {
+    if (!launch?.resolved) return { status: "not_installed" };
+    // `example-agent --version` prints `1.4.2`.
+    return { status: "installed", version: await run(launch, ["--version"], signal) };
+  },
+
+  async checkForUpdates({ launch, signal }) {
+    if (!launch?.resolved) return { status: "unknown", message: "example-agent is not installed" };
+    // Asks the release source `example-agent self-update` installs from.
+    const answer = JSON.parse(await run(launch, ["self-update", "--check", "--json"], signal)) as {
+      latest: string;
+      updateAvailable: boolean;
+    };
+    return answer.updateAvailable
+      ? { status: "available", versions: [answer.latest] }
+      : { status: "current" };
+  },
+
+  async update({ launch, signal, report }) {
+    if (!launch?.resolved) return { status: "failed", message: "example-agent is not installed" };
+    const child = spawnProcess(launch.command, [...launch.args, "self-update"], {
+      env: launch.env,
+      stdio: "pipe",
+    });
+    child.stdin.end();
+    child.stdout.on("data", (chunk: Buffer) => report({ type: "stdout", text: chunk.toString() }));
+    child.stderr.on("data", (chunk: Buffer) => report({ type: "stderr", text: chunk.toString() }));
+    const stop = () => void terminateProcess(child);
+    signal.addEventListener("abort", stop, { once: true });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => signal.removeEventListener("abort", stop));
+    if (code !== 0) return { status: "failed", message: `self-update exited with code ${code}` };
+    return { status: "succeeded", message: "New sessions use the new version." };
+  },
+};
+```
+
+把它添加到注册中 `command` 的旁边：
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    installation,
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+每个回调都会收到会话将使用的启动配置。当 `launch.resolved` 为 `false` 时，Paseo 没有找到可执行文件，`command` 是配置中写的名称，因此直接报告 `not_installed`，不要运行它。注册没有声明 `command` 时，`launch` 不存在。对于 ACP Provider，把 `runAcpProvider()` 展开到注册中，并在旁边添加 `installation`。版本和更新探测使用会话子命令之前的启动参数，例如对运行 `hoplite acp` 的 Provider 使用 `hoplite --version`。
+
+Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从不比较它们，因此由你的检查决定什么算更新。询问 CLI 自带更新程序所询问的来源；做不到时就不要声明 `checkForUpdates`。返回 `unknown`、抛出异常或超过期限的检查会显示 **无法检查更新** 和你的消息，绝不会显示 **已是最新**。
+
+`update` 只在用户选择 **更新** 时运行，并且每个 Provider 同一时间只运行一个更新。把更新程序的输出原样传给 `report`；Paseo 保留最后 65,536 个字符。Paseo 不会额外做任何校验，所以更新的效果与在终端中运行你的命令相同。返回 `succeeded` 并用消息说明新版本何时生效，或返回 `failed` 并说明原因。没有 `update` 时，如果你声明了 `updateUrl`，可用更新会显示 **更新说明**。
+
+Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。它在 `inspect` 报告 CLI 已安装后调用 `checkForUpdates`，并把 `current` 或 `available` 结果保留一小时。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
+
 ## 适配 ACP Agent {#adapt-an-acp-agent}
 
 当 Agent 已经支持 ACP 时，使用 ACP 适配层：
