@@ -286,7 +286,8 @@ Declare only what the vendor offers:
 The three calls are separate because they cost differently. `inspect` runs whenever someone opens
 provider settings, with a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
 network, so the app asks only after `inspect` reports the CLI installed, and a conclusive answer
-holds for an hour. `update` runs for minutes, streams output, and is aborted only when the daemon
+holds for an hour while `inspect` reports the same version string. Report every part of the version
+the check compares, such as Muse's build, or a CLI updated outside Paseo keeps its stale answer. `update` runs for minutes, streams output, and is aborted only when the daemon
 stops.
 
 The app shows **Update** only when a check answers `available` and the provider declares `update`.

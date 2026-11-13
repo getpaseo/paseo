@@ -181,6 +181,18 @@ test("installation links to the Muse guide and reports the installed version", a
     }),
   ).resolves.toEqual({ status: "not_installed" });
 });
+test("installation reports the build its update check compares", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8600.1)" },
+    resolved: true,
+  };
+  await expect(
+    provider.installation?.inspect?.({ launch, signal: new AbortController().signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.4.18-R8600.1" });
+});
 test("update check compares the installed build with the launcher's channel", async () => {
   const channels: string[] = [];
   const provider = createMuseProvider(new MuseUsage(), {

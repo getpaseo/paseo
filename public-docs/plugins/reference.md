@@ -491,7 +491,8 @@ Answers:
 | `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` or `{ status: "failed", message: string }`                                                  |
 
 Paseo shows `version`, `versions` and `message` as written and does not parse, sort or compare
-them. It keeps the last 65,536 characters of `report` output. An answer that does not match these
+them. It reuses a `current` or `available` answer for up to an hour while `inspect` reports the
+same `version`, so include in `version` everything `checkForUpdates` compares. It keeps the last 65,536 characters of `report` output. An answer that does not match these
 shapes is an error. **Update** appears only when `checkForUpdates` answers `available` and you
 declare `update`; without `update`, Paseo offers `updateUrl` instead.
 
