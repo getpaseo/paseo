@@ -1,0 +1,21 @@
+Regression test command:
+npx vitest run --root packages/app --project browser src/components/tool-call-details.browser.test.tsx --bail=1 --reporter=verbose
+
+Before the fix:
+× ToolCallDetailsContent empty state > insets the empty message to align with the tool-call sheet header
+  expected '' to be '16px' // Object.is equality
+Test Files 1 failed
+Tests 1 failed
+
+After the fix:
+✓ ToolCallDetailsContent empty state > insets the empty message to align with the tool-call sheet header
+Test Files 1 passed
+Tests 1 passed
+
+Repository checks (after `npm run build:server`):
+`npm run typecheck` — exit 0
+`npm run lint` — Found 0 warnings and 0 errors.
+`npm run format:check` — All matched files use the correct format.
+`git diff --check` — exit 0
+
+The commit's Lefthook pre-commit checks also passed: format, lint, and full typecheck.
