@@ -132,10 +132,12 @@ An adapter opts into `referenceRepository` with the optional
 `ForgeService.getReferenceRepository`. GitHub reads `parent` from `gh repo view`,
 GitLab reads `forked_from_project` from `glab api`, and the Gitea family reads
 `parent` from `tea api`. The lookup always names the `origin` repository
-explicitly, so it does not depend on `gh`'s default-repository choice. It only
-runs while the forge CLI is signed in. `packages/server/src/server/forge-web.ts`
-caches the result per remote and retries a failed or signed-out lookup after a
-minute; until then links use `origin`.
+explicitly, so it does not depend on `gh`'s default-repository choice, and it
+rejects on any CLI failure. `packages/server/src/server/forge-web.ts` keeps a
+successful answer for as long as the remote stays the same, including across
+forced refreshes. A failed lookup (signed out, network down) leaves links on
+`origin` and is retried by the next forced refresh, or by the pull request status
+poll once a minute has passed.
 
 Daemons older than v0.16.0 omit the field; the app then derives the host from the
 remote and links `#N` to `origin`. That fallback is tagged `COMPAT(forgeWeb)` in

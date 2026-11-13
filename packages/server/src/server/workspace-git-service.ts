@@ -3764,7 +3764,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: target.cwd,
       remoteUrl,
       resolution,
-      authenticated: forgeSnapshot.authState === "authenticated",
       previous: target.latestForgeWeb,
       force: forceForge,
       nowMs: this.deps.now().getTime(),
@@ -3825,15 +3824,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       forceEmit: false,
     });
-    void this.retryForgeWebIfDue(target, github.authState === "authenticated");
+    void this.retryForgeWebIfDue(target);
   }
 
   // The status poll is the only periodic work an idle workspace has, so it also
   // retries a parent lookup that failed or ran before the forge CLI was signed in.
-  private async retryForgeWebIfDue(
-    target: WorkspaceGitTarget,
-    authenticated: boolean,
-  ): Promise<void> {
+  private async retryForgeWebIfDue(target: WorkspaceGitTarget): Promise<void> {
     const entry = target.latestForgeWeb;
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const nowMs = this.deps.now().getTime();
@@ -3848,7 +3844,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: target.cwd,
       remoteUrl,
       resolution,
-      authenticated,
       previous: entry,
       force: false,
       nowMs,

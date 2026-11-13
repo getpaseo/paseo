@@ -1220,3 +1220,59 @@ test("a failed parent lookup is retried by the pull request status poll once the
     })
     .toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
 }, 30_000);
+
+test("a successful parent lookup is reused across forced refreshes of the same remote", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  let repositoryViews = 0;
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(path.dirname(repo), "home"),
+    deps: {
+      forgeOverrides: {
+        github: createGitHubService({
+          resolveGhPath: async () => "gh",
+          resolveRepoHost: async () => null,
+          runner: async (args) => {
+            if (args[0] === "repo" && args[1] === "view") {
+              // The parent lookup is the one that names the origin repository.
+              if (args[2] === "fork-owner/repo") repositoryViews += 1;
+              return {
+                stdout: JSON.stringify({
+                  owner: { login: "fork-owner" },
+                  name: "repo",
+                  parent: { owner: { login: "main-owner" }, name: "repo" },
+                }),
+                stderr: "",
+              };
+            }
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      },
+    },
+  });
+  cleanup.push(() => service.dispose());
+
+  await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+  const second = await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
+
+  expect(second.forgeWeb?.referenceRepository).toBe("main-owner/repo");
+  expect(repositoryViews).toBe(1);
+});
+
+test("a fork checked out at a detached HEAD still publishes its parent", async () => {
+  const repo = createCheckoutWithOrigin("git@github.com:fork-owner/repo.git");
+  execFileSync("git", ["checkout", "--detach"], { cwd: repo, stdio: "pipe" });
+
+  const snapshot = await snapshotOf(repo, {
+    forgeOverrides: {
+      github: createGitHubWithRepositoryView({
+        owner: { login: "fork-owner" },
+        name: "repo",
+        parent: { owner: { login: "main-owner" }, name: "repo" },
+      }),
+    },
+  });
+
+  expect(snapshot.forgeWeb).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
+});
