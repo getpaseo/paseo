@@ -562,6 +562,7 @@ function isControlEntryType(type: string): boolean {
     type === "model_change" ||
     type === "thinking_level_change" ||
     type === "ttsr_injection" ||
+    type === "credential_pin" ||
     type === "tool_execution" ||
     type.startsWith("tool_execution_")
   );
