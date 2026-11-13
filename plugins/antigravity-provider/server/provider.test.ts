@@ -789,3 +789,30 @@ it.runIf(process.platform === "win32")(
     });
   },
 );
+
+describe("installation", () => {
+  const signal = new AbortController().signal;
+
+  it("reports the version agy prints and links its install docs", async () => {
+    const installation = provider.installation!;
+    expect(installation.installUrl).toBe("https://antigravity.google/docs/getting-started?tab=cli");
+    expect(installation.update).toBeUndefined();
+    const launch = {
+      command: process.execPath,
+      args: [fake],
+      env: { AGY_TEST_VERSION: "1.2.14" },
+      resolved: true,
+    };
+    await expect(installation.inspect!({ launch, signal })).resolves.toEqual({
+      status: "installed",
+      version: "1.2.14",
+    });
+  });
+
+  it("is not installed when the executable does not resolve", async () => {
+    const launch = { command: "agy", args: [], env: {}, resolved: false };
+    await expect(provider.installation!.inspect!({ launch, signal })).resolves.toEqual({
+      status: "not_installed",
+    });
+  });
+});

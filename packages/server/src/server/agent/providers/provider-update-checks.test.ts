@@ -6,6 +6,10 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentClient } from "../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./claude/agent.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import { CopilotACPAgentClient } from "./copilot-acp-agent.js";
+import { OmpAgentClient } from "./omp/agent.js";
+import { OpenCodeRuntimeClient } from "./opencode/runtime-client.js";
+import { PiRpcAgentClient } from "./pi/agent.js";
 import type { LatestReleaseLookup } from "./release-check.js";
 import type { ProviderUpdateReport } from "@getpaseo/plugin/server/provider";
 
@@ -181,4 +185,145 @@ test("Claude Code is inconclusive when a wrapper command hides its version", asy
     message: "The configured command does not report its version",
   });
   expect(lookups).toEqual([]);
+});
+
+/**
+ * A command that answers `--version` with `banner` and any other invocation with `rest`, the way
+ * a CLI answers both its version and its update check.
+ */
+async function cliCommand(input: { banner: string; rest: string }): Promise<[string, string]> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-cli-"));
+  roots.push(root);
+  const script = path.join(root, "cli.mjs");
+  await fs.writeFile(
+    script,
+    [
+      `const args = process.argv.slice(2);`,
+      `console.log(args.at(-1) === "--version" ? ${JSON.stringify(input.banner)} : ${JSON.stringify(input.rest)});`,
+    ].join("\n"),
+  );
+  return [process.execPath, script];
+}
+
+function inspect(client: AgentClient) {
+  return client.installation?.inspect?.({ signal: new AbortController().signal });
+}
+
+const selfUpdatingClis = [
+  {
+    name: "Copilot",
+    banner: "GitHub Copilot CLI 1.0.110.\nRun 'copilot update' to check for updates.",
+    version: "1.0.110",
+    updateArgs: ["update"],
+    successMessage: expect.stringContaining("New agents use the new version"),
+    client: (argv: [string, string]) =>
+      new CopilotACPAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { command: { mode: "replace", argv } },
+      }),
+  },
+  {
+    name: "OpenCode",
+    banner: "1.19.5",
+    version: "1.19.5",
+    updateArgs: ["upgrade"],
+    // OpenCode runs one server for every agent, which keeps the old version until restarted.
+    successMessage: expect.stringContaining("Restart the Paseo daemon"),
+    client: (argv: [string, string]) =>
+      new OpenCodeRuntimeClient(createTestLogger(), { command: { mode: "replace", argv } }),
+  },
+  {
+    name: "Pi",
+    banner: "1.3.0",
+    version: "1.3.0",
+    updateArgs: ["update", "--self"],
+    successMessage: expect.stringContaining("New agents use the new version"),
+    client: (argv: [string, string]) =>
+      new PiRpcAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { command: { mode: "replace", argv } },
+      }),
+  },
+  {
+    name: "Oh My Pi",
+    banner: "omp/18.6.1",
+    version: "18.6.1",
+    updateArgs: ["update"],
+    successMessage: expect.stringContaining("New agents use the new version"),
+    client: (argv: [string, string]) =>
+      new OmpAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { command: { mode: "replace", argv } },
+      }),
+  },
+];
+
+describe.each(selfUpdatingClis)("$name installation", (cli) => {
+  test("reports the version the CLI prints", async () => {
+    const argv = await versionCommand(cli.banner);
+    await expect(inspect(cli.client(argv))).resolves.toEqual({
+      status: "installed",
+      version: cli.version,
+    });
+  });
+
+  test("updates with the CLI's own update command", async () => {
+    const updater = await updaterCommand({ stdout: "done\n", stderr: "", exitCode: 0 });
+    const { result } = await runUpdate(cli.client(updater.argv));
+    expect(await updater.recordedArgs()).toEqual(cli.updateArgs);
+    expect(result).toEqual({ status: "succeeded", message: cli.successMessage });
+  });
+
+  test("is not installed when the command is missing", async () => {
+    const client = cli.client(["/nonexistent/paseo-cli", "--flag"]);
+    await expect(inspect(client)).resolves.toEqual({ status: "not_installed" });
+    await expect(runUpdate(client)).resolves.toMatchObject({
+      result: { status: "failed", message: `${cli.name} is not installed` },
+    });
+  });
+});
+
+test("Pi checks the release its own update check reads", async () => {
+  const argv = await versionCommand("1.3.0");
+  const { lookup, lookups } = releases("1.5.2");
+  const client = new PiRpcAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: { command: { mode: "replace", argv } },
+    lookupLatestRelease: lookup,
+  });
+  await expect(check(client)).resolves.toEqual({ status: "available", versions: ["1.5.2"] });
+  expect(lookups).toEqual([await fs.realpath(process.execPath)]);
+});
+
+describe("Oh My Pi update check", () => {
+  async function ompCheck(answer: string) {
+    const argv = await cliCommand({ banner: "omp/18.6.1", rest: answer });
+    return check(
+      new OmpAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { command: { mode: "replace", argv } },
+      }),
+    );
+  }
+
+  test("reads the answer of `omp update --check`", async () => {
+    await expect(ompCheck("\u001b[32mNew version available: 18.7.0\u001b[0m")).resolves.toEqual({
+      status: "available",
+      versions: ["18.7.0"],
+    });
+    await expect(ompCheck("Already up to date")).resolves.toEqual({ status: "current" });
+  });
+
+  test("passes through an install that another tool keeps up to date", async () => {
+    await expect(ompCheck("omp is kept up to date by mise")).resolves.toEqual({
+      status: "unknown",
+      message: "omp is kept up to date by mise",
+    });
+  });
+});
+
+test("Copilot and OpenCode declare no update check", () => {
+  const argv: [string, string] = [process.execPath, "cli.mjs"];
+  expect(selfUpdatingClis[0]!.client(argv).installation.checkForUpdates).toBeUndefined();
+  expect(selfUpdatingClis[1]!.client(argv).installation.checkForUpdates).toBeUndefined();
 });

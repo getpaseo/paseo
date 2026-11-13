@@ -100,7 +100,7 @@ import {
   resolveExecutablePath,
   type LatestReleaseLookup,
 } from "../release-check.js";
-import { runUpdateCommand } from "../update-command.js";
+import { runUpdateCommand, updatedForNewAgents } from "../update-command.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -1652,7 +1652,7 @@ export class ClaudeAgentClient implements AgentClient {
           command: installed.executable,
           args: [...installed.args, "update"],
           env: createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
-          successMessage: CLAUDE_UPDATED,
+          successMessage: updatedForNewAgents("Claude Code"),
         },
         context,
       );
@@ -1983,8 +1983,6 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 const CLAUDE_INSTALL_URL = "https://code.claude.com/docs/en/setup#install-claude-code";
 const CLAUDE_UPDATE_URL = "https://code.claude.com/docs/en/setup#update-claude-code";
-const CLAUDE_UPDATED =
-  "Claude Code is updated. New agents use the new version; running agents keep theirs until restarted.";
 
 type ClaudeCodeVersionRead =
   | { status: "not_installed" }

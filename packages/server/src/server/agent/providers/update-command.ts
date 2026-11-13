@@ -11,6 +11,11 @@ export interface UpdateCommand {
   successMessage: string;
 }
 
+/** The success message for a CLI that Paseo starts once per agent. */
+export function updatedForNewAgents(name: string): string {
+  return `${name} is updated. New agents use the new version; running agents keep theirs until restarted.`;
+}
+
 /**
  * Runs a CLI's own updater and passes its output through unchanged. Exit code 0 is success;
  * anything else is a failure. Aborting the signal kills the command.

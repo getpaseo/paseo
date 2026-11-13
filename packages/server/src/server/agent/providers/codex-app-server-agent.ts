@@ -128,7 +128,7 @@ import {
   resolveExecutablePath,
   type LatestReleaseLookup,
 } from "./release-check.js";
-import { runUpdateCommand } from "./update-command.js";
+import { runUpdateCommand, updatedForNewAgents } from "./update-command.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
@@ -7765,8 +7765,6 @@ export class CodexAppServerAgentSession implements AgentSession {
 }
 
 const CODEX_INSTALL_URL = "https://developers.openai.com/codex/cli";
-const CODEX_UPDATED =
-  "Codex is updated. New agents use the new version; running agents keep theirs until restarted.";
 
 /** `codex --version` prints `codex-cli <version>`; report the version part. */
 function readCodexVersionLabel(output: string): string | undefined {
@@ -7823,7 +7821,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           command: command.command,
           args: [...command.args, "update"],
           env: createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
-          successMessage: CODEX_UPDATED,
+          successMessage: updatedForNewAgents("Codex"),
         },
         context,
       );

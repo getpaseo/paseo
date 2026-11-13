@@ -1,7 +1,11 @@
 import type { Logger } from "pino";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
-import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentClientInstallation,
+  AgentMode,
+} from "../agent-sdk-types.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -21,6 +25,14 @@ import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
 } from "./diagnostic-utils.js";
+import { createCliInstallation } from "./cli-installation.js";
+import { updatedForNewAgents } from "./update-command.js";
+
+const COPILOT_INSTALL_URL =
+  "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli";
+// The command reference documents `copilot update`.
+const COPILOT_UPDATE_URL =
+  "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference";
 
 const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -78,7 +90,15 @@ interface CopilotACPAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
 }
 
+/** `copilot --version` prints `GitHub Copilot CLI <version>.` and a hint; report the version. */
+function readCopilotVersionLabel(output: string): string | undefined {
+  const line = output.split("\n")[0]?.trim() ?? "";
+  return line.replace(/^GitHub Copilot CLI\s+/i, "").replace(/\.$/, "") || undefined;
+}
+
 export class CopilotACPAgentClient extends ACPAgentClient {
+  readonly installation: AgentClientInstallation;
+
   constructor(options: CopilotACPAgentClientOptions) {
     super({
       provider: "copilot",
@@ -93,6 +113,16 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
       capabilities: COPILOT_CAPABILITIES,
+    });
+    // Copilot's updater lives in its native binary, so there is no known release source to check.
+    this.installation = createCliInstallation({
+      name: "Copilot",
+      defaultBinary: "copilot",
+      runtimeSettings: options.runtimeSettings,
+      installUrl: COPILOT_INSTALL_URL,
+      updateUrl: COPILOT_UPDATE_URL,
+      versionLabel: readCopilotVersionLabel,
+      update: { args: ["update"], successMessage: updatedForNewAgents("Copilot") },
     });
   }
 
