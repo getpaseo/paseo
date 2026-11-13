@@ -2643,6 +2643,11 @@ export const ptBR: TranslationResources = {
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
       },
+      focusColor: {
+        title: "Foco do teclado",
+        label: "Cor do foco",
+        hint: "Cor hexadecimal, ex. #8aabe0. Deixe vazio para seguir o tema",
+      },
       fonts: {
         title: "Fontes",
         systemDefault: "Sistema padrão",

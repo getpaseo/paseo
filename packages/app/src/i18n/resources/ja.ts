@@ -2628,6 +2628,11 @@ export const ja: TranslationResources = {
         moveUp: "上に移動",
         moveDown: "下に移動",
       },
+      focusColor: {
+        title: "キーボードフォーカス",
+        label: "フォーカスの色",
+        hint: "16進数の色（例: #8aabe0）。空欄でテーマに従う",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",

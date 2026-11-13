@@ -2649,6 +2649,11 @@ export const ru: TranslationResources = {
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
       },
+      focusColor: {
+        title: "Фокус клавиатуры",
+        label: "Цвет фокуса",
+        hint: "Цвет в формате HEX, например #8aabe0. Пустое поле использует тему",
+      },
       fonts: {
         title: "Шрифты",
         systemDefault: "Системный шрифт",
