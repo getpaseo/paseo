@@ -317,6 +317,42 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
+  test("Open on directory search lands the open-project shortcut on directory search", async ({
+    page,
+  }, testInfo) => {
+    await page.goto("/settings/general");
+    const setting = page.getByRole("switch", { name: "Open on directory search", exact: true });
+    await expect(setting).not.toBeChecked();
+    await setting.click();
+    await expect(setting).toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath("settings-open-on-directory-search.png") });
+
+    await gotoAppShell(page);
+    await expect(page.locator('[data-testid="sidebar-add-project"]:visible')).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.keyboard.press("ControlOrMeta+o");
+
+    await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toBeFocused();
+    await expect(addProjectFlowBack(page)).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("add-project-opens-on-directory-search.png"),
+    });
+
+    await addProjectFlowBack(page).click();
+    await expectAddProjectPage(page, "method");
+    await expect(addProjectFlowMethod(page, "directory-search")).toBeVisible();
+    await expect(addProjectFlowBack(page)).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("add-project-back-to-methods.png") });
+
+    await chooseAddProjectMethod(page, "directory-search");
+    await page.keyboard.press("Escape");
+    await expectAddProjectPage(page, "method");
+    await page.keyboard.press("Escape");
+    await expect(addProjectFlow(page)).not.toBeVisible();
+  });
+
   test("keyboard navigation keeps the selected row inside the visible results", async ({
     page,
   }) => {

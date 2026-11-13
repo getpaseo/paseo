@@ -75,6 +75,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
+import { useSettings } from "@/hooks/use-settings";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
@@ -367,9 +368,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       stableProjectIdentityByHost,
     ],
   );
+  const startsOnDirectorySearch = useSettings(
+    (settings) => settings.addProjectStartsOnDirectorySearch,
+  );
   const [state, setState] = useState(() =>
     openAddProjectFlow({
       hosts: availableHosts,
+      startsOnDirectorySearch,
       ...(request.preferredHostId ? { preferredHostId: request.preferredHostId } : {}),
     }),
   );
@@ -402,9 +407,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   useEffect(() => {
     setState((current) =>
-      applyAvailableAddProjectHosts(current, availableHosts, request.preferredHostId),
+      applyAvailableAddProjectHosts(current, {
+        hosts: availableHosts,
+        startsOnDirectorySearch,
+        ...(request.preferredHostId ? { preferredHostId: request.preferredHostId } : {}),
+      }),
     );
-  }, [availableHosts, request.preferredHostId]);
+  }, [availableHosts, request.preferredHostId, startsOnDirectorySearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 250);
@@ -601,7 +610,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: choice.serverId,
           icon: Server,
           testID: `add-project-flow-host-${choice.serverId}`,
-          select: () => setState((current) => chooseAddProjectHost(current, choice.serverId)),
+          select: () =>
+            setState((current) =>
+              chooseAddProjectHost(current, { hostId: choice.serverId, startsOnDirectorySearch }),
+            ),
         }),
       );
       if (state.hosts.length === 0) {
@@ -720,6 +732,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     pathOptions,
     recommendedPaths,
     selectMethod,
+    startsOnDirectorySearch,
     state.hosts,
   ]);
 

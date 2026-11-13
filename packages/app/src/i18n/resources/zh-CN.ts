@@ -2435,6 +2435,13 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      addProject: {
+        title: "添加 project",
+        startOnDirectorySearch: {
+          label: "从目录搜索打开",
+          description: "添加 project 时直接进入目录搜索。返回可选择其他方式。",
+        },
+      },
       sendShortcut: {
         label: "发送快捷键",
         options: {

@@ -2498,6 +2498,13 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      addProject: {
+        title: "إضافة مشروع",
+        startOnDirectorySearch: {
+          label: "الفتح على البحث عن مجلد",
+          description: "تبدأ إضافة مشروع بالبحث عن مجلد. يعيدك الرجوع إلى الخيارات الأخرى.",
+        },
+      },
       sendShortcut: {
         label: "اختصار الإرسال",
         options: {

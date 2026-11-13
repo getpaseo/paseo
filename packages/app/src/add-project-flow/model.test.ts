@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyAvailableAddProjectHosts,
   backAddProjectPage,
   chooseAddProjectHost,
   currentAddProjectPage,
@@ -51,7 +52,7 @@ describe("Add Project navigation", () => {
     let state = openAddProjectFlow({ hosts: [HOST, secondHost] });
     state = setAddProjectPageInput(state, "rem");
     state = setAddProjectActiveIndex(state, 1);
-    state = chooseAddProjectHost(state, secondHost.serverId);
+    state = chooseAddProjectHost(state, { hostId: secondHost.serverId });
     state = openDirectorySearchPage(state, secondHost.serverId);
 
     state = backAddProjectPage(state) ?? state;
@@ -107,6 +108,109 @@ describe("Add Project navigation", () => {
       query: "~/dev",
       activeIndex: 2,
     });
+  });
+});
+
+describe("Add Project opening on directory search", () => {
+  const SECOND_HOST: AddProjectHost = { ...HOST, serverId: "host-2", label: "Remote" };
+
+  function pageKinds(state: ReturnType<typeof openAddProjectFlow>): string[] {
+    return state.pages.map((page) => page.kind);
+  }
+
+  it("keeps the method list as the first page when the preference is off", () => {
+    const state = openAddProjectFlow({ hosts: [HOST], startsOnDirectorySearch: false });
+
+    expect(pageKinds(state)).toEqual(["method"]);
+  });
+
+  it("opens a single host on directory search above the method list", () => {
+    const state = openAddProjectFlow({ hosts: [HOST], startsOnDirectorySearch: true });
+
+    expect(currentAddProjectPage(state)).toEqual({
+      kind: "directory-search",
+      hostId: "host-1",
+      query: "",
+      activeIndex: 0,
+      error: null,
+      isSubmitting: false,
+    });
+    const methodState = backAddProjectPage(state);
+    expect(methodState && currentAddProjectPage(methodState)).toMatchObject({
+      kind: "method",
+      hostId: "host-1",
+    });
+    expect(methodState && backAddProjectPage(methodState)).toBeNull();
+  });
+
+  it("opens the preferred host on directory search", () => {
+    const state = openAddProjectFlow({
+      hosts: [HOST, SECOND_HOST],
+      preferredHostId: SECOND_HOST.serverId,
+      startsOnDirectorySearch: true,
+    });
+
+    expect(pageKinds(state)).toEqual(["method", "directory-search"]);
+    expect(currentAddProjectPage(state)).toMatchObject({ hostId: "host-2" });
+  });
+
+  it("asks for the host first, then lands on directory search with Back to the methods", () => {
+    let state = openAddProjectFlow({
+      hosts: [HOST, SECOND_HOST],
+      startsOnDirectorySearch: true,
+    });
+    expect(pageKinds(state)).toEqual(["host"]);
+
+    state = chooseAddProjectHost(state, {
+      hostId: SECOND_HOST.serverId,
+      startsOnDirectorySearch: true,
+    });
+    expect(pageKinds(state)).toEqual(["host", "method", "directory-search"]);
+    expect(currentAddProjectPage(state)).toMatchObject({ hostId: "host-2" });
+
+    state = backAddProjectPage(state) ?? state;
+    expect(currentAddProjectPage(state)).toMatchObject({ kind: "method", hostId: "host-2" });
+    state = backAddProjectPage(state) ?? state;
+    expect(currentAddProjectPage(state).kind).toBe("host");
+  });
+
+  it("pushes only the method list for a chosen host when the preference is off", () => {
+    let state = openAddProjectFlow({ hosts: [HOST, SECOND_HOST] });
+
+    state = chooseAddProjectHost(state, {
+      hostId: SECOND_HOST.serverId,
+      startsOnDirectorySearch: false,
+    });
+
+    expect(pageKinds(state)).toEqual(["host", "method"]);
+  });
+
+  it("lands on directory search when the only host connects after opening", () => {
+    let state = openAddProjectFlow({ hosts: [], startsOnDirectorySearch: true });
+    expect(pageKinds(state)).toEqual(["host"]);
+
+    state = applyAvailableAddProjectHosts(state, {
+      hosts: [HOST],
+      startsOnDirectorySearch: true,
+    });
+
+    expect(pageKinds(state)).toEqual(["method", "directory-search"]);
+  });
+
+  it("lands on the method list when a host connects after opening and the preference is off", () => {
+    let state = openAddProjectFlow({ hosts: [] });
+
+    state = applyAvailableAddProjectHosts(state, { hosts: [HOST] });
+
+    expect(pageKinds(state)).toEqual(["method"]);
+  });
+
+  it("stays on the method list for a host that cannot add projects", () => {
+    const outdatedHost = { ...HOST, canAddProject: false };
+
+    const state = openAddProjectFlow({ hosts: [outdatedHost], startsOnDirectorySearch: true });
+
+    expect(pageKinds(state)).toEqual(["method"]);
   });
 });
 
