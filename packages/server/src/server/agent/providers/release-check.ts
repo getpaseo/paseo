@@ -25,7 +25,7 @@ function isNewer(latest: ReleaseVersion, installed: ReleaseVersion): boolean {
   return false;
 }
 
-/** Compares `major.minor.patch` releases, the scheme Claude Code and Codex publish. */
+/** Compares `major.minor.patch` releases, the scheme Claude Code, Codex and Pi publish. */
 export function compareWithLatestRelease(input: {
   installed: string | null | undefined;
   latest: string;
