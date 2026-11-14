@@ -854,6 +854,60 @@ function hideAlerts() {
 }
 ```
 
+### Workspace row badge items
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` adds an item to the line under each workspace
+title in the sidebar, after the row's own items (host, pull request, checks, services, labels).
+`title` and `icon` label the item's toggle in the sidebar's **Show** menu, in a separate plugin group
+below a separator. Items start visible.
+
+`Component` renders once per workspace row on the plugin's host and receives
+`PluginWorkspaceRowBadgeItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render
+`WorkspaceRowBadge` from `@getpaseo/plugin/client/ui`, or `null` when there is nothing to say about
+the workspace:
+
+| Prop                 | Meaning                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `icon`               | Optional. Any [icon](#icons) form, drawn at the line's glyph size.             |
+| `label`              | Optional. A short word. A badge with neither `icon` nor `label` draws nothing. |
+| `tone`               | `"muted"` (default), `"success"`, `"warning"`, `"danger"`, or `"info"`.        |
+| `accessibilityLabel` | Defaults to `label`, then the item's `title`.                                  |
+
+The line adds no separator around your badges, and returning `null` leaves no gap. Render as many
+badges as you like. Every row
+renders the component, so share one query across rows instead of fetching per workspace: the
+plugin's React Query client is shared by all of its components on a host.
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+Apps older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
+
+See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
+
 ## Host UI
 
 Import Paseo-owned UI from `@getpaseo/plugin/client/ui` in client code. This example
@@ -1277,6 +1331,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1287,16 +1347,29 @@ Every color is a hex string; anything else fails to load. Paseo expands the pale
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Color                  | Becomes                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `background`           | App, workspace, and terminal background                                        |
+| `foreground`           | Primary text, terminal foreground and cursor                                   |
+| `raised`               | Cards and popovers                                                             |
+| `control`              | Inputs, secondary fills, and the light-theme sidebar unless `sidebar` is set   |
+| `border`               | Borders                                                                        |
+| `accent`               | Buttons, selection, and focus. Optional; `foreground` if omitted.              |
+| `mutedForeground`      | Secondary text                                                                 |
+| `ring`                 | The keyboard focus outline on web, and terminal bright black                   |
+| `sidebar`              | Sidebar background. Optional; `background` in dark themes, `control` in light. |
+| `sidebarHover`         | Optional hovered sidebar row background.                                       |
+| `sidebarSelected`      | Optional selected sidebar row background.                                      |
+| `surface3`             | Optional neutral fill for message bubbles, secondary buttons, and chips.       |
+| `surface4`             | Optional stronger neutral fill for tracks and other states.                    |
+| `foregroundExtraMuted` | Optional tertiary text, including sidebar timestamps.                          |
+
+Each optional override is used exactly as given. Omitted state, fill, and tertiary colors are derived
+independently from the palette. When you override a color, choose it for readable contrast with the
+surfaces or text it accompanies.
+
+`sidebar` and the five overrides require Paseo 0.16.0 or later. Older apps reject a theme with an unknown color, and the
+plugin's other contributions fail to load with it, so raise `requirements.paseo` when you use any of them.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.

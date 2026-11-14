@@ -38,7 +38,10 @@ export async function registerSharedBridge(context) {
     return null;
   }
   async function install(binding) {
-    const manifest = await request(binding, "/tools");
+    const manifest = await request(
+      binding,
+      `/tools?sessionID=${encodeURIComponent(binding.sessionID)}`,
+    );
     for (const definition of manifest.tools) await installDefinition(definition);
   }
   async function installDefinition(definition) {

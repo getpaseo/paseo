@@ -134,6 +134,7 @@ describe("DOM source through the shared resolver", () => {
       keyUp() {},
       blur() {},
       commandCenterOpen: () => false,
+      subscribeCommandCenter: () => () => {},
     });
     const event = new KeyboardEvent("keydown", {
       key: "j",

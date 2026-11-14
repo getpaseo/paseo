@@ -1,5 +1,5 @@
-import { forwardRef, useMemo } from "react";
-import { Text, type View } from "react-native";
+import { forwardRef, useCallback, useMemo } from "react";
+import { Text, type PressableStateCallbackType, type View } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { PressHighlight } from "@/components/ui/press-highlight";
@@ -35,10 +35,11 @@ export const FloatingActionButton = forwardRef<View, FloatingActionButtonProps>(
     ref,
   ) {
     const accessibilityState = useMemo(() => ({ disabled }), [disabled]);
-    const buttonStyle = useMemo(
-      () => [
+    const buttonStyle = useCallback(
+      ({ pressed }: PressableStateCallbackType) => [
         styles.button,
         label && styles.labeled,
+        pressed && styles.pressed,
         disabled && styles.disabled,
         { bottom: FLOATING_ACTION_BUTTON_INSET + bottomInset },
       ],
@@ -53,7 +54,6 @@ export const FloatingActionButton = forwardRef<View, FloatingActionButtonProps>(
         disabled={disabled}
         onPress={onPress}
         style={buttonStyle}
-        highlightStyle={styles.pressed}
         testID={testID}
       >
         <Icon size={ICON_SIZE.lg} color={styles.glyph.color} />
@@ -86,7 +86,7 @@ const styles = StyleSheet.create((theme) => ({
   label: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   disabled: { opacity: theme.opacity[50] },
   pressed: {
-    backgroundColor: theme.colors.interactionHighlight,
+    backgroundColor: theme.colors.surface2,
   },
   glyph: {
     color: theme.colors.foreground,

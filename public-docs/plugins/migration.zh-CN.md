@@ -60,29 +60,30 @@ my-plugin/
 
 把下表作为完整的注册检查清单。
 
-| 旧的注册及位置                                                                                | 新的注册及位置                                                                                                         |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 旧根入口中的 `plugin.handle(contract, handler)`                                               | `index.server.ts` 中的 `server.handle(contract, handler)`                                                              |
-| 旧根入口中的 `plugin.addSurface(id, Component)`                                               | `index.client.tsx` 中的 `client.addScreen({ id, title, Component })`                                                   |
-| 旧根入口中的 `plugin.addSidebarItem({ id, title, icon, surface })`                            | `index.client.tsx` 中的 `client.addSidebarHeaderItem({ id, title, Component })`；见[侧边栏项](reference#sidebar-items) |
-| 新的侧边栏底部贡献                                                                            | `index.client.tsx` 中的 `client.addSidebarFooterItem({ id, title, Component })`                                        |
-| 新的文件面板贡献                                                                              | `index.client.tsx` 中的 `client.addFilePanel(panel)`                                                                   |
-| 旧根入口中的 `plugin.addWorkspacePanel(panel)`                                                | `index.client.tsx` 中的 `client.addWorkspacePanel(panel)`                                                              |
-| 带有 `context: "agent"` 的 Agent 面板                                                         | `index.client.tsx` 中的 `client.addAgentPanel(panel)`；省略 `context`                                                  |
-| 旧根入口中的 `plugin.addCommandCenterItem(item)`                                              | `index.client.tsx` 中的 `client.addCommandCenterItem(item)`                                                            |
-| 旧根入口中的 `plugin.addClientSlashCommand(command)`                                          | `index.client.tsx` 中的 `client.addSlashCommand(command)`                                                              |
-| 旧根入口中的 `plugin.addClientSide(fn)`                                                       | 删除这层包装，把 `fn` 的函数体移入默认的客户端入口函数                                                                 |
-| 旧客户端回调中的 `client.addComposerPill(pill)`                                               | `index.client.tsx` 或被导入的 `client/` 函数中的 `client.addComposerPill(pill)`                                        |
-| 新的编辑器项贡献                                                                              | `index.client.tsx` 中的 `client.addComposerItem(item)`;见[编辑器项](reference#composer-items)                          |
-| 新的“新建工作区”项贡献                                                                        | `index.client.tsx` 中的 `client.addNewWorkspaceItem(item)`;见[新建工作区项](reference#new-workspace-items)             |
-| 新的标题栏贡献                                                                                | `client.addHeaderButton({ id, workspaceId, button })`                                                                  |
-| 旧根入口中的 `plugin.addAttachmentSource(source)`                                             | `index.client.tsx` 中的 `client.addAttachmentSource(source)`                                                           |
-| 新的设置界面贡献                                                                              | `index.client.tsx` 中的 `client.addSettingsScreen(screen)`；见[设置界面](reference#settings-screens)                   |
-| 旧根入口中的 `plugin.addTheme(theme)`                                                         | `index.client.tsx` 中的 `client.addTheme(theme)`                                                                       |
-| 旧根入口中的 `plugin.addTimelineTransformer(transformer)`                                     | `index.client.tsx` 中的 `client.addTimelineTransformer(transformer)`                                                   |
-| 旧根入口中的 `plugin.addTimelineRenderer(renderer)`                                           | `index.client.tsx` 中的 `client.addTimelineRenderer(renderer)`                                                         |
-| shared 文件中的 `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                                 |
-| 处理函数参数类型 `ZodOutput<typeof contract.input>`                                           | 来自 `@getpaseo/plugin` 的 `RpcInput<typeof contract>`；返回类型使用 `RpcOutput`                                       |
+| 旧的注册及位置                                                                                | 新的注册及位置                                                                                                                                     |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 旧根入口中的 `plugin.handle(contract, handler)`                                               | `index.server.ts` 中的 `server.handle(contract, handler)`                                                                                          |
+| 旧根入口中的 `plugin.addSurface(id, Component)`                                               | `index.client.tsx` 中的 `client.addScreen({ id, title, Component })`                                                                               |
+| 旧根入口中的 `plugin.addSidebarItem({ id, title, icon, surface })`                            | `index.client.tsx` 中的 `client.addSidebarHeaderItem({ id, title, Component })`；见[侧边栏项](reference#sidebar-items)                             |
+| 新的侧边栏底部贡献                                                                            | `index.client.tsx` 中的 `client.addSidebarFooterItem({ id, title, Component })`                                                                    |
+| 新的工作区行徽章贡献                                                                          | `index.client.tsx` 中的 `client.addWorkspaceRowBadgeItem({ id, title, icon, Component })`；见[工作区行徽章项](reference#workspace-row-badge-items) |
+| 新的文件面板贡献                                                                              | `index.client.tsx` 中的 `client.addFilePanel(panel)`                                                                                               |
+| 旧根入口中的 `plugin.addWorkspacePanel(panel)`                                                | `index.client.tsx` 中的 `client.addWorkspacePanel(panel)`                                                                                          |
+| 带有 `context: "agent"` 的 Agent 面板                                                         | `index.client.tsx` 中的 `client.addAgentPanel(panel)`；省略 `context`                                                                              |
+| 旧根入口中的 `plugin.addCommandCenterItem(item)`                                              | `index.client.tsx` 中的 `client.addCommandCenterItem(item)`                                                                                        |
+| 旧根入口中的 `plugin.addClientSlashCommand(command)`                                          | `index.client.tsx` 中的 `client.addSlashCommand(command)`                                                                                          |
+| 旧根入口中的 `plugin.addClientSide(fn)`                                                       | 删除这层包装，把 `fn` 的函数体移入默认的客户端入口函数                                                                                             |
+| 旧客户端回调中的 `client.addComposerPill(pill)`                                               | `index.client.tsx` 或被导入的 `client/` 函数中的 `client.addComposerPill(pill)`                                                                    |
+| 新的编辑器项贡献                                                                              | `index.client.tsx` 中的 `client.addComposerItem(item)`;见[编辑器项](reference#composer-items)                                                      |
+| 新的“新建工作区”项贡献                                                                        | `index.client.tsx` 中的 `client.addNewWorkspaceItem(item)`;见[新建工作区项](reference#new-workspace-items)                                         |
+| 新的标题栏贡献                                                                                | `client.addHeaderButton({ id, workspaceId, button })`                                                                                              |
+| 旧根入口中的 `plugin.addAttachmentSource(source)`                                             | `index.client.tsx` 中的 `client.addAttachmentSource(source)`                                                                                       |
+| 新的设置界面贡献                                                                              | `index.client.tsx` 中的 `client.addSettingsScreen(screen)`；见[设置界面](reference#settings-screens)                                               |
+| 旧根入口中的 `plugin.addTheme(theme)`                                                         | `index.client.tsx` 中的 `client.addTheme(theme)`                                                                                                   |
+| 旧根入口中的 `plugin.addTimelineTransformer(transformer)`                                     | `index.client.tsx` 中的 `client.addTimelineTransformer(transformer)`                                                                               |
+| 旧根入口中的 `plugin.addTimelineRenderer(renderer)`                                           | `index.client.tsx` 中的 `client.addTimelineRenderer(renderer)`                                                                                     |
+| shared 文件中的 `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                                                             |
+| 处理函数参数类型 `ZodOutput<typeof contract.input>`                                           | 来自 `@getpaseo/plugin` 的 `RpcInput<typeof contract>`；返回类型使用 `RpcOutput`                                                                   |
 
 用原 `addSidebarItem` 项的 `id` 注册替代它的界面，这样已保存的链接仍然有效。`/plugin/<plugin>/sidebar/<id>` 链接以及更早的 `/plugin/<plugin>/<id>` 链接，会打开具有该 `id` 的 `addSidebarItem`，否则打开具有该 `id` 的界面。
 
@@ -169,6 +170,21 @@ Provider 插件只有一个配置记录 `providerOptions`，并用控件描述�
 | `session.open` 的 `config.settings`               | `config.providerOptions`                                        |
 | `ProviderSetting` 类型                            | `ProviderOptionControl`                                         |
 | `agent.create.before` 的 `config.featureValues`   | `config.providerOptions`；返回的 `featureValues` 修改仍会被应用 |
+
+### v0.16 中的轮次历史 {#turn-history-in-v016}
+
+自 v0.13 起，`agent.turn.after` 发送的 `timeline` 始终为空，SDK 类型也不再声明它。读取 `event.timeline` 的插件现在无法通过类型检查。请改为从 Agent 读取本轮：
+
+```ts
+const turn = await context.paseo.agents
+  .ref(event.agent.id)
+  .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+const items = turn.entries.filter((entry) => entry.turnId === event.turnId).map(({ item }) => item);
+```
+
+过滤会去掉本轮结束后才开始的新一轮的条目，例如另一个插件发送的后续消息。如果这样的新一轮已经开始，或 `event.turnId` 为 `null`，列表为空。
+
+基于旧版 SDK 构建的插件在 2027-05-31 之后移除兼容层之前仍会收到 `timeline: []`。
 
 ## 5. 识别只迁移了一半的错误 {#5-recognize-half-migration-errors}
 

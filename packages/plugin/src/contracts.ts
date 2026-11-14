@@ -90,6 +90,12 @@ export interface PluginThemeColors {
   accent?: string;
   mutedForeground: string;
   ring: string;
+  sidebar?: string;
+  sidebarHover?: string;
+  sidebarSelected?: string;
+  surface3?: string;
+  surface4?: string;
+  foregroundExtraMuted?: string;
 }
 
 export interface PluginThemeContribution<Text extends PluginText = string> {

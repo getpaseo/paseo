@@ -690,7 +690,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
 
   // The delay measures the daemon's answer, so it starts when the question is sent. On a cold
   // start the cache read that precedes the question can outlast it on its own. Only opening a
-  // chat escalates. A reconnect already shows Reconnecting to host until the answer. A resume
+  // chat escalates. A reconnect already shows Reconnecting until the answer. A resume
   // kept its socket subscribed, so a slow answer is no reason to doubt the chat; a socket that
   // died quietly is caught by the foreground liveness probe and becomes a reconnect.
   const startFreshnessCheckDelay = (agentId: string) => {
