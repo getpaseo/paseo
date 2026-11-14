@@ -109,10 +109,13 @@ import {
   extractHttpBearerToken,
   extractWsBearerProtocol,
   extractWsBearerToken,
-  isBearerTokenValidAsync,
+  resolveDaemonBearerPrincipal,
   type DaemonAuthConfig,
+  type DaemonBearerPrincipal,
 } from "./auth.js";
 import { resolveSessionAdmission } from "./session-admission-auth.js";
+import { FleetCommitmentControlService } from "./fleet-commitment-control.js";
+import { FLEET_CONTROL_PORTFOLIO_AGENT_ID } from "@getpaseo/protocol/fleet-control";
 import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
@@ -496,6 +499,7 @@ type SessionConnection = ReconnectableSessionConnection | PluginSessionConnectio
 interface SocketSessionOptions {
   sourceId?: string;
   clientId: string;
+  principalId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
   permissions: readonly DaemonPermission[];
@@ -528,6 +532,10 @@ const WS_RUNTIME_METRICS_FLUSH_MS = 30_000;
 const OWNER_SESSION_ADMISSION: SessionAdmission = {
   principalId: "owner",
   permissions: OWNER_PERMISSIONS,
+};
+const FIRSTMATE_DECK_SESSION_ADMISSION: SessionAdmission = {
+  principalId: "service:firstmate-deck",
+  permissions: ["fleet.control"],
 };
 
 export class MissingDaemonVersionError extends Error {
@@ -577,6 +585,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly messageReceipts: MessageReceipts;
   readonly agentMessages: AgentMessageDelivery;
   private readonly creationService: CreationService;
+  private readonly fleetCommitmentControl: FleetCommitmentControlService | null;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceBaseBranch: WorkspaceBaseBranchService;
@@ -708,6 +717,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    fleetCommitmentControls?: { ledgerPath: string },
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -759,6 +769,7 @@ export class VoiceAssistantWebSocketServer {
       (snapshot) => this.validateCompletedCreation(snapshot),
       join(paseoHome, "agent-requests"),
     );
+    this.fleetCommitmentControl = this.createFleetCommitmentControl(fleetCommitmentControls);
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
@@ -893,17 +904,33 @@ export class VoiceAssistantWebSocketServer {
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
   }
 
+  private createFleetCommitmentControl(
+    controls: { ledgerPath: string } | undefined,
+  ): FleetCommitmentControlService | null {
+    if (!controls) return null;
+    return new FleetCommitmentControlService({
+      ledgerPath: controls.ledgerPath,
+      receipts: this.messageReceipts,
+      readPortfolioAgent: async () => {
+        const stored = await this.agentStorage.get(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
+        const live = this.agentManager.getAgent(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
+        return stored && live ? { id: live.id, archivedAt: stored.archivedAt } : null;
+      },
+      streamAgent: (agentId, prompt, options) =>
+        this.agentManager.streamAgent(agentId, prompt, options),
+    });
+  }
+
   private createWebSocketServer(
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
-    const password = auth?.password;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
       maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
-      handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
+      handleProtocols: (protocols) => selectWebSocketProtocol(protocols, auth),
       verifyClient: ({ req }, callback) => {
         this.verifyWsUpgrade(
           req,
@@ -914,7 +941,7 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      void this.attachAuthenticatedSocket(ws, request, auth);
     });
     return wss;
   }
@@ -996,7 +1023,7 @@ export class VoiceAssistantWebSocketServer {
   private async attachAuthenticatedSocket(
     ws: WebSocket,
     request: IncomingMessage,
-    password: string | undefined,
+    auth: DaemonAuthConfig | undefined,
   ): Promise<void> {
     // Header validation is asynchronous. Buffer frames until the socket has a
     // pending hello handler so an eager client cannot lose its first message.
@@ -1006,19 +1033,15 @@ export class VoiceAssistantWebSocketServer {
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
       const token =
         extractHttpBearerToken(request.headers.authorization) ?? extractWsBearerToken(protocol);
-      const hasHeaderCredential = token !== null;
-      if (password && hasHeaderCredential) {
+      const principal = await resolveDaemonBearerPrincipal(auth, token);
+      if (token !== null && principal === null) {
         const requestMetadata = extractSocketRequestMetadata(request);
-        const isAuthorized = await isBearerTokenValidAsync({ password, token });
-        if (!isAuthorized) {
-          const reason = "Incorrect password";
-          this.logger.warn(
-            { ...requestMetadata, hasToken: true },
-            "Rejected WebSocket connection with invalid daemon password",
-          );
-          ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, reason);
-          return;
-        }
+        this.logger.warn(
+          { ...requestMetadata, hasToken: true },
+          "Rejected WebSocket connection with invalid daemon credential",
+        );
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Incorrect password");
+        return;
       }
 
       await this.attachSocket(
@@ -1026,7 +1049,7 @@ export class VoiceAssistantWebSocketServer {
         request,
         undefined,
         false,
-        hasHeaderCredential ? OWNER_SESSION_ADMISSION : null,
+        resolveHeaderAdmission(principal, token !== null),
       );
     } finally {
       ws.resume();
@@ -1113,7 +1136,10 @@ export class VoiceAssistantWebSocketServer {
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolve);
     try {
-      await this.attachSocket(ws, undefined, undefined, true, OWNER_SESSION_ADMISSION);
+      await this.attachSocket(ws, undefined, undefined, true, {
+        principalId: `plugin:${pluginId}`,
+        permissions: OWNER_PERMISSIONS,
+      });
     } catch (error) {
       this.pluginSocketIds.delete(ws);
       this.finishPluginSocketCleanup(ws);
@@ -1563,6 +1589,7 @@ export class VoiceAssistantWebSocketServer {
 
     const session = this.createSocketSession({
       clientId,
+      principalId: admission.principalId,
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
@@ -1653,6 +1680,7 @@ export class VoiceAssistantWebSocketServer {
       sourceId: options.sourceId,
       browserToolsBroker: this.browserToolsBroker,
       clientId: options.clientId,
+      principalId: options.principalId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
@@ -1680,6 +1708,7 @@ export class VoiceAssistantWebSocketServer {
       messageReceipts: this.messageReceipts,
       agentMessages: this.agentMessages,
       creationService: this.creationService,
+      fleetCommitmentControl: this.fleetCommitmentControl ?? undefined,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceBaseBranch: this.workspaceBaseBranch,
@@ -2038,6 +2067,8 @@ export class VoiceAssistantWebSocketServer {
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
+        // COMPAT(fleetCommitmentControls): old clients ignore this optional capability.
+        ...(this.fleetCommitmentControl ? { fleetCommitmentControls: true } : {}),
         hubAgentRpc: true,
         backgroundWorkspaces: true,
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
@@ -3284,11 +3315,19 @@ export function isWebSocketSameOrigin(
   return isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname);
 }
 
+function resolveHeaderAdmission(
+  principal: DaemonBearerPrincipal | null,
+  hasHeaderCredential: boolean,
+): SessionAdmission | null {
+  if (principal === "service:firstmate-deck") return FIRSTMATE_DECK_SESSION_ADMISSION;
+  return hasHeaderCredential ? OWNER_SESSION_ADMISSION : null;
+}
+
 function selectWebSocketProtocol(
   protocols: Set<string>,
-  password: string | undefined,
+  auth: DaemonAuthConfig | undefined,
 ): string | false {
-  if (!password) {
+  if (!auth?.password && !auth?.firstmateDeckCredential) {
     return protocols.values().next().value ?? false;
   }
 

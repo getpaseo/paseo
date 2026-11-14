@@ -46,6 +46,7 @@ interface TestPaseoDaemonOptions {
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
+  fleetCommitmentControls?: PaseoDaemonConfig["fleetCommitmentControls"];
   pushNotificationSender?: PushNotificationSender;
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
@@ -207,6 +208,7 @@ async function prepareTestDaemonConfig(
     relayRequireProtectedSecurity: options.relayRequireProtectedSecurity,
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
+    fleetCommitmentControls: options.fleetCommitmentControls,
     pushNotificationSender: options.pushNotificationSender,
     serviceProxy: options.serviceProxy,
     webUi: options.webUi,
