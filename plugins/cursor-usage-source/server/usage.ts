@@ -1,9 +1,11 @@
 import type { UsageInput } from "../shared/input.js";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   toneFromUsedPct,
@@ -36,6 +38,15 @@ function toIsoStringOrNull(timestampMs: number): string | null {
 // ~/.config/cursor/auth.json instead.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+
+// cursor-agent on macOS keeps its login in the login Keychain unless
+// AGENT_CLI_CREDENTIAL_STORE says otherwise. The service is the input's locator.
+const CURSOR_KEYCHAIN_SERVICE = "cursor-access-token";
+const CURSOR_KEYCHAIN_ACCOUNT = "cursor-user";
+const CURSOR_KEYCHAIN_TIMEOUT_MS = 2_000;
+const execFileAsync = promisify(execFile);
+
+export type SecurityCommandRunner = (args: string[]) => Promise<string | null>;
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -155,11 +166,30 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
   }
 }
 
+async function runSecurityCommand(args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("security", args, {
+      timeout: CURSOR_KEYCHAIN_TIMEOUT_MS,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function readCursorTokenFromKeychain(
+  service: string,
+  runSecurity: SecurityCommandRunner,
+): Promise<string | null> {
+  return runSecurity(["find-generic-password", "-a", CURSOR_KEYCHAIN_ACCOUNT, "-s", service, "-w"]);
+}
+
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
+  runSecurity: SecurityCommandRunner = runSecurityCommand,
 ): Promise<UsageReport> {
-  const token = await readToken(input);
+  const token = await readToken(input, runSecurity);
   if (!token) throw new Error("Cursor login store no longer exists");
 
   const res = await fetchApi(
@@ -229,8 +259,13 @@ export async function fetchUsage(
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
+async function readToken(
+  input: UsageInput,
+  runSecurity: SecurityCommandRunner,
+): Promise<string | undefined> {
   if (input.store === "env") return process.env[input.locator];
+  if (input.store === "keychain")
+    return (await readCursorTokenFromKeychain(input.locator, runSecurity)) ?? undefined;
   const token =
     input.store === "sqlite"
       ? await readCursorTokenFromSqlite(input.locator)
@@ -258,7 +293,10 @@ function cursorAccount(token: string, input: UsageInput): UsageAccount {
   return { key: `store-${key}`, input };
 }
 
-export async function discover(): Promise<UsageAccount[]> {
+export async function discover(
+  platform: NodeJS.Platform = process.platform,
+  runSecurity: SecurityCommandRunner = runSecurityCommand,
+): Promise<UsageAccount[]> {
   const home = homedir();
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
     store: "env",
@@ -284,8 +322,15 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
+  // The Keychain goes last: reading it can raise a macOS access prompt, so it runs only
+  // when no other store holds a login.
+  if (platform === "darwin")
+    candidates.push(
+      { store: "file", locator: join(home, ".cursor", "auth.json") },
+      { store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE },
+    );
   for (const input of candidates) {
-    const token = await readToken(input);
+    const token = await readToken(input, runSecurity);
     if (token) return [cursorAccount(token, input)];
   }
   return [];
@@ -295,25 +340,37 @@ export async function discover(): Promise<UsageAccount[]> {
 export async function discoverSession(
   scope: Extract<UsageScope, { kind: "session" }>,
   platform: NodeJS.Platform = process.platform,
+  runSecurity: SecurityCommandRunner = runSecurityCommand,
 ): Promise<UsageAccount[]> {
   if (scope.provider !== "cursor") return [];
-  const locator = cursorAgentAuthPath(scope.env, platform);
-  if (!locator) return [];
-  const input: UsageInput = { store: "file", locator };
-  const token = await readToken(input);
+  const input = cursorAgentLogin(scope.env, platform);
+  if (!input) return [];
+  const token = await readToken(input, runSecurity);
   return token ? [cursorAccount(token, input)] : [];
 }
 
 // Mirrors cursor-agent's credential store. Env credentials win over the stored login and
 // can't be named by an input. AGENT_CLI_CREDENTIAL_STORE picks "file" or "memory"; by
 // default macOS keeps the login in the Keychain and other platforms in auth.json.
-function cursorAgentAuthPath(env: Record<string, string>, platform: NodeJS.Platform) {
+function cursorAgentLogin(
+  env: Record<string, string>,
+  platform: NodeJS.Platform,
+): UsageInput | null {
   if (env.CURSOR_API_KEY || env.CURSOR_AUTH_TOKEN) return null;
   const store = env.AGENT_CLI_CREDENTIAL_STORE;
-  if (store === "memory" || (platform === "darwin" && store !== "file")) return null;
+  if (store === "memory") return null;
   const home = env.HOME || env.USERPROFILE || homedir();
+  if (platform === "darwin")
+    return store === "file"
+      ? { store: "file", locator: join(home, ".cursor", "auth.json") }
+      : { store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE };
   if (platform === "win32")
-    return join(env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json");
-  if (platform === "darwin") return join(home, ".cursor", "auth.json");
-  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json");
+    return {
+      store: "file",
+      locator: join(env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json"),
+    };
+  return {
+    store: "file",
+    locator: join(env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json"),
+  };
 }
