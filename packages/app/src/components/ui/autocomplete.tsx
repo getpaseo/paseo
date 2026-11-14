@@ -326,6 +326,14 @@ function AutocompleteRows({
     [revealPendingRow],
   );
 
+  // A viewport that got shorter can leave the selected row outside it.
+  const handleLayout = useCallback(() => {
+    // The list reports the rows its new height shows before the row is checked against them.
+    listRef.current?.recordInteraction();
+    pendingReveal.current = selectedRow < 0 ? null : selectedRow;
+    revealPendingRow();
+  }, [revealPendingRow, selectedRow]);
+
   const renderRow = useCallback(
     ({ item, index }: ListRenderItemInfo<AutocompleteOption>) => (
       <AutocompleteRow
@@ -350,6 +358,7 @@ function AutocompleteRows({
       removeClippedSubviews={false}
       viewabilityConfig={FULLY_VISIBLE}
       onViewableItemsChanged={handleViewableItemsChanged}
+      onLayout={handleLayout}
       onContentSizeChange={revealPendingRow}
       onScrollToIndexFailed={handleScrollToIndexFailed}
       // The list's padding. As a header and footer it counts in the list's own scroll positions.

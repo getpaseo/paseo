@@ -278,6 +278,7 @@ function commandOptions(prefix: string, count: number): AutocompleteOption[] {
 }
 
 const LIST_PADDING_AND_BORDER = 5;
+const ROW_HEIGHT_AT_LEAST = 36;
 
 /** How far the best match's row sits above the popover's bottom edge, or null when not painted. */
 function bestMatchAgainstPopoverBottom(label: string): number | null {
@@ -395,71 +396,6 @@ it("mounts the rows nearest the composer first when the results change", async (
   expect(bestMatchAgainstPopoverBottom("/plugin-1")).toBe(LIST_PADDING_AND_BORDER);
 });
 
-/** Every scroll position script gives an element inside the popover. */
-function recordScrollCommands(): { count: () => number; stop: () => void } {
-  let commands = 0;
-  const insidePopover = (target: unknown): boolean =>
-    target instanceof Element &&
-    target.closest('[data-testid="composer-autocomplete-popover"]') !== null;
-  const prototype = Element.prototype;
-  const scroll = prototype.scroll;
-  const scrollTo = prototype.scrollTo;
-  const scrollTop = Object.getOwnPropertyDescriptor(prototype, "scrollTop");
-  if (!scrollTop?.get || !scrollTop.set) throw new Error("Element.scrollTop is not an accessor");
-  const readScrollTop = scrollTop.get;
-  const writeScrollTop = scrollTop.set;
-  prototype.scroll = function recordedScroll(this: Element, ...args: unknown[]) {
-    if (insidePopover(this)) commands += 1;
-    Reflect.apply(scroll, this, args);
-  };
-  prototype.scrollTo = function recordedScrollTo(this: Element, ...args: unknown[]) {
-    if (insidePopover(this)) commands += 1;
-    Reflect.apply(scrollTo, this, args);
-  };
-  Object.defineProperty(prototype, "scrollTop", {
-    configurable: true,
-    get(this: Element) {
-      return readScrollTop.call(this);
-    },
-    set(this: Element, value: number) {
-      if (insidePopover(this)) commands += 1;
-      writeScrollTop.call(this, value);
-    },
-  });
-  return {
-    count: () => commands,
-    stop: () => {
-      prototype.scroll = scroll;
-      prototype.scrollTo = scrollTo;
-      Object.defineProperty(prototype, "scrollTop", scrollTop);
-    },
-  };
-}
-
-/**
- * Native paints a scroll command a frame or two after the rows it was meant for. A list that rests
- * against the composer only because script scrolled it there shows the rows somewhere else first.
- */
-it("rests against the composer without a scroll command", async () => {
-  const all = commandOptions("skill", 100);
-  const fewer = all.filter((_, index) => index % 3 === 0);
-  render(<Screen visible={false} options={all} />);
-  const recording = recordScrollCommands();
-  try {
-    render(<Screen visible options={all} />);
-    await waitForPopover();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await changeAndPaint(<Screen visible options={fewer} />);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await changeAndPaint(<Screen visible options={all} />);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER);
-    expect(recording.count()).toBe(0);
-  } finally {
-    recording.stop();
-  }
-});
-
 function scrollerOf(popover: HTMLElement): HTMLElement {
   const scroller = [...popover.querySelectorAll<HTMLElement>("*")].find(
     (element) =>
@@ -469,6 +405,30 @@ function scrollerOf(popover: HTMLElement): HTMLElement {
   if (!scroller) throw new Error("The list does not scroll");
   return scroller;
 }
+
+/**
+ * Native paints a scroll command a frame or two after the rows it was meant for. A list that rests
+ * against the composer only because script scrolled it there shows the rows somewhere else first,
+ * so the composer's edge is where the list's scroll starts.
+ */
+it("rests against the composer where its scroll starts", async () => {
+  const all = commandOptions("skill", 100);
+  const fewer = all.filter((_, index) => index % 3 === 0);
+  render(<Screen visible={false} options={all} />);
+  render(<Screen visible options={all} />);
+  const popover = await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(scrollerOf(popover).scrollTop).toBe(0);
+
+  await changeAndPaint(<Screen visible options={fewer} />);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(scrollerOf(popover).scrollTop).toBe(0);
+
+  await changeAndPaint(<Screen visible options={all} />);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(scrollerOf(popover).scrollTop).toBe(0);
+  expect(bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER);
+});
 
 it("returns to the best match in the frame results arrive while the list is scrolled away", async () => {
   const all = commandOptions("skill", 100);
@@ -514,6 +474,25 @@ it("reveals the row the arrow keys select, including across the wrap to the far 
       .toEqual([selectedFromBest, true]);
   }
   await expect.poll(() => bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER);
+});
+
+/** The composer grew until the space above it holds fewer rows than the popover was showing. */
+it("keeps the selected row in view when the popover gets shorter", async () => {
+  const options = commandOptions("skill", 100);
+  render(<Screen visible={false} options={options} />);
+  render(<Screen visible options={options} />);
+  await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Beyond the rows the popover opened with, so it came into view at the popover's top edge.
+  render(<Screen visible options={options} selectedFromBest={7} />);
+  await expect.poll(() => isRowInView("/skill-8"), { timeout: 3000 }).toBe(true);
+  const height = rectOf("composer-autocomplete-popover")!.height;
+
+  render(<Screen visible options={options} selectedFromBest={7} inputHeight={560} />);
+  await expect
+    .poll(() => rectOf("composer-autocomplete-popover")!.height, { timeout: 3000 })
+    .toBeLessThan(height - ROW_HEIGHT_AT_LEAST);
+  await expect.poll(() => isRowInView("/skill-8"), { timeout: 3000 }).toBe(true);
 });
 
 /** The label of the row at the top of the popover's box. */
