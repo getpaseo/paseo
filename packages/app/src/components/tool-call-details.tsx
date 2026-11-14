@@ -726,6 +726,7 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.destructive,
     },
     emptyStateText: {
+      padding: insets.padding,
       color: theme.colors.foregroundMuted,
       fontSize: theme.fontSize.base,
       fontStyle: "italic",
