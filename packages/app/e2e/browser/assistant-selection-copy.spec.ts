@@ -203,6 +203,161 @@ async function dragFromBelowImageTo(page: Page, text: string): Promise<void> {
   await page.mouse.up();
 }
 
+async function dragAssistantTextTo(
+  page: Page,
+  startText: string,
+  endText: string,
+): Promise<string> {
+  const blocks = assistantMessageBlocks(page);
+  const end = await blocks.getByText(endText).boundingBox();
+  if (!end) throw new Error(`Expected rendered ending text: ${endText}`);
+  const start = await assistantTextPoint(page, startText);
+  // A later iteration must start a new selection, rather than drag the previous highlight.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 35, start.y, { steps: 5 });
+  const initialSelection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  await page.mouse.move(end.x + end.width - 1, end.y + end.height / 2, { steps: 20 });
+  await page.mouse.up();
+  return initialSelection;
+}
+
+async function assistantTextPoint(page: Page, text: string): Promise<{ x: number; y: number }> {
+  return assistantMessageBlocks(page)
+    .getByText(text)
+    .evaluate((element, value) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node: Node | null = null;
+      while ((node = walker.nextNode())) {
+        if (node.textContent?.includes(value.slice(0, 4))) break;
+      }
+      if (!node?.textContent) throw new Error(`Expected rendered text node: ${value}`);
+      const range = document.createRange();
+      range.setStart(node, 1);
+      range.setEnd(node, Math.min(2, node.textContent.length));
+      const rect = range.getBoundingClientRect();
+      // Exact fractional glyph midpoints can leave native Chromium drags collapsed.
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    }, text);
+}
+
+async function extendAssistantDragWithoutNativeMove(
+  page: Page,
+  startText: string,
+  endText: string,
+): Promise<{ initial: string; extended: string; rewound: string; released: string }> {
+  const start = await assistantTextPoint(page, startText);
+  const end = await assistantMessageBlocks(page).getByText(endText).boundingBox();
+  if (!end) throw new Error(`Expected rendered ending text: ${endText}`);
+  await page.evaluate(() => {
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        document.body.dataset.selectionPointerId = String(event.pointerId);
+      },
+      { capture: true, once: true },
+    );
+    document.addEventListener(
+      "selectstart",
+      (event) => {
+        const target = event.target;
+        let element: Element | null = null;
+        if (target instanceof Element) element = target;
+        else if (target instanceof Node) element = target.parentElement;
+        if (element?.closest('[data-testid="assistant-message"]')) event.preventDefault();
+      },
+      { capture: true },
+    );
+  });
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(start.x + 35, start.y, { steps: 5 });
+    const initial = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    async function dispatchPointerAt(
+      pointX: number,
+      pointY: number,
+      eventType: "pointermove" | "pointerup",
+    ) {
+      return page.evaluate(
+        async ({ x, y, type }) => {
+          const target = document.elementFromPoint(x, y);
+          if (!target) throw new Error("Expected rendered ending text");
+          target.dispatchEvent(
+            new PointerEvent(type, {
+              bubbles: true,
+              pointerId: Number(document.body.dataset.selectionPointerId),
+              pointerType: "mouse",
+              buttons: type === "pointermove" ? 1 : 0,
+              isPrimary: true,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          return window.getSelection()?.toString() ?? "";
+        },
+        { x: pointX, y: pointY, type: eventType },
+      );
+    }
+    const endX = end.x + end.width - 1;
+    const endY = end.y + end.height / 2;
+    const extended = await dispatchPointerAt(endX, endY, "pointermove");
+    const rewound = await dispatchPointerAt(start.x, start.y, "pointermove");
+    await dispatchPointerAt(endX, endY, "pointermove");
+    const released = await dispatchPointerAt(start.x, start.y, "pointerup");
+    return { initial, extended, rewound, released };
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+async function dragAfterReleaseOutsideAssistant(page: Page): Promise<{
+  beforeRelease: string;
+  afterRelease: string;
+}> {
+  const startPoint = await assistantTextPoint(page, "const answer = 1;");
+  const endBox = await assistantMessageBlocks(page).getByText("Third paragraph.").boundingBox();
+  if (!endBox) throw new Error("Expected rendered ending text");
+  return page.evaluate(
+    async ({ start, end }) => {
+      const pointerId = 99;
+      const dispatch = (
+        type: "pointerdown" | "pointermove" | "pointerup",
+        x: number,
+        y: number,
+      ) => {
+        const target = type === "pointerup" ? document.body : document.elementFromPoint(x, y);
+        if (!target) throw new Error("Expected rendered pointer target");
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            pointerId,
+            pointerType: "mouse",
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            isPrimary: true,
+            clientX: x,
+            clientY: y,
+          }),
+        );
+      };
+      window.getSelection()?.removeAllRanges();
+      dispatch("pointerdown", start.x, start.y);
+      dispatch("pointermove", end.x + end.width - 1, end.y + end.height / 2);
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      const beforeRelease = window.getSelection()?.toString() ?? "";
+      dispatch("pointerup", 0, 0);
+      window.getSelection()?.removeAllRanges();
+      dispatch("pointermove", end.x + end.width - 1, end.y + end.height / 2);
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      return { beforeRelease, afterRelease: window.getSelection()?.toString() ?? "" };
+    },
+    { start: startPoint, end: endBox },
+  );
+}
+
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
@@ -774,24 +929,42 @@ test.describe("on a touch-capable desktop browser", () => {
         30_000,
       );
       await openAgentRoute(page, agent);
-      const blocks = assistantMessageBlocks(page);
-      const first = await blocks.getByText("First paragraph.").boundingBox();
-      const third = await blocks.getByText("Third paragraph.").boundingBox();
-      if (!first || !third) {
-        throw new Error("Expected rendered paragraphs");
+      await allowRichClipboard(page.context());
+
+      for (const startText of [
+        "First paragraph.",
+        "List item.",
+        "Quote text.",
+        "const answer = 1;",
+      ]) {
+        const initialSelection = await dragAssistantTextTo(page, startText, "Third paragraph.");
+        expect(initialSelection, `drag starts selecting inside ${startText}`).toContain(
+          startText.slice(2, 4),
+        );
+        const selectedFromBlock = await page.evaluate(
+          () => window.getSelection()?.toString() ?? "",
+        );
+        expect(selectedFromBlock, `drag starting in ${startText}`).toContain(startText.slice(2));
+        expect(selectedFromBlock, `drag ending in third paragraph`).toContain("Third paragraph.");
+        await copySelection(page);
+        const copied = await readRichClipboard(page);
+        expect(copied.plainText, `copy starting in ${startText}`).toContain(startText.slice(2));
+        expect(copied.plainText).toContain("Third paragraph.");
       }
 
-      await page.mouse.move(first.x + 1, first.y + first.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, { steps: 20 });
-      await page.mouse.up();
-
-      const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
-      expect(selected).toContain("First paragraph.");
-      expect(selected).toContain("List item.");
-      expect(selected).toContain("Quote text.");
-      expect(selected).toContain("const answer = 1;");
-      expect(selected).toContain("Third paragraph.");
+      await page.evaluate(() => window.getSelection()?.removeAllRanges());
+      const { initial, extended, rewound, released } = await extendAssistantDragWithoutNativeMove(
+        page,
+        "const answer = 1;",
+        "Third paragraph.",
+      );
+      expect(initial).toContain("nst");
+      expect(extended).toContain("Third paragraph.");
+      expect(rewound).toBe("");
+      expect(released).toBe("");
+      const outsideRelease = await dragAfterReleaseOutsideAssistant(page);
+      expect(outsideRelease.beforeRelease).toContain("Third paragraph.");
+      expect(outsideRelease.afterRelease).toBe("");
     } finally {
       await agent.cleanup();
     }
