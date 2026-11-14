@@ -10,6 +10,9 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { parseMarkdownPreviewDocument } from "./document";
 
+const FRONT_MATTER_KEY_DATASET = { paseoMarkdownTag: "th" } as const;
+const FRONT_MATTER_VALUE_DATASET = { paseoMarkdownTag: "td" } as const;
+
 export function FileMarkdownPreview({
   source,
   filePath,
@@ -37,12 +40,12 @@ export function FileMarkdownPreview({
                 key={row.key}
                 style={[styles.frontMatterRow, index > 0 && styles.frontMatterRowBorder]}
               >
-                <View style={styles.frontMatterKeyCell}>
+                <View style={styles.frontMatterKeyCell} dataSet={FRONT_MATTER_KEY_DATASET}>
                   <Text selectable style={styles.frontMatterKey}>
                     {row.key}
                   </Text>
                 </View>
-                <View style={styles.frontMatterValueCell}>
+                <View style={styles.frontMatterValueCell} dataSet={FRONT_MATTER_VALUE_DATASET}>
                   <Text selectable style={styles.frontMatterValue}>
                     {row.value}
                   </Text>
