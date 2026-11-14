@@ -17,6 +17,7 @@ import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-tr
 import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
+  type WorkspaceTabFileReveal,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -137,6 +138,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  fileReveal?: WorkspaceTabFileReveal;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -158,6 +160,7 @@ function MobileWorkspaceTabOption({
   onCopyAgentId,
   onCopyTerminalId,
   onCopyFilePath,
+  fileReveal,
   onReloadAgent,
   onRenameTab,
   onCloseTab,
@@ -177,6 +180,7 @@ function MobileWorkspaceTabOption({
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  fileReveal?: WorkspaceTabFileReveal;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -214,6 +218,7 @@ function MobileWorkspaceTabOption({
     onCopyAgentId,
     onCopyTerminalId,
     onCopyFilePath,
+    fileReveal,
     onReloadAgent,
     onRenameTab,
     onCloseTab,
@@ -292,6 +297,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   onCopyAgentId,
   onCopyTerminalId,
   onCopyFilePath,
+  fileReveal,
   onReloadAgent,
   onRenameTab,
   onCloseTab,
@@ -414,6 +420,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
           onCopyAgentId={onCopyAgentId}
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
+          fileReveal={fileReveal}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
           onCloseTab={onCloseTab}
@@ -433,6 +440,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       onCopyAgentId,
       onCopyTerminalId,
       onCopyFilePath,
+      fileReveal,
       onReloadAgent,
       onRenameTab,
       onCloseTab,
