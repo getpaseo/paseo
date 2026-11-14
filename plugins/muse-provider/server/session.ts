@@ -164,16 +164,18 @@ export class Session {
               await live.recovery.backfill();
               return live.children.refresh();
             })
-            .catch((error) => this.runtimeFailed(error));
+            .catch((error: unknown) => this.repairFailed(error));
         },
       ),
     };
     this.providerId = response.session.providerId ?? undefined;
+    const configured = { model: this.config.model, mode: this.config.mode };
     this.config = {
       ...this.config,
       model: response.session.modelId ?? this.config.model,
       mode: response.session.approvalMode?.mode ?? this.config.mode ?? "onRequest",
     };
+    if (input.persistence) await this.restoreControls(nativeId, configured);
     this.options.emit({
       type: "session.opened",
       requestId: input.requestId,
@@ -203,6 +205,26 @@ export class Session {
       requestId: input.requestId,
       sessionId: this.options.id,
     });
+  }
+
+  // session/resume takes no model or approval mode, and Muse can reload a session on its defaults.
+  private async restoreControls(
+    sessionId: string,
+    configured: Pick<ProviderSessionConfig, "model" | "mode">,
+  ): Promise<void> {
+    if (configured.model && configured.model !== this.config.model) {
+      await this.host.command(
+        "session/setModel",
+        { sessionId, model: { providerId: this.providerId, modelId: configured.model } },
+        ackSchema,
+      );
+      this.config = { ...this.config, model: configured.model };
+    }
+    if (configured.mode && configured.mode !== this.config.mode) {
+      const mode = approvalModeSchema.parse(configured.mode);
+      await this.host.command("session/setApprovalMode", { sessionId, mode }, ackSchema);
+      this.config = { ...this.config, mode };
+    }
   }
 
   private live(): Live {
@@ -393,6 +415,14 @@ export class Session {
       .then(() => this.notify(notification))
       .catch((error: unknown) => this.runtimeFailed(error));
   }
+  // The silence repair is best effort: the live view still delivers, so a failed page waits for the
+  // next silence instead of failing the session. Host death reaches runtimeFailed through onExit.
+  private repairFailed(error: unknown): void {
+    process.stderr.write(
+      `Muse silence repair failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    this.live().recovery.activity(undefined, this.activeTurnIds().length > 0);
+  }
   private runtimeFailed(error: unknown): void {
     this.live().recovery.close();
     this.options.emit({
@@ -410,7 +440,9 @@ export class Session {
       return;
     }
     await this.processNotification(notification);
-    this.live().recovery.activity(envelope.viewCursor, this.activeTurnIds().length > 0);
+    // A projected subagent event carries the child's view cursor, which this session's view rejects.
+    const cursor = envelope.subagentOrigin === undefined ? envelope.viewCursor : undefined;
+    this.live().recovery.activity(cursor, this.activeTurnIds().length > 0);
   }
   private async processNotification(notification: Notification): Promise<void> {
     switch (notification.method) {
