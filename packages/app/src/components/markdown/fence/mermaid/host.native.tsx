@@ -1,5 +1,5 @@
 import { Modal } from "@/components/ui/modal";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
@@ -13,6 +13,8 @@ import { Code, Workflow, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MermaidColorsContext } from "./colors-context";
+import { runtimeStyleOf } from "./options";
 import type { Theme } from "@/styles/theme";
 import type { MarkdownFenceRendererProps } from "./types";
 import type { MermaidRenderRequest } from "./render-model";
@@ -24,7 +26,7 @@ import {
 } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 import { useMermaidRenderModel } from "./use-render-model";
-import { getDiagramBoxStyle } from "./presentation";
+import { getDiagramBoxStyle, getDiagramFrameStyle } from "./presentation";
 
 interface MermaidFenceHostImplProps extends MarkdownFenceRendererProps {
   colorScheme?: "light" | "dark";
@@ -55,6 +57,8 @@ function MermaidWebView({
   onRenderFailed,
   style,
 }: MermaidWebViewProps) {
+  const options = useContext(MermaidColorsContext);
+  const runtimeStyle = useMemo(() => runtimeStyleOf(options), [options]);
   const webViewRef = useRef<WebView | null>(null);
   const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
   driverRef.current ??= new MermaidRuntimeRequestDriver();
@@ -70,13 +74,14 @@ function MermaidWebView({
         source: current.source,
         colorScheme: current.colorScheme,
         interactive,
+        style: runtimeStyle,
       };
       const payload = serializeMermaidRuntimeRenderMessage(message);
       webViewRef.current.injectJavaScript(
         `window.__PASEO_MERMAID_RUNTIME_RECEIVE__ && window.__PASEO_MERMAID_RUNTIME_RECEIVE__(${payload}); true;`,
       );
     },
-    [interactive],
+    [interactive, runtimeStyle],
   );
 
   useEffect(() => {
@@ -275,6 +280,7 @@ function MermaidFenceHostImpl({
   phase,
   inheritedStyles,
   textStyle,
+  frame,
   colorScheme = "dark",
 }: MermaidFenceHostImplProps) {
   const { t } = useTranslation();
@@ -315,6 +321,7 @@ function MermaidFenceHostImpl({
     [canShowDiagram, visible],
   );
   const diagramBoxStyle = getDiagramBoxStyle(textStyle);
+  const frameStyle = getDiagramFrameStyle(frame);
 
   return (
     <>
@@ -333,7 +340,7 @@ function MermaidFenceHostImpl({
         accessibilityLabel={t("message.diagram.diagram")}
         style={
           canShowDiagram
-            ? [diagramBoxStyle, previewStyles.preview]
+            ? [diagramBoxStyle, frameStyle, previewStyles.preview]
             : [diagramBoxStyle, previewStyles.measuring]
         }
       >

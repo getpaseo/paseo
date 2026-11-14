@@ -4,6 +4,8 @@ import type { Theme } from "@/styles/theme";
 import { MermaidFenceHost } from "./host";
 export { splitMermaidFences } from "./segments";
 export const MermaidStreamingContext = createContext(false);
+export { MermaidColorsContext } from "./colors-context";
+import { MermaidColorsContext } from "./colors-context";
 const ThemedHost = withUnistyles(MermaidFenceHost);
 const styles = (theme: Theme) => ({
   inheritedStyles: {
@@ -15,5 +17,13 @@ const styles = (theme: Theme) => ({
 });
 export function MermaidFence({ code }: { code: string }) {
   const streaming = useContext(MermaidStreamingContext);
-  return <ThemedHost code={code} phase={streaming ? "streaming" : "complete"} uniProps={styles} />;
+  const options = useContext(MermaidColorsContext);
+  return (
+    <ThemedHost
+      code={code}
+      phase={streaming ? "streaming" : "complete"}
+      frame={options?.frame}
+      uniProps={styles}
+    />
+  );
 }
