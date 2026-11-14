@@ -117,7 +117,9 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 
 ## Schedules and heartbeats
 
-**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.
+**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `mode`, `thinking`, `cwd`, `isolation` (`local` or `worktree`), `maxRuns`, `expiresIn`. In an agent-scoped session, `provider` is optional and omitted provider, model, mode, and thinking are copied from your own agent; set `mode` and `thinking` explicitly when the runs should not use your current settings. Use when the recurring work should live in fresh agents.
+
+**`update_schedule`** — patches a new-agent schedule in place: `cron`, `timezone`, `name`, `prompt`, `provider`, `model`, `mode`, `thinking`, `isolation`, `cwd`, `maxRuns`, `expiresIn`. Pass `null` to `model`, `mode`, or `thinking` to clear it.
 
 **`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `maxRuns`, `expiresIn`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation.
 
@@ -144,6 +146,7 @@ paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree -
 paseo send <agent-id> "<follow-up>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
+paseo schedule create --cron "0 9 * * *" --provider claude/claude-opus-5-5 --mode auto --thinking medium --new-workspace worktree "daily sweep"
 paseo heartbeat create --cron "*/15 * * * *" "check the build"
 ```
 

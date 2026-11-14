@@ -388,6 +388,14 @@ function resolveScheduleUpdateProviderAndModel(params: {
   };
 }
 
+interface NewAgentScheduleTargetParams {
+  provider?: string;
+  mode?: string;
+  thinking?: string;
+  cwd?: string;
+  isolation?: "local" | "worktree";
+}
+
 interface ScheduleUpdateToolInput {
   id: string;
   every?: string;
@@ -399,6 +407,8 @@ interface ScheduleUpdateToolInput {
   provider?: string;
   model?: string | null;
   mode?: string | null;
+  thinking?: string | null;
+  isolation?: "local" | "worktree";
   cwd?: string;
   expiresIn?: string;
   clearExpires?: boolean;
@@ -532,6 +542,8 @@ function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateSchedul
     ...(providerModelPatch.provider !== undefined ? { provider: providerModelPatch.provider } : {}),
     ...(providerModelPatch.model !== undefined ? { model: providerModelPatch.model } : {}),
     ...(input.mode !== undefined ? { modeId: input.mode } : {}),
+    ...(input.thinking !== undefined ? { thinkingOptionId: input.thinking } : {}),
+    ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
     ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
   };
 
@@ -944,11 +956,11 @@ function createToolCatalog(
   const buildCallerAgentScheduleConfigExtras = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
     resolvedProvider: string,
+    thinkingOverride: string | undefined,
   ): Record<string, unknown> => {
+    const thinkingOptionId = thinkingOverride ?? callerAgent.config.thinkingOptionId;
     return {
-      ...(callerAgent.config.thinkingOptionId
-        ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
-        : {}),
+      ...(thinkingOptionId ? { thinkingOptionId } : {}),
       ...(callerAgent.provider === resolvedProvider && callerAgent.config.providerOptions
         ? { providerOptions: callerAgent.config.providerOptions }
         : {}),
@@ -959,7 +971,7 @@ function createToolCatalog(
 
   const buildCallerAgentScheduleConfig = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
-    params?: { provider?: string; cwd?: string },
+    params?: NewAgentScheduleTargetParams,
   ) => {
     const hasProviderOverride = params?.provider !== undefined;
     const resolvedProviderModel = hasProviderOverride
@@ -975,24 +987,21 @@ function createToolCatalog(
     } else if (!hasProviderOverride && callerAgent.config.model) {
       resolvedModel = callerAgent.config.model;
     }
+    const modeId =
+      params?.mode ??
+      (callerAgent.currentModeId && callerAgent.provider === resolvedProvider
+        ? callerAgent.currentModeId
+        : undefined);
     return {
       provider: resolvedProvider,
       cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
-      ...(callerAgent.currentModeId && callerAgent.provider === resolvedProvider
-        ? {
-            modeId: callerAgent.currentModeId,
-          }
-        : {}),
+      ...(modeId ? { modeId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider),
+      ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider, params?.thinking),
     };
   };
 
-  const resolveNewAgentScheduleTarget = (params?: {
-    provider?: string;
-    cwd?: string;
-    isolation?: "local" | "worktree";
-  }) => {
+  const resolveNewAgentScheduleTarget = (params?: NewAgentScheduleTargetParams) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return {
@@ -1018,6 +1027,8 @@ function createToolCatalog(
         provider: resolvedProviderModel.provider,
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+        ...(params?.mode ? { modeId: params.mode } : {}),
+        ...(params?.thinking ? { thinkingOptionId: params.thinking } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
       },
     };
@@ -2670,7 +2681,10 @@ function createToolCatalog(
     "create_schedule",
     {
       title: "Create schedule",
-      description: "Create a recurring schedule that starts a new agent on a cron cadence.",
+      description:
+        scope === "agent"
+          ? "Create a recurring schedule that starts a new agent on a cron cadence. Omitted provider, model, mode, and thinking are copied from your own agent; so are your provider options, features, system prompt, and MCP servers. Pass mode and thinking explicitly when the scheduled runs should not use your current settings."
+          : "Create a recurring schedule that starts a new agent on a cron cadence.",
       inputSchema: z
         .object({
           prompt: z.string().trim().min(1, "prompt is required"),
@@ -2685,15 +2699,48 @@ function createToolCatalog(
           provider: (scope === "agent" ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
             "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
           ),
+          mode: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              "Session mode ID for each run (from inspect_provider). Defaults to the caller's current mode in an agent-scoped session when the provider matches.",
+            ),
+          thinking: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              "Thinking option ID for each run (from list_models). Defaults to the caller's thinking option in an agent-scoped session.",
+            ),
           cwd: z.string().optional(),
-          isolation: z.enum(["local", "worktree"]).optional(),
+          isolation: z
+            .enum(["local", "worktree"])
+            .optional()
+            .describe(
+              "Workspace isolation for each run: local adopts cwd, worktree cuts a fresh git worktree.",
+            ),
           maxRuns: z.number().int().positive().optional(),
           expiresIn: scheduleDurationInputSchema.optional(),
         })
         .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      mode,
+      thinking,
+      cwd,
+      isolation,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2705,7 +2752,7 @@ function createToolCatalog(
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, mode, thinking, cwd, isolation }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2963,6 +3010,17 @@ function createToolCatalog(
             .nullable()
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
+          thinking: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe("New thinking option ID for new-agent target (null to clear)."),
+          isolation: z
+            .enum(["local", "worktree"])
+            .optional()
+            .describe("New workspace isolation for each run of a new-agent target."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
           expiresIn: scheduleDurationInputSchema
             .optional()

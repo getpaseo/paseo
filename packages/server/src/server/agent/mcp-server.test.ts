@@ -4969,6 +4969,93 @@ describe("rename_workspace MCP tool", () => {
   });
 });
 
+describe("update_schedule MCP tool", () => {
+  const logger = createTestLogger();
+
+  it("patches thinking and isolation on a new-agent schedule", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = createStoredSchedule({
+      prompt: "daily sweep",
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: REPO_CWD, thinkingOptionId: "xhigh" },
+      },
+    });
+    const inspect = vi.fn(async () => stored);
+    const update = vi.fn(async (input: UpdateScheduleInput) => ({
+      ...stored,
+      target: {
+        type: "new-agent" as const,
+        config: {
+          ...stored.target.config,
+          ...(input.newAgentConfig?.thinkingOptionId
+            ? { thinkingOptionId: input.newAgentConfig.thinkingOptionId }
+            : {}),
+          ...(input.newAgentConfig?.isolation ? { isolation: input.newAgentConfig.isolation } : {}),
+        },
+      },
+    }));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { inspect, update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    const response = await tool.handler({
+      id: stored.id,
+      thinking: "medium",
+      isolation: "worktree",
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      id: stored.id,
+      newAgentConfig: { thinkingOptionId: "medium", isolation: "worktree" },
+    });
+    expect(response.structuredContent.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: REPO_CWD,
+        thinkingOptionId: "medium",
+        isolation: "worktree",
+      },
+    });
+  });
+
+  it("clears the thinking option with null", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = createStoredSchedule({
+      prompt: "daily sweep",
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: REPO_CWD, thinkingOptionId: "xhigh" },
+      },
+    });
+    const inspect = vi.fn(async () => stored);
+    const update = vi.fn(async () => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { inspect, update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await tool.handler({ id: stored.id, thinking: null });
+
+    expect(update).toHaveBeenCalledWith({
+      id: stored.id,
+      newAgentConfig: { thinkingOptionId: null },
+    });
+  });
+});
+
 describe("create_schedule MCP tool", () => {
   const logger = createTestLogger();
 
@@ -5110,6 +5197,93 @@ describe("create_schedule MCP tool", () => {
         providerOptions: { auto_accept: true },
       },
     });
+  });
+
+  it("prefers explicit mode and thinking over the caller's runtime settings", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      provider: "claude",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: "bypassPermissions",
+      availableModes: [],
+      config: {
+        title: "Parent agent",
+        model: "claude-opus-5-5",
+        thinkingOptionId: "xhigh",
+      },
+    } as ManagedAgent);
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    const response = await tool.handler({
+      prompt: "daily sweep",
+      cron: "0 9 * * *",
+      provider: "claude/claude-opus-5-5",
+      mode: "auto",
+      thinking: "medium",
+      isolation: "worktree",
+    });
+
+    expect(response.structuredContent.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: REPO_CWD,
+        modeId: "auto",
+        model: "claude-opus-5-5",
+        thinkingOptionId: "medium",
+        isolation: "worktree",
+      },
+    });
+  });
+
+  it("stores explicit mode and thinking for top-level schedules", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await tool.handler({
+      prompt: "daily sweep",
+      cron: "0 9 * * *",
+      provider: "codex",
+      mode: "full-access",
+      thinking: "high",
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex",
+            cwd: process.cwd(),
+            modeId: "full-access",
+            thinkingOptionId: "high",
+          },
+        },
+      }),
+    );
   });
 
   it("passes timezone through cron create_schedule input", async () => {

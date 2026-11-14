@@ -28,6 +28,7 @@ export type ScheduleTarget =
         modeId?: string;
         model?: string;
         thinkingOptionId?: string;
+        isolation?: "local" | "worktree";
         title?: string | null;
         providerOptions?: Record<string, unknown>;
       };
@@ -138,6 +139,8 @@ export interface UpdateScheduleNewAgentConfig {
   provider?: string;
   model?: string | null;
   modeId?: string | null;
+  thinkingOptionId?: string | null;
+  isolation?: "local" | "worktree";
   cwd?: string;
 }
 
