@@ -243,7 +243,12 @@ describe("update action", () => {
   // The check only informs: Update and the update instructions never wait on it.
   const checkStates = [
     { name: "an update is available", updates: available, says: "Update available" },
-    { name: "the provider cannot check", updates: { status: "ready", updateCheck: null } },
+    // No check answer: the row shows only its title (asserted whole below).
+    {
+      name: "the provider cannot check",
+      updates: { status: "ready", updateCheck: null },
+      says: "Updates",
+    },
     { name: "the check is running", updates: { status: "loading" }, says: "Checking..." },
     {
       name: "the check could not tell",
@@ -260,7 +265,7 @@ describe("update action", () => {
       updates: { status: "ready", updateCheck: { status: "current" } },
       says: "Up to date",
     },
-  ] satisfies { name: string; updates: ProviderUpdatesState; says?: string }[];
+  ] satisfies { name: string; updates: ProviderUpdatesState; says: string }[];
 
   it.each(checkStates)(
     "offers Update when $name and the provider runs its own",
@@ -271,7 +276,7 @@ describe("update action", () => {
       act(() => button.click());
       expect(control.starts()).toBe(1);
       expect(section.view.queryByRole("button", { name: "Update instructions" })).toBeNull();
-      if (says) await expect.element(section.view.getByText(says)).toBeVisible();
+      await expect.element(section.view.getByText(says, { exact: true })).toBeVisible();
     },
   );
 

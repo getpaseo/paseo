@@ -309,6 +309,27 @@ describe.each(selfUpdatingClis)("$name installation", (cli) => {
   });
 });
 
+// Agents spawn the bare command with the provider's environment, so its PATH picks the copy.
+test("Copilot reports the copy on the provider's PATH, the one its agents launch", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-provider-path-"));
+  roots.push(dir);
+  if (process.platform === "win32") {
+    await fs.writeFile(
+      path.join(dir, "copilot.cmd"),
+      "@echo off\r\necho GitHub Copilot CLI 9.9.9.\r\n",
+    );
+  } else {
+    await fs.writeFile(path.join(dir, "copilot"), "#!/bin/sh\necho 'GitHub Copilot CLI 9.9.9.'\n", {
+      mode: 0o755,
+    });
+  }
+  const client = new CopilotACPAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: { env: { PATH: dir } },
+  });
+  await expect(inspect(client)).resolves.toEqual({ status: "installed", version: "9.9.9" });
+});
+
 test("Pi checks the release its own update check reads", async () => {
   const argv = await versionCommand("1.3.0");
   const { lookup, lookups } = releases("1.5.2");

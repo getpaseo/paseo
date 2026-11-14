@@ -2,6 +2,7 @@ import type { ProviderUpdateCheck } from "@getpaseo/plugin/server/provider";
 import type { AgentClientInstallation } from "../agent-sdk-types.js";
 import {
   checkProviderLaunchAvailable,
+  createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -9,7 +10,7 @@ import {
 import { readCommandVersionOutput } from "./diagnostic-utils.js";
 import { runUpdateCommand } from "./update-command.js";
 
-/** The provider's CLI as configured, found on the daemon's PATH. */
+/** The provider's CLI as configured, found on the PATH its agents launch with. */
 export interface InstalledCli {
   /** The resolved executable. */
   command: string;
@@ -54,7 +55,12 @@ export function createCliInstallation(options: CliInstallationOptions): AgentCli
       commandConfig: runtimeSettings?.command,
       defaultBinary: options.defaultBinary,
     });
-    const availability = await checkProviderLaunchAvailable(launch);
+    // Agents spawn the bare command with the provider's environment, so its PATH picks the copy
+    // shown and updated here.
+    const availability = await checkProviderLaunchAvailable({
+      ...launch,
+      env: createProviderEnv({ runtimeSettings }),
+    });
     if (!availability.available) return null;
     return {
       command: availability.resolvedPath ?? launch.command,
