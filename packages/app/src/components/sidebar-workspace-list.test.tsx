@@ -578,9 +578,10 @@ describe("sidebar group visibility", () => {
     expect(result.current.visibleItems).toHaveLength(10);
   });
 
-  it("keeps a reveal when the row holding the group remounts", () => {
-    // A native drop remounts every project block it moves. The reveal belongs to the list, so the
-    // remounted block still shows all of its workspaces.
+  it("shows the reveal its owner passes in on every mount", () => {
+    // A native drop remounts every project block it moves, so the group holds no reveal of its
+    // own. Only the native list remounts rows; the browser list never does, so no test here can
+    // drive that remount.
     const items = entries([...Array(7).fill("done"), "running", "done", "failed", "done"]);
     const first = renderHook(() =>
       useLimitedSidebarGroup({ items, selection: null, expanded: true, policy }),

@@ -121,6 +121,10 @@ export function DraggableList<T>({
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       scrollEnabled={scrollEnabled}
+      // A list that doesn't scroll shows every row, so it renders them all in its first commit.
+      // FlatList's default first render is 10 rows; a nested list remounted by a drop would paint
+      // 10 rows, then grow on a later commit.
+      initialNumToRender={scrollEnabled ? undefined : data.length}
       extraData={extraData}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
