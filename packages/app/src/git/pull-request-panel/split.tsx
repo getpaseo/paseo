@@ -88,16 +88,14 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
         ) : (
           <View style={styles.divider} />
         )}
+        {/* The header keeps one slot in both states, so toggling it does not remount the row
+            and drop keyboard focus. Only the timeline mounts and unmounts. */}
+        {activityHeader}
         {activityOpen ? (
-          <View style={styles.activity}>
-            {activityHeader}
-            <ScrollView style={styles.activityScroll} showsVerticalScrollIndicator={false}>
-              {activityTimeline}
-            </ScrollView>
-          </View>
-        ) : (
-          activityHeader
-        )}
+          <ScrollView style={styles.activityScroll} showsVerticalScrollIndicator={false}>
+            {activityTimeline}
+          </ScrollView>
+        ) : null}
       </View>
     </View>
   );
@@ -126,10 +124,6 @@ const styles = StyleSheet.create((theme) => ({
   divider: {
     height: 1,
     backgroundColor: theme.colors.border,
-  },
-  activity: {
-    flex: 1,
-    minHeight: 0,
   },
   activityScroll: {
     flex: 1,

@@ -140,6 +140,43 @@ describe("pull request pane layout", () => {
     expect(rows.every(isOnScreen)).toBe(true);
   });
 
+  it("keeps keyboard focus on the Activity header while it collapses and expands", () => {
+    const pane = mountPane(pullRequest(successfulChecks(3)));
+    const header = activityHeader(pane);
+    act(() => header.focus());
+
+    act(() => header.click());
+    expect(document.activeElement).toBe(header);
+    act(() => header.click());
+    expect(document.activeElement).toBe(header);
+  });
+
+  it("exposes whether Activity is expanded to assistive technology", () => {
+    const pane = mountPane(pullRequest(successfulChecks(3)));
+    expect(activityHeader(pane).getAttribute("aria-expanded")).toBe("true");
+
+    act(() => activityHeader(pane).click());
+
+    expect(activityHeader(pane).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the Activity header inside the pane when a dragged pane gets short", async () => {
+    const pane = mountPane(pullRequest(successfulChecks(30)));
+    await settleLayout();
+    dragSeparator(pane, PANE_HEIGHT);
+    await settleLayout();
+
+    act(() => {
+      if (container) container.style.height = "160px";
+    });
+    await settleLayout();
+
+    await expect
+      .poll(() => activityHeader(pane).getBoundingClientRect().bottom)
+      .toBeLessThanOrEqual(pane.getBoundingClientRect().bottom);
+    expect(isOnScreen(activityHeader(pane))).toBe(true);
+  });
+
   it("resizes the checks against Activity by dragging the separator between them", async () => {
     const pane = mountPane(pullRequest(successfulChecks(30)));
     await settleLayout();
