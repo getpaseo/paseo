@@ -38,6 +38,8 @@ Slack filters use IDs, not display names or Hub connection slugs. `from_users` m
 
 The reply posts in the triggering thread. A root message gets a thread; a threaded message stays there. `slack.reply` grants `hub.reply`, but does not add reply instructions to the prompt.
 
+A step that authors `${{ paseo.context }}` gets `slack.trigger_message`, the message that mentioned the bot: its `ts`, `channel.id`, `thread.ts`, and `attachments`. `thread` is `null` when the mention is at the root of a channel. `attachments` lists files posted with the mention as Hub download URLs that work only for that execution.
+
 Leading declared inputs follow the mention:
 
 ```text
