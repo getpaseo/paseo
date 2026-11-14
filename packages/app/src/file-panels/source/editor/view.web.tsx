@@ -7,6 +7,7 @@ import { getCM, vim } from "@replit/codemirror-vim";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
+import { reconfigureEditorTheme, useZoomedEditorTheme } from "./zoom.web";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
@@ -40,11 +41,13 @@ export function FileEditorView({
   location,
   navigationRevision,
   vimEnabled,
-  theme,
+  theme: appearanceTheme,
   onCursorChange,
   onVimModeChange,
   onReady,
 }: FileEditorViewProps) {
+  const theme = useZoomedEditorTheme(appearanceTheme);
+  const fontSizeRef = useRef(theme.codeFontSize);
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -136,7 +139,16 @@ export function FileEditorView({
   }, [filename]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: themeCompartment.reconfigure(editorTheme(theme)) });
+    const view = viewRef.current;
+    const fontSizeChanged = fontSizeRef.current !== theme.codeFontSize;
+    fontSizeRef.current = theme.codeFontSize;
+    if (!view) return;
+    reconfigureEditorTheme({
+      view,
+      compartment: themeCompartment,
+      theme: editorTheme(theme),
+      fontSizeChanged,
+    });
   }, [theme]);
 
   useEffect(() => {

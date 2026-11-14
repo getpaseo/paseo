@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import { RenderProfile } from "@/utils/render-profiler";
+import { TextZoomArea, useScopedTextZoom, zoomedFontSize } from "@/text-zoom";
 import { createDiffPalette, retainDiffPalette } from "./palette";
 import { DiffSurface } from "./surface";
 import type { DiffDocumentProps, DiffHeaderTypography, DiffPalette } from "./types";
@@ -53,10 +54,35 @@ const StyledDiffDocument = withUnistyles(ThemedDiffDocument, (theme) => ({
   },
 }));
 
+const ZOOM_AREA_STYLE = { flex: 1, minHeight: 0 } as const;
+
+/**
+ * Diffs follow the file views' pinch zoom. The code size drives the measurer, the line-number
+ * gutter and the change markers, so they stay aligned; the surface keeps the row at the top of
+ * the viewport in place when the layout changes.
+ */
+function ZoomedDiffDocument(props: DiffDocumentProps) {
+  const zoom = useScopedTextZoom();
+  const { displayPreferences } = props;
+  const zoomedPreferences = useMemo(
+    () =>
+      zoom === 1
+        ? displayPreferences
+        : {
+            ...displayPreferences,
+            codeFontSize: zoomedFontSize(displayPreferences.codeFontSize, zoom),
+          },
+    [displayPreferences, zoom],
+  );
+  return <StyledDiffDocument {...props} displayPreferences={zoomedPreferences} />;
+}
+
 export function DiffDocument(props: DiffDocumentProps) {
   return (
     <RenderProfile id="DiffDocument">
-      <StyledDiffDocument {...props} />
+      <TextZoomArea surface="files" style={ZOOM_AREA_STYLE}>
+        <ZoomedDiffDocument {...props} />
+      </TextZoomArea>
     </RenderProfile>
   );
 }

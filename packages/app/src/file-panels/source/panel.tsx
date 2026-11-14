@@ -22,6 +22,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatFileSize } from "@/utils/format-file-size";
 import type { Theme } from "@/styles/theme";
 import { FilePanelLoading } from "../loading";
+import { TextZoomArea } from "@/text-zoom";
 import type { FileConflictAlertState } from "./conflict-alert";
 import { FileEditorModel, getFileConflictCallout } from "./editor/model";
 import { FileEditorView } from "./editor/view";
@@ -71,6 +72,15 @@ type TextFilePanelProps = PluginFilePanelProps & {
  * and every file on native read-only, and refuses files above the display budget before reading.
  */
 export function TextFilePanel(props: TextFilePanelProps) {
+  return (
+    <TextZoomArea surface="files" style={styles.container}>
+      <TextFilePanelContent {...props} />
+    </TextZoomArea>
+  );
+}
+
+/** Source and Preview follow the file views' pinch zoom. */
+function TextFilePanelContent(props: TextFilePanelProps) {
   const size = props.file.size;
   const presentation = selectSourcePresentation({ size, platform: isWeb ? "web" : "native" });
   if (presentation === "unsupported") return <TooLargeTextFile size={size} />;

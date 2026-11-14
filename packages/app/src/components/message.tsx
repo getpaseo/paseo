@@ -88,6 +88,8 @@ import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { PlanCard } from "./plan-card";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
+import { useScopedTextZoom } from "@/text-zoom/scope";
+import { zoomedFontSize } from "@/text-zoom/model";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -323,15 +325,19 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
-  text: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.content,
-    ...(isWeb
-      ? {
-          lineHeight: Math.round(theme.fontSize.content * 1.4),
-          overflowWrap: "anywhere" as const,
-        }
-      : {}),
+  // The chat's pinch zoom scales the message with the transcript around it.
+  text: (zoom: number) => {
+    const fontSize = zoomedFontSize(theme.fontSize.content, zoom);
+    return {
+      color: theme.colors.foreground,
+      fontSize,
+      ...(isWeb
+        ? {
+            lineHeight: Math.round(fontSize * 1.4),
+            overflowWrap: "anywhere" as const,
+          }
+        : {}),
+    };
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -411,6 +417,7 @@ export const UserMessage = memo(function UserMessage({
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
+  const textZoom = useScopedTextZoom();
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
@@ -515,7 +522,11 @@ export const UserMessage = memo(function UserMessage({
               </View>
             ) : null}
             {hasText ? (
-              <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
+              <Text
+                selectable
+                style={userMessageStylesheet.text(textZoom)}
+                dataSet={MESSAGE_TEXT_DATASET}
+              >
                 {message}
               </Text>
             ) : null}

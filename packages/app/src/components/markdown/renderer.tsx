@@ -19,6 +19,7 @@ import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
 import { splitStreamingMarkdown } from "./streaming";
 import { useMarkdownSource, type MarkdownImageContext } from "./images";
+import { useScopedTextZoom } from "@/text-zoom/scope";
 
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
 
@@ -27,18 +28,20 @@ const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true }
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
-  (compact: boolean, muted = false) =>
+  (compact: boolean, muted = false, zoom = 1) =>
   (theme: Theme, rt: { breakpoint?: string }) =>
     createMarkdownStyles(theme, {
       compact,
       muted,
       blockGap: resolveDensity(rt, density.blockGap),
+      zoom,
     });
 const regularStyle = markdownStyle(false);
 const compactStyle = markdownStyle(true);
 const compactMutedStyle = markdownStyle(true, true);
 
-function pickMarkdownStyle(compact: boolean, muted: boolean) {
+function pickMarkdownStyle(compact: boolean, muted: boolean, zoom: number) {
+  if (zoom !== 1) return markdownStyle(compact, muted, zoom);
   if (!compact) return regularStyle;
   return muted ? compactMutedStyle : compactStyle;
 }
@@ -127,6 +130,8 @@ const MarkdownPart = memo(function MarkdownPart({
     if (url !== PENDING_MARKDOWN_IMAGE) setImage({ type: "uri", uri: url });
   });
   const closeImage = useStableEvent(() => setImage(null));
+  const zoom = useScopedTextZoom();
+  const uniProps = useMemo(() => pickMarkdownStyle(compact, muted, zoom), [compact, muted, zoom]);
   const segments = useMemo(
     () =>
       isWeb ? [{ kind: "markdown", id: "0", source: markdown }] : splitMermaidFences(markdown),
@@ -142,7 +147,7 @@ const MarkdownPart = memo(function MarkdownPart({
             <ThemedMarkdown
               key={`${segment.kind}:${segment.id}`}
               markdown={segment.source}
-              uniProps={pickMarkdownStyle(compact, muted)}
+              uniProps={uniProps}
               flavor="github"
               selectable={selectable}
               md4cFlags={MD4C_FLAGS}
