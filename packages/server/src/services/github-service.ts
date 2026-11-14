@@ -1343,9 +1343,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         ? await resolveRepoSlugCached(runOptions.cwd)
         : null;
     if (host && slug && runOptions.useDefaultRepository) {
-      slug = (await resolveGitHubDefaultRepoSlug(runOptions.cwd, host)) ?? slug;
+      slug = (await resolveGitHubDefaultRepoSlug({ cwd: runOptions.cwd, host })) ?? slug;
     }
-    const effectiveArgs = selectGitHubCommandRepository(args, host, slug);
+    const effectiveArgs = selectGitHubCommandRepository({ args, host, slug });
     const { useDefaultRepository: _useDefaultRepository, ...runnerOptions } = runOptions;
     const effectiveOptions: GitHubCommandRunnerOptions = host
       ? { ...runnerOptions, envOverlay: { ...runnerOptions.envOverlay, GH_HOST: host } }
@@ -2176,11 +2176,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             throw new Error("Unable to resolve GitHub repository for pull request checkout");
           }
           const host = (await resolveRepoHostCached(input.cwd)) ?? "github.com";
-          const remoteNames = await resolveGitHubCheckoutRemotes(
-            input.cwd,
+          const remoteNames = await resolveGitHubCheckoutRemotes({
+            cwd: input.cwd,
             host,
-            `${owner}/${name}`,
-          );
+            repository: `${owner}/${name}`,
+          });
 
           const parsed = await runGhJson(
             [
@@ -2221,7 +2221,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
             explicitRepo: (await resolveRepoHostCached(input.cwd)) !== null,
-            run,
+            // The head owner tells this PR apart from other forks' PRs on the
+            // same branch, so look it up where gh would by default: an
+            // upstream remote's repository before a fork origin's.
+            run: input.headRepositoryOwner ? withDefaultRepository(run) : run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
         },
@@ -2730,11 +2733,15 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   return api;
 }
 
-function selectGitHubCommandRepository(
-  args: string[],
-  host: string | null,
-  slug: string | null,
-): string[] {
+function selectGitHubCommandRepository({
+  args,
+  host,
+  slug,
+}: {
+  args: string[];
+  host: string | null;
+  slug: string | null;
+}): string[] {
   if (args[0] === "auth" && args[1] === "status" && !args.includes("--hostname")) {
     return [...args, "--hostname", host ?? "github.com"];
   }
@@ -3060,6 +3067,12 @@ async function tryCurrentPullRequestBranchView(options: {
   });
 }
 
+function withDefaultRepository(
+  run: (args: string[], options: GitHubRunOptions) => Promise<string>,
+): (args: string[], options: GitHubCommandRunnerOptions) => Promise<string> {
+  return (args, options) => run(args, { ...options, useDefaultRepository: true });
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
@@ -3315,11 +3328,15 @@ async function runCurrentPullRequestStatusCommand(options: {
   }
 }
 
-async function resolveGitHubCheckoutRemotes(
-  cwd: string,
-  host: string,
-  repository: string,
-): Promise<string[]> {
+async function resolveGitHubCheckoutRemotes({
+  cwd,
+  host,
+  repository,
+}: {
+  cwd: string;
+  host: string;
+  repository: string;
+}): Promise<string[]> {
   const { stdout } = await runGitCommand(
     ["config", "--null", "--get-regexp", "^remote\\..*\\.url$"],
     {
@@ -3359,7 +3376,13 @@ async function resolveGitHubCheckoutRemotes(
   return matches.length > 0 ? matches : ["origin", "upstream"];
 }
 
-async function resolveGitHubDefaultRepoSlug(cwd: string, host: string): Promise<string | null> {
+async function resolveGitHubDefaultRepoSlug({
+  cwd,
+  host,
+}: {
+  cwd: string;
+  host: string;
+}): Promise<string | null> {
   // `gh repo set-default` stores either "base" or an owner/name in the remote's
   // gh-resolved config. Read the raw URLs because `git remote` applies rewrites.
   const { stdout } = await runGitCommand(
