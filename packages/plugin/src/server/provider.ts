@@ -213,7 +213,7 @@ interface ProviderReviewAttachment {
   type: "review";
   mimeType: "application/paseo-review";
   cwd: string;
-  mode: "uncommitted" | "base";
+  mode: "uncommitted" | "base" | "all";
   baseRef?: string | null;
   comments: Array<{
     filePath: string;
@@ -881,7 +881,7 @@ const providerContentSchema: z.ZodType<ProviderContent> = z.union([
       type: z.literal("review"),
       mimeType: z.literal("application/paseo-review"),
       cwd: z.string(),
-      mode: z.enum(["uncommitted", "base"]),
+      mode: z.enum(["uncommitted", "base", "all"]),
       baseRef: z.string().nullable().optional(),
       comments: z.array(
         z
