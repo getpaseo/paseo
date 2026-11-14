@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import { ToastApiProvider } from "@/contexts/toast-context";
@@ -57,7 +58,10 @@ function pullRequest(checks: PrPaneCheck[]): PrPaneData {
   };
 }
 
-function mountPane(data: PrPaneData) {
+/** A phone's home indicator: the pane clears it with bottom padding. */
+const HOME_INDICATOR_INSETS = { top: 0, right: 0, bottom: 34, left: 0 };
+
+function mountPane(data: PrPaneData, insets = { top: 0, right: 0, bottom: 0, left: 0 }) {
   container = document.createElement("div");
   container.style.height = `${PANE_HEIGHT}px`;
   container.style.width = "600px";
@@ -67,9 +71,11 @@ function mountPane(data: PrPaneData) {
   root = createRoot(container);
   act(() =>
     root?.render(
-      <ToastApiProvider api={silentToasts}>
-        <PullRequestPane serverId="server-1" cwd="/repo" data={data} activityLoading={false} />
-      </ToastApiProvider>,
+      <SafeAreaInsetsContext.Provider value={insets}>
+        <ToastApiProvider api={silentToasts}>
+          <PullRequestPane serverId="server-1" cwd="/repo" data={data} activityLoading={false} />
+        </ToastApiProvider>
+      </SafeAreaInsetsContext.Provider>,
     ),
   );
   const pane = container.querySelector<HTMLElement>('[data-testid="pr-pane"]');
@@ -143,5 +149,15 @@ describe("pull request pane layout", () => {
 
     await expect.poll(() => Math.round(checksRegionBottom(pane) - before)).toBe(120);
     expect(activityHeader(pane).getBoundingClientRect().top).toBeGreaterThan(before + 100);
+  });
+
+  it("keeps the separator under the pointer when the pane clears a bottom inset", async () => {
+    const pane = mountPane(pullRequest(successfulChecks(30)), HOME_INDICATOR_INSETS);
+    await settleLayout();
+    const before = checksRegionBottom(pane);
+
+    dragSeparator(pane, 120);
+
+    await expect.poll(() => Math.round(checksRegionBottom(pane) - before)).toBe(120);
   });
 });

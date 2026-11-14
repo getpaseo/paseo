@@ -31,11 +31,11 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const [overview, activityHeader, activityTimeline] = Children.toArray(children);
   const insets = useSafeAreaInsets();
   const [overviewShare, setOverviewShare] = useState(DEFAULT_OVERVIEW_SHARE);
-  const [paneHeight, setPaneHeight] = useState(0);
+  const [splitHeight, setSplitHeight] = useState(0);
   const [overviewHeight, setOverviewHeight] = useState(0);
 
-  const handlePaneLayout = useCallback((event: LayoutChangeEvent) => {
-    setPaneHeight(event.nativeEvent.layout.height);
+  const handleSplitLayout = useCallback((event: LayoutChangeEvent) => {
+    setSplitHeight(event.nativeEvent.layout.height);
   }, []);
   const handleOverviewLayout = useCallback((event: LayoutChangeEvent) => {
     setOverviewHeight(event.nativeEvent.layout.height);
@@ -48,11 +48,12 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   // The overview stops at its content height, so a drag starts from where the separator is
   // drawn rather than from the share the overview may grow to.
   const separatorSizes = useMemo(() => {
-    const share = paneHeight > 0 ? overviewHeight / paneHeight : DEFAULT_OVERVIEW_SHARE;
+    const share = splitHeight > 0 ? overviewHeight / splitHeight : DEFAULT_OVERVIEW_SHARE;
     return [share, 1 - share];
-  }, [overviewHeight, paneHeight]);
+  }, [overviewHeight, splitHeight]);
   // The Activity header docks to the bottom edge, so it clears the home indicator the way the
-  // Changes pane's docked Commits section does.
+  // Changes pane's docked Commits section does. The split is measured inside that padding: the
+  // overview's percentage height resolves against this box, so the drag must use the same one.
   const rootStyle = useMemo(() => [styles.root, { paddingBottom: insets.bottom }], [insets.bottom]);
   const overviewStyle = useMemo(
     () =>
@@ -63,39 +64,41 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   );
 
   return (
-    <View style={rootStyle} onLayout={handlePaneLayout} testID="pr-pane">
-      <ScrollView
-        style={overviewStyle}
-        onLayout={handleOverviewLayout}
-        showsVerticalScrollIndicator={false}
-        testID="pr-pane-overview"
-      >
-        {overview}
-      </ScrollView>
-      {activityOpen ? (
-        <ResizeHandle
-          testID="pr-pane-split-handle"
-          direction="vertical"
-          groupId={SPLIT_GROUP_ID}
-          index={0}
-          sizes={separatorSizes}
-          containerSize={paneHeight}
-          onPreviewResizeSplit={handleResize}
-          onResizeSplit={handleResize}
-        />
-      ) : (
-        <View style={styles.divider} />
-      )}
-      {activityOpen ? (
-        <View style={styles.activity}>
-          {activityHeader}
-          <ScrollView style={styles.activityScroll} showsVerticalScrollIndicator={false}>
-            {activityTimeline}
-          </ScrollView>
-        </View>
-      ) : (
-        activityHeader
-      )}
+    <View style={rootStyle} testID="pr-pane">
+      <View style={styles.split} onLayout={handleSplitLayout}>
+        <ScrollView
+          style={overviewStyle}
+          onLayout={handleOverviewLayout}
+          showsVerticalScrollIndicator={false}
+          testID="pr-pane-overview"
+        >
+          {overview}
+        </ScrollView>
+        {activityOpen ? (
+          <ResizeHandle
+            testID="pr-pane-split-handle"
+            direction="vertical"
+            groupId={SPLIT_GROUP_ID}
+            index={0}
+            sizes={separatorSizes}
+            containerSize={splitHeight}
+            onPreviewResizeSplit={handleResize}
+            onResizeSplit={handleResize}
+          />
+        ) : (
+          <View style={styles.divider} />
+        )}
+        {activityOpen ? (
+          <View style={styles.activity}>
+            {activityHeader}
+            <ScrollView style={styles.activityScroll} showsVerticalScrollIndicator={false}>
+              {activityTimeline}
+            </ScrollView>
+          </View>
+        ) : (
+          activityHeader
+        )}
+      </View>
     </View>
   );
 }
@@ -105,6 +108,10 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surfaceSidebar,
+  },
+  split: {
+    flex: 1,
+    minHeight: 0,
   },
   overviewShared: {
     flexGrow: 0,
