@@ -2,7 +2,7 @@ import type { Dialog } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
-import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { getServerId } from "../support/helpers/server-id";
 import {
   expectProviderInstalledInSettings,
@@ -94,22 +94,10 @@ async function expectMissingNoticeNeverShown(page: Page): Promise<void> {
 }
 
 /**
- * The daemon may publish the provider list without the removed provider before it answers the
- * config patch. Hold the answer so the test always sees that order.
+ * The daemon publishes the provider list without the removed provider before it answers the config
+ * patch. Holding the answer keeps the page in that window.
  */
-async function delayConfigResponses(page: Page): Promise<void> {
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
-    const server = ws.connectToServer();
-    ws.onMessage((message) => server.send(message));
-    server.onMessage((message) => {
-      if (typeof message === "string" && message.includes("set_daemon_config_response")) {
-        setTimeout(() => ws.send(message), 1_500);
-        return;
-      }
-      ws.send(message);
-    });
-  });
-}
+const CONFIG_RESPONSE = "set_daemon_config_response";
 
 test.describe("provider removal", () => {
   test("removes a custom provider from Settings", async ({ page }) => {
@@ -121,7 +109,7 @@ test.describe("provider removal", () => {
     try {
       await removeCustomProvider(client);
 
-      await delayConfigResponses(page);
+      const gate = await installDaemonWebSocketGate(page);
       await gotoAppShell(page);
       await openSettings(page);
       await openSettingsHost(page, getServerId());
@@ -140,7 +128,17 @@ test.describe("provider removal", () => {
       await openProviderDetail(page, CUSTOM_PROVIDER.name);
       await expect(page.getByTestId("provider-remove")).toBeVisible();
       await watchForMissingNotice(page);
+      gate.holdNextServerMessage(CONFIG_RESPONSE);
       await clickRemoveProviderAndAcceptWarning(page);
+      await gate.waitForHeldServerMessage(CONFIG_RESPONSE);
+      await expectProviderSource(client, undefined);
+      // Until the removal is answered, the page keeps the provider and the pressed button says so.
+      const removeButton = page.getByTestId("provider-remove");
+      await expect(removeButton).toHaveText("Removing...");
+      await expect(removeButton.getByRole("progressbar")).toBeVisible();
+      await expect(removeButton).toBeDisabled();
+      await expect(page.getByTestId("provider-detail-title")).toHaveText(CUSTOM_PROVIDER.name);
+      gate.releaseHeldServerMessage(CONFIG_RESPONSE);
       // Removing leaves the provider's page for the list, without first calling it missing.
       await expect(page.getByTestId("provider-list")).toBeVisible();
       await expectMissingNoticeNeverShown(page);
@@ -151,7 +149,6 @@ test.describe("provider removal", () => {
           exact: true,
         }),
       ).toHaveCount(0);
-      await expectProviderSource(client, undefined);
     } finally {
       await removeCustomProvider(client).catch(() => undefined);
       await client.close().catch(() => undefined);

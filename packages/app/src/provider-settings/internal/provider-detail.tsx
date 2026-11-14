@@ -16,48 +16,77 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { readDetailPresence, readDetailSections, type DetailPresence } from "./detail-sections";
 import { DiagnosticSheet } from "./diagnostic-sheet";
 import { useProviderConfigActions, type ProviderEntry } from "./provider-config";
 import { ProviderModels } from "./provider-models";
 import { ProviderNotice } from "./provider-notice";
 
-export interface ProviderDetailProps {
-  serverId: string;
+export interface ProviderDetailState {
   provider: string;
+  /** The provider's name, kept while this page removes it. */
+  label: string;
+  presence: DetailPresence;
+  /** Config owns the provider, so Remove can delete it. */
+  canRemove: (entry: ProviderEntry) => boolean;
+  /** This page's Remove is running, or has succeeded and the page is closing. */
+  removing: boolean;
+  remove: () => void;
+}
+
+/**
+ * What a provider's detail shows and its Remove, shared by the frame's title and the body. A
+ * provider this page removes leaves the host's list before the removal answers; both keep showing
+ * it until the frame closes.
+ */
+export function useProviderDetail(
+  serverId: string,
+  provider: string,
   /** The provider was removed; leave its detail. */
-  onRemoved: () => void;
+  onRemoved: () => void,
+): ProviderDetailState {
+  const { entries, error } = useProvidersSnapshot(serverId);
+  const connected = useHostRuntimeIsConnected(serverId);
+  const { canRemove, remove, removing } = useProviderConfigActions(serverId);
+  const presence = readDetailPresence({ provider, connected, entries, error, removing });
+  const shown = presence.kind === "found" ? presence.entry : null;
+  const label = shown?.label ?? provider;
+  const handleRemove = useCallback(() => {
+    if (!shown) return;
+    void remove(shown, label).then((removed) => {
+      if (removed) onRemoved();
+      return removed;
+    });
+  }, [label, onRemoved, remove, shown]);
+  return {
+    provider,
+    label,
+    presence,
+    canRemove,
+    removing: removing?.provider === provider,
+    remove: handleRemove,
+  };
 }
 
 /**
  * Everything about one provider, top to bottom: what is wrong, whether it runs, its installation,
  * its models, then the rare actions. The page and the sheet frame the same body.
  */
-export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetailProps) {
-  const { entries, error, refresh, isRefreshing } = useProvidersSnapshot(serverId);
-  const connected = useHostRuntimeIsConnected(serverId);
+export function ProviderDetail({
+  serverId,
+  detail,
+}: {
+  serverId: string;
+  detail: ProviderDetailState;
+}) {
+  const { provider, presence, label } = detail;
+  const { refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const installation = useProviderInstallation({ serverId, provider, visible: true });
   const refreshInstallation = installation.refresh;
   const handleRefresh = useCallback(() => {
     void refresh([provider]);
     refreshInstallation();
   }, [provider, refresh, refreshInstallation]);
-  const label = resolveProviderLabel(provider, entries);
-  const { canRemove, remove, removingProviderId } = useProviderConfigActions(serverId);
-  // Kept once Remove succeeds, until the frame closes the page.
-  const [removedProvider, setRemovedProvider] = useState<string | null>(null);
-  const handleRemove = useCallback(() => {
-    void remove(provider, label).then((removed) => {
-      if (!removed) return removed;
-      setRemovedProvider(provider);
-      onRemoved();
-      return removed;
-    });
-  }, [label, onRemoved, provider, remove]);
-  const removingHere = removingProviderId === provider || removedProvider === provider;
-  const presence = readDetailPresence({ provider, connected, entries, error, removingHere });
-  if (presence.kind === "removed") return null;
   if (presence.kind !== "found") return <AbsentProvider presence={presence} />;
 
   const entry = presence.entry;
@@ -81,18 +110,15 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
         refreshing={isRefreshing || installation.refreshing}
         onRefresh={handleRefresh}
       />
-      {canRemove(entry) ? (
-        <DangerZone removing={removingProviderId === provider} onRemove={handleRemove} />
+      {/* Config no longer owns a provider whose removal has succeeded. */}
+      {detail.removing || detail.canRemove(entry) ? (
+        <DangerZone removing={detail.removing} onRemove={detail.remove} />
       ) : null}
     </View>
   );
 }
 
-function AbsentProvider({
-  presence,
-}: {
-  presence: Exclude<DetailPresence, { kind: "found" | "removed" }>;
-}) {
+function AbsentProvider({ presence }: { presence: Exclude<DetailPresence, { kind: "found" }> }) {
   const { t } = useTranslation();
   const messages = {
     loading: t("settings.providers.loading"),
@@ -197,8 +223,10 @@ function DangerZone({ removing, onRemove }: { removing: boolean; onRemove: () =>
           label={t("settings.providers.actions.remove")}
           hint={t("settings.providers.detail.removeHint")}
         >
-          <Button variant="outline" onPress={onRemove} disabled={removing} testID="provider-remove">
-            {t("settings.providers.remove.confirm")}
+          <Button variant="outline" onPress={onRemove} loading={removing} testID="provider-remove">
+            {removing
+              ? t("settings.providers.actions.removing")
+              : t("settings.providers.remove.confirm")}
           </Button>
         </SettingsRow>
       </SettingsCard>

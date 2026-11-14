@@ -355,7 +355,7 @@ function AddCustomModelSheet({
           <Button variant="secondary" onPress={onClose} disabled={saving}>
             {t("common.actions.cancel")}
           </Button>
-          <Button variant="default" onPress={handleAdd} disabled={!canAdd || saving}>
+          <Button variant="default" onPress={handleAdd} disabled={!canAdd} loading={saving}>
             {saving ? t("settings.providers.models.adding") : t("settings.providers.models.add")}
           </Button>
         </View>

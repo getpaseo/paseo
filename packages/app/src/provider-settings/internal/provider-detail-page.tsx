@@ -2,9 +2,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { SettingsDetailHeader } from "@/components/settings";
-import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { resolveProviderLabel } from "@/utils/provider-definitions";
-import { ProviderDetail } from "./provider-detail";
+import { ProviderDetail, useProviderDetail } from "./provider-detail";
 import { ProviderGlyph } from "./provider-glyph";
 
 /**
@@ -24,7 +22,7 @@ export function ProviderDetailPage({
   showBack: boolean;
 }) {
   const { t } = useTranslation();
-  const { entries } = useProvidersSnapshot(serverId);
+  const detail = useProviderDetail(serverId, provider, onBack);
   const back = useMemo(
     () => ({
       label: t("settings.providers.detail.backToProviders"),
@@ -42,10 +40,10 @@ export function ProviderDetailPage({
       <SettingsDetailHeader
         back={showBack ? back : undefined}
         icon={icon}
-        title={resolveProviderLabel(provider, entries)}
+        title={detail.label}
         titleTestID="provider-detail-title"
       />
-      <ProviderDetail serverId={serverId} provider={provider} onRemoved={onBack} />
+      <ProviderDetail serverId={serverId} detail={detail} />
     </View>
   );
 }
