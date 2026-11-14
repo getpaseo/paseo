@@ -25,25 +25,40 @@ const { frames } = JSON.parse(
     { encoding: "utf8" },
   ),
 );
-const pixels = execFileSync("ffmpeg", [
-  "-v",
-  "fatal",
-  "-i",
-  recording,
-  "-vf",
-  `crop=2:400:${Number(sampleX)}:1100,format=gray`,
-  "-fps_mode",
-  "passthrough",
-  "-f",
-  "rawvideo",
-  "-",
-]);
+const selectedFrames = frames
+  .map((frame, index) => ({ time: Number(frame.best_effort_timestamp_time), index }))
+  .filter(({ time }) => time >= Number(start) && time <= Number(end));
+assert(selectedFrames.length > 2, "Capture at least three frames in the supplied interval");
+const firstFrame = selectedFrames[0].index;
+const endFrame = selectedFrames.at(-1).index + 1;
+const bytesPerFrame = 800;
+// Bound both output and buffer to the requested frames, even for a long recording.
+const pixels = execFileSync(
+  "ffmpeg",
+  [
+    "-v",
+    "fatal",
+    "-i",
+    recording,
+    "-vf",
+    `trim=start_frame=${firstFrame}:end_frame=${endFrame},crop=2:400:${Number(sampleX)}:1100,format=gray`,
+    "-fps_mode",
+    "passthrough",
+    "-f",
+    "rawvideo",
+    "-",
+  ],
+  { maxBuffer: selectedFrames.length * bytesPerFrame + 1024 },
+);
+assert.equal(
+  pixels.length,
+  selectedFrames.length * bytesPerFrame,
+  "Every selected frame must be decoded",
+);
 const positions = [];
 let disappeared = false;
-for (const [index, frame] of frames.entries()) {
-  const time = Number(frame.best_effort_timestamp_time);
-  if (time < Number(start) || time > Number(end)) continue;
-  const column = pixels.subarray(index * 800, (index + 1) * 800);
+for (const [index, { time }] of selectedFrames.entries()) {
+  const column = pixels.subarray(index * bytesPerFrame, (index + 1) * bytesPerFrame);
   const runs = [];
   let run = [];
   for (let y = 0; y < 400; y++) {

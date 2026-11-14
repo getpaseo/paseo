@@ -8,7 +8,7 @@ import { Platform, StyleSheet as NativeStyleSheet, Text, ToastAndroid, View } fr
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -219,7 +219,12 @@ export function ToastViewport({
       entering={toastEntering}
       exiting={toastExiting}
       style={
-        placement === "sidebar" ? styles.sidebarContainer : styles.container(placement, topOffset)
+        placement === "sidebar"
+          ? animatedStyles.sidebarContainer
+          : [
+              animatedStyles.container,
+              { top: topOffset + (placement === "app-shell" ? SPACING[2] : SPACING[3]) },
+            ]
       }
       pointerEvents="box-none"
       collapsable={false}
@@ -294,26 +299,25 @@ function ToastCard({
 }
 
 const animatedStyles = NativeStyleSheet.create({
+  container: {
+    position: "absolute",
+    left: SPACING[4],
+    right: SPACING[4],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
+  sidebarContainer: {
+    position: "absolute",
+    left: SPACING[2],
+    right: SPACING[2],
+    bottom: SPACING[2],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
   surface: { alignSelf: "center", maxWidth: "100%" },
 });
 
 const styles = StyleSheet.create((theme) => ({
-  container: (placement: Exclude<ToastViewportPlacement, "sidebar">, topOffset: number) => ({
-    position: "absolute",
-    left: theme.spacing[4],
-    right: theme.spacing[4],
-    top: topOffset + (placement === "app-shell" ? theme.spacing[2] : theme.spacing[3]),
-    zIndex: OVERLAY_Z.toast,
-    alignItems: "center",
-  }),
-  sidebarContainer: {
-    position: "absolute",
-    left: theme.spacing[2],
-    right: theme.spacing[2],
-    bottom: theme.spacing[2],
-    zIndex: OVERLAY_Z.toast,
-    alignItems: "center",
-  },
   widthBoundary: {
     width: "92%",
     maxWidth: TOAST_MAX_WIDTH,
