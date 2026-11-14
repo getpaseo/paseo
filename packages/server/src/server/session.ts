@@ -2383,7 +2383,7 @@ export class Session {
     }
     try {
       // Stringifying a binary plugin input costs its size; test logger stubs lack isLevelEnabled.
-      if (this.sessionLogger.isLevelEnabled?.("trace"))
+      if (this.sessionLogger.isLevelEnabled?.("trace")) {
         this.sessionLogger.trace(
           {
             messageType: msg.type,
@@ -2391,6 +2391,7 @@ export class Session {
           },
           "agent.session.inbound",
         );
+      }
       if (!this.authorization.allowsInbound(msg)) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
