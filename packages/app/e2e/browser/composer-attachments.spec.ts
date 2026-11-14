@@ -24,6 +24,7 @@ import {
   selectGithubOption,
   expectGithubAttachmentPill,
   openGithubWorkspace,
+  submitMessage,
 } from "../support/helpers/composer";
 import {
   delayBrowserAgentCreatedStatus,
@@ -39,6 +40,14 @@ import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-f
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
+import {
+  observeCrossHostAttachmentTraffic,
+  withAttachmentSourceFixture,
+} from "../support/helpers/attachment-source";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
+import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
+import { copyPluginFixture } from "../support/helpers/plugin-fixture";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -53,6 +62,136 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("New Agent offers an attachment source shortcut with a default result", async ({
+    page,
+  }, info) => {
+    await withAttachmentSourceFixture(page, info, async (context) => {
+      await context.openShortcut();
+      await context.attachDefaultResult();
+      await context.expectAttachmentInDraft();
+    });
+  });
+
+  test("cross-host attachment asks before searching and retains the source host", async ({
+    page,
+  }, info) => {
+    info.setTimeout(120_000);
+    const workspace = await seedWorkspace({ repoPrefix: "cross-host-attachment-" });
+    const sourceHost = await startIsolatedHostDaemon("cross-host-attachment-source");
+    const sourceClient = await connectNewWorkspaceDaemonClient({
+      port: sourceHost.port,
+      ownProjects: false,
+    });
+    const destinationClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    const plugin = await copyPluginFixture("attachment-source");
+    const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
+    let previousDestinationPluginsEnabled: boolean | null = null;
+    try {
+      const previousDestinationConfig = await destinationClient.getDaemonConfig();
+      previousDestinationPluginsEnabled = previousDestinationConfig.config.pluginsEnabled ?? false;
+      await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
+      await sourceClient.installDirectoryPlugin(plugin.directory);
+      await destinationClient.patchDaemonConfig({ pluginsEnabled: true });
+      await destinationClient.installDirectoryPlugin(plugin.directory);
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: sourceHost.serverId,
+        label: "Secondary",
+        port: sourceHost.port,
+        primaryLabel: "Primary",
+      });
+      await waitForSidebarHydration(page);
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: workspace.workspaceId,
+      });
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+
+      await expect(
+        page.getByRole("button", { name: "Attach Conversation context", exact: true }),
+      ).toHaveCount(1);
+      await expect(
+        page.getByRole("button", { name: "Attach Conversation context from Secondary" }),
+      ).toHaveCount(0);
+      await openAttachmentMenu(page);
+      await page
+        .getByRole("menuitem", { name: "Attach Conversation context from Secondary" })
+        .click();
+      const approveRemoteSearch = page.getByRole("button", {
+        name: "Search Conversation context on Secondary",
+      });
+      await expect(approveRemoteSearch).toBeVisible();
+      await expect(page.getByText(/Readable results will be copied to this app/)).toBeVisible();
+      await expect(page.getByText("Example conversation")).toHaveCount(0);
+      traffic.expectSearchNotStarted();
+
+      await approveRemoteSearch.click();
+      await expect(page.getByPlaceholder("Search conversations")).toBeVisible();
+      const result = page.getByRole("button", { name: /Example conversation/ });
+      await expect(result).toBeVisible({ timeout: 30_000 });
+      await traffic.expectSearchStarted();
+      await result.click();
+      await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
+        "Secondary",
+      );
+      await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
+        "Example conversation",
+      );
+      await submitMessage(page, "Use the attached conversation.");
+      await traffic.expectSnapshotSubmittedToDestination();
+    } finally {
+      try {
+        const installed = (await destinationClient.getDaemonConfig()).config.plugins?.[
+          "test-attachment-source"
+        ];
+        if (installed?.path === plugin.directory) {
+          await destinationClient.removePlugin("test-attachment-source");
+        }
+      } finally {
+        try {
+          if (previousDestinationPluginsEnabled !== null) {
+            await destinationClient.patchDaemonConfig({
+              pluginsEnabled: previousDestinationPluginsEnabled,
+            });
+          }
+        } finally {
+          await destinationClient.close();
+          await sourceClient.close();
+          await sourceHost.close();
+          await plugin.cleanup();
+          await workspace.cleanup();
+        }
+      }
+    }
+  });
+
+  test("failed attachment source setup releases its workspace", async ({ page }, info) => {
+    await expect(
+      withAttachmentSourceFixture(page, info, async () => {}, {
+        fixtureName: "missing-attachment-source",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("failed attachment source startup removes its configured plugin", async ({ page }, info) => {
+    const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    try {
+      const before = (await client.getDaemonConfig()).config;
+      await expect(
+        withAttachmentSourceFixture(page, info, async () => {}, {
+          fixtureName: "attachment-source-failed-startup",
+        }),
+      ).rejects.toThrow("Intentional attachment source startup failure");
+      const after = (await client.getDaemonConfig()).config;
+      expect(after.plugins?.["test-attachment-source"]).toBeUndefined();
+      expect(after.pluginsEnabled).toBe(before.pluginsEnabled);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,

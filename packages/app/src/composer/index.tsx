@@ -181,6 +181,7 @@ import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
+import { getPluginResourceAttachmentKey } from "@/plugins/attachments/model";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -480,7 +481,7 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
     return (
       <PluginResourceAttachmentPill
         serverId={args.serverId}
-        key={`${attachment.pluginId}:${attachment.sourceId}:${attachment.item.id}`}
+        key={getPluginResourceAttachmentKey(attachment)}
         attachment={attachment}
         index={index}
         disabled={disabled}

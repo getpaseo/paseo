@@ -14,6 +14,7 @@ export const PluginResourceComposerAttachmentSchema = z.object({
   sourceTitle: z.string().min(1),
   // Validated when the source registered; a draft keeps the icon its source had then.
   sourceIcon: z.union([z.string().min(1), z.object({ svg: z.string().min(1) })]),
+  sourceServerId: z.string().min(1).optional(),
   item: PluginAttachmentItemSchema,
 });
 
@@ -26,6 +27,7 @@ export interface PluginResourceSourceIdentity {
   sourceId: string;
   sourceTitle: string;
   sourceIcon: PluginSerializableIcon;
+  sourceServerId?: string;
 }
 
 export function createPluginResourceAttachment(
@@ -39,6 +41,12 @@ export function createPluginResourceAttachment(
   };
 }
 
+export function getPluginResourceAttachmentKey(
+  attachment: PluginResourceComposerAttachment,
+): string {
+  return `${attachment.sourceServerId ?? ""}:${attachment.pluginId}:${attachment.sourceId}:${attachment.item.id}`;
+}
+
 export function togglePluginResourceAttachment(
   current: UserComposerAttachment[],
   attachment: PluginResourceComposerAttachment,
@@ -47,6 +55,7 @@ export function togglePluginResourceAttachment(
     candidate.kind === "plugin_resource" &&
     candidate.pluginId === attachment.pluginId &&
     candidate.sourceId === attachment.sourceId &&
+    candidate.sourceServerId === attachment.sourceServerId &&
     candidate.item.id === attachment.item.id;
   if (current.some(matches)) {
     return current.filter((candidate) => !matches(candidate));
@@ -62,6 +71,7 @@ export function pluginResourceAttachmentToAgentAttachment(
     mimeType: "text/plain",
     title: `${attachment.item.identifier} ${attachment.item.title}`,
     text: attachment.item.text,
+    ...(attachment.item.contextKind ? { contextKind: attachment.item.contextKind } : {}),
     externalResource: {
       provider: attachment.pluginId,
       providerLabel: attachment.sourceTitle,

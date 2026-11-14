@@ -9,6 +9,7 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useFetchQuery } from "@/data/query";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { PluginIconView } from "../icons";
 import { useInstalledPlugins } from "../registry";
@@ -29,6 +30,8 @@ interface InstalledAttachmentSource {
   plugin: InstalledPlugin;
   source: PluginAttachmentSourceContribution;
   key: string;
+  hostLabel: string;
+  remote: boolean;
 }
 
 interface PluginAttachmentPickerInput {
@@ -42,6 +45,7 @@ interface PluginAttachmentPickerInput {
 
 interface PluginAttachmentPickerBinding {
   menuItems: AttachmentMenuItem[];
+  newAgentShortcutItems: AttachmentMenuItem[];
   picker: ReactElement | null;
 }
 
@@ -54,16 +58,20 @@ function searchEmptyText(error: unknown, isFetching: boolean): string {
 function installedAttachmentSources(
   plugins: InstalledPlugin[],
   serverId: string,
+  hosts: readonly { serverId: string; label: string }[],
 ): InstalledAttachmentSource[] {
-  return plugins
-    .filter((plugin) => plugin.serverId === serverId)
-    .flatMap((plugin) =>
-      plugin.attachmentSources.map((source) => ({
+  return plugins.flatMap((plugin) =>
+    plugin.attachmentSources
+      .filter((source) => plugin.serverId === serverId || source.crossHost === true)
+      .map((source) => ({
         plugin,
         source,
-        key: `${plugin.id}/${source.id}`,
+        key: `${plugin.serverId}/${plugin.id}/${source.id}`,
+        hostLabel:
+          hosts.find((host) => host.serverId === plugin.serverId)?.label ?? plugin.serverId,
+        remote: plugin.serverId !== serverId,
       })),
-    );
+  );
 }
 
 function attachmentOptions(items: PluginAttachmentItem[]): ComboboxOption[] {
@@ -78,11 +86,13 @@ export function usePluginAttachmentPicker(
   input: PluginAttachmentPickerInput,
 ): PluginAttachmentPickerBinding {
   const plugins = useInstalledPlugins();
+  const hosts = useHosts();
   const sources = useMemo(
-    () => installedAttachmentSources(plugins, input.serverId),
-    [input.serverId, plugins],
+    () => installedAttachmentSources(plugins, input.serverId, hosts),
+    [input.serverId, plugins, hosts],
   );
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [approvedRemoteKey, setApprovedRemoteKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const active = sources.find((candidate) => candidate.key === activeKey) ?? null;
   const trimmedQuery = query.trim();
@@ -90,21 +100,28 @@ export function usePluginAttachmentPicker(
     {
       queryKey: [
         "plugin-attachment-search",
-        input.serverId,
+        active?.plugin.serverId ?? "",
         active?.plugin.id ?? "",
         active?.source.id ?? "",
         trimmedQuery,
       ],
       queryFn: async () => {
-        if (!input.client || !active) throw new Error("Plugin host is offline");
-        const client = input.client;
+        if (!active) throw new Error("Attachment source is unavailable");
+        const sourceHost = active.remote
+          ? getHostRuntimeStore().getSnapshot(active.plugin.serverId)
+          : null;
+        const client = active.remote ? sourceHost?.client : input.client;
+        if (!client || (active.remote && sourceHost?.connectionStatus !== "online")) {
+          throw new Error(`Source host ${active.hostLabel} is offline`);
+        }
         return searchPluginAttachments(
           active.source,
           (method, rpcInput) => client.invokePluginRpc(active.plugin.id, method, rpcInput),
           trimmedQuery,
         );
       },
-      enabled: input.connected && active !== null,
+      enabled:
+        input.connected && active !== null && (!active.remote || approvedRemoteKey === active.key),
       dataShape: "list",
       staleTimeMs: SEARCH_STALE_TIME_MS,
     },
@@ -116,6 +133,7 @@ export function usePluginAttachmentPicker(
   const options = useMemo(() => attachmentOptions(items), [items]);
   const close = useCallback(() => {
     setActiveKey(null);
+    setApprovedRemoteKey(null);
     setQuery("");
   }, []);
   const handleOpenChange = useCallback(
@@ -124,6 +142,9 @@ export function usePluginAttachmentPicker(
     },
     [close],
   );
+  const handleApproveRemote = useCallback(() => {
+    if (active) setApprovedRemoteKey(active.key);
+  }, [active]);
   const handleSelect = useCallback(
     (itemId: string) => {
       if (!active) return;
@@ -133,8 +154,11 @@ export function usePluginAttachmentPicker(
         {
           pluginId: active.plugin.id,
           sourceId: active.source.id,
-          sourceTitle: active.plugin.i18n.resolve(active.source.title, active.plugin.locale),
+          sourceTitle: active.remote
+            ? `${active.plugin.i18n.resolve(active.source.title, active.plugin.locale)} · ${active.hostLabel}`
+            : active.plugin.i18n.resolve(active.source.title, active.plugin.locale),
           sourceIcon: active.source.icon,
+          ...(active.remote ? { sourceServerId: active.plugin.serverId } : {}),
         },
         item,
       );
@@ -145,17 +169,55 @@ export function usePluginAttachmentPicker(
   );
   const menuItems = useMemo(
     () =>
-      sources.map(({ key, source, plugin }) => ({
-        id: `plugin:${key}`,
-        label: `Attach ${plugin.i18n.resolve(source.title, plugin.locale)}`,
-        icon: <ThemedSourceIcon icon={source.icon} uniProps={iconColorMapping} />,
-        onSelect: () => setActiveKey(key),
-      })),
+      sources.map(({ key, source, plugin, remote, hostLabel }) => {
+        const title = plugin.i18n.resolve(source.title, plugin.locale);
+        return {
+          id: `plugin:${key}`,
+          label: remote ? `Attach ${title} from ${hostLabel}` : `Attach ${title}`,
+          icon: <ThemedSourceIcon icon={source.icon} uniProps={iconColorMapping} />,
+          onSelect: () => setActiveKey(key),
+        };
+      }),
     [sources],
   );
-  if (!active) return { menuItems, picker: null };
+  const newAgentShortcutItems = useMemo(() => {
+    const shortcutIds = new Set(
+      sources
+        .filter(({ source, remote }) => !remote && source.newAgentShortcut === true)
+        .map(({ key }) => `plugin:${key}`),
+    );
+    return menuItems.filter((item) => shortcutIds.has(item.id));
+  }, [menuItems, sources]);
+  if (!active) return { menuItems, newAgentShortcutItems, picker: null };
+  if (active.remote && approvedRemoteKey !== active.key) {
+    return {
+      menuItems,
+      newAgentShortcutItems,
+      picker: (
+        <Combobox
+          options={[
+            {
+              id: "browse",
+              label: `Search ${active.plugin.i18n.resolve(active.source.title, active.plugin.locale)} on ${active.hostLabel}`,
+              description:
+                "Readable results will be copied to this app. Your selected snapshot goes to the destination host when you send.",
+            },
+          ]}
+          value=""
+          onSelect={handleApproveRemote}
+          keepOpenOnSelect
+          title={`Use ${active.hostLabel} as the source?`}
+          open
+          onOpenChange={handleOpenChange}
+          desktopPlacement="top-start"
+          anchorRef={input.anchorRef}
+        />
+      ),
+    };
+  }
   return {
     menuItems,
+    newAgentShortcutItems,
     picker: (
       <Combobox
         options={options}
@@ -166,7 +228,11 @@ export function usePluginAttachmentPicker(
           active.source.searchPlaceholder,
           active.plugin.locale,
         )}
-        title={active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)}
+        title={
+          active.remote
+            ? `${active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)} from ${active.hostLabel}`
+            : active.plugin.i18n.resolve(active.source.pickerTitle, active.plugin.locale)
+        }
         open
         onOpenChange={handleOpenChange}
         onSearchQueryChange={setQuery}
