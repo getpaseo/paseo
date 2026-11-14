@@ -250,6 +250,84 @@ describe("cursor usage source", () => {
     expect(cursor.status).toBe("available");
   });
 
+  describe.each([
+    ["modern state.vscdb", "v1"],
+    ["modern state.vscdb", "v99"],
+    ["legacy cursorAuthStatus", "v1"],
+    ["auth.json", "v1"],
+    ["CURSOR_ACCESS_TOKEN", "v1"],
+    ["CURSOR_TOKEN", "v1"],
+  ])("encrypted %s (%s)", (store, version) => {
+    beforeEach(() => {
+      const encrypted = `cursor-safe-storage:${version}:${Buffer.from("ciphertext").toString("base64")}`;
+      if (store === "modern state.vscdb") {
+        writeCursorStateDb(homeDir, { "cursorAuth/accessToken": encrypted });
+      } else if (store === "legacy cursorAuthStatus") {
+        writeCursorStateDb(homeDir, {
+          cursorAuthStatus: Buffer.from(JSON.stringify({ accessToken: encrypted }), "utf8"),
+        });
+      } else if (store === "auth.json") {
+        writeCursorAuthJson(homeDir, encrypted);
+      } else {
+        process.env[store] = encrypted;
+      }
+    });
+
+    it("discovers no account when the only credential is encrypted", async () => {
+      expect(await discover()).toEqual([]);
+    });
+
+    it("never sends an encrypted bearer token when fetching from a stored locator", async () => {
+      let input: Parameters<typeof fetchUsage>[0];
+      if (store === "modern state.vscdb" || store === "legacy cursorAuthStatus") {
+        input = {
+          store: "sqlite",
+          locator: join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
+        };
+      } else if (store === "auth.json") {
+        input = { store: "file", locator: join(homeDir, ".config", "cursor", "auth.json") };
+      } else {
+        input = { store: "env", locator: store };
+      }
+      const requests: RequestInit[] = [];
+      fetchApi = async (_url, init) => {
+        requests.push(init ?? {});
+        return new Response(null, { status: 401 });
+      };
+
+      await expect(fetchUsage(input, fetchApi)).rejects.toThrow(
+        "Cursor login store no longer exists",
+      );
+      expect(requests).toEqual([]);
+    });
+  });
+
+  it("discovers and uses auth.json after skipping an encrypted desktop token", async () => {
+    writeCursorStateDb(homeDir, {
+      "cursorAuth/accessToken": `cursor-safe-storage:v1:${Buffer.from("ciphertext").toString("base64")}`,
+    });
+    writeCursorAuthJson(homeDir, "cursor_cli_jwt");
+    expect(await discover()).toEqual([
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "file", locator: join(homeDir, ".config", "cursor", "auth.json") },
+      },
+    ]);
+    const authorizations: string[] = [];
+    fetchApi = async (_url, init) => {
+      authorizations.push(new Headers(init?.headers).get("Authorization") ?? "");
+      return jsonResponse({
+        planUsage: { totalSpend: "0", remaining: "100", limit: "100" },
+        billingCycleStart: null,
+        billingCycleEnd: null,
+      });
+    };
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+    expect(authorizations).toEqual(["Bearer cursor_cli_jwt"]);
+    expect(cursor.status).toBe("available");
+  });
+
   it("omits unreadable state.vscdb", async () => {
     const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
     mkdirSync(directory, { recursive: true });
