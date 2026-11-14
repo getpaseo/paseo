@@ -30,6 +30,7 @@ export { resolvePaseoHome } from "./paseo-home.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
 export { readLocalCredentialForTarget } from "./local-credential.js";
+export { LISTEN_ADDRESS_RETRY_MAX_WAIT_MS } from "./listen-address-retry.js";
 export {
   TerminalCleanupNotConfirmedError,
   retryUnconfirmedTerminalCleanup,

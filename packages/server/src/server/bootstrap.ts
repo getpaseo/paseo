@@ -21,6 +21,11 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+import {
+  listenWithAddressRetry,
+  type ListenAddressRetryClock,
+  type ListenAddressRetryPolicy,
+} from "./listen-address-retry.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -45,6 +50,34 @@ function resolveBoundListenTarget(
     host: listenTarget.host,
     port: address.port,
   };
+}
+
+/** One listen attempt. Node allows listen() again on the same server after a listen error. */
+function listenHttpServerOnce(
+  httpServer: ReturnType<typeof createHTTPServer>,
+  listenTarget: ListenTarget,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => {
+      httpServer.off("listening", onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      httpServer.off("error", onError);
+      resolve();
+    };
+    httpServer.once("error", onError);
+    httpServer.once("listening", onListening);
+
+    if (listenTarget.type === "tcp") {
+      httpServer.listen(listenTarget.port, listenTarget.host);
+    } else {
+      if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+        unlinkSync(listenTarget.path);
+      }
+      httpServer.listen(listenTarget.path);
+    }
+  });
 }
 
 // Matches a Windows drive-letter path like C:\ or D:\
@@ -513,6 +546,8 @@ export interface PaseoDaemonDependencies {
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
   createHubDaemonId?: () => string;
+  listenAddressRetryClock?: ListenAddressRetryClock;
+  listenAddressRetryPolicy?: ListenAddressRetryPolicy;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
@@ -1770,12 +1805,7 @@ export async function createPaseoDaemon(
 
       // Start main HTTP server
       await new Promise<void>((resolve, reject) => {
-        const onError = (err: Error) => {
-          httpServer.off("listening", onListening);
-          reject(err);
-        };
         const onListening = () => {
-          httpServer.off("error", onError);
           mainStarted = true;
           const logAndResolve = async () => {
             boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
@@ -1946,17 +1976,19 @@ export async function createPaseoDaemon(
 
           logAndResolve().then(resolve, reject);
         };
-        httpServer.once("error", onError);
-        httpServer.once("listening", onListening);
 
-        if (listenTarget.type === "tcp") {
-          httpServer.listen(listenTarget.port, listenTarget.host);
-        } else {
-          if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-            unlinkSync(listenTarget.path);
-          }
-          httpServer.listen(listenTarget.path);
-        }
+        listenWithAddressRetry({
+          attemptListen: () => listenHttpServerOnce(httpServer, listenTarget),
+          listen: config.listen,
+          clock: dependencies.listenAddressRetryClock,
+          policy: dependencies.listenAddressRetryPolicy,
+          onRetry: ({ attempt, delayMs, waitedMs }) => {
+            logger.warn(
+              { listen: config.listen, attempt, delayMs, waitedMs },
+              "Configured listen address is not available yet; retrying",
+            );
+          },
+        }).then(onListening, reject);
       });
 
       // Start speech service after listening so synchronous Sherpa native
