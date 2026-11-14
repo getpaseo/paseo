@@ -36,6 +36,7 @@ describe("OpenCodeEventConsumer", () => {
     consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -53,6 +54,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: processExit.promise,
+      onSustainedFailure: async () => undefined,
       listening: listening.promise,
       logger: createRecordingLogger(),
       timing,
@@ -98,6 +100,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -129,6 +132,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger,
       timing,
       createClient: (baseUrl) =>
@@ -188,6 +192,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: processExit.promise,
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -207,6 +212,90 @@ describe("OpenCodeEventConsumer", () => {
     expect(upstream.requests).toHaveLength(1);
   });
 
+  test("asks the manager to invalidate a generation after a sustained failure", async () => {
+    const upstream = await createSseUpstream();
+    const timing = new ControlledTiming();
+    let now = 1_000_000;
+    const onSustainedFailure = vi.fn(async () => undefined);
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: upstream.url,
+      processExit: new Promise<Error>(() => undefined),
+      logger: createRecordingLogger(),
+      timing,
+      now: () => now,
+      onSustainedFailure,
+    });
+    cleanups.push(async () => {
+      await consumer.close();
+      await upstream.close();
+    });
+    const inputs: OpenCodeEventSourceInput[] = [];
+    consumer.subscribe((input) => inputs.push(input));
+
+    await upstream.connected(1);
+    upstream.end(0);
+    await timing.waiting();
+    now += 60_000;
+    timing.advanceWait();
+
+    await upstream.connected(2);
+    upstream.end(1);
+    await eventually(() => expect(onSustainedFailure).toHaveBeenCalledTimes(1));
+    expect(
+      inputs.filter((input) => "type" in input && input.type === "server-exited"),
+    ).toHaveLength(1);
+    await expect(consumer.ready()).rejects.toThrow("did not deliver an event");
+    expect(upstream.requests).toHaveLength(2);
+  });
+
+  test("does not treat idle time since the last event as failure duration", async () => {
+    const upstream = await createSseUpstream();
+    const timing = new ControlledTiming();
+    let now = 0;
+    const onSustainedFailure = vi.fn(async () => undefined);
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: upstream.url,
+      processExit: new Promise<Error>(() => undefined),
+      logger: createRecordingLogger(),
+      timing,
+      now: () => now,
+      onSustainedFailure,
+    });
+    cleanups.push(async () => {
+      await consumer.close();
+      await upstream.close();
+    });
+    consumer.subscribe(() => undefined);
+
+    await upstream.connected(1);
+    upstream.send(0, connectedRecord("/one"));
+    await consumer.ready();
+
+    // The stream was healthy and simply idle; the next failure must not inherit that silence.
+    now = 120_000;
+    upstream.end(0);
+    await timing.waiting();
+    timing.advanceWait();
+
+    await upstream.connected(2);
+    upstream.end(1);
+    await timing.waiting();
+    expect(onSustainedFailure).not.toHaveBeenCalled();
+    timing.advanceWait();
+
+    // Two consecutive zero-record failures at the same timestamp must still be inside budget.
+    await upstream.connected(3);
+    upstream.end(2);
+    await timing.waiting();
+    expect(onSustainedFailure).not.toHaveBeenCalled();
+    now = 180_000;
+    timing.advanceWait();
+
+    await upstream.connected(4);
+    upstream.end(3);
+    await eventually(() => expect(onSustainedFailure).toHaveBeenCalledTimes(1));
+  });
+
   test("backs off repeated zero-record EOFs exponentially up to the cap", async () => {
     const upstream = await createSseUpstream();
     const timing = new ControlledTiming();
@@ -214,6 +303,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger,
       timing,
     });
@@ -242,6 +332,7 @@ describe("OpenCodeEventConsumer", () => {
       }),
       "OpenCode event stream connection failed; retrying",
     );
+    expect(logger.warn.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   test("isolates a throwing subscriber from the shared transport", async () => {
@@ -250,6 +341,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -277,6 +369,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger,
     });
     cleanups.push(async () => {
@@ -308,6 +401,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -330,6 +424,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       timing,
     });
@@ -358,6 +453,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
       createClient: () =>
         ({
@@ -388,6 +484,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger,
       timing,
     });
@@ -411,6 +508,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: processExit.promise,
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
     });
     cleanups.push(async () => {
@@ -432,6 +530,7 @@ describe("OpenCodeEventConsumer", () => {
     const consumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       logger: createRecordingLogger(),
     });
     cleanups.push(upstream.close);
@@ -448,6 +547,7 @@ describe("OpenCodeEventConsumer", () => {
     const waitingConsumer = new OpenCodeEventConsumer({
       serverUrl: upstream.url,
       processExit: new Promise<Error>(() => undefined),
+      onSustainedFailure: async () => undefined,
       listening: new Promise<void>(() => undefined),
       logger: createRecordingLogger(),
     });
