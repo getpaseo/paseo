@@ -3029,6 +3029,10 @@ export const ko: TranslationResources = {
     providers: {
       title: "프로바이더",
       addProvider: "프로바이더 추가",
+      list: {
+        add: "프로바이더",
+        updatingTo: "{{version}}(으)로 업데이트 중...",
+      },
       detail: {
         backToProviders: "프로바이더로 돌아가기",
         enabled: "사용",

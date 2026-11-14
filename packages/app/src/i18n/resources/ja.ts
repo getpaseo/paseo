@@ -3044,6 +3044,10 @@ export const ja: TranslationResources = {
     providers: {
       title: "プロバイダー",
       addProvider: "プロバイダーを追加",
+      list: {
+        add: "プロバイダー",
+        updatingTo: "{{version}} に更新中...",
+      },
       detail: {
         backToProviders: "プロバイダーに戻る",
         enabled: "有効",

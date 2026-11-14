@@ -2976,6 +2976,10 @@ export const zhCN: TranslationResources = {
     providers: {
       title: "Providers",
       addProvider: "添加 Provider",
+      list: {
+        add: "Provider",
+        updatingTo: "正在更新到 {{version}}...",
+      },
       detail: {
         backToProviders: "返回 Provider 列表",
         enabled: "已启用",

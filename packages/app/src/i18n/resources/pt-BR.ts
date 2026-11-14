@@ -3057,6 +3057,10 @@ export const ptBR: TranslationResources = {
     providers: {
       title: "Provedores",
       addProvider: "Adicionar provedor",
+      list: {
+        add: "Provedor",
+        updatingTo: "Atualizando para {{version}}...",
+      },
       detail: {
         backToProviders: "Voltar para provedores",
         enabled: "Ativado",

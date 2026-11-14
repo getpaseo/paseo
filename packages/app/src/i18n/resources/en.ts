@@ -3142,6 +3142,10 @@ export const en = {
     providers: {
       title: "Providers",
       addProvider: "Add provider",
+      list: {
+        add: "Provider",
+        updatingTo: "Updating to {{version}}...",
+      },
       detail: {
         backToProviders: "Back to providers",
         enabled: "Enabled",

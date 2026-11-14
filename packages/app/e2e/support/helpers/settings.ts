@@ -507,8 +507,8 @@ export async function serveJson(page: Page, url: string, body: unknown): Promise
   });
 }
 
-export async function openAddProviderArea(page: Page): Promise<void> {
-  await page.getByTestId("host-page-add-provider-card").scrollIntoViewIfNeeded();
+export async function openAddProvider(page: Page): Promise<void> {
+  await page.getByTestId("provider-list-add").click();
   await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
 }
 
@@ -522,13 +522,26 @@ export async function installAcpCatalogProvider(page: Page, providerName: string
   await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
 }
 
+/** Adding opens the new provider's page; its row waits in the list behind it. */
 export async function expectProviderInstalledInSettings(
   page: Page,
   providerName: string,
 ): Promise<void> {
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+  await page.getByTestId("provider-detail-back").click();
   await expect(
     page.getByRole("button", { name: `${providerName} provider details`, exact: true }),
   ).toBeVisible();
+}
+
+export async function openProviderDetail(page: Page, providerName: string): Promise<void> {
+  await page.getByRole("button", { name: `${providerName} provider details`, exact: true }).click();
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+}
+
+export async function leaveProviderDetail(page: Page): Promise<void> {
+  await page.getByTestId("provider-detail-back").click();
+  await expect(page.getByTestId("provider-list")).toBeVisible();
 }
 
 export async function expectHostNoDaemonLifecycleRow(page: Page): Promise<void> {

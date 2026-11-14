@@ -3076,6 +3076,10 @@ export const es: TranslationResources = {
     providers: {
       title: "Proveedores",
       addProvider: "Agregar proveedor",
+      list: {
+        add: "Proveedor",
+        updatingTo: "Actualizando a {{version}}...",
+      },
       detail: {
         backToProviders: "Volver a proveedores",
         enabled: "Activado",

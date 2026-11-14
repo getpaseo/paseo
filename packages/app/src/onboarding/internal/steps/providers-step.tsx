@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { View } from "react-native";
-import { ProvidersSection } from "@/screens/settings/providers-section";
+import { ProviderList } from "@/provider-settings";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 
 export function ProvidersStep({ serverId }: { serverId: string }) {
@@ -11,7 +11,7 @@ export function ProvidersStep({ serverId }: { serverId: string }) {
   );
   return (
     <View>
-      <ProvidersSection serverId={serverId} onOpenProvider={openProvider} />
+      <ProviderList serverId={serverId} onOpenProvider={openProvider} />
     </View>
   );
 }
