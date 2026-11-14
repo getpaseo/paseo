@@ -305,6 +305,7 @@ export function useAgentHistory(options: {
     [daemons],
   );
 
+  const queryEnabled = Boolean(enabled && targetHosts.length > 0);
   const historyQuery = useInfiniteQuery<
     AgentHistoryBatchPage,
     Error,
@@ -313,9 +314,11 @@ export function useAgentHistory(options: {
     AgentHistoryCursorByServerId | null
   >({
     queryKey,
-    enabled: Boolean(enabled && targetHosts.length > 0),
+    enabled: queryEnabled,
     staleTime: 30_000,
-    ...(options.keepPreviousResults ? { placeholderData: keepPreviousData } : {}),
+    // Previous results stand in only until the next query's arrive. With no host to search,
+    // nothing will arrive, so they would stand in, and read as still loading, indefinitely.
+    ...(options.keepPreviousResults && queryEnabled ? { placeholderData: keepPreviousData } : {}),
     initialPageParam: null,
     getNextPageParam: getNextAgentHistoryPageParam,
     queryFn: async ({ pageParam }) => {
