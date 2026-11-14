@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { Platform, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
-import { ArrowLeft, Settings } from "lucide-react-native";
+import { Settings } from "lucide-react-native";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
+import { SettingsBackLink } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -181,14 +182,12 @@ export function PluginSettingsContent({
   return (
     <View>
       {showBackToPlugins ? (
-        <Button
-          onPress={onBackToPlugins}
-          variant="ghost"
-          leftIcon={ArrowLeft}
-          style={styles.backButton}
-        >
-          {t("settings.plugins.screens.backToPlugins")}
-        </Button>
+        <View style={styles.backLink}>
+          <SettingsBackLink
+            label={t("settings.plugins.screens.backToPlugins")}
+            onPress={onBackToPlugins}
+          />
+        </View>
       ) : null}
       <ThemedSettingsContent {...identity} uniProps={themeMapping} />
     </View>
@@ -197,5 +196,5 @@ export function PluginSettingsContent({
 const styles = StyleSheet.create((theme) => ({
   message: { color: theme.colors.foregroundMuted },
   tabs: { flexGrow: 0, marginBottom: theme.spacing[4] },
-  backButton: { alignSelf: "flex-start", paddingHorizontal: 0, marginBottom: theme.spacing[4] },
+  backLink: { marginBottom: theme.spacing[4] },
 }));

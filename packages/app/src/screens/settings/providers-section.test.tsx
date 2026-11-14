@@ -214,11 +214,6 @@ vi.mock("@/components/provider-icons", () => ({
     React.createElement("span", { "data-icon": `provider-${provider}` }),
 }));
 
-vi.mock("@/stores/provider-settings-store", () => ({
-  useProviderSettingsStore: (selector: (state: unknown) => unknown) =>
-    selector({ open: openProviderSettingsMock }),
-}));
-
 vi.mock("@/components/provider-catalog-list", () => ({
   ProviderCatalogList: () => null,
 }));
@@ -351,7 +346,7 @@ describe("ProvidersSection", () => {
     act(() => {
       root?.render(
         <ToastApiProvider api={toastApi}>
-          <ProvidersSection serverId="server-1" />
+          <ProvidersSection serverId="server-1" onOpenProvider={openProviderSettingsMock} />
         </ToastApiProvider>,
       );
     });
@@ -410,7 +405,7 @@ describe("ProvidersSection", () => {
     expect(switchEl).toBeGreaterThan(modelCount);
   });
 
-  it("opens the diagnostic sheet when the outer row is pressed for a disabled provider", () => {
+  it("asks its host to open the provider when the outer row is pressed for a disabled provider", () => {
     snapshotState.entries = [disabledCodexEntry];
     configState.config = makeConfig({ codex: { enabled: false } });
 
@@ -424,10 +419,7 @@ describe("ProvidersSection", () => {
     });
 
     expect(openProviderSettingsMock).toHaveBeenCalledTimes(1);
-    expect(openProviderSettingsMock).toHaveBeenCalledWith({
-      serverId: "server-1",
-      provider: "codex",
-    });
+    expect(openProviderSettingsMock).toHaveBeenCalledWith("codex");
   });
 
   it("toggles the provider enabled flag through patchConfig when the switch is pressed", async () => {

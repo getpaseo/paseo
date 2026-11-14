@@ -30,6 +30,7 @@ export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
 export { SettingsDetailRow } from "./detail-row";
+export { SettingsBackLink, SettingsDetailHeader } from "./detail-header";
 export { SettingsInfoTip } from "./headings/settings-info-tip";
 
 /** What app screens can add to a plugin-facing row: an accessory beside the label, such as an info tip. */

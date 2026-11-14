@@ -1,0 +1,25 @@
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { ProviderInstallationState } from "@/components/provider-installation-section";
+
+export interface DetailSections {
+  /** The failure the page leads with, or null. Empty when the provider gave no message. */
+  error: string | null;
+  /** Models are listed only while the provider runs. */
+  models: boolean;
+}
+
+/** Which of the detail's state-dependent parts show, so each fact is said once. */
+export function readDetailSections(
+  entry: ProviderSnapshotEntry,
+  installation: ProviderInstallationState,
+): DetailSections {
+  const notInstalled =
+    entry.status === "unavailable" ||
+    (installation.status === "ready" &&
+      installation.installation?.inspection?.status === "not_installed");
+  const failing = entry.enabled && entry.status === "error" && !notInstalled;
+  return {
+    error: failing ? (entry.error?.trim() ?? "") : null,
+    models: entry.enabled && (entry.status === "ready" || entry.status === "loading"),
+  };
+}
