@@ -538,6 +538,11 @@ function handleHttpRequest(
   }
 
   const duplex = new TunnelDuplex(input.diagnostics);
+  // openStream can synchronously close the sink when its renderer disappeared.
+  // Attach this before opening so a failed stream cannot emit an unhandled error.
+  duplex.on("error", (error) => {
+    log("http.tunnel-error", { host: target.host, port: target.port, error: String(error) });
+  });
   const handle = openStream({ host: target.host, port: target.port }, duplex.sink);
   if (!handle) {
     sendProxyError(
