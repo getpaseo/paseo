@@ -44,13 +44,12 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const handleOverviewContentSizeChange = useCallback((_width: number, height: number) => {
     setOverviewContentHeight(height);
   }, []);
-  // A drag past the end of short content leaves the separator at the content's bottom, so the
-  // share saved is the one drawn. Otherwise the separator would jump there when content grows.
   const handleResize = useCallback(
     (_groupId: string, sizes: number[]) => {
       const [share] = sizes;
       if (share === undefined || splitHeight <= 0) return;
-      setOverviewShare(Math.min(share, overviewContentHeight / splitHeight));
+      const contentShare = overviewContentHeight / splitHeight;
+      setOverviewShare((current) => resolveDraggedShare(share, current, contentShare));
     },
     [overviewContentHeight, splitHeight],
   );
@@ -110,6 +109,17 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
       </View>
     </View>
   );
+}
+
+/**
+ * The share a drag leaves the overview. Short content stops the separator at the content's
+ * bottom, so a drag that ends there or below saves what was drawn and keeps any larger share
+ * the overview already had. The separator then neither jumps to the pointer nor stays pinned
+ * at the old content height when the content grows.
+ */
+function resolveDraggedShare(pointerShare: number, currentShare: number, contentShare: number) {
+  if (pointerShare < contentShare) return pointerShare;
+  return Math.max(currentShare, contentShare);
 }
 
 const styles = StyleSheet.create((theme) => ({

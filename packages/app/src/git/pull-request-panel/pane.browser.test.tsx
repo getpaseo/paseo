@@ -183,18 +183,23 @@ describe("pull request pane layout", () => {
     expect(isOnScreen(activityHeader(pane))).toBe(true);
   });
 
-  it("keeps the separator where it was drawn when a drag past short checks is followed by more", async () => {
-    const pane = mountPane(pullRequest(successfulChecks(2)));
-    await settleLayout();
-    const drawn = checksRegionBottom(pane);
+  it.each([5, 400])(
+    "gives the checks their earlier share when they grow after a %ipx drag past their end",
+    async (deltaY) => {
+      const pane = mountPane(pullRequest(successfulChecks(2)));
+      await settleLayout();
+      const drawn = checksRegionBottom(pane);
 
-    dragSeparator(pane, 400);
-    await settleLayout();
-    renderPane(pullRequest(successfulChecks(30)));
-    await settleLayout();
+      dragSeparator(pane, deltaY);
+      await settleLayout();
+      expect(checksRegionBottom(pane)).toBeCloseTo(drawn, 0);
 
-    expect(checksRegionBottom(pane)).toBeCloseTo(drawn, 0);
-  });
+      renderPane(pullRequest(successfulChecks(30)));
+      await settleLayout();
+      const overview = within(pane).getByTestId("pr-pane-overview");
+      expect(overview.getBoundingClientRect().height).toBeCloseTo(PANE_HEIGHT / 2, 0);
+    },
+  );
 
   it("resizes the checks against Activity by dragging the separator between them", async () => {
     const pane = mountPane(pullRequest(successfulChecks(30)));
