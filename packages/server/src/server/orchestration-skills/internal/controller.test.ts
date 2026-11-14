@@ -335,6 +335,50 @@ describe("skills controller", () => {
     expect(await isInstalled(harness.targets, "paseo-loop")).toBe(false);
   });
 
+  it("requires confirmation before removing retired paseo-loop copies", async () => {
+    await harness.controller.install();
+    await writeUserFile(harness.targets, "paseo-loop", "SKILL.md", "loop-v1");
+    await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "keep this");
+    await rm(path.join(harness.targets.sourceDir, "paseo-loop"), { recursive: true });
+
+    await harness.controller.autoUpdate();
+    expect(await readUserFile(harness.targets, "paseo-loop", "SKILL.md")).toEqual([
+      "loop-v1",
+      "loop-v1",
+      "loop-v1",
+    ]);
+
+    expect(await harness.controller.save({ mode: "all" })).toEqual({
+      state: "drift",
+      ops: [{ kind: "delete", name: "paseo-loop" }],
+      available: ["paseo", "paseo-advisor"],
+      installed: BUNDLED_SKILLS,
+      selection: { mode: "all" },
+      confirmationRequired: { removals: ["paseo-loop"] },
+    });
+    expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
+      "keep this",
+      "keep this",
+    ]);
+
+    expect(
+      await harness.controller.save({ mode: "all", confirmedRemovals: ["paseo-loop"] }),
+    ).toEqual({
+      state: "up-to-date",
+      ops: [],
+      available: ["paseo", "paseo-advisor"],
+      installed: ["paseo", "paseo-advisor"],
+      selection: { mode: "all" },
+      confirmationRequired: null,
+    });
+    expect(await installedEverywhere(harness.targets)).toEqual([
+      ["paseo", "paseo-advisor"],
+      ["paseo", "paseo-advisor"],
+      [],
+    ]);
+  });
+
   it("keeps the saved selection after uninstall so a later install restores it", async () => {
     await harness.controller.save({ mode: "custom", skills: ["paseo"] });
 

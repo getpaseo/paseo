@@ -150,6 +150,22 @@ describe("getSkillsStatus", () => {
     expect((await getSkillsStatus(sandbox.targets, ALL_SKILLS)).installed).toEqual(["paseo-chat"]);
   });
 
+  it.each(["agentsDir", "claudeDir", "codexDir"] as const)(
+    "reports retired paseo-loop copies in %s for removal without making them selectable",
+    async (target) => {
+      await writeBundleSkill(sandbox.targets.sourceDir, "paseo", { "SKILL.md": "paseo-v1" });
+      await installSkills(sandbox.targets, ALL_SKILLS);
+      await writeOnDiskSkill(sandbox.targets[target], "paseo-loop", { "SKILL.md": "loop-v1" });
+
+      expect(await getSkillsStatus(sandbox.targets, ALL_SKILLS)).toEqual({
+        state: "drift",
+        ops: [{ kind: "delete", name: "paseo-loop" }],
+        available: ["paseo"],
+        installed: ["paseo", "paseo-loop"],
+      });
+    },
+  );
+
   it("returns not-installed when only user-personal skill dirs exist (the live bug)", async () => {
     await writeCurrentBundle(sandbox.targets.sourceDir);
     for (const name of ["unslop", "tdd", "devbox"]) {
