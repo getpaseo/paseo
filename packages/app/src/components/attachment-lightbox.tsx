@@ -4,17 +4,21 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import { Pressable, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
-import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import {
+  type AttachmentPreviewUrl,
+  useAttachmentPreviewUrl,
+} from "@/attachments/use-attachment-preview-url";
 import { isNative } from "@/constants/platform";
 import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
 import { useGlobalOverlayLayer } from "@/lib/overlay-root";
+import { WindowSafeArea } from "@/window-layout";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -31,10 +35,13 @@ const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
 export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { t } = useTranslation();
   const metadata = source?.type === "attachment" ? source.metadata : null;
-  const attachmentUrl = useAttachmentPreviewUrl(metadata);
-  const url = source?.type === "uri" ? source.uri : attachmentUrl;
+  const attachmentPreview = useAttachmentPreviewUrl(metadata);
+  const image: AttachmentPreviewUrl =
+    source?.type === "uri" ? { status: "ready", url: source.uri } : attachmentPreview;
+  const url = image.status === "ready" ? image.url : null;
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
+  const failed = errored || image.status === "failed";
   const modalLayer = useGlobalOverlayLayer("modal", source !== null);
 
   useEffect(() => {
@@ -76,14 +83,12 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     return null;
   }
 
-  const hasError = errored || !url;
-
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
       <ModalRoot style={styles.root}>
-        {/* The modal is its own window: its insets are the window's, not the ones left where the
-            image was opened (inside a sheet tab, the bottom one is already spent). */}
-        <SafeAreaProvider>
+        {/* The modal draws over the whole window: its insets are the window's, not the ones left
+            where the image was opened (inside a sheet tab, the bottom one is already spent). */}
+        <WindowSafeArea>
           <WindowChromeRootRegion corners="both">
             <View ref={setOverlayScope} style={styles.root}>
               <Pressable
@@ -94,9 +99,10 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                 style={styles.backdrop}
               />
               <LightboxImageArea>
-                {hasError ? (
+                {failed ? (
                   <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
-                ) : (
+                ) : null}
+                {!failed && url ? (
                   <ZoomableImage
                     accessibilityLabel={t("composer.attachments.openImage")}
                     actions={actions}
@@ -108,11 +114,11 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                     testID="attachment-lightbox"
                     uri={url}
                   />
-                )}
+                ) : null}
               </LightboxImageArea>
             </View>
           </WindowChromeRootRegion>
-        </SafeAreaProvider>
+        </WindowSafeArea>
       </ModalRoot>
     </Modal>
   );
