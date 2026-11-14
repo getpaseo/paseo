@@ -7,12 +7,12 @@ canonical files and are trying to add or change one.
 
 ## Canonical files
 
-| File                                     | Use case                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
-| `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
-| `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
+| File                                  | Use case                                                          |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `components/ui/combobox.tsx`          | Anchored picker with search; mobile falls back to bottom sheet    |
+| `components/ui/tooltip.tsx`           | Non-interactive hover/long-press tooltip                          |
+| `components/ui/hover-card.tsx`        | Desktop-web hover card the pointer can move onto; Portal          |
+| `components/ui/autocomplete-popover/` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
 non-interactive, hover-card is web-only desktop, autocomplete keeps the composer
@@ -280,6 +280,22 @@ popover or leaves it behind the keyboard. `measureAtRest` measures through
 Fabric's transform-free `measureLayout` instead. Re-measure when `isMoving`
 settles; the composer's resting position changes as the draft grows.
 
+A measured rect is an asynchronous copy, so it lands after the anchor's new
+layout has painted. The composer resizes while the autocomplete is open: a
+wrapped line, cleared text, a window resize. On web a `ResizeObserver` reads
+the anchor's rect against the layer and commits the placement with `flushSync`,
+which runs after layout and before paint. On native a Reanimated frame callback
+reads only the anchor's height on the UI thread and holds its bottom edge at
+the rest measurement. A height carries no transform. On iOS the absolute
+position does not reliably include one: the keyboard lift runs on the native
+driver and reaches the shadow tree only when the view re-renders. The
+fixed-bottom model is wrong for the centered New workspace composer on tablets,
+which grows around its middle, and for width or x changes. The popover is off
+there by half the growth, or by the old width, until the next rest measurement.
+Keep the portal's `KeyboardTranslateView` host-sized with
+`pointerEvents="box-none"` and position the popover inside it, so the popover
+moves without leaving its parent's bounds (Gotcha 1).
+
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
 interactive move, but not at the terminal event, so JS contention can otherwise
@@ -453,6 +469,14 @@ Before you write a new one, ask:
    `top` paints over its anchor until the next placement lands, about 150 ms
    on Android. Web hides this because React commits the resize and the
    re-placement in one task.
+7. **Does the panel hold a list that reads away from its anchor?** Make the
+   anchor edge the list's resting scroll position: an inverted list, as in
+   `components/ui/autocomplete.tsx`. On Android a scroll command issued after
+   the rows commit reaches the screen one or two frames after them, so a list
+   scrolled to its anchor edge paints its far end first. Give each result set
+   its own list with a `key`, so it starts at the anchor edge with the rows
+   that fill the panel. A list that mounts every result holds the panel's
+   first frame until the last row is ready.
 
 Then copy the closest canonical file and trim.
 
