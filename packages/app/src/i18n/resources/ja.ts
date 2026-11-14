@@ -1308,7 +1308,8 @@ export const ja: TranslationResources = {
       title: "ワークツリースクリプトを設定",
       description:
         "新しいワークツリーが依存関係をインストールして自動的に準備できるようにセットアップコマンドを追加してください。",
-      openProjectSettings: "プロジェクト設定を開く",
+      askAgent: "エージェントに依頼",
+      addManually: "手動で追加",
     },
     project: {
       actions: {

@@ -1301,7 +1301,8 @@ export const ko: TranslationResources = {
       title: "워크트리 스크립트 설정",
       description:
         "새 워크트리가 의존성을 설치하고 자동으로 준비될 수 있도록 설정 명령을 추가하세요.",
-      openProjectSettings: "프로젝트 설정 열기",
+      askAgent: "에이전트에게 요청",
+      addManually: "직접 추가",
     },
     project: {
       actions: {

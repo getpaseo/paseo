@@ -1330,7 +1330,8 @@ export const es: TranslationResources = {
       title: "Configurar secuencias de comandos del árbol de trabajo",
       description:
         "Agregue comandos de configuración para que los nuevos árboles de trabajo puedan instalar dependencias y prepararse automáticamente.",
-      openProjectSettings: "Abrir la configuración del proyecto",
+      askAgent: "Pedir al agente",
+      addManually: "Agregar manualmente",
     },
     project: {
       actions: {
