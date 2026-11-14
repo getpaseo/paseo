@@ -668,7 +668,11 @@ ACP permission requests without surfacing each prompt. If the provider sends no 
 Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
 explicitly disable it.
 
-Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
+Models and modes are discovered dynamically at runtime from the agent process. goose gates its
+model list behind its active provider, so Paseo sweeps every provider goose offers and lists the
+models as `provider/model` (`openai/gpt-4o`), skipping providers that fail to construct. The sweep
+restores goose's active provider afterwards — goose persists it on every switch. To curate the list
+yourself, use the `models` field:
 
 ```json
 {

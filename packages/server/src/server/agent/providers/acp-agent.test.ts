@@ -529,6 +529,62 @@ test("ACP setModel only uses config-option fallback when the matching select cho
   expect(setSessionConfigOption).not.toHaveBeenCalled();
 });
 
+test("ACP setModel routes a catalog id to the modelWriter even when the session advertises only bare model ids", async () => {
+  const written: string[] = [];
+  const session = new ACPAgentSession(
+    { provider: "goose", cwd: "/tmp/paseo-acp-test" },
+    {
+      provider: "goose",
+      logger: createTestLogger(),
+      defaultCommand: ["goose", "acp"],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      modelWriter: async (_connection, _sessionId, modelId) => {
+        written.push(modelId);
+        return {
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "gpt-4o",
+              options: [{ value: "gpt-4o", name: "GPT-4o" }],
+            },
+          ],
+          modelConfigId: "model",
+        };
+      },
+    },
+  );
+  const internals = asInternals<ACPModelSelectionInternals>(session);
+  internals.sessionId = "session-1";
+  internals.connection = { setSessionConfigOption: vi.fn() };
+  // goose advertises only the active provider's bare ids; the catalog id is namespaced.
+  internals.availableModels = [{ modelId: "qwen3", name: "Qwen3" }];
+  internals.configOptions = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "qwen3",
+      options: [{ value: "qwen3", name: "Qwen3" }],
+    },
+  ];
+
+  await session.setModel("openai/gpt-4o");
+
+  expect(written).toEqual(["openai/gpt-4o"]);
+});
+
 describe("createLoggedNdJsonStream", () => {
   test("routes malformed ACP stdout through the provider logger instead of console.error", async () => {
     const input = new TransformStream<Uint8Array, Uint8Array>();

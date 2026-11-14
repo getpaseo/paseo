@@ -482,6 +482,19 @@ export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
 
+// A model write can move several selects: switching provider refreshes the model list,
+// so the writer returns the final options for the session to apply.
+export interface ACPModelWriteResult {
+  configOptions: SessionConfigOption[];
+  modelConfigId: string;
+}
+
+export type ACPModelWriter = (
+  connection: ClientSideConnection,
+  sessionId: string,
+  modelId: string,
+) => Promise<ACPModelWriteResult>;
+
 interface ACPAgentClientOptions {
   provider: string;
   // Provider id usage sources match a session against; ACP sessions without one report no usage.
@@ -508,6 +521,7 @@ interface ACPAgentClientOptions {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  modelWriter?: ACPModelWriter;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
@@ -540,6 +554,7 @@ interface ACPAgentSessionOptions {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  modelWriter?: ACPModelWriter;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
@@ -983,6 +998,7 @@ export class ACPAgentClient implements AgentClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly modelWriter?: ACPModelWriter;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -1014,6 +1030,7 @@ export class ACPAgentClient implements AgentClient {
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
+    this.modelWriter = options.modelWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
@@ -1047,6 +1064,7 @@ export class ACPAgentClient implements AgentClient {
         providerModeWriter: this.providerModeWriter,
         beforeModeWriter: this.beforeModeWriter,
         thinkingOptionWriter: this.thinkingOptionWriter,
+        modelWriter: this.modelWriter,
         capabilities: {
           ...this.capabilities,
           supportsMcpServers:
@@ -1105,6 +1123,7 @@ export class ACPAgentClient implements AgentClient {
       providerModeWriter: this.providerModeWriter,
       beforeModeWriter: this.beforeModeWriter,
       thinkingOptionWriter: this.thinkingOptionWriter,
+      modelWriter: this.modelWriter,
       capabilities: {
         ...this.capabilities,
         supportsMcpServers:
@@ -1765,6 +1784,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     sessionId: string,
     thinkingOptionId: string,
   ) => Promise<void>;
+  private readonly modelWriter?: ACPModelWriter;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
   private readonly usageProvider?: string;
@@ -1836,6 +1856,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.providerModeWriter = options.providerModeWriter;
     this.beforeModeWriter = options.beforeModeWriter;
     this.thinkingOptionWriter = options.thinkingOptionWriter;
+    this.modelWriter = options.modelWriter;
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
@@ -2341,6 +2362,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }): Promise<void> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
+    }
+
+    // The writer owns validation: goose's session advertises only the active provider's
+    // bare model ids, so a namespaced id never matches the advertised list.
+    const modelWriter = this.modelWriter;
+    if (modelWriter) {
+      const { connection, sessionId } = this;
+      const before = this.featureValues();
+      const response = await this.runACPRequest(() => modelWriter(connection, sessionId, modelId));
+      this.applyConfigOptionResponse({
+        response,
+        configId: response.modelConfigId,
+        category: "model",
+        requestedValue: modelId,
+        label: "model",
+      });
+      // Keep the id the catalog advertises, not the provider's bare model id.
+      this.currentModel = modelId;
+      this.reportFeatureChanges(before);
+      this.pushEvent({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: this.runtimeInfo(),
+      });
+      return;
     }
 
     if (selection.hasAvailableModels && !selection.availableModel) {
@@ -3787,11 +3833,21 @@ export function deriveSelectorOptions(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): ConfigOptionSelector[] {
-  const option = findSelectConfigOption({ configOptions, category });
+  return toSelectorOptions(findSelectConfigOption({ configOptions, category }));
+}
+
+// Goose's provider select carries no category, so it is addressed by id.
+export function deriveSelectorOptionsById(
+  configOptions: SessionConfigOption[] | null | undefined,
+  id: string,
+): ConfigOptionSelector[] {
+  return toSelectorOptions(findSelectConfigOptionById({ configOptions, id }));
+}
+
+function toSelectorOptions(option: SelectConfigOption | null): ConfigOptionSelector[] {
   if (!option) {
     return [];
   }
-
   return flattenSelectOptions(option.options).map((value) => ({
     id: value.value,
     label: value.name,
