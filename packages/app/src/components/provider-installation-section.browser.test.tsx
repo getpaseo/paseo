@@ -423,6 +423,35 @@ describe("update action", () => {
       expect(section.view.queryByTestId("provider-update-status")).toBeNull();
     });
 
+    it.each([
+      { name: "still loading", state: { status: "loading" } },
+      {
+        name: "not installed",
+        state: { status: "ready", installation: { inspection: { status: "not_installed" } } },
+      },
+      {
+        name: "failing",
+        state: {
+          status: "ready",
+          installation: { inspection: { status: "error", message: "--version timed out" } },
+        },
+      },
+      { name: "unreachable", state: { status: "error", message: "Host disconnected" } },
+    ] satisfies { name: string; state: ProviderInstallationState }[])(
+      "shows progress on Update while the installation reads as $name",
+      ({ state }) => {
+        const section = mount(
+          state,
+          { status: "hidden" },
+          action({ current: runningUpdate() }).value,
+        );
+        // The inspection may show its own progress beside the Version row.
+        const button = section.view.getByRole("button", { name: "Updating..." });
+        expect(button.getAttribute("aria-disabled")).toBe("true");
+        expect(within(button).queryAllByRole("progressbar")).toHaveLength(1);
+      },
+    );
+
     it("returns Update to rest when the host refuses the start", () => {
       const section = mount(installed(true), available, action({ starting: true }).value);
       expect(progress(section)).toEqual(updating);
