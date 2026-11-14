@@ -9,9 +9,3 @@ interface UploadLimitConfig {
 export function resolveUploadMaxFileBytes(config: UploadLimitConfig | null | undefined): number {
   return config?.uploads?.maxFileBytes ?? FILE_UPLOAD_MAX_BYTES;
 }
-
-/** Words for the limit in user-facing errors, matching the "50MB" default style. */
-export function formatUploadLimit(bytes: number): string {
-  const mib = bytes / (1024 * 1024);
-  return `${Number.isInteger(mib) ? mib : mib.toFixed(1)}MB`;
-}

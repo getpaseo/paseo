@@ -119,7 +119,7 @@ Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain wher
 Clients cap each uploaded file at 50 MiB by default. A daemon can raise or lower that cap for every client that connects to it:
 
 ```json
-{ "daemon": { "uploads": { "maxFileBytes": 104857600 } }
+{ "daemon": { "uploads": { "maxFileBytes": 104857600 } } }
 ```
 
 The value is bytes. Daemons that omit it advertise nothing and clients keep their 50 MiB default. Changes apply on config reload; large uploads still share the WebSocket message budget of the connection.
