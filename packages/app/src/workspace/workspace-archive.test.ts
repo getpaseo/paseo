@@ -7,6 +7,8 @@ import {
   isWorkspaceArchivePending,
   isWorkspaceArchiveUndoPending,
 } from "@/contexts/session-workspace-upserts";
+import { queryClient } from "@/data/query-client";
+import { allAgentHistoryQueryKey } from "@/hooks/agent-history-query-key";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   archiveWorkspaceOptimistically,
@@ -131,6 +133,17 @@ describe("archiveWorkspaceOptimistically", () => {
     await archive;
 
     expect(storedWorkspace(archived.id)).toBeUndefined();
+  });
+
+  it("marks cached agent history stale once the host has archived the workspace", async () => {
+    const historyKey = [...allAgentHistoryQueryKey([SERVER_ID]), "workspace-1"];
+    queryClient.setQueryData(historyKey, { pages: [], pageParams: [] });
+    const client = createClient(vi.fn(async () => archivePayload({ workspaceId: "workspace-1" })));
+
+    await archiveWorkspaceOptimistically({ client, workspace: target() });
+
+    expect(queryClient.getQueryState(historyKey)?.isInvalidated).toBe(true);
+    queryClient.removeQueries({ queryKey: historyKey });
   });
 
   it("restores the workspace and clears pending state when the daemon rejects the archive", async () => {

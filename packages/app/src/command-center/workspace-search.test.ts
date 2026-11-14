@@ -243,6 +243,22 @@ describe("workspace ranking", () => {
     expect(ids([loose, viaAgent], "login")).toEqual(["via-agent", "loose-own"]);
   });
 
+  it("keeps a workspace that also matches on its own name first while typing an agent's title", () => {
+    const ownAndAgent = workspace({
+      id: "oauth-refactor",
+      activityAt: new Date("2026-10-17T00:00:00Z"),
+      agents: [agent("agent-a", "Auth flow fix")],
+    });
+    const agentOnly = workspace({
+      id: "cleanup",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+      agents: [agent("agent-b", "Auth flow fix")],
+    });
+    for (const query of ["a", "au", "auth", "auth f", "auth fl", "auth flow"]) {
+      expect(ids([ownAndAgent, agentOnly], query)).toEqual(["oauth-refactor", "cleanup"]);
+    }
+  });
+
   it("opens the matched agent's tab, and the workspace otherwise", () => {
     const opened: string[] = [];
     const row = workspace({

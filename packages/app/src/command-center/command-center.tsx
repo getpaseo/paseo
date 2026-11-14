@@ -58,7 +58,8 @@ import { useTimeAgo } from "@/hooks/use-time-ago";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useProjectIcons } from "@/projects/icons";
 import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeConnectionStatuses, useHosts } from "@/runtime/host-runtime";
+import { useHydratedWorkspaceServerIds } from "@/stores/session-store-hooks";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
@@ -189,6 +190,7 @@ function useWorkspaceRows(
   const { agents, isInitialLoad: agentsLoading } = useAggregatedAgents({ demand: open });
   const { projects, isLoading: projectsLoading } = useProjects({ enabled: open });
   const hosts = useHosts();
+  const workspacesArriving = useWorkspacesArriving(open, hosts);
   const showHost = hosts.length > 1;
   const iconTargets = useMemo(
     () =>
@@ -315,8 +317,22 @@ function useWorkspaceRows(
     archived,
     // Opening a workspace route loads that workspace before the rest of the directory, so rows
     // are no sign that the list is complete.
-    loading: agentsLoading || projectsLoading,
+    loading: agentsLoading || projectsLoading || workspacesArriving,
   };
+}
+
+/**
+ * An online host's workspaces have not arrived yet. Its agent directory reports ready before
+ * the workspace snapshot lands, so until then the workspace rows are incomplete.
+ */
+function useWorkspacesArriving(open: boolean, hosts: readonly { serverId: string }[]): boolean {
+  const serverIds = useMemo(() => (open ? hosts.map((host) => host.serverId) : []), [hosts, open]);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
+  const hydratedServerIds = useHydratedWorkspaceServerIds(serverIds);
+  return serverIds.some(
+    (serverId) =>
+      connectionStatuses.get(serverId) === "online" && !hydratedServerIds.includes(serverId),
+  );
 }
 
 interface CommandCenterState {

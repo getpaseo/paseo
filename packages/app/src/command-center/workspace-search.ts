@@ -73,22 +73,21 @@ interface AgentMatch {
 }
 
 /**
- * The agent to name for a workspace whose own text matched loosely or not at all. Each agent
- * is scored together with the workspace's text, so a query split across the two finds it. Over
- * a loose own match, only an agent that matches contiguously is named. Agents arrive most
- * recent first, so a tie keeps the newer one.
+ * The workspace's best-matching agent. Each agent is scored together with the workspace's
+ * text, so a query split across the two finds it. With `contiguousOnly`, only an agent that
+ * matches contiguously counts. Agents arrive most recent first, so a tie keeps the newer one.
  */
 function agentMatch(
   workspace: CommandCenterWorkspaceResult,
   query: string,
-  ownMatchedLoosely: boolean,
+  contiguousOnly: boolean,
 ): AgentMatch | null {
   let best: AgentMatch | null = null;
   for (const agent of workspace.agents) {
     const fields = agentSearchFields(workspace, agent);
     const score = scoreSearchFields(query, fields);
     if (!score) continue;
-    if (ownMatchedLoosely && !matchesSearchFieldsContiguously(query, fields)) continue;
+    if (contiguousOnly && !matchesSearchFieldsContiguously(query, fields)) continue;
     if (!best || compareBuiltInScores(score, best.score) < 0) best = { agent, score };
   }
   return best;
@@ -149,7 +148,18 @@ export function createWorkspaceRanker(): WorkspaceRanker {
       // The workspace answers the query itself: no agent line, and Enter opens the workspace.
       const ownMatch =
         changeRequestHit || (own !== null && matchesSearchFieldsContiguously(query, ownFields));
-      const throughAgent = ownMatch ? null : agentMatch(workspace, query, own !== null);
+      // Over a loose own match, only an agent that matches contiguously is named.
+      const throughAgent = agentMatch(workspace, query, own !== null && !ownMatch);
+      if (ownMatch) {
+        // Ranked by the better of its own match and its agents', so typing further into an
+        // agent's title does not drop it below workspaces that match only through that title.
+        const score =
+          own && throughAgent && compareBuiltInScores(throughAgent.score, own) < 0
+            ? throughAgent.score
+            : (own ?? throughAgent?.score ?? null);
+        matches.push({ workspace, via: OWN_MATCH, score, agent: null, changeRequestHit });
+        continue;
+      }
       if (throughAgent) {
         matches.push({
           workspace,
@@ -160,7 +170,7 @@ export function createWorkspaceRanker(): WorkspaceRanker {
         });
         continue;
       }
-      if (own || changeRequestHit) {
+      if (own) {
         matches.push({ workspace, via: OWN_MATCH, score: own, agent: null, changeRequestHit });
         continue;
       }
