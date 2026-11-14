@@ -332,6 +332,8 @@ export type ToolCallDetail =
       label?: string;
       text?: string;
       icon?: ToolCallIconName;
+      /** How `text` reads. `markdown` renders it as formatted text; absent means raw text. */
+      format?: "markdown";
     }
   | {
       type: "plan";
