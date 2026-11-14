@@ -5393,15 +5393,11 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
-      );
+      for (const id of agentIds) {
+        if (!this.agentManager.getAgent(id) && !(await this.agentStorage.get(id))) {
+          throw new Error(`Agent not found: ${id}`);
+        }
+      }
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
