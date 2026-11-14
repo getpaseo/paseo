@@ -353,7 +353,7 @@ function buildDownloadUrl(
  * Saves bytes read over the session. Web and Electron hand them to the browser's download
  * manager and return `null`; native writes the file and returns its URI for the share sheet.
  */
-async function saveDownloadedBytes({
+export async function saveDownloadedBytes({
   bytes,
   fileName,
   mimeType,
@@ -375,7 +375,7 @@ async function saveDownloadedBytes({
   return targetFile.uri;
 }
 
-async function shareSavedFile(
+export async function shareSavedFile(
   uri: string,
   mimeType: string | null,
   fileName: string,

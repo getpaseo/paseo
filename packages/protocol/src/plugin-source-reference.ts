@@ -70,6 +70,28 @@ export function formatPluginIdentity(identity: PluginInstallation["identity"]): 
   const source = identity.kind === "npm" ? `npm:${identity.packageName}` : `git:${identity.remote}`;
   return identity.pluginPath === "." ? source : `${source}:${identity.pluginPath}`;
 }
+// Unlike formatPluginIdentity, which is for display, this builds the install request that
+// reproduces the installation on another daemon. Null means no source string can, e.g. a local
+// directory or a registry whose URL is not a bare https origin.
+export function pluginInstallSource(
+  identity: PluginInstallation["identity"],
+  revision: string | undefined,
+): { source: string; ref?: string } | null {
+  if (identity.kind === "directory") return null;
+  if (identity.registry) {
+    const source = `${new URL(identity.registry.url).host}/${identity.registry.id}`;
+    const resolved = parsePluginRegistryReference(source);
+    return resolved?.url === identity.registry.url.replace(/\/+$/, "") ? { source } : null;
+  }
+  const pluginPath = identity.pluginPath === "." ? undefined : identity.pluginPath;
+  if (identity.kind === "npm") {
+    const pinned = revision ? `${identity.packageName}@${revision}` : identity.packageName;
+    return { source: formatPluginSourceReference(`npm:${pinned}`, pluginPath) };
+  }
+  const source = formatPluginSourceReference(`git:${identity.remote}`, pluginPath);
+  return revision ? { source, ref: revision } : { source };
+}
+
 export function formatPluginInstallation(installation: PluginInstallation): string {
   const identity = formatPluginIdentity(installation.identity);
   const revision =

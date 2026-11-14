@@ -19,6 +19,7 @@ import {
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   pinRelayProtectedSecurityInProfiles,
+  importHostProfilesInProfiles,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
@@ -2255,6 +2256,17 @@ export class HostRuntimeStore {
 
   async renameHost(serverId: string, label: string): Promise<void> {
     await this.updateHost(serverId, (host) => ({ ...host, label }));
+  }
+
+  /** Adds or merges hosts from a backup; rejects when the host list cannot be saved. */
+  async importHostProfiles(imported: HostProfile[]): Promise<void> {
+    const next = importHostProfilesInProfiles({
+      profiles: this.hosts,
+      imported,
+      now: new Date().toISOString(),
+    });
+    this.setHostsAndSync(next);
+    await this.persistHosts();
   }
 
   async setHostPassword(serverId: string, password: string): Promise<void> {

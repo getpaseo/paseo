@@ -24,6 +24,11 @@ export interface ShortcutOverrideStore {
   /** Drop the override entirely, restoring the binding's default combo. */
   remove(bindingId: string): Promise<void>;
   resetAll(): Promise<void>;
+  /**
+   * Replace every override with an imported map. Unlike the per-binding edits, a failed save
+   * rejects after restoring the previous map, so the import can report it.
+   */
+  replaceAll(next: ShortcutOverrides): Promise<void>;
 }
 
 export interface CreateShortcutOverrideStoreOptions {
@@ -92,6 +97,18 @@ export function createShortcutOverrideStore({
         } catch (err) {
           cache.write(prev);
           onError(err);
+        }
+      }),
+    replaceAll: (next) =>
+      enqueue(async () => {
+        const prev = cache.read();
+        cache.write(next);
+        try {
+          await storage.write(JSON.stringify(next));
+        } catch (err) {
+          cache.write(prev);
+          onError(err);
+          throw err;
         }
       }),
   };
