@@ -4,6 +4,8 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
+import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
+import { loadProtocolSchemas } from "../support/helpers/daemon-client-loader";
 import { expect, test, type Page } from "../support/fixtures";
 import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
@@ -124,6 +126,77 @@ test.afterAll(async () => {
   await rm(claudeConfigDirectory, { recursive: true, force: true });
 });
 
+test("a new search starts at page one without requesting the previous larger page", async ({
+  page,
+}) => {
+  const requests = await recordClaudeListRequests(page);
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 1280, height: 800 });
+  await flow.openGlobally();
+  requests.length = 0;
+  await flow.search("INVOICE");
+  expect(requests.map(({ query, limit }) => ({ query, limit }))).toEqual([
+    { query: "INVOICE", limit: 15 },
+  ]);
+  await flow.resetSearch();
+  await flow.loadMore();
+  requests.length = 0;
+  await flow.search("invoice");
+  expect(requests.map(({ query, limit }) => ({ query, limit }))).toEqual([
+    { query: "invoice", limit: 15 },
+  ]);
+});
+
+test("Show all starts at page one after loading a larger workspace page", async ({ page }) => {
+  const directory = path.join(
+    claudeConfigDirectory,
+    "projects",
+    scenario.projectRoot.replace(/[^a-zA-Z0-9]/g, "-"),
+  );
+  const fixturePaths: string[] = [];
+  try {
+    for (let index = 0; index < 20; index++) {
+      const id = `fixture-pagination-${index}`;
+      const file = path.join(directory, `${id}.jsonl`);
+      fixturePaths.push(file);
+      const record = {
+        type: "user",
+        uuid: `${id}-user`,
+        sessionId: id,
+        cwd: scenario.projectRoot,
+        message: { role: "user", content: `Pagination fixture ${index}` },
+      };
+      await writeFile(file, `${JSON.stringify(record)}\n`);
+    }
+    const requests = await recordClaudeListRequests(page);
+    const flow = new ImportSessionFlow(page);
+    await flow.openWorkspace(scenario.project.workspaceId, { width: 1280, height: 800 });
+    await flow.openFromWorkspaceHeader();
+    requests.length = 0;
+    await flow.showAll();
+    const rows = page.locator('[data-testid^="import-session-session-claude-"]');
+    await expect(rows.first()).toBeVisible();
+    await expect(page.getByTestId("import-session-load-more")).toBeVisible();
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    expect(requests.map(({ cwd, limit }) => ({ cwd, limit }))).toEqual([
+      { cwd: undefined, limit: 15 },
+    ]);
+    await flow.close();
+    await flow.openFromWorkspaceHeader();
+    await page.getByTestId("import-session-load-more").click();
+    await expect(page.getByTestId("import-session-load-more")).toHaveCount(0);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    requests.length = 0;
+    await flow.showAll();
+    await expect(rows.first()).toBeVisible();
+    await expect(page.getByTestId("import-session-load-more")).toBeVisible();
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    expect(requests).toEqual([]);
+  } finally {
+    await Promise.all(fixturePaths.map((file) => rm(file, { force: true })));
+  }
+});
+
 test("an open Import Session row keeps its age current", async ({ page }) => {
   await page.clock.install({ time: scenario.importSessionTimestamp + 60_000 });
   const flow = new ImportSessionFlow(page);
@@ -229,6 +302,27 @@ test("captures the desktop import sheet and command-center entry", async ({ page
   });
 });
 
+async function recordClaudeListRequests(
+  page: Page,
+): Promise<FetchRecentProviderSessionsRequestMessage[]> {
+  const { WSSessionInboundSchema } = await loadProtocolSchemas();
+  const requests: FetchRecentProviderSessionsRequestMessage[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      const frame = WSSessionInboundSchema.safeParse(JSON.parse(payload));
+      if (!frame.success) return;
+      const message = frame.data.message;
+      if (
+        message.type === "fetch_recent_provider_sessions_request" &&
+        message.providers?.includes("claude")
+      ) {
+        requests.push(message);
+      }
+    });
+  });
+  return requests;
+}
 test("large import lists keep mounted rows bounded and remain scrollable", async ({
   page,
 }, testInfo) => {
