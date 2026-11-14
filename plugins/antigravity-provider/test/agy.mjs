@@ -60,20 +60,73 @@ if (args.includes("--model")) init.init.model = args[args.indexOf("--model") + 1
 emit(init);
 let interrupted = null;
 const turns = new Map();
+const SCENARIO_FIXTURES = [
+  ["Attached image: ", "image-file-external"],
+  ["TOOLS", "tools-default"],
+  ["DENIAL_REPLAY", "denial-replay"],
+  ["SUBAGENT", "subagent"],
+  ["MULTI", "multi-turn-reasoning"],
+  ["RESUME", "resume"],
+  ["HANG", "sigint-mid-text"],
+  ["TOOL_HANG", "sigint-mid-tool"],
+];
+function emitErrorResult(error) {
+  emit({
+    event: "result",
+    result: {
+      conversation_id: conversationId,
+      status: "ERROR",
+      error,
+      denied_actions: [],
+    },
+  });
+}
+function handleErrorScenario(text) {
+  if (text.includes("STALE_ERROR")) {
+    for (const frame of fixture("text-turn").slice(1, -1)) emit(frame);
+    emitErrorResult("The stream was interrupted. Please continue the task you were working on.");
+    return true;
+  }
+  if (text.includes("PARTIAL_ACTIVE_ERROR")) {
+    for (const frame of fixture("sigint-mid-text").slice(1, -1)) emit(frame);
+    emitErrorResult("The stream was interrupted. Please continue the task you were working on.");
+    return true;
+  }
+  if (text.includes("UNANSWERED_ERROR")) {
+    emitErrorResult("Individual quota reached. Resets in 66h22m0s.");
+    return true;
+  }
+  if (text.includes("RUNNING_TOOL_ERROR")) {
+    for (const frame of fixture("sigint-mid-tool").slice(1, -1)) emit(frame);
+    emitErrorResult("Tool execution failed abruptly");
+    return true;
+  }
+  if (text.includes("POST_ANSWER_ERROR")) {
+    for (const frame of fixture("text-turn").slice(1, -1)) emit(frame);
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 99,
+        state: "ERROR",
+        step_type: "tool",
+        tool_name: "view_file",
+        tool_info: { name: "view_file", parameters: { AbsolutePath: "/tmp/x" }, output: "failed" },
+      },
+    });
+    emitErrorResult("Post-answer tool step failed");
+    return true;
+  }
+  return false;
+}
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const input = JSON.parse(line);
   record({ input });
   const text = input.message.content;
-  let name = "text-turn";
-  if (text.includes("Attached image: ")) name = "image-file-external";
-  if (text.includes("TOOLS")) name = "tools-default";
-  if (text.includes("DENIAL_REPLAY")) name = "denial-replay";
-  if (text.includes("SUBAGENT")) name = "subagent";
-  if (text.includes("MULTI")) name = "multi-turn-reasoning";
-  if (text.includes("RESUME")) name = "resume";
-  if (text.includes("HANG")) name = "sigint-mid-text";
-  if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (handleErrorScenario(text)) return;
+  const matched = SCENARIO_FIXTURES.find(([token]) => text.includes(token));
+  const name = matched ? matched[1] : "text-turn";
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

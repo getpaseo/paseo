@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PROVIDER_CAPABILITIES,
   ProviderEventSchema,
@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -567,6 +567,65 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
   ).rejects.toThrow(/prompt.steer/);
 });
 
+it("settles answered turns with trailing trajectory errors as completed without restarting the driver", async () => {
+  const h = await harness();
+  await h.open();
+  const firstTurn = await h.completed(await h.prompt("STALE_ERROR"));
+  expect(firstTurn).toEqual({
+    type: "session.turn",
+    sessionId: "s",
+    turnId: firstTurn.turnId,
+    state: "completed",
+  });
+  expect(h.events).toContainEqual({
+    type: "session.notice",
+    sessionId: "s",
+    notice: {
+      id: `${firstTurn.turnId}:trajectory_error`,
+      severity: "warning",
+      title: "Antigravity reported an earlier trajectory error",
+      description: "The stream was interrupted. Please continue the task you were working on.",
+    },
+  });
+  const secondTurn = await h.completed(await h.prompt("HELLO AGAIN"));
+  expect(secondTurn).toEqual({
+    type: "session.turn",
+    sessionId: "s",
+    turnId: secondTurn.turnId,
+    state: "completed",
+  });
+  const launches = (await h.records()).filter(
+    (entry) => entry.args && entry.args.includes("--input-format"),
+  );
+  expect(launches).toHaveLength(1);
+});
+
+it.each([
+  ["PARTIAL_ACTIVE_ERROR", /stream was interrupted/i],
+  ["UNANSWERED_ERROR", /quota reached/i],
+  ["RUNNING_TOOL_ERROR", /abruptly/i],
+  ["POST_ANSWER_ERROR", /Post-answer tool step failed/i],
+])(
+  "keeps %s failed when the final reply is incomplete, unanswered, mid-tool, or followed by a new error step",
+  async (scenario, expectedMessage) => {
+    const h = await harness();
+    await h.open();
+    const turn = await h.completed(await h.prompt(scenario));
+    expect(turn).toMatchObject({
+      type: "session.turn",
+      state: "failed",
+      error: {
+        message: expect.stringMatching(expectedMessage),
+      },
+    });
+    expect(
+      h.events.some(
+        (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+      ),
+    ).toBe(false);
+  },
+);
+
 describe("discovery", () => {
   it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
     const h = await harness();
@@ -688,6 +747,32 @@ describe("process signal plans", () => {
       });
     },
   );
+  it("ignores EPERM and ESRCH errors when signaling POSIX process groups", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("kill EPERM");
+      Object.assign(error, { code: "EPERM" });
+      throw error;
+    });
+    try {
+      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).not.toThrow();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+  it("propagates unexpected errors when signaling POSIX process groups", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("kill EINVAL");
+      Object.assign(error, { code: "EINVAL" });
+      throw error;
+    });
+    try {
+      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).toThrow(
+        /EINVAL/,
+      );
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
 });
 
 describe("image prompts", () => {

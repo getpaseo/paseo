@@ -26,6 +26,9 @@ interface Turn {
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
   usage: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
+  lastStep: number;
+  answeredStep: number;
+  errorStep: number;
 }
 type State =
   | { type: "dormant" }
@@ -94,6 +97,9 @@ export class Session {
       usageSteps: new Set(),
       tools: new Map(),
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      lastStep: -1,
+      answeredStep: -1,
+      errorStep: -1,
     };
     this.state = { type: "running", driver, turn };
     this.emit({
@@ -261,6 +267,27 @@ export class Session {
     }
     if (result.status === "ERROR") {
       const canceled = result.error === "interrupted";
+      if (!canceled && isSettledAnswerWithStaleError(turn)) {
+        this.emit({
+          type: "session.notice",
+          sessionId: this.options.id,
+          notice: {
+            id: `${turn.id}:trajectory_error`,
+            severity: "warning",
+            title: "Antigravity reported an earlier trajectory error",
+            description: diagnostic(result.error),
+          },
+        });
+        this.finishTools(turn, "completed");
+        this.state = { type: "idle", driver };
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: "completed",
+        });
+        return;
+      }
       this.finishTools(turn, canceled ? "canceled" : "failed");
       this.retire(driver);
       this.emit({
@@ -284,11 +311,20 @@ export class Session {
 
   private acceptStep(step: Step, turn: Turn): void {
     const id = `${turn.id}:${step.step_index}`;
+    if (step.step_index > turn.lastStep) turn.lastStep = step.step_index;
+    if (step.state === "ERROR" && step.step_index > turn.errorStep) {
+      turn.errorStep = step.step_index;
+    }
     if (step.step_type === "agent_response") {
       const previous = turn.text.get(step.step_index) || "";
       const text = previous + step.text_delta;
       turn.text.set(step.step_index, text);
       if (step.text_delta) this.item({ type: "assistant_message", id, messageId: id, text });
+      if (step.state === "DONE" && text.length > 0 && step.step_index >= turn.answeredStep) {
+        turn.answeredStep = step.step_index;
+      } else if (step.state !== "DONE" && turn.answeredStep === step.step_index) {
+        turn.answeredStep = -1;
+      }
       if (step.state === "DONE" && step.usage && !turn.usageSteps.has(step.step_index)) {
         turn.usageSteps.add(step.step_index);
         turn.usage.inputTokens += step.usage.input_tokens;
@@ -387,6 +423,15 @@ function takeNewDenials(
   });
   for (const [key, count] of counts) reported.set(key, Math.max(count, reported.get(key) ?? 0));
   return fresh;
+}
+
+function isSettledAnswerWithStaleError(turn: Turn): boolean {
+  if (turn.answeredStep < 0 || turn.answeredStep !== turn.lastStep) return false;
+  if (turn.errorStep >= turn.answeredStep) return false;
+  for (const item of turn.tools.values()) {
+    if (item.status === "running") return false;
+  }
+  return true;
 }
 
 function denialNoticeTitle(
