@@ -1,4 +1,7 @@
-import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import type {
+  SidebarProjectEntry,
+  SidebarWorkspaceEntry,
+} from "@/hooks/use-sidebar-workspaces-list";
 
 /**
  * The subset of a stored project filter that still names a project the sidebar can see.
@@ -35,6 +38,24 @@ export function filterWorkspacesByProjects(input: {
   if (projectFilters.length === 0) return [...workspaces];
   const included = new Set(projectFilters);
   return workspaces.filter((workspace) => included.has(workspace.projectViewKey));
+}
+
+/**
+ * Drops projects that own no workspaces, for the "Show empty projects" toggle.
+ *
+ * Emptiness is read from the project itself, before the background and label filters narrow its
+ * workspaces: a project whose only workspaces are hidden is not empty, and those filters already
+ * decide its fate. A project named in the Project filter survives, because pinning the sidebar to
+ * a project is an explicit request to see it, including its header row for creating a workspace.
+ */
+export function filterEmptyProjects(input: {
+  projects: readonly SidebarProjectEntry[];
+  projectFilters: readonly string[];
+}): SidebarProjectEntry[] {
+  const included = new Set(input.projectFilters);
+  return input.projects.filter(
+    (project) => project.workspaces.length > 0 || included.has(project.viewKey),
+  );
 }
 
 const EMPTY_PROJECT_FILTERS: readonly string[] = [];

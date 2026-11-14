@@ -1240,6 +1240,7 @@ export const es: TranslationResources = {
     },
     display: {
       showBackground: "Mostrar espacios en segundo plano",
+      showEmptyProjects: "Mostrar proyectos vacíos",
       trigger: "Preferencias de visualización",
       heading: "Visualización",
       sort: {
