@@ -9,7 +9,11 @@ import type {
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { ChevronDown, Inbox, Layers, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { ImportSessionList } from "@/components/import-session-list";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -213,36 +217,6 @@ function ProviderErrorBannerRow({
         {t("common.actions.retry")}
       </Button>
     </View>
-  );
-}
-
-function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const pressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.refreshButton,
-      pressed && styles.refreshButtonPressed,
-    ],
-    [],
-  );
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={isRefreshing}
-      accessibilityLabel={t("importSession.actions.refresh")}
-      accessibilityRole="button"
-      testID="import-session-refresh"
-      style={pressableStyle}
-    >
-      <View style={styles.refreshIconSlot}>
-        {isRefreshing ? (
-          <LoadingSpinner color={theme.colors.foregroundMuted} />
-        ) : (
-          <RotateCw size={16} color={theme.colors.foregroundMuted} />
-        )}
-      </View>
-    </Pressable>
   );
 }
 
@@ -775,7 +749,15 @@ export function ImportSessionSheet({
             },
           }
         : {}),
-      actions: <RefreshAction isRefreshing={isRefreshing} onPress={handleRefresh} />,
+      actions: (
+        <SheetHeaderIconButton
+          icon={RotateCw}
+          label={t("importSession.actions.refresh")}
+          onPress={handleRefresh}
+          busy={isRefreshing}
+          testID="import-session-refresh"
+        />
+      ),
     }),
     [handleRefresh, handleShowAll, hostLabel, isRefreshing, scopeCwd, supportsSearch, t, visible],
   );
@@ -1098,19 +1080,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     textAlign: "center",
-  },
-  refreshButton: {
-    padding: theme.spacing[2],
-    marginRight: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-  },
-  refreshButtonPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  refreshIconSlot: {
-    width: 16,
-    height: 16,
-    alignItems: "center",
-    justifyContent: "center",
   },
 }));

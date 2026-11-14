@@ -3,8 +3,11 @@ import { View } from "react-native";
 import { Settings } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
+import {
+  mutedIconColorMapping,
+  useIconButtonChromeGlyphSize,
+} from "@/components/ui/icon-button-chrome";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { SettingsRow, SettingsSwitch } from "@/components/settings";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -32,6 +35,7 @@ export function UsageOptions({ serverId }: { serverId: string | null }) {
     },
   ];
   const compact = useIsCompactFormFactor();
+  const glyphSize = useIconButtonChromeGlyphSize("small", compact);
   const { display } = useUsageDisplay([]);
   const { inSidebar, setInSidebar } = useUsageInSidebar();
   return (
@@ -42,10 +46,7 @@ export function UsageOptions({ serverId }: { serverId: string | null }) {
         compact={compact}
         testID="usage-options-menu"
       >
-        <ThemedSettings
-          size={paneContentToolbarIconSize(compact)}
-          uniProps={extraMutedIconColorMapping}
-        />
+        <ThemedSettings size={glyphSize} uniProps={mutedIconColorMapping} />
       </ToolbarButton>
       <DropdownMenuContent
         align="end"
