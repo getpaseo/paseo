@@ -21,8 +21,19 @@ function terminalSurface(page: Page): Locator {
   return page.getByTestId("terminal-surface").filter({ visible: true }).first();
 }
 
+function terminalInput(page: Page): Locator {
+  return terminalSurface(page).locator(".xterm-helper-textarea");
+}
+
 function visibleComposer(page: Page): Locator {
   return page.getByTestId("message-input-root").locator("textarea:visible").first();
+}
+
+function mainPaneTabs(page: Page): Locator {
+  return page
+    .getByTestId("workspace-pane-main")
+    .locator('[data-testid^="workspace-tab-"][aria-selected]')
+    .filter({ visible: true });
 }
 
 async function seedModifiedReadme(repoPath: string): Promise<void> {
@@ -180,4 +191,62 @@ test("cycles continuously through Agent, Diff, Preview, and Terminal tabs with M
   // Once the user explicitly clicks into the non-empty composer, Meta+ArrowLeft/Right
   // pass through without preventDefault instead of switching tabs.
   await expectArrowShortcutsPassThroughToDraftComposer(page, "draft message");
+
+  // Unlike plain Cmd+Arrow browsing, global relative tab shortcuts (Alt+Shift+[/] on macOS web)
+  // focus the destination terminal or composer immediately so the user can keep typing.
+  await page.keyboard.press("Alt+Shift+BracketRight");
+  await expect(terminalSurface(page)).toBeVisible();
+  await expect(terminalInput(page)).toBeFocused();
+
+  await page.keyboard.press("Alt+Shift+BracketRight");
+  await expect(visibleComposer(page)).toBeFocused();
+  await page.keyboard.type("ready to type");
+  await expect(visibleComposer(page)).toHaveValue("ready to type");
+
+  await page.keyboard.press("Alt+Shift+BracketLeft");
+  await expect(terminalInput(page)).toBeFocused();
+  await page.keyboard.press("Alt+Shift+BracketLeft");
+  await expect(visibleComposer(page)).toBeFocused();
+  await expect(visibleComposer(page)).toHaveValue("draft message");
+});
+
+test("restores composer focus via global relative tab shortcut when only one suppressed tab remains", async ({
+  page,
+  withWorkspace,
+}) => {
+  const workspace = await withWorkspace({ prefix: "mac-tab-single-" });
+  await seedModifiedReadme(workspace.repoPath);
+  await workspace.navigateTo();
+
+  await openEmptyAgentComposer(page);
+  await openReadmePreviewTab(page);
+  await expect(mainPaneTabs(page)).toHaveCount(2);
+
+  // Cycle into the composer tab with Meta+ArrowLeft so browsing-focus suppression stays active.
+  await page.keyboard.press("Meta+ArrowLeft");
+  await expect(visibleComposer(page)).toBeVisible();
+  await expect(visibleComposer(page)).not.toBeFocused();
+
+  // Close the inactive README.md preview tab so only the suppressed composer tab remains.
+  const fileTab = page
+    .getByTestId("workspace-pane-main")
+    .locator('[data-testid^="workspace-tab-file_"][aria-selected]')
+    .filter({ visible: true })
+    .first();
+  const fileTabTestId = await fileTab.getAttribute("data-testid");
+  if (!fileTabTestId) {
+    throw new Error("Expected file tab data-testid");
+  }
+  const fileTabId = fileTabTestId.slice("workspace-tab-".length);
+  await fileTab.click({ button: "right" });
+  await page.getByTestId(`workspace-tab-context-${fileTabId}-close`).click();
+  await expect(mainPaneTabs(page)).toHaveCount(1);
+  await expect(visibleComposer(page)).not.toBeFocused();
+
+  // Even when only 1 tab remains, the global relative shortcut clears browsing suppression
+  // and focuses the composer for immediate typing.
+  await page.keyboard.press("Alt+Shift+BracketRight");
+  await expect(visibleComposer(page)).toBeFocused();
+  await page.keyboard.type("single tab focus");
+  await expect(visibleComposer(page)).toHaveValue("single tab focus");
 });

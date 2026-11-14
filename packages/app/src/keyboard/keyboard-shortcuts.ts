@@ -89,7 +89,7 @@ interface ShortcutWhen {
 
 type ShortcutPayloadDef =
   | { type: "index" }
-  | { type: "delta"; delta: 1 | -1 }
+  | { type: "delta"; delta: 1 | -1; preserveBrowsingFocus?: boolean }
   | { type: "message-input"; kind: MessageInputKeyboardActionKind };
 
 interface ShortcutHelp {
@@ -830,7 +830,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       terminal: false,
       overlay: false,
     },
-    payload: { type: "delta", delta: -1 },
+    payload: { type: "delta", delta: -1, preserveBrowsingFocus: true },
   },
   {
     id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-desktop",
@@ -846,7 +846,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       terminal: false,
       overlay: false,
     },
-    payload: { type: "delta", delta: 1 },
+    payload: { type: "delta", delta: 1, preserveBrowsingFocus: true },
   },
   {
     id: "workspace-tab-navigate-relative-cmd-arrow-left-mac-web",
@@ -862,7 +862,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       terminal: false,
       overlay: false,
     },
-    payload: { type: "delta", delta: -1 },
+    payload: { type: "delta", delta: -1, preserveBrowsingFocus: true },
   },
   {
     id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-web",
@@ -878,7 +878,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       terminal: false,
       overlay: false,
     },
-    payload: { type: "delta", delta: 1 },
+    payload: { type: "delta", delta: 1, preserveBrowsingFocus: true },
   },
 
   // --- Pane management (mac only) ---
@@ -1433,11 +1433,25 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
       lastCombo.repeat = false;
     }
     const when = withoutDefaultComboGuard(binding.when);
+    const payload = withoutDefaultComboPayload(binding.payload);
     if (!binding.help?.defaultDisplayKeys) {
-      return { ...binding, combo: override, parsedChord, when };
+      return {
+        ...binding,
+        combo: override,
+        parsedChord,
+        when,
+        ...(payload !== undefined ? { payload } : {}),
+      };
     }
     const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
-    return { ...binding, combo: override, parsedChord, when, help };
+    return {
+      ...binding,
+      combo: override,
+      parsedChord,
+      when,
+      ...(payload !== undefined ? { payload } : {}),
+      help,
+    };
   });
 }
 
@@ -1456,6 +1470,14 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
 function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
   if (when?.editable !== false) return when;
   const { editable: _editable, allowEmptyMessageInput: _allowEmptyMessageInput, ...rest } = when;
+  return rest;
+}
+
+function withoutDefaultComboPayload(
+  payload: ShortcutPayloadDef | undefined,
+): ShortcutPayloadDef | undefined {
+  if (payload?.type !== "delta" || !payload.preserveBrowsingFocus) return payload;
+  const { preserveBrowsingFocus: _preserveBrowsingFocus, ...rest } = payload;
   return rest;
 }
 
@@ -1567,7 +1589,9 @@ function resolvePayload(
       return index ? { index } : null;
     }
     case "delta":
-      return { delta: def.delta };
+      return def.preserveBrowsingFocus
+        ? { delta: def.delta, preserveBrowsingFocus: true }
+        : { delta: def.delta };
     case "message-input":
       return { kind: def.kind };
     default:

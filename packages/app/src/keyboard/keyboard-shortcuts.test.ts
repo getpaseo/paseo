@@ -259,14 +259,14 @@ describe("keyboard-shortcuts", () => {
       event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
       context: { isMac: true, focusScope: "other" },
       action: "workspace.tab.navigate.relative",
-      payload: { delta: -1 },
+      payload: { delta: -1, preserveBrowsingFocus: true },
     },
     {
       name: "matches tab relative navigation on mac via Cmd+ArrowRight outside editable and terminal scopes",
       event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
       context: { isMac: true, focusScope: "other" },
       action: "workspace.tab.navigate.relative",
-      payload: { delta: 1 },
+      payload: { delta: 1, preserveBrowsingFocus: true },
     },
     {
       name: "matches Mod+T to open new tab",
@@ -1646,10 +1646,10 @@ describe("macOS tab relative navigation alias override compatibility", () => {
           resolveShortcut({
             event,
             context: { ...platform, focusScope: "message-input", messageInputEmpty: true },
-          }).match,
-        ).toMatchObject({
-          action: "workspace.tab.navigate.relative",
-          payload: { delta: expectedDelta },
+          }).match?.payload,
+        ).toStrictEqual({
+          delta: expectedDelta,
+          preserveBrowsingFocus: true,
         });
         expect(
           resolveShortcut({
@@ -1672,5 +1672,110 @@ describe("macOS tab relative navigation alias override compatibility", () => {
         context: { ...macDesktop, focusScope: "message-input", messageInputEmpty: true },
       }).match,
     ).toBeNull();
+  });
+
+  it("emits preserveBrowsingFocus only on default plain Cmd+Arrow bindings and strips it when overridden", () => {
+    const globalCases = [
+      {
+        event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "message-input" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+        context: { ...macDesktop, focusScope: "editable" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+        context: { ...macDesktop, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
+        context: { ...macWeb, focusScope: "message-input" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "\u2019", code: "BracketRight", altKey: true, shiftKey: true },
+        context: { ...macWeb, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+        context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+        context: { isMac: false, usesDesktopBindings: false, focusScope: "message-input" as const },
+        delta: 1 as const,
+      },
+    ];
+
+    for (const testCase of globalCases) {
+      const match = resolveShortcut({
+        event: testCase.event,
+        context: testCase.context,
+      }).match;
+      expect(match?.action).toBe("workspace.tab.navigate.relative");
+      expect(match?.payload).toStrictEqual({ delta: testCase.delta });
+    }
+
+    for (const platform of [macDesktop, macWeb]) {
+      for (const [key, delta] of [
+        ["ArrowLeft", -1],
+        ["ArrowRight", 1],
+      ] as const) {
+        const match = resolveShortcut({
+          event: { key, code: key, metaKey: true },
+          context: { ...platform, focusScope: "other" },
+        }).match;
+        expect(match?.action).toBe("workspace.tab.navigate.relative");
+        expect(match?.payload).toStrictEqual({ delta, preserveBrowsingFocus: true });
+      }
+    }
+
+    const overriddenCases = [
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-left-mac-desktop",
+        platform: macDesktop,
+        delta: -1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-right-mac-desktop",
+        platform: macDesktop,
+        delta: 1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-left-mac-web",
+        platform: macWeb,
+        delta: -1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-right-mac-web",
+        platform: macWeb,
+        delta: 1 as const,
+      },
+    ];
+
+    const altJ = { key: "\u2206", code: "KeyJ", altKey: true };
+    for (const { bindingId, platform, delta } of overriddenCases) {
+      const bindings = buildEffectiveBindings({ [bindingId]: "Alt+J" });
+      for (const focusScope of ["message-input", "editable", "other"] as const) {
+        const match = resolveShortcut({
+          event: altJ,
+          context: { ...platform, focusScope },
+          bindings,
+        }).match;
+        expect(match?.action).toBe("workspace.tab.navigate.relative");
+        expect(match?.payload).toStrictEqual({ delta });
+      }
+    }
   });
 });

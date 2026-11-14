@@ -75,7 +75,12 @@ export type KeyboardActionDefinition =
   | { id: "workspace.tab.target.files"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
   | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }
-  | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
+  | {
+      id: "workspace.tab.navigate-relative";
+      scope: KeyboardActionScope;
+      delta: 1 | -1;
+      preserveBrowsingFocus?: boolean;
+    }
   | {
       id: "workspace.tab.open";
       scope: KeyboardActionScope;

@@ -2618,14 +2618,16 @@ function WorkspaceScreenContent({
           return true;
         }
         case "workspace.tab.navigate-relative": {
-          if (tabs.length > 0) {
-            const currentIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
-            const fromIndex = currentIndex >= 0 ? currentIndex : 0;
-            const nextIndex = (fromIndex + action.delta + tabs.length) % tabs.length;
-            const next = tabs[nextIndex] ?? null;
-            if (next?.tabId && next.tabId !== activeTabId) {
-              navigateRelativeToTabId(next.tabId);
-            }
+          if (tabs.length === 0) return true;
+          const currentIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
+          const fromIndex = currentIndex >= 0 ? currentIndex : 0;
+          const nextIndex = (fromIndex + action.delta + tabs.length) % tabs.length;
+          const next = tabs[nextIndex] ?? null;
+          if (!next?.tabId) return true;
+          if (!action.preserveBrowsingFocus) {
+            navigateToTabId(next.tabId);
+          } else if (next.tabId !== activeTabId) {
+            navigateRelativeToTabId(next.tabId);
           }
           return true;
         }

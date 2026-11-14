@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 import {
   selectIsExplorerSidebarVisible,
   useWorkspaceLayoutStore,
@@ -149,30 +149,15 @@ it("suppresses auto-focus during relative tab cycling and clears suppression on 
   })!;
   expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
 
-  const blur = vi.fn();
-  const originalDocument = (globalThis as { document?: unknown }).document;
-  const originalHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;
-  class FakeHTMLElement {
-    blur = blur;
-  }
-  const activeElement = new FakeHTMLElement();
-  (globalThis as { HTMLElement?: unknown }).HTMLElement = FakeHTMLElement;
-  (globalThis as { document?: unknown }).document = {
-    activeElement,
-    body: new FakeHTMLElement(),
-    documentElement: new FakeHTMLElement(),
-  };
+  revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: agentTabId });
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(true);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
 
-  try {
-    revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: agentTabId });
-    expect(blur).toHaveBeenCalledTimes(1);
-    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(true);
-    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
+  revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: fileTabId });
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(true);
 
-    revealWorkspaceTab(workspaceKey, fileTabId);
-    expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
-  } finally {
-    (globalThis as { document?: unknown }).document = originalDocument;
-    (globalThis as { HTMLElement?: unknown }).HTMLElement = originalHTMLElement;
-  }
+  revealWorkspaceTab(workspaceKey, agentTabId);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
 });

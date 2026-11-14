@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { isWeb } from "@/constants/platform";
 
 const suppressedTabByWorkspace = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -17,7 +18,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 function blurActiveSurfaceForTabCycle(): void {
-  if (typeof document === "undefined") return;
+  if (!isWeb || typeof document === "undefined") return;
   const active = document.activeElement;
   if (
     active instanceof HTMLElement &&
