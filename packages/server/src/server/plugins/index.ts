@@ -117,16 +117,13 @@ export class PluginService {
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
-    this.usageSources = new UsageSourceRegistry(
-      Date.now,
-      300_000,
-      this.logger,
-      dependencies.usageAgents,
-      undefined,
-      dependencies.usageReportFile
+    this.usageSources = new UsageSourceRegistry({
+      logger: this.logger,
+      agents: dependencies.usageAgents,
+      store: dependencies.usageReportFile
         ? createUsageReportFile({ filePath: dependencies.usageReportFile, logger: this.logger })
         : undefined,
-    );
+    });
     this.runtime =
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {

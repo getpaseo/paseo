@@ -45,6 +45,15 @@ export interface ListUsageReportsOptions {
   onReport?: (report: UsageReportEntry) => void;
 }
 
+export interface UsageSourceRegistryOptions {
+  now?: () => number;
+  ttlMs?: number;
+  logger?: Pick<Logger, "warn">;
+  agents?: AgentUsageLookup;
+  deadlineMs?: number;
+  store?: UsageReportStore;
+}
+
 interface Discovery {
   reports: Map<string, KnownReport>;
   /** Sources whose discovery succeeded; a failed one kept its previous mapping. */
@@ -73,15 +82,28 @@ export class UsageSourceRegistry {
   /** Saved by an earlier daemon run; neither claimed by an account nor retired by discovery yet. */
   private readonly restored = new Map<string, RetainedUsage>();
   private restoring: Promise<void> | undefined;
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+  private readonly logger: Pick<Logger, "warn">;
+  private readonly agents: AgentUsageLookup;
+  private readonly deadlineMs: number;
+  private readonly store: UsageReportStore | undefined;
 
-  constructor(
-    private readonly now: () => number = Date.now,
-    private readonly ttlMs = 300_000,
-    private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
-    private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
-    private readonly deadlineMs = 20_000,
-    private readonly store?: UsageReportStore,
-  ) {}
+  constructor({
+    now = Date.now,
+    ttlMs = 300_000,
+    logger = { warn: console.warn },
+    agents = { hasAgent: () => false, usageSession: () => null },
+    deadlineMs = 20_000,
+    store,
+  }: UsageSourceRegistryOptions = {}) {
+    this.now = now;
+    this.ttlMs = ttlMs;
+    this.logger = logger;
+    this.agents = agents;
+    this.deadlineMs = deadlineMs;
+    this.store = store;
+  }
 
   register(source: UsageSource): void {
     if (this.sources.has(source.id)) throw new Error(`Duplicate usage source: ${source.id}`);
