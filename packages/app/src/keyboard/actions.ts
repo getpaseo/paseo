@@ -60,6 +60,6 @@ export type KeyboardActionId =
 
 export type KeyboardShortcutPayload =
   | { index: number }
-  | { delta: 1 | -1 }
+  | { delta: 1 | -1; preserveBrowsingFocus?: boolean }
   | { kind: MessageInputKeyboardActionKind }
   | null;

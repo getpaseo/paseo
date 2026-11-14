@@ -3,6 +3,7 @@ import type { KeyboardInputEvent } from "../overlays";
 export interface KeyboardSourceInput {
   event: KeyboardInputEvent;
   focusScope: KeyboardFocusScope;
+  messageInputEmpty?: boolean;
   captureFocusRestore(): void;
 }
 export interface KeyboardSourceHandlers {

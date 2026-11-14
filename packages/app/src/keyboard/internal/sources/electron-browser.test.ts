@@ -189,6 +189,23 @@ describe("buildBrowserKeyboardPolicy", () => {
         shift: false,
       });
     }
+    for (const code of ["ArrowLeft", "ArrowRight"]) {
+      expect(policy.prefixes).not.toContainEqual({
+        alt: false,
+        code,
+        control: false,
+        editable: false,
+        meta: true,
+        shift: false,
+      });
+      expect(policy.prefixes).toContainEqual({
+        alt: true,
+        code,
+        control: false,
+        meta: true,
+        shift: false,
+      });
+    }
   });
 
   it("marks editable-only exclusions for enforcement inside the guest", () => {

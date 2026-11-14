@@ -114,6 +114,7 @@ function routeWorkspaceTabNavigateRelative(payload: KeyboardShortcutPayload): Sh
     id: "workspace.tab.navigate-relative",
     scope: "workspace",
     delta: payload.delta,
+    ...(payload.preserveBrowsingFocus ? { preserveBrowsingFocus: true } : {}),
   });
 }
 
