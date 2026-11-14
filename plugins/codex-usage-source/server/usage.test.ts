@@ -188,6 +188,31 @@ test("auth account claim survives token rotation", async () => {
   });
 });
 
+test("discovery isolates multiple user seats within the same workspace account", async () => {
+  const teamToken = (userId: string, email: string) =>
+    `header.${Buffer.from(
+      JSON.stringify({
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: "team-workspace-id",
+          chatgpt_user_id: userId,
+        },
+        "https://api.openai.com/profile": { email },
+      }),
+    ).toString("base64url")}.signature`;
+
+  await writeAuth(teamToken("user-seat-1", "user1@company.test"));
+  expect(await accountFor(authInput(fixtureHome))).toEqual({
+    key: "user-seat-1.team-workspace-id",
+    label: "user1@company.test",
+  });
+
+  await writeAuth(teamToken("user-seat-2", "user2@company.test"));
+  expect(await accountFor(authInput(fixtureHome))).toEqual({
+    key: "user-seat-2.team-workspace-id",
+    label: "user2@company.test",
+  });
+});
+
 test("discovery reads an email label from auth id_token when access token has no profile", async () => {
   const home = await mkdtemp(join(tmpdir(), "usage-codex-label-"));
   try {
@@ -464,4 +489,48 @@ test("#6155: real Codex and OpenCode stores share an account but keep agent fail
     problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
   });
   expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
+});
+
+test("same user seat across Codex and OpenCode harnesses shares one report card", async () => {
+  const teamToken = (harness: string) =>
+    `header.${Buffer.from(
+      JSON.stringify({
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: "team-workspace-id",
+          chatgpt_user_id: "user-seat-1",
+        },
+        "https://api.openai.com/profile": { email: "user1@company.test" },
+        harness,
+      }),
+    ).toString("base64url")}.signature`;
+
+  await writeAuth(teamToken("codex"));
+  const data = join(fixtureHome, "data");
+  await mkdir(join(data, "opencode"), { recursive: true });
+  await writeFile(
+    join(data, "opencode", "auth.json"),
+    JSON.stringify({
+      openai: {
+        type: "oauth",
+        access: teamToken("opencode"),
+        accountId: "team-workspace-id",
+        expires: 0,
+      },
+    }),
+  );
+  const env = { HOME: fixtureHome, CODEX_HOME: fixtureHome, XDG_DATA_HOME: data };
+  const lookup = { home: fixtureHome, env, platform: "linux" as const, now: () => 1_000 };
+  const registry = new UsageSourceRegistry(Date.now, 300_000);
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: (scope) => discover(scope, lookup),
+    fetch: (input) =>
+      fetchUsage(inputSchema.parse(input), async () => new Response(null, { status: 401 }), lookup),
+  });
+  const reports = await registry.listReports();
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.id).toBe("codex:user-seat-1.team-workspace-id");
+  expect(reports[0]?.account.label).toBe("user1@company.test");
+  expect(reports[0]?.loginErrors).toHaveLength(2);
 });
