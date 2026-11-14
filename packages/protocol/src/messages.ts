@@ -5707,6 +5707,7 @@ const CheckoutStatusCommonSchema = z.object({
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
   baseRefExact: z.string().nullable().optional(),
+  defaultBranchRef: z.string().nullable().optional(),
   comparisonBaseRef: z.string().nullable().optional(),
   // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
   // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a

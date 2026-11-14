@@ -82,6 +82,7 @@ import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-works
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
+  resolveNewWorkspaceBaseContext,
 } from "./new-workspace-fork-context";
 import {
   buildPickerOptionData,
@@ -982,6 +983,14 @@ export function NewWorkspaceScreen({
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
+  const { checkoutSourceDirectory, forkFromCurrentBranch } = resolveNewWorkspaceBaseContext({
+    forkSetup: forkDraftSetup,
+    selectedServerId,
+    sourceServerId: serverId,
+    selectedProject,
+    sourceProject: routeProject,
+    sourceDirectory: selectedSourceDirectory,
+  });
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
     () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
@@ -1037,7 +1046,7 @@ export function NewWorkspaceScreen({
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: checkoutSourceDirectory ?? "",
   });
 
   const { effectiveIsolation, setIsolation, showRefPicker } = useWorkspaceIsolation({
@@ -1090,8 +1099,10 @@ export function NewWorkspaceScreen({
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
   const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
+    () =>
+      selectedItem ??
+      (checkoutStatus ? defaultBasePickerItem(checkoutStatus, { forkFromCurrentBranch }) : null),
+    [checkoutStatus, selectedItem, forkFromCurrentBranch],
   );
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
@@ -1104,8 +1115,8 @@ export function NewWorkspaceScreen({
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem) : t("newWorkspace.tooltips.startingRef");
+  }, [itemById, selectedOptionId, t]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       setup.chooseBase(item);
@@ -1241,14 +1252,18 @@ export function NewWorkspaceScreen({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
+            cwd: checkoutSourceDirectory ?? selectedSourceDirectory,
           })
         : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
-            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+            selectedItem ??
+              defaultBasePickerItem(checkoutStatusForCreate, { forkFromCurrentBranch }),
           )
         : undefined;
+      const requiresStartingRef =
+        createsWorktree && checkoutStatusForCreate?.defaultBranchRef === null && !checkoutRequest;
+      if (requiresStartingRef) throw new Error(t("newWorkspace.tooltips.startingRef"));
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
         worktreeSlug: creationIdentity.worktreeSlug,
@@ -1274,7 +1289,9 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      checkoutSourceDirectory,
       effectiveIsolation,
+      forkFromCurrentBranch,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1598,7 +1615,11 @@ export function NewWorkspaceScreen({
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text testID="new-workspace-error" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        ) : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>

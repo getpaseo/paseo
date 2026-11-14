@@ -7,7 +7,10 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { CheckoutContext } from "../utils/checkout-git.js";
+import type {
+  CheckoutContext,
+  ResolveRepositoryDefaultBranchRefInput,
+} from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
@@ -25,6 +28,7 @@ import {
   hasOriginRemote,
   listBranchSuggestions,
   resolveRepositoryDefaultBranch,
+  resolveRepositoryDefaultBranchRef,
   resolveBranchCheckout,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
@@ -168,6 +172,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     isDirty: boolean | null;
     baseRef: string | null;
     baseRefExact?: string | null;
+    defaultBranchRef?: string | null;
     comparisonBaseRef?: string | null;
     aheadBehind: { ahead: number; behind: number } | null;
     upstreamRef: string | null;
@@ -694,6 +699,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<string>
   >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly defaultBranchRefCache = new LRUCache<
+    string,
+    WorkspaceGitAuxiliaryReadCacheEntry<{ ref: string | null }>
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
   private readonly checkoutDiffCache = new CheckoutDiffCache(() => this.deps.now().getTime());
   private watcherErrorCallbackCount = 0;
   constructor(options: WorkspaceGitServiceOptions) {
@@ -835,6 +844,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
+      resolveDefaultBranchRef: (input) => this.resolveDefaultBranchRef(input),
       ...(options?.priority
         ? { runGitCommand: createRunGitCommand("checkout-read", { priority: options.priority }) }
         : {}),
@@ -1142,6 +1152,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.closeWorkspaceTarget(target);
     }
     this.workspaceTargets.clear();
+    this.defaultBranchRefCache.clear();
 
     for (const target of this.repoTargets.values()) {
       this.closeRepoTarget(target);
@@ -1179,6 +1190,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     return this.createWorkspaceTarget(cwd);
+  }
+
+  private async resolveDefaultBranchRef(
+    input: ResolveRepositoryDefaultBranchRefInput,
+  ): Promise<string | null> {
+    const facts = input.context?.facts;
+    let key = input.cwd;
+    if (facts?.isGit) key = facts.gitCommonDir ?? facts.worktreeRoot;
+    const result = await this.readAuxiliaryCache(
+      this.defaultBranchRefCache,
+      key,
+      undefined,
+      async () => ({
+        // Resolve in the cached repository scope, not a caller's worktree-local config.
+        ref: await resolveRepositoryDefaultBranchRef({ ...input, cwd: key }),
+      }),
+    );
+    return result.ref;
   }
 
   private readAuxiliaryCache<T>(
@@ -2656,6 +2685,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: RepoGitTarget,
     events: FileChange[],
   ): Map<string, RepoMetadataWorkspaceRefresh> | null {
+    let defaultRefsChanged = false;
+    let defaultRefTopologyChanged = false;
+    for (const event of events) {
+      const relativePath = target.paths.relative(event.path) ?? "";
+      const effect = classifyGitMetadataPath("common", relativePath);
+      if (relativePath === "config.worktree") {
+        defaultRefsChanged = true;
+        defaultRefTopologyChanged = true;
+      }
+      if (effect.kind === "ref" || effect.kind === "all") defaultRefsChanged = true;
+      if (effect.kind !== "ref") continue;
+      const isTopologyChange =
+        event.type === "create" || event.type === "delete" || effect.ref.endsWith("/HEAD");
+      if (isTopologyChange) defaultRefTopologyChanged = true;
+    }
+    if (defaultRefsChanged) this.defaultBranchRefCache.delete(target.repoGitRoot);
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
     const matchesRepoGitRoot = target.paths.matches;
 
@@ -2663,7 +2708,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (!this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes)) return null;
     }
 
-    return refreshes;
+    return defaultRefTopologyChanged ? null : refreshes;
   }
 
   private refreshWorkingTreeIgnoresFromRepoMetadataEvents(
@@ -3691,7 +3736,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.invalidateCheckoutDiffCache(cwd, "base");
       this.invalidateCheckoutDiffCache(facts.worktreeRoot, "base");
     }
-    const context: CheckoutContext = { ...baseContext, facts };
+    const context: CheckoutContext = {
+      ...baseContext,
+      facts,
+      resolveDefaultBranchRef: (input) => this.resolveDefaultBranchRef(input),
+    };
     const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
     if (!checkoutStatus.isGit) {
       target.latestGit = buildNotGitSnapshot(cwd).git;
@@ -3725,6 +3774,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         : (target.latestGit?.isDirty ?? checkoutStatus.isDirty),
       baseRef: checkoutStatus.baseRef,
       baseRefExact: checkoutStatus.baseRefExact,
+      defaultBranchRef: checkoutStatus.defaultBranchRef,
       comparisonBaseRef: checkoutStatus.comparisonBaseRef,
       aheadBehind: checkoutStatus.aheadBehind,
       upstreamRef: checkoutStatus.upstreamRef,
@@ -3996,6 +4046,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     result: WorkspaceGitFetchResult | null,
     eventsBeforeFetchSnapshot: FileChange[],
   ): void {
+    // The fetch snapshot can consume ref watch events before they invalidate this cache.
+    this.defaultBranchRefCache.delete(target.repoGitRoot);
     this.flushFetchMetadataEvents(target, eventsBeforeFetchSnapshot);
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();
