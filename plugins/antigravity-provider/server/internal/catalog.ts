@@ -23,8 +23,10 @@ const modes: readonly ProviderMode[] = [
 export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<ProviderCatalog> {
   const output = await probe({ launch, args: ["models"], cwd });
   const models: ProviderModel[] = [];
-  for (const line of output.trim().split(/\r?\n/)) {
-    const [id, label, ...extra] = line.split("\t");
+  for (const rawLine of output.trim().split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const [id, label, ...extra] = rawLine.split("\t");
     if (!id || !label || extra.length > 0)
       throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
     if (models.some((model) => model.id === id))
@@ -58,12 +60,37 @@ export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus>
   }
 }
 
+export function normalizeModelId(
+  model: string | undefined,
+  catalog: ProviderCatalog,
+): string | undefined {
+  if (!model) return undefined;
+  if (catalog.models.some((m) => m.id === model)) return model;
+
+  const match = /^(.*)-(low|medium|high|xhigh|max)$/.exec(model);
+  if (match) {
+    const candidate = `antigravity/${match[1]}:${match[2]}`;
+    if (catalog.models.some((m) => m.id === candidate)) return candidate;
+  }
+
+  const scopedMatch = /^antigravity\/(.*):(low|medium|high|xhigh|max)$/.exec(model);
+  if (scopedMatch) {
+    const candidate = `${scopedMatch[1]}-${scopedMatch[2]}`;
+    if (catalog.models.some((m) => m.id === candidate)) return candidate;
+  }
+
+  return model;
+}
+
 export function validateSelection(
   config: { model?: string; mode?: string; thinkingOption?: string },
   catalog: ProviderCatalog,
 ): void {
-  if (config.model && !catalog.models.some((model) => model.id === config.model))
-    throw new AntigravityError(`Unknown Antigravity model: ${config.model}`, "INVALID_MODEL");
+  if (config.model) {
+    const resolved = normalizeModelId(config.model, catalog);
+    if (!catalog.models.some((model) => model.id === resolved))
+      throw new AntigravityError(`Unknown Antigravity model: ${config.model}`, "INVALID_MODEL");
+  }
   if (config.mode && !catalog.modes.some((mode) => mode.id === config.mode))
     throw new AntigravityError(`Unknown Antigravity mode: ${config.mode}`, "INVALID_MODE");
   if (config.thinkingOption)

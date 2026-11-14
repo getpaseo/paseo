@@ -14,6 +14,7 @@ import {
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
 import { signalPlan } from "./internal/signals.js";
+import { normalizeModelId, validateSelection } from "./internal/catalog.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -430,7 +431,7 @@ it("rejects plan and keeps the full-access selection without respawning", async 
   ).toHaveLength(1);
 });
 
-it("emits one full-access warning per open, none on respawn, and one again on resume", async () => {
+it("emits one full-access warning on open, none on respawn, and does not duplicate on resume", async () => {
   const h = await harness();
   await h.open();
   const warning = {
@@ -467,7 +468,7 @@ it("emits one full-access warning per open, none on respawn, and one again on re
   const resumed = await harness();
   await resumed.open(persistence);
   await resumed.completed(await resumed.prompt("RESUME"));
-  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
+  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([]);
 });
 
 it("defers model and mode changes until the next prompt, then respawns with validated flags", async () => {
@@ -688,6 +689,74 @@ describe("process signal plans", () => {
       });
     },
   );
+});
+
+describe("model normalization", () => {
+  const modernCatalog = {
+    models: [
+      {
+        id: "antigravity/gemini-3.8-flash:medium",
+        label: "Gemini 3.8 Flash · Antigravity (Medium)",
+      },
+      { id: "auto/glm-5.3-flash:high", label: "GLM-5.3-Flash (High)" },
+    ],
+    modes: [
+      {
+        id: "full-access",
+        icon: "ShieldOff",
+        colorTier: "dangerous",
+        label: "Full access",
+        description: "",
+      },
+    ],
+    thinkingOptions: [],
+    defaultMode: "full-access",
+  } as const;
+
+  const legacyCatalog = {
+    models: [{ id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" }],
+    modes: [
+      {
+        id: "full-access",
+        icon: "ShieldOff",
+        colorTier: "dangerous",
+        label: "Full access",
+        description: "",
+      },
+    ],
+    thinkingOptions: [],
+    defaultMode: "full-access",
+  } as const;
+
+  it("normalizes legacy model ID to scoped model ID when present in modern catalog", () => {
+    expect(normalizeModelId("gemini-3.8-flash-medium", modernCatalog)).toBe(
+      "antigravity/gemini-3.8-flash:medium",
+    );
+  });
+
+  it("normalizes scoped model ID to legacy model ID when present in legacy catalog", () => {
+    expect(normalizeModelId("antigravity/gemini-3.8-flash:medium", legacyCatalog)).toBe(
+      "gemini-3.8-flash-medium",
+    );
+  });
+
+  it("keeps exact model ID when directly matching catalog", () => {
+    expect(normalizeModelId("auto/glm-5.3-flash:high", modernCatalog)).toBe(
+      "auto/glm-5.3-flash:high",
+    );
+    expect(normalizeModelId("gemini-3.8-flash-medium", legacyCatalog)).toBe(
+      "gemini-3.8-flash-medium",
+    );
+  });
+
+  it("validates normalized model successfully", () => {
+    expect(() =>
+      validateSelection({ model: "gemini-3.8-flash-medium" }, modernCatalog),
+    ).not.toThrow();
+    expect(() =>
+      validateSelection({ model: "antigravity/gemini-3.8-flash:medium" }, legacyCatalog),
+    ).not.toThrow();
+  });
 });
 
 describe("image prompts", () => {

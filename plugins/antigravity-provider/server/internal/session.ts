@@ -12,7 +12,7 @@ import type {
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
-import { validateSelection } from "./catalog.js";
+import { normalizeModelId, validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -52,12 +52,14 @@ export class Session {
   private readonly reportedDenials = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {
-    this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
+    const catalog = options.catalog();
+    const model = normalizeModelId(options.config.model, catalog);
+    this.config = { ...options.config, model, mode: options.config.mode ?? "full-access" };
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
     this.firstMessage = this.conversationId === null;
-    validateSelection(this.config, options.catalog());
+    validateSelection(this.config, catalog);
   }
 
   async open(requestId: string, capabilities: readonly string[]): Promise<void> {
@@ -72,7 +74,9 @@ export class Session {
       cwd: this.config.cwd,
       title: this.config.title,
     });
-    this.publishFullAccessNotice();
+    if (!this.options.persistence) {
+      this.publishFullAccessNotice();
+    }
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
@@ -129,9 +133,13 @@ export class Session {
   }
 
   configure(changes: ProviderConfigChanges): void {
+    const catalog = this.options.catalog();
+    const requestedModel =
+      changes.model === null ? undefined : (changes.model ?? this.config.model);
+    const model = normalizeModelId(requestedModel, catalog);
     const config = {
       ...this.config,
-      model: changes.model === null ? undefined : (changes.model ?? this.config.model),
+      model,
       mode: changes.mode === null ? "full-access" : (changes.mode ?? this.config.mode),
       thinkingOption:
         changes.thinkingOption === null
@@ -140,7 +148,7 @@ export class Session {
     };
     if (changes.settings && Object.keys(changes.settings).length > 0)
       throw new AntigravityError("Antigravity has no configurable settings");
-    validateSelection(config, this.options.catalog());
+    validateSelection(config, catalog);
     this.config = config;
     this.publishConfig();
   }
