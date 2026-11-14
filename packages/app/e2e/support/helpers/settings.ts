@@ -737,3 +737,95 @@ export async function normalizeSettingsFontSizes(page: Page): Promise<void> {
     await expect(input).toHaveValue(minimum);
   }
 }
+
+/** Sample actual paints, including the first workspace frame after Settings. */
+export async function captureCompactSidebarReturn(page: Page, returnAction: () => Promise<void>) {
+  await page.evaluate(() => {
+    const capture = {
+      frames: [] as {
+        time: number;
+        pathname: string;
+        sidebarVisible: boolean;
+        settingsVisible: boolean;
+        closeX: number | null;
+      }[],
+      stopped: false,
+    };
+    Object.assign(window, { __sidebarFrameCapture: capture });
+    const start = performance.now();
+    function sample() {
+      if (capture.stopped) return;
+      const close = document.querySelector('[data-testid="sidebar-close"]');
+      capture.frames.push({
+        time: performance.now() - start,
+        pathname: location.pathname,
+        settingsVisible:
+          document
+            .querySelector('[data-testid="settings-sidebar"]')
+            ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false,
+        sidebarVisible:
+          (close?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false) &&
+          close!.getBoundingClientRect().x >= 0 &&
+          close!.getBoundingClientRect().right <= innerWidth,
+        closeX: close?.getBoundingClientRect().x ?? null,
+      });
+      requestAnimationFrame(sample);
+    }
+    requestAnimationFrame(sample);
+  });
+  await returnAction();
+  return page.evaluate(async () => {
+    const capture = (
+      window as typeof window & {
+        __sidebarFrameCapture: {
+          frames: {
+            time: number;
+            pathname: string;
+            sidebarVisible: boolean;
+            settingsVisible: boolean;
+            closeX: number | null;
+          }[];
+          stopped: boolean;
+        };
+      }
+    ).__sidebarFrameCapture;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+    capture.stopped = true;
+    return capture.frames;
+  });
+}
+
+export async function captureCompactSidebarContext(page: Page) {
+  const sidebar = await page.getByTestId("sidebar-project-workspace-list-scroll").elementHandle();
+  if (!sidebar) throw new Error("Open sidebar has no workspace list");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
+  const offset = await sidebar.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop;
+  });
+  expect(offset).toBeGreaterThan(0);
+  return async () => {
+    expect(await sidebar.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(offset);
+    await sidebar.dispose();
+  };
+}
+
+export async function expectCompactSidebarOpen(page: Page) {
+  await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeInViewport();
+}
+
+export async function closeCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Close sidebar", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open menu", exact: true }).first(),
+  ).toBeInViewport();
+}
+
+export async function openSettingsFromCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectAppRoute(page, buildSettingsRoute());
+  await expectCompactSettingsList(page);
+}
