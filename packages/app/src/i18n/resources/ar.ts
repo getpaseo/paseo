@@ -2534,6 +2534,7 @@ export const ar: TranslationResources = {
         label: "لغة",
         description: "لغة التطبيق",
         options: {
+          it: "Italiano",
           system: "نظام",
           ar: "العربية",
           en: "English",
