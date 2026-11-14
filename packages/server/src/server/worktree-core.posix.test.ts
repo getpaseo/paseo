@@ -806,6 +806,25 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
     test("checks out the authoritative GitLab MR ref before a same-named origin branch", async () => {
       const { tempDir, repoDir, paseoHome } = createGitLabMrWithConflictingOriginBranchRepo();
       cleanupPaths.push(tempDir);
+      const sourceRemote = path.join(tempDir, "fork.git");
+      execFileSync("git", ["clone", "--bare", path.join(tempDir, "origin.git"), sourceRemote], {
+        stdio: "pipe",
+      });
+      const mrHead = execFileSync(
+        "git",
+        [
+          `--git-dir=${path.join(tempDir, "origin.git")}`,
+          "rev-parse",
+          "refs/merge-requests/14/head",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+      execFileSync("git", [
+        `--git-dir=${sourceRemote}`,
+        "update-ref",
+        "refs/heads/feature/gitlab-mr",
+        mrHead,
+      ]);
       const gitlab = createGitLabService({
         resolveGlabPath: async () => "/usr/bin/glab",
         resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
@@ -820,8 +839,19 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
                 state: "opened",
                 source_branch: "feature/gitlab-mr",
                 target_branch: "main",
+                author: { username: "mr-author" },
                 source_project_id: 202,
                 target_project_id: 101,
+              }),
+              stderr: "",
+            };
+          }
+          if (args[0] === "api" && args[1] === "projects/202") {
+            return {
+              stdout: JSON.stringify({
+                namespace: { full_path: "team" },
+                ssh_url_to_repo: sourceRemote,
+                http_url_to_repo: "https://gitlab.example.com/team/fork.git",
               }),
               stderr: "",
             };
@@ -843,11 +873,17 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.intent).toMatchObject({
         kind: "checkout-change-request",
         forge: "gitlab",
+        headRepository: "team/fork",
+        localBranchName: "team/feature/gitlab-mr",
         checkoutRefs: [
           { remoteName: "origin", remoteRef: "refs/merge-requests/14/head" },
           { remoteName: "origin", remoteRef: "refs/heads/feature/gitlab-mr" },
         ],
       });
+      expect(result.worktree.branchName).toBe("team/feature/gitlab-mr");
+      expect(getGitConfigValue(result.worktree.worktreePath, "remote.paseo-pr-14.url")).toBe(
+        sourceRemote,
+      );
       expect(readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8")).toBe(
         "authoritative merge request head\n",
       );
