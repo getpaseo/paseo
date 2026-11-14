@@ -89,6 +89,33 @@ describe("local project links store", () => {
     expect(pendingStorage.setItem).toHaveBeenCalledOnce();
   });
 
+  test("rejects a suggestion that hydration reveals would merge clones on one host", async () => {
+    const persistedLink = {
+      id: "local-existing",
+      members: [
+        { serverId: "host-a", projectId: "project-a" },
+        { serverId: "host-b", projectId: "project-b-one" },
+      ],
+      identity: input.identity,
+    };
+    const pendingStorage = storageWithPendingRead();
+    const store = createLocalProjectLinksStore(pendingStorage.storage);
+    await pendingStorage.readStarted;
+
+    const save = store.getState().linkProjects({
+      ...input,
+      members: [
+        { serverId: "host-a", projectId: "project-a" },
+        { serverId: "host-b", projectId: "project-b-two" },
+      ],
+    });
+    pendingStorage.finishRead(JSON.stringify({ state: { links: [persistedLink] }, version: 0 }));
+
+    await expect(save).rejects.toThrow("can no longer be linked");
+    expect(store.getState().links).toEqual([persistedLink]);
+    expect(pendingStorage.setItem).not.toHaveBeenCalled();
+  });
+
   test("waits for a local write before reporting a link complete", async () => {
     let finishWrite: () => void;
     const pendingWrite = new Promise<void>((resolve) => {

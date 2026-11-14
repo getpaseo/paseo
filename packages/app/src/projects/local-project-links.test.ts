@@ -215,6 +215,23 @@ describe("local project links", () => {
     expect(sameLocalProjectLinkIdentity(literalBackslash!, directorySeparator!)).toBe(false);
   });
 
+  test("keeps significant whitespace in POSIX subdirectories", () => {
+    const trailingWhitespace = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app/web ",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "https://git.example.test/team/app.git",
+    });
+    const withoutWhitespace = deriveProjectGitIdentity({
+      projectRootPath: "/repos/app/web",
+      worktreeRoot: "/repos/app",
+      remoteUrl: "https://git.example.test/team/app.git",
+    });
+
+    expect(trailingWhitespace).toMatchObject({ subdirectory: "web " });
+    expect(withoutWhitespace).toMatchObject({ subdirectory: "web" });
+    expect(sameLocalProjectLinkIdentity(trailingWhitespace!, withoutWhitespace!)).toBe(false);
+  });
+
   test("uses the main checkout when resolving a managed worktree project", () => {
     const descriptor = project({ id: "prj-managed", root: "/repos/app/packages/web" });
     expect(

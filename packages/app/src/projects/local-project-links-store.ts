@@ -85,6 +85,23 @@ export function linkLocalProjects(input: {
   ];
 }
 
+function isLocalProjectLinkRequestSatisfied(input: {
+  links: readonly LocalProjectLink[];
+  members: readonly ProjectLinkPlacementRef[];
+  identity: LocalProjectLinkIdentity;
+}): boolean {
+  const members = normalizeMembers(input.members);
+  return (
+    members.length >= 2 &&
+    hasDistinctServers(members) &&
+    input.links.some(
+      (link) =>
+        sameLocalProjectLinkIdentity(link.identity, input.identity) &&
+        members.every((member) => findLocalProjectLink([link], member) !== null),
+    )
+  );
+}
+
 export function unlinkLocalProject(input: {
   links: readonly LocalProjectLink[];
   placement: ProjectLinkPlacementRef;
@@ -116,10 +133,11 @@ export function createLocalProjectLinksStore(
           // read has settled so this update applies to the saved links and can be acknowledged.
           await hydration;
           const previousLinks = get().links;
+          const nextLinks = update(previousLinks);
           try {
             // Zustand's persist middleware returns the storage write from this wrapped set call.
             // Await it so callers do not acknowledge a device-local link before it is durable.
-            await Promise.resolve(set({ links: update(previousLinks) }));
+            await Promise.resolve(set({ links: nextLinks }));
           } catch (error) {
             // The storage still holds the prior value when its write rejects. Restore the in-memory
             // view as well, and ignore a second storage failure while preserving the original error.
@@ -130,7 +148,14 @@ export function createLocalProjectLinksStore(
 
         return {
           links: [],
-          linkProjects: (input) => updateLinks((links) => linkLocalProjects({ ...input, links })),
+          linkProjects: (input) =>
+            updateLinks((links) => {
+              const nextLinks = linkLocalProjects({ ...input, links });
+              if (!isLocalProjectLinkRequestSatisfied({ ...input, links: nextLinks })) {
+                throw new Error("The selected projects can no longer be linked.");
+              }
+              return nextLinks;
+            }),
           unlinkProject: (placement) =>
             updateLinks((links) => unlinkLocalProject({ links, placement })),
         };

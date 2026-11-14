@@ -642,7 +642,7 @@ function normalizePathSegments(
   input: string,
   compareAsWindows: boolean,
 ): { root: string; segments: string[] } | null {
-  let value = input.trim();
+  let value = input;
   if (compareAsWindows) value = value.replaceAll("\\", "/");
   if (!value) return null;
   value = value.replace(/^\/\/\?\/UNC\//iu, "//").replace(/^\/\/\?\//u, "");
