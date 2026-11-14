@@ -837,11 +837,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingCatchUps.delete(agentId);
+    // A gap recovery pages forward to keep the coverage it extends. Without coverage there is
+    // nothing to keep, so an overflowing page falls back to the latest tail, as a resume does.
     void fetchUntilCurrent(
       agentId,
       generation,
       nextRequest,
-      request === undefined && nextRequest.direction === "after",
+      nextRequest.direction === "after" && (request === undefined || applied === undefined),
     );
   };
 

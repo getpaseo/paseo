@@ -465,6 +465,38 @@ test("a gap parked behind a running tail resumes after the rows that tail applie
   world.sync.dispose();
 });
 
+test("a chat without coverage that recovers a gap loads the latest tail when history overflows a page", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const tail = await world.nextFetch("agent-a");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  tail.respond({ hasNewer: false, seq: 0 });
+
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 0 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  recovery.respond({ hasNewer: true, seq: 40 });
+
+  const fallback = await world.nextFetch("agent-a");
+  expect(fallback.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  fallback.respond({ hasNewer: false, seq: 90 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
 test("reports a chat current only once its parked follow-up page completes", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
@@ -909,7 +941,8 @@ test("gap recovery supersedes completed catch-up and pages through the current t
   const membership = await world.nextMembership();
   membership.succeed();
   const initial = await world.nextFetch("agent-a");
-  initial.respond({ hasNewer: false });
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
+  initial.respond({ hasNewer: false, seq: 10 });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 
   world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
