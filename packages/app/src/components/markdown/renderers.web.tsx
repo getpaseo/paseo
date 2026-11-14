@@ -1,5 +1,12 @@
 import { Text } from "react-native";
-import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+} from "react";
 import type {
   CodeBlockRendererProps,
   LinkRendererProps,
@@ -12,6 +19,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
+import { scrollToMarkdownHeading } from "./heading-link";
 import { markdownLinkSource } from "./source";
 
 const ThemedCodeBlock = withUnistyles(HighlightedCodeBlock);
@@ -50,11 +58,22 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     }),
     [anchorProps.style, hovered],
   );
+  const handleClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (!forgeUrl && scrollToMarkdownHeading(event.currentTarget, link.url)) {
+        event.preventDefault();
+        return;
+      }
+      anchorProps.onClick?.(event);
+    },
+    [anchorProps, forgeUrl, link.url],
+  );
   const anchor = (
     <a
       {...anchorProps}
       href={forgeUrl ?? anchorProps.href}
       style={anchorStyle}
+      onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
