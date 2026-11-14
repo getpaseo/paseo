@@ -1000,7 +1000,11 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       }
       publish({
         ...resolved,
-        modelSelectorProviders: buildSelectableProviderSelectorProviders(providerEntries),
+        modelSelectorProviders: buildSelectableProviderSelectorProviders(
+          providerEntries,
+          true,
+          resolved.selectedProvider,
+        ),
         providerResolutionByServerId,
         providerSnapshotRequest: isPendingResolution ? null : state.providerSnapshotRequest,
       });
