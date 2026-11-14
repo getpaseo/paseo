@@ -71,6 +71,18 @@ describe("paseo config schema", () => {
     });
   });
 
+  it.each([{ invalid: null }, { invalid: 42 }, { invalid: "bad" }, { invalid: [] }])(
+    "preserves valid launch siblings when one runtime entry is $invalid",
+    ({ invalid }) => {
+      const config = { launches: { dev: { command: "./bin/dev" }, broken: invalid } };
+      expect(PaseoConfigSchema.parse(config).launches).toEqual({
+        dev: { command: "./bin/dev" },
+        broken: {},
+      });
+      expect(PaseoConfigRawSchema.safeParse(config).success).toBe(false);
+    },
+  );
+
   it("sends port block size outside the strict service ports object for old clients", () => {
     const oldConfigClientSchema = z
       .object({

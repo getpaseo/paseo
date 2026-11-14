@@ -105,7 +105,7 @@ export const ScriptEntrySchema = PaseoScriptEntryRawSchema.catch({});
 export const PaseoConfigSchema = PaseoConfigRawSchema.extend({
   worktree: WorktreeConfigSchema.optional(),
   scripts: z.record(z.string(), ScriptEntrySchema).optional().catch({}),
-  launches: z.record(z.string(), PaseoLaunchEntryRawSchema).optional().catch({}),
+  launches: z.record(z.string(), PaseoLaunchEntryRawSchema.catch({})).optional().catch({}),
   metadataGeneration: PaseoMetadataGenerationSchema.optional(),
 })
   .passthrough()
