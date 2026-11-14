@@ -2776,7 +2776,14 @@ export const ar: TranslationResources = {
     },
     host: {
       password: {
-        guidance: "أزل هذا المضيف ثم أضفه مرة أخرى بكلمة المرور التي يطلبها هذا الخادم.",
+        awaitingOrigin: "يتصل {{host}} عبر {{origin}}. اتصل بـ {{origin}} للوصول إليه.",
+        password_required:
+          "{{host}} ({{connection}}): أصبح هذا المضيف يتطلب كلمة مرور، ولا توجد كلمة مرور محفوظة له.",
+        incorrect_password: "{{host}} ({{connection}}): رُفضت كلمة المرور المحفوظة. ربما تغيرت.",
+        label: "كلمة المرور",
+        connect: "اتصال",
+        saving: "جارٍ الحفظ…",
+        saveError: "تعذّر حفظ كلمة المرور. حاول مرة أخرى.",
       },
       appearance: {
         title: "المظهر",

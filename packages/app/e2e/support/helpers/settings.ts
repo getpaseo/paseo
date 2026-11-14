@@ -575,27 +575,24 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
 }
 
-export async function expectHostRejectedWithReAddGuidance(
+export async function expectHostPasswordRecovery(
   page: Page,
-  reason: string,
+  hostLabel: string,
+  connection: string,
 ): Promise<void> {
   const error = page.getByTestId("host-connection-error");
-  await expect(error).toContainText(reason);
-  await expect(error).toContainText(
-    "Remove this host and add it again with the password this daemon asks for.",
-  );
+  await expect(error).toContainText("Password required");
+  await expect(error).toContainText(hostLabel);
+  await expect(error).toContainText(connection);
+  await expect(error).toContainText("This host now requires a password, and none is saved for it.");
+  await expect(error.getByTestId("host-password-input")).toBeVisible();
+  await expect(error.getByTestId("host-password-submit")).toBeDisabled();
 }
 
-export async function expectNoHostPasswordControls(page: Page): Promise<void> {
-  await expect(page.getByText("Password", { exact: true })).toHaveCount(0);
-  await expect(page.locator('input[type="password"]')).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /password/i })).toHaveCount(0);
-}
-
-export async function removeHostFromHostPage(page: Page, serverId: string): Promise<void> {
-  await page.getByTestId("host-page-remove-host-button").click();
-  await page.getByTestId("remove-host-confirm").click();
-  await expect(page).not.toHaveURL(new RegExp(`/settings/hosts/${serverId}`));
+export async function submitHostPassword(page: Page, password: string): Promise<void> {
+  const error = page.getByTestId("host-connection-error");
+  await error.getByTestId("host-password-input").fill(password);
+  await error.getByTestId("host-password-submit").click();
 }
 
 export async function expectHostOnlineWithoutError(page: Page): Promise<void> {

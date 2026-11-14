@@ -2754,7 +2754,16 @@ export const ko: TranslationResources = {
     },
     host: {
       password: {
-        guidance: "이 호스트를 제거한 뒤 이 데몬이 요구하는 비밀번호로 다시 추가하세요.",
+        awaitingOrigin:
+          "{{host}}은(는) {{origin}}을(를) 통해 연결됩니다. 액세스하려면 {{origin}}에 연결하세요.",
+        password_required:
+          "{{host}} ({{connection}}): 이 호스트에 이제 비밀번호가 필요하지만 저장된 비밀번호가 없습니다.",
+        incorrect_password:
+          "{{host}} ({{connection}}): 저장된 비밀번호가 거부되었습니다. 비밀번호가 변경되었을 수 있습니다.",
+        label: "비밀번호",
+        connect: "연결",
+        saving: "저장 중…",
+        saveError: "비밀번호를 저장할 수 없습니다. 다시 시도하세요.",
       },
       appearance: {
         title: "모양",

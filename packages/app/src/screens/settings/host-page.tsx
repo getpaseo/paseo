@@ -27,6 +27,8 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FormTextInput } from "@/components/ui/form-field";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -41,6 +43,7 @@ import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
+  type HostRuntimeSnapshot,
   getHostRuntimeStore,
   isHostRuntimeConnected,
   useHostMutations,
@@ -228,22 +231,123 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   );
 }
 
+function getHostConnectionFailure(snapshot: HostRuntimeSnapshot | null) {
+  const title = snapshot?.lastError?.trim();
+  if (!title && !snapshot?.awaitingOriginServerId) return null;
+  return {
+    title,
+    reason: snapshot?.authFailureReason,
+    connectionId: snapshot?.authFailureConnectionId ?? snapshot?.activeConnectionId,
+    display: snapshot?.activeConnection?.display ?? "",
+  };
+}
+
+// A routed host waits for its offline origin instead of asking for its own password.
+function useAwaitingOrigin(originId: string | null | undefined): string | null {
+  const origin = useHostProfile(originId ?? "");
+  const originSnapshot = useHostRuntimeSnapshot(originId ?? "");
+  if (!originId || originSnapshot?.connectionStatus === "online") return null;
+  return origin?.label || originId;
+}
+
 function HostConnectionError({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const snapshot = useHostRuntimeSnapshot(serverId);
-  const lastError = snapshot?.lastError ?? null;
-  const connectionError =
-    typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
-  if (!connectionError) return null;
+  const host = useHostProfile(serverId);
+  const awaitingOrigin = useAwaitingOrigin(snapshot?.awaitingOriginServerId);
+  const { setHostPassword } = useHostMutations();
+  const inputRef = useRef<EditingTextInputHandle>(null);
+  const [password, setPassword] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingFailure, setPendingFailure] =
+    useState<ReturnType<typeof getHostConnectionFailure>>(null);
+  const savingRef = useRef(false);
+  const failure = pendingFailure ?? getHostConnectionFailure(snapshot);
+  const connection = host?.connections.find((entry) => entry.id === failure?.connectionId);
+
+  const submit = useCallback(async () => {
+    if (!password.length || savingRef.current || !failure?.reason) return;
+    savingRef.current = true;
+    setIsSaving(true);
+    setSaveError(null);
+    // The runtime clears its auth failure before persistence finishes. Keep the
+    // alert mounted until saving succeeds so a storage error stays actionable.
+    setPendingFailure(failure);
+    try {
+      await setHostPassword(serverId, password);
+      inputRef.current?.replaceText("");
+      setPassword("");
+      setPendingFailure(null);
+    } catch {
+      setSaveError(t("settings.host.password.saveError"));
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  }, [password, failure, serverId, setHostPassword, t]);
+
+  const needsPassword = Boolean(failure?.reason && host && !awaitingOrigin);
+  // Discard the draft when recovery or an offline origin hides its editor.
+  useEffect(() => {
+    if (isSaving || (needsPassword && snapshot?.connectionStatus !== "online")) return;
+    inputRef.current?.replaceText("");
+    setPassword("");
+    setSaveError(null);
+    setPendingFailure(null);
+  }, [snapshot?.connectionStatus, needsPassword, isSaving]);
+
+  if (!failure || !host) return null;
+  const title = awaitingOrigin
+    ? t("settings.host.password.awaitingOrigin", { host: host.label, origin: awaitingOrigin })
+    : failure.title;
+  if (!title) return null;
   return (
     <View style={styles.connectionError}>
       <InlineAlert
         size="sm"
         variant="error"
-        title={connectionError}
-        description={snapshot?.authFailureReason ? t("settings.host.password.guidance") : undefined}
+        title={title ?? undefined}
+        description={
+          needsPassword
+            ? t(`settings.host.password.${failure.reason}`, {
+                host: host.label,
+                connection: connection ? formatHostConnectionLabel(connection, t) : failure.display,
+              })
+            : undefined
+        }
         testID="host-connection-error"
-      />
+      >
+        {needsPassword ? (
+          <View style={styles.passwordRecovery}>
+            <Field label={t("settings.host.password.label")} error={saveError}>
+              <FormTextInput
+                ref={inputRef}
+                initialValue=""
+                onChangeText={setPassword}
+                secureTextEntry
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!isSaving}
+                accessibilityLabel={t("settings.host.password.label")}
+                testID="host-password-input"
+                returnKeyType="go"
+                onSubmitEditing={submit}
+              />
+            </Field>
+            <Button
+              variant="outline"
+              disabled={!password.length || isSaving}
+              loading={isSaving}
+              onPress={submit}
+              testID="host-password-submit"
+            >
+              {t(isSaving ? "settings.host.password.saving" : "settings.host.password.connect")}
+            </Button>
+          </View>
+        ) : null}
+      </InlineAlert>
     </View>
   );
 }
@@ -257,7 +361,7 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <HostConnectionError serverId={serverId} />
+      <HostConnectionError key={serverId} serverId={serverId} />
       <ConnectionsSection host={host} />
     </View>
   );
@@ -377,7 +481,7 @@ export function HostSettingsPage({
   return (
     <View>
       <HostStatusBadges serverId={serverId} />
-      <HostConnectionError serverId={serverId} />
+      <HostConnectionError key={serverId} serverId={serverId} />
 
       <HostAppearanceSection host={host} />
 
@@ -1724,6 +1828,10 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  passwordRecovery: {
+    flex: 1,
+    gap: theme.spacing[2],
   },
   connectionError: {
     marginBottom: theme.spacing[6],

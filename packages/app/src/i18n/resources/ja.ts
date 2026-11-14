@@ -2766,8 +2766,16 @@ export const ja: TranslationResources = {
     },
     host: {
       password: {
-        guidance:
-          "このホストを削除し、このデーモンが求めるパスワードを入力して追加し直してください。",
+        awaitingOrigin:
+          "{{host}} は {{origin}} 経由で接続します。アクセスするには {{origin}} に接続してください。",
+        password_required:
+          "{{host}}（{{connection}}）：このホストにはパスワードが必要になりましたが、保存されていません。",
+        incorrect_password:
+          "{{host}}（{{connection}}）：保存されたパスワードが拒否されました。変更された可能性があります。",
+        label: "パスワード",
+        connect: "接続",
+        saving: "保存中…",
+        saveError: "パスワードを保存できませんでした。もう一度お試しください。",
       },
       appearance: {
         title: "外観",

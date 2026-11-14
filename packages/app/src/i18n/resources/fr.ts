@@ -2802,8 +2802,15 @@ export const fr: TranslationResources = {
     },
     host: {
       password: {
-        guidance:
-          "Supprimez cet hôte puis ajoutez-le à nouveau avec le mot de passe demandé par ce daemon.",
+        awaitingOrigin: "{{host}} se connecte via {{origin}}. Connectez {{origin}} pour y accéder.",
+        password_required:
+          "{{host}} ({{connection}}) : Cet hôte exige désormais un mot de passe et aucun n’est enregistré pour lui.",
+        incorrect_password:
+          "{{host}} ({{connection}}) : Le mot de passe enregistré a été refusé. Il a peut-être changé.",
+        label: "Mot de passe",
+        connect: "Se connecter",
+        saving: "Enregistrement…",
+        saveError: "Impossible d’enregistrer le mot de passe. Réessayez.",
       },
       appearance: {
         title: "Apparence",
