@@ -64,6 +64,9 @@ export function ProviderInstallationSection({
     return null;
   const installation = state.status === "ready" ? state.installation : null;
   const run = action ? readUpdateRun(action) : null;
+  // A running update keeps its row, so Update shows its progress whatever the inspection reads
+  // meanwhile; the binary may be mid-replacement.
+  const updating = action ? isUpdating(action) : false;
 
   return (
     <View style={settingsStyles.section} testID="provider-installation">
@@ -74,11 +77,11 @@ export function ProviderInstallationSection({
       </View>
       <View style={settingsStyles.card}>
         <InstallationRow state={state} />
-        {installation?.inspection?.status === "installed" ? (
+        {installation?.inspection?.status === "installed" || updating ? (
           <UpdatesRow
             updates={updates}
-            updateUrl={installation.updateUrl}
-            action={installation.canUpdate ? action : undefined}
+            updateUrl={installation?.updateUrl}
+            action={updating || installation?.canUpdate ? action : undefined}
           />
         ) : null}
         {run ? <UpdateRunRow run={run} updateUrl={installation?.updateUrl} /> : null}
