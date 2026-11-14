@@ -161,15 +161,29 @@ function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): UsageWin
 
 export type UsageRunner = (launch: ProviderLaunch, args: string[]) => Promise<string>;
 
-/** Options the usage call sets itself, so the launch's own copies must not reach the command. */
-const OVERRIDDEN_FLAGS = new Set(["--disable-slash-commands"]);
+/** Options the usage call sets itself or that break/alter `agy -p /usage`. */
+const OVERRIDDEN_FLAGS = new Set([
+  "-c",
+  "--continue",
+  "--disable-slash-commands",
+  "--remote-agent",
+  "--remote-control",
+]);
 /** Overridden options that take a value; the bare form carries it in the next argument. */
 const OVERRIDDEN_VALUE_FLAGS = new Set([
   "-p",
   "--print",
   "--prompt",
+  "-i",
+  "--prompt-interactive",
   "--input-format",
   "--output-format",
+  "--effort",
+  "--model",
+  "--mode",
+  "--conversation",
+  "--json-schema",
+  "--print-timeout",
 ]);
 
 /**

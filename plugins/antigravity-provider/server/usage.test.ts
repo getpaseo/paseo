@@ -29,7 +29,7 @@ const sampleAgyUsageJson = JSON.stringify({
       groups: [
         {
           name: "Gemini Models",
-          description: "Models within this group: Gemini Flash, Gemini Pro",
+          description: "Models within this group: Gemini 4 Hydrogen, Gemini 3.8 Flash",
           buckets: [
             {
               id: "gemini-weekly",
@@ -49,7 +49,7 @@ const sampleAgyUsageJson = JSON.stringify({
         },
         {
           name: "Claude and GPT models",
-          description: "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+          description: "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
           buckets: [
             {
               id: "3p-weekly",
@@ -359,7 +359,7 @@ describe("Antigravity Usage", () => {
     });
   });
 
-  test("defaultUsageRunner drops overridden options together with their values", async () => {
+  test("defaultUsageRunner drops session and print-conflicting options together with their values", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "antigravity-argv-"));
     const log = path.join(directory, "argv.ndjson");
     try {
@@ -367,14 +367,45 @@ describe("Antigravity Usage", () => {
         command: process.execPath,
         args: [
           fakeAgy,
+          "-p",
+          "ignored prompt",
+          "--print",
+          "also ignored",
+          "--prompt=ignored",
           "--input-format",
           "stream-json",
           "--output-format",
           "stream-json",
           "--output-format=stream-json",
           "--disable-slash-commands",
+          "-c",
+          "--continue",
+          "--conversation",
+          "conv-123",
+          "--conversation=conv-456",
+          "--effort",
+          "xhigh",
+          "--effort=max",
           "--model",
-          "keep-me",
+          "gemini-4-hydrogen-xhigh",
+          "--model=gemini-4-argon-high",
+          "--mode",
+          "auto",
+          "--mode=plan",
+          "-i",
+          "interactive",
+          "--prompt-interactive=interactive",
+          "--remote-agent",
+          "--remote-agent=true",
+          "--remote-control",
+          '--json-schema={"type":"object"}',
+          "--print-timeout",
+          "5s",
+          "--settings",
+          "/tmp/agy-settings.json",
+          "--add-dir",
+          "/tmp/workspace",
+          "--sandbox",
         ],
         // The fake CLI records its argv and exits, so the assertion sees what agy would receive.
         env: { AGY_TEST_LOG: log, AGY_TEST_STARTUP: "exit" },
@@ -384,8 +415,11 @@ describe("Antigravity Usage", () => {
 
       const record = JSON.parse(readFileSync(log, "utf8").trim().split("\n")[0] ?? "{}");
       expect(record.args).toEqual([
-        "--model",
-        "keep-me",
+        "--settings",
+        "/tmp/agy-settings.json",
+        "--add-dir",
+        "/tmp/workspace",
+        "--sandbox",
         "-p",
         "/usage",
         "--output-format",
@@ -624,5 +658,102 @@ describe("Antigravity Usage", () => {
 
     const discovered = await usage.registration().discover({ kind: "global" });
     expect(discovered.map((entry) => entry.key)).toEqual([accountKey(launch.env)]);
+  });
+
+  test("Usage.fetch maps live agy 1.5.9 Hydrogen, Claude/GPT, and Argon quota groups", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        conversation_id: "",
+        status: "SUCCESS",
+        response: "",
+        duration_seconds: 0,
+        num_turns: 0,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          thinking_tokens: 0,
+          cache_read_tokens: 0,
+          total_tokens: 0,
+        },
+        command: {
+          name: "usage",
+          data: {
+            description: "Quota summary",
+            groups: [
+              {
+                name: "Gemini Models",
+                description: "Models within this group: Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                buckets: [
+                  {
+                    id: "gemini-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remaining_fraction: 0.98,
+                    reset_time: "2026-11-21T16:18:06Z",
+                  },
+                  {
+                    id: "gemini-5h",
+                    name: "Five Hour Limit Remaining",
+                    window: "5h",
+                    remaining_fraction: 0.92,
+                    reset_time: "2026-11-14T21:18:06Z",
+                  },
+                ],
+              },
+              {
+                name: "Claude and GPT models",
+                description:
+                  "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+                buckets: [
+                  {
+                    id: "3p-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remaining_fraction: 1,
+                    reset_time: "2026-11-21T16:32:39Z",
+                  },
+                  {
+                    id: "3p-5h",
+                    name: "Five Hour Limit Remaining",
+                    window: "5h",
+                    remaining_fraction: 1,
+                    reset_time: "2026-11-14T21:32:39Z",
+                  },
+                ],
+              },
+              {
+                name: "Gemini 4 Argon",
+                description: "Separate Argon quota on paid Pro plans.",
+                buckets: [
+                  {
+                    id: "gemini-argon-wtu-weekly",
+                    name: "Gemini 4 Argon Weekly Limit",
+                    window: "weekly",
+                    remaining_fraction: 0.998,
+                    reset_time: "2026-11-21T16:25:47Z",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+    const { account } = usage.remember({ command: "agy", args: [], env: {} });
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "gemini-weekly", usedPct: 2, summary: true }),
+        expect.objectContaining({ id: "gemini-5h", usedPct: 8 }),
+        expect.objectContaining({ id: "claude-gpt-oss-weekly", usedPct: 0, summary: true }),
+        expect.objectContaining({ id: "claude-gpt-oss-5h", usedPct: 0 }),
+        expect.objectContaining({ id: "gemini-argon-weekly", usedPct: 0, summary: true }),
+      ],
+      details: [{ id: "observed", label: "Observed", value: expect.any(String) }],
+    });
   });
 });
