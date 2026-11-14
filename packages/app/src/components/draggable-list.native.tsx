@@ -11,6 +11,10 @@ export type { DraggableListProps, DraggableRenderItemInfo };
 
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
 
+// A drop remounts every row between the drag's start and end slots (see the draggable-flatlist
+// patch), so state held inside a rendered row resets when a drop moves it. Keep state that must
+// survive a reorder in the list's owner, keyed by row.
+
 export function DraggableList<T>({
   data,
   keyExtractor,
