@@ -17,7 +17,10 @@ interface TestSqliteDb {
 // Cursor builds have stored ItemTable values as both TEXT and BLOB. Keys map to the
 // real layouts: a plain modern token or the legacy JSON object.
 function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8Array>): void {
-  const dir = join(homeDir, ".config", "Cursor", "User", "globalStorage");
+  writeCursorStateDbAt(join(homeDir, ".config", "Cursor", "User", "globalStorage"), rows);
+}
+
+function writeCursorStateDbAt(dir: string, rows: Record<string, string | Uint8Array>): void {
   mkdirSync(dir, { recursive: true });
   const { DatabaseSync } = testRequire("node:sqlite") as {
     DatabaseSync: new (path: string) => TestSqliteDb;
@@ -33,6 +36,10 @@ function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8
 
 function writeCursorAuthJson(homeDir: string, accessToken: string): void {
   const dir = join(homeDir, ".config", "cursor");
+  writeCursorAuthJsonAt(dir, accessToken);
+}
+
+function writeCursorAuthJsonAt(dir: string, accessToken: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "auth.json"), JSON.stringify({ accessToken }));
 }
@@ -250,6 +257,29 @@ describe("cursor usage source", () => {
     expect(cursor.status).toBe("available");
   });
 
+  it("discovers both Windows desktop and cursor-agent logins", async () => {
+    const appData = join(homeDir, "AppData", "Roaming");
+    process.env["APPDATA"] = appData;
+    writeCursorStateDbAt(join(appData, "Cursor", "User", "globalStorage"), {
+      "cursorAuth/accessToken": "cursor_desktop_jwt",
+    });
+    writeCursorAuthJsonAt(join(appData, "Cursor"), "cursor_cli_jwt");
+
+    expect(await discover()).toEqual([
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: {
+          store: "sqlite",
+          locator: join(appData, "Cursor", "User", "globalStorage", "state.vscdb"),
+        },
+      },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "file", locator: join(appData, "Cursor", "auth.json") },
+      },
+    ]);
+  });
+
   it("omits unreadable state.vscdb", async () => {
     const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
     mkdirSync(directory, { recursive: true });
@@ -377,7 +407,14 @@ describe("cursor usage source", () => {
 
 it("discovery returns a locator when fetch finds cursor credentials", async () => {
   const previous = process.env["CURSOR_ACCESS_TOKEN"];
+  const previousAppData = process.env["APPDATA"];
+  const previousHome = process.env["HOME"];
+  const previousUserProfile = process.env["USERPROFILE"];
+  const directory = mkdtempSync(join(tmpdir(), "usage-env-"));
   try {
+    delete process.env["APPDATA"];
+    process.env["HOME"] = directory;
+    process.env["USERPROFILE"] = directory;
     process.env["CURSOR_ACCESS_TOKEN"] = "fixture-token";
     let requested = false;
     await fetchFirst(async () => {
@@ -394,6 +431,13 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
   } finally {
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;
+    if (previousAppData === undefined) delete process.env["APPDATA"];
+    else process.env["APPDATA"] = previousAppData;
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
+    if (previousUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = previousUserProfile;
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
