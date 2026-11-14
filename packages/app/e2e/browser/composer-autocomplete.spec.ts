@@ -787,6 +787,10 @@ test.describe("Composer autocomplete", () => {
       await input.press("ArrowDown");
       await input.press("ArrowDown");
       await input.press("h");
+      // /help is in the unfiltered list too; only a hidden /tdd proves the search became "h".
+      // On web the cursor reaches the search after paint, so a Backspace sent sooner leaves
+      // the search at "" and the stale choice standing.
+      await expect(popover.getByText("/tdd", { exact: true })).toHaveCount(0);
       await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
       await input.press("Backspace");
       await expect(input).toHaveValue("/");
