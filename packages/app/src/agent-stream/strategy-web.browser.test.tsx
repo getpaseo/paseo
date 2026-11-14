@@ -54,12 +54,16 @@ type OlderHistoryInput = Pick<
   "onNearHistoryStart" | "hasOlderHistory" | "olderHistoryProgressKey"
 >;
 
+interface MountTimelineOptions {
+  olderHistory?: OlderHistoryInput;
+  isMobileBreakpoint?: boolean;
+}
+
 function mountTimeline(
   historyMounted: StreamItem[],
-  olderHistory?: OlderHistoryInput,
-  options = { isMobileBreakpoint: true },
+  { olderHistory, isMobileBreakpoint = true }: MountTimelineOptions = {},
 ) {
-  const strategy = createWebStreamStrategy(options);
+  const strategy = createWebStreamStrategy({ isMobileBreakpoint });
   const viewportRef = React.createRef<StreamViewportHandle>();
   const input: StreamRenderInput = {
     agentId: "agent",
@@ -139,7 +143,7 @@ describe("web disclosure hold", () => {
     "keeps the reading position when mounted history becomes virtualized (compact: $isMobileBreakpoint)",
     async (options) => {
       const history = Array.from({ length: 80 }, (_, index) => row(index));
-      const timeline = mountTimeline(history, undefined, options);
+      const timeline = mountTimeline(history, options);
       await timeline.settle();
       timeline.scrollUp(600);
       await timeline.settle();
@@ -162,7 +166,7 @@ describe("web disclosure hold", () => {
     "keeps following output when mounted history becomes virtualized at the end (compact: $isMobileBreakpoint)",
     async (options) => {
       const history = Array.from({ length: 80 }, (_, index) => row(index));
-      const timeline = mountTimeline(history, undefined, options);
+      const timeline = mountTimeline(history, options);
       await timeline.settle();
 
       timeline.render({
@@ -283,11 +287,13 @@ describe("web history start", () => {
     let olderHistoryLoads = 0;
     const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
     const timeline = mountTimeline(history, {
-      hasOlderHistory: true,
-      olderHistoryProgressKey: "epoch:1",
-      onNearHistoryStart: async () => {
-        olderHistoryLoads += 1;
-        return true;
+      olderHistory: {
+        hasOlderHistory: true,
+        olderHistoryProgressKey: "epoch:1",
+        onNearHistoryStart: async () => {
+          olderHistoryLoads += 1;
+          return true;
+        },
       },
     });
     await timeline.settle();
