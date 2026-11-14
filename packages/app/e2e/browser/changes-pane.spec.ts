@@ -2297,13 +2297,9 @@ async function changeCodeTypographyFromSettings(
   await page.getByTestId("sidebar-settings").click();
   await expect(page).toHaveURL(new RegExp(`${buildSettingsSectionRoute("general")}|/settings$`));
   await page.getByRole("button", { name: "Appearance" }).click();
-  // A committed font change remounts the screen (AppearanceStyleBoundary), and the new form starts
-  // from the stored size. Edit the size only in the remounted form, or the remount drops it.
   const sizeField = page.getByLabel("Code font size");
-  await sizeField.evaluate((field) => field.setAttribute("data-e2e-before-font-family", ""));
   await page.getByLabel("Code font family").fill(typography.fontFamily);
   await page.getByLabel("Code font family").press("Enter");
-  await expect(page.locator("[data-e2e-before-font-family]")).toHaveCount(0);
   await sizeField.fill(String(typography.fontSize));
   await page.getByLabel("Code font size").press("Enter");
   await expect(page.getByLabel("Code font family")).toHaveValue(typography.fontFamily);

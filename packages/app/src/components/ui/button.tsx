@@ -1,3 +1,4 @@
+import { AppearanceText as Text } from "@/appearance/text";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useContainedControlSize } from "@/components/ui/control-size";
 import {
@@ -10,7 +11,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
 import type {
   PressableProps,
   PressableStateCallbackType,
