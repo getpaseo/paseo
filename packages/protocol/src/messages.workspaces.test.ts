@@ -272,6 +272,7 @@ describe("workspace message schemas", () => {
     const request = SessionInboundMessageSchema.parse({
       type: "fetch_agent_history_request",
       requestId: "req-history",
+      filter: { excludeDelegated: true },
       page: { limit: 25, cursor: "cursor-1" },
       sort: [{ key: "updated_at", direction: "desc" }],
     });
@@ -289,6 +290,7 @@ describe("workspace message schemas", () => {
     });
 
     expect(request.type).toBe("fetch_agent_history_request");
+    expect(request).toMatchObject({ filter: { excludeDelegated: true } });
     expect(response.type).toBe("fetch_agent_history_response");
   });
 

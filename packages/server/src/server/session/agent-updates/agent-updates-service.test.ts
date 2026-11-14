@@ -9,6 +9,7 @@ import type {
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 import { DirectorySyncService } from "../../directory-sync/index.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 // No mocks — every dependency is an injected in-memory fake. The agent payloads
 // are supplied through the fake builders, so each test fully controls the
@@ -227,6 +228,18 @@ describe("matchesAgentUpdatesFilter", () => {
     expect(
       matchesAgentUpdatesFilter({ agent, project, filter: { labels: { surface: "cli" } } }),
     ).toBe(false);
+  });
+
+  test("excludeDelegated rejects agents with a parent label", () => {
+    const main = makeAgentPayload({ id: "main" });
+    const child = makeAgentPayload({
+      id: "child",
+      labels: { [PARENT_AGENT_ID_LABEL]: "main" },
+    });
+    const filter = { excludeDelegated: true };
+
+    expect(matchesAgentUpdatesFilter({ agent: main, project, filter })).toBe(true);
+    expect(matchesAgentUpdatesFilter({ agent: child, project, filter })).toBe(false);
   });
 
   test("archived agents are excluded unless includeArchived", () => {

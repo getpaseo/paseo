@@ -293,9 +293,14 @@ export const es: TranslationResources = {
     title: "Historial",
     empty: "Aún no hay sesiones",
     noMatches: "No hay sesiones que coincidan",
+    noMainAgents: "No hay sesiones de agentes principales",
     tooManyMatches: "Demasiadas coincidencias: acota la búsqueda",
     hostLoadFailed: "{{host}}: No se pudo cargar el historial",
     searchPlaceholder: "Buscar en el historial",
+    agentScope: {
+      all: "Todas",
+      main: "Principal",
+    },
     actions: {
       loadMore: "Cargar más",
       clearSearch: "Borrar búsqueda",

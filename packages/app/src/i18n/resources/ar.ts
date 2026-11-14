@@ -288,9 +288,14 @@ export const ar: TranslationResources = {
     title: "السجل",
     empty: "لا توجد جلسات بعد",
     noMatches: "لا توجد جلسات مطابقة",
+    noMainAgents: "لا توجد جلسات للوكلاء الرئيسيين",
     tooManyMatches: "نتائج كثيرة جدًا — ضيّق نطاق البحث",
     hostLoadFailed: "{{host}}: تعذر تحميل السجل",
     searchPlaceholder: "البحث في السجل",
+    agentScope: {
+      all: "الكل",
+      main: "الرئيسية",
+    },
     actions: {
       loadMore: "تحميل المزيد",
       clearSearch: "مسح البحث",
