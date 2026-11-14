@@ -15,6 +15,17 @@ afterEach(cleanup);
 
 function onPress() {}
 
+function recordPresses() {
+  const calls: string[] = [];
+  return {
+    calls,
+    onPressIn: () => calls.push("in"),
+    onPressOut: () => calls.push("out"),
+  };
+}
+
+const borderedRowStyle = { ...rowStyle, borderWidth: 1, borderColor: "rgb(0, 0, 0)" };
+
 function recordHighlights() {
   const calls: boolean[] = [];
   return { calls, record: (highlighted: boolean) => calls.push(highlighted) };
@@ -105,4 +116,24 @@ it("leaves the Android row surface alone while pressed and clips the ripple to i
   expect(row.borderRadius).toBe("8px");
   expect(row.overflow).toBe("hidden");
   expect(highlights.calls).toEqual([]);
+});
+
+it("keeps the caller's border and press handlers on the Android ripple row", async () => {
+  const presses = recordPresses();
+  const { getByTestId } = render(
+    <AndroidPressHighlight
+      testID="row"
+      style={borderedRowStyle}
+      highlightStyle={highlightStyle}
+      onPressIn={presses.onPressIn}
+      onPressOut={presses.onPressOut}
+      onPress={onPress}
+    />,
+  );
+  const row = getByTestId("row");
+
+  expect(getComputedStyle(row).borderTopWidth).toBe("1px");
+  fireEvent.mouseDown(row, { button: 0 });
+  fireEvent.mouseUp(row, { button: 0 });
+  await waitFor(() => expect(presses.calls).toEqual(["in", "out"]));
 });
