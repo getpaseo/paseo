@@ -7,6 +7,7 @@ import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import { resolveClientMessageId } from "../client-message-id.js";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -391,7 +392,12 @@ export async function startCreatedAgentInitialPrompt(
     params.agentId,
     delivery.prompt,
     params.logger,
-    { runOptions: { ...params.runOptions, clientMessageId: delivery.messageId } },
+    {
+      runOptions: {
+        ...params.runOptions,
+        clientMessageId: resolveClientMessageId(delivery.messageId),
+      },
+    },
   );
 
   if (dispatchResult.disposition === "turn_started") {
