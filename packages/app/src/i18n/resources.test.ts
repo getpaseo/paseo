@@ -319,15 +319,15 @@ describe("translation resources", () => {
     expect(en.shell.menu.toggleSidebar).toBe("Toggle sidebar");
     expect(en.shell.menu.open).toBe("Open menu");
     expect(en.shell.menu.close).toBe("Close menu");
-    expect(en.shell.commandCenter.placeholder).toBe(
-      "Search commands, files, workspaces, and agents...",
-    );
+    expect(en.shell.commandCenter.placeholder).toBe("Search workspaces, files, and actions...");
+    expect(en.shell.commandCenter.placeholderWithoutFiles).toBe("Search workspaces and actions...");
     expect(en.shell.commandCenter.filePlaceholder).toBe("Search files...");
     expect(en.shell.commandCenter.files).toBe("Files");
     expect(en.shell.commandCenter.noMatches).toBe("No matches");
     expect(en.shell.commandCenter.actions).toBe("Actions");
     expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
-    expect(en.shell.commandCenter.agents).toBe("Agents");
+    expect(en.shell.commandCenter.recentWorkspaces).toBe("Recent workspaces");
+    expect(en.shell.commandCenter.tabs.all).toBe("All");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
     expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");

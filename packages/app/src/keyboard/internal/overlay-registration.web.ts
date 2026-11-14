@@ -85,7 +85,9 @@ function dispatchOverlayEntry(entry: WebOverlayEntry, event: KeyboardInputEvent)
   const scope = entry.getScope();
   if (!scope) return top.getKeyHandler()(event);
 
-  if (top.manageFocus && event.key === "Tab") {
+  // An overlay that declares Tab owns it (the command center rotates its tabs); the focus trap
+  // only moves focus for overlays that leave Tab alone.
+  if (top.manageFocus && event.key === "Tab" && !top.getKeys().includes("Tab")) {
     const focusable = getFocusableElements(scope);
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
