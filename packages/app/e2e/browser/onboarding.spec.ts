@@ -6,6 +6,7 @@ import {
   addProjectFromSetup,
   continueSetup,
   expectSetupStep,
+  expectSheetCoversSetupCard,
   finishSetup,
   goToSetupStep,
   hostGivesAgentsPaseoTools,
@@ -23,6 +24,7 @@ import {
   recordFirstLaunch,
   setupModal,
   setupPrimaryButton,
+  setupSheet,
   showSetupAgainFromSettings,
   skipSetup,
   startSetupHost,
@@ -59,9 +61,26 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
 
     await test.step("Providers shows the same provider list as Settings", async () => {
       await continueSetup(page);
-      await expectSetupStep(page, "Your agents");
+      await expectSetupStep(page, "Your providers");
       await expect(setupModal(page).getByTestId("host-page-providers-card")).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("2-providers.png") });
+    });
+
+    await test.step("a provider's detail and Add provider cover the setup card and lead back to it", async () => {
+      await setupModal(page)
+        .getByRole("button", { name: "Claude provider details", exact: true })
+        .click();
+      const detail = setupSheet(page, "provider-settings-sheet");
+      await expectSheetCoversSetupCard(page, detail);
+      await detail.getByRole("button", { name: "Back to providers", exact: true }).click();
+      await expect(detail).toHaveCount(0);
+
+      await setupModal(page).getByTestId("provider-list-add").click();
+      const add = setupSheet(page, "add-provider-sheet");
+      await expectSheetCoversSetupCard(page, add);
+      await page.keyboard.press("Escape");
+      await expect(add).toHaveCount(0);
+      await expectSetupStep(page, "Your providers");
     });
 
     await test.step("with no agent history, Add project opens the regular flow and the folder shows as added", async () => {
@@ -145,7 +164,7 @@ test("changing the theme keeps the setup window in place on every step", async (
 
     for (const title of [
       "Welcome to Paseo",
-      "Your agents",
+      "Your providers",
       "Add your projects",
       "Let agents use Paseo",
       "Take your agents with you",
@@ -418,7 +437,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     await openAppAsNewUser(page, host);
     await step("Welcome to Paseo");
     await primary("Continue").click();
-    await step("Your agents");
+    await step("Your providers");
     await primary("Continue").click();
     await step("Add your projects");
     await primary("Continue").click();

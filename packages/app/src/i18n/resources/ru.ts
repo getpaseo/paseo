@@ -1777,7 +1777,7 @@ export const ru: TranslationResources = {
         },
         providers: {
           label: "Провайдеры",
-          title: "Ваши агенты",
+          title: "Ваши провайдеры",
           description: "Paseo использует CLI агентов, уже установленные на этом компьютере",
         },
         projects: {

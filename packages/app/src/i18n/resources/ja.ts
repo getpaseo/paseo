@@ -1764,7 +1764,7 @@ export const ja: TranslationResources = {
         },
         providers: {
           label: "プロバイダー",
-          title: "エージェント",
+          title: "プロバイダー",
           description: "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います",
         },
         projects: {
