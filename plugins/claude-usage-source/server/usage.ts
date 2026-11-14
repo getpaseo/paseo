@@ -68,6 +68,9 @@ const ClaudeUsageResponseSchema = z.object({
   extra_usage: z
     .object({
       is_enabled: z.boolean().optional(),
+      monthly_limit: ApiNumberSchema.nullish(),
+      used_credits: ApiNumberSchema.nullish(),
+      currency: z.string().nullish(),
     })
     .nullish(),
 });
@@ -491,6 +494,26 @@ function toCredentialRecord(credentials: ClaudeCredentials): ClaudeCredentialRec
     : null;
 }
 
+function extraUsageBalances(extraUsage: ClaudeUsageResponse["extra_usage"]) {
+  if (extraUsage?.currency?.toUpperCase() !== "USD") return [];
+  const used = extraUsage.used_credits == null ? undefined : extraUsage.used_credits / 100;
+  const limit = extraUsage.monthly_limit == null ? undefined : extraUsage.monthly_limit / 100;
+  if (used == null && limit == null) return [];
+  return [
+    {
+      id: "extra_usage_monthly",
+      label: "Extra usage",
+      used,
+      remaining: used != null && limit != null ? Math.max(0, limit - used) : undefined,
+      limit,
+      unit: "usd" as const,
+      tone: toneFromUsedPct(
+        used != null && limit != null && limit > 0 ? (used / limit) * 100 : null,
+      ),
+    },
+  ];
+}
+
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
@@ -594,20 +617,21 @@ export async function fetchUsage(
   }
 
   const details: UsageDetail[] = [];
-  const extraUsageEnabled = resp.extra_usage?.is_enabled;
-  if (extraUsageEnabled !== undefined) {
+  const extraUsage = resp.extra_usage;
+  if (extraUsage?.is_enabled !== undefined) {
     details.push({
       id: "extra_usage",
       label: "Extra usage",
-      value: extraUsageEnabled ? "Enabled" : "Disabled",
+      value: extraUsage.is_enabled ? "Enabled" : "Disabled",
     });
   }
+  const balances = extraUsageBalances(extraUsage);
 
   return {
     status: "available",
     planLabel: plan ?? undefined,
     windows,
-    balances: [],
+    balances,
     details,
   };
 }
