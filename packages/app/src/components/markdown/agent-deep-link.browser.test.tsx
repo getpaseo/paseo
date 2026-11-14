@@ -84,11 +84,19 @@ async function waitForAnchors(container: HTMLElement, count: number): Promise<HT
   return waitFor(
     () => {
       const anchors = [...container.querySelectorAll<HTMLAnchorElement>("a")];
-      expect(anchors.length).toBeGreaterThanOrEqual(count);
+      expect(anchors).toHaveLength(count);
       return anchors;
     },
     { timeout: 5_000 },
   );
+}
+
+async function waitForSingleAnchor(container: HTMLElement): Promise<HTMLAnchorElement> {
+  const [anchor] = await waitForAnchors(container, 1);
+  if (!anchor) {
+    throw new Error("Expected 1 anchor");
+  }
+  return anchor;
 }
 
 async function settleRender(): Promise<void> {
@@ -142,10 +150,12 @@ describe("MarkdownRenderer paseo:// agent deep links (browser)", () => {
       "paseo://h/srv%203/agent/a%3A3",
       "paseo://h/srv_4/agent/a_4",
     ]);
-    expect(anchors[0]?.textContent).toBe("跳转到会话");
-    expect(anchors[1]?.textContent).toBe("paseo://h/srv_2/agent/a_2");
-    expect(anchors[2]?.textContent).toBe("paseo://h/srv%203/agent/a%3A3");
-    expect(anchors[3]?.textContent).toBe("paseo://h/srv_4/agent/a_4");
+    expect(anchors.map((anchor) => anchor.textContent)).toEqual([
+      "跳转到会话",
+      "paseo://h/srv_2/agent/a_2",
+      "paseo://h/srv%203/agent/a%3A3",
+      "paseo://h/srv_4/agent/a_4",
+    ]);
     expect(container.textContent).toContain(
       "见 paseo://h/srv_2/agent/a_2，以及 (paseo://h/srv%203/agent/a%3A3)。",
     );
@@ -185,8 +195,9 @@ describe("MarkdownRenderer paseo:// agent deep links (browser)", () => {
     });
     const anchors = await waitForAnchors(container, 2);
 
-    if (anchors[0]) fireEvent.click(anchors[0]);
-    if (anchors[1]) fireEvent.click(anchors[1]);
+    for (const anchor of anchors) {
+      fireEvent.click(anchor);
+    }
 
     expect(navigatedAgents).toEqual([{ serverId: "srv_pr", agentId: "a_pr" }]);
     expect(customPressedUrls).toEqual(["https://example.com/pr/1"]);
@@ -225,17 +236,15 @@ describe("MarkdownRenderer paseo:// agent deep links (browser)", () => {
       toast: createTestToast(toastCalls),
     });
 
-    const anchors = await waitForAnchors(container, 1);
+    const anchor = await waitForSingleAnchor(container);
     await settleRender();
 
-    expect(anchors).toHaveLength(1);
-    expect(anchors[0]?.getAttribute("href")).toBe("paseo://invalid");
-    expect(anchors[0]?.textContent).toBe("bad");
+    expect(container.querySelectorAll("a")).toHaveLength(1);
+    expect(anchor.getAttribute("href")).toBe("paseo://invalid");
+    expect(anchor.textContent).toBe("bad");
 
-    if (anchors[0]) {
-      fireEvent.mouseOver(anchors[0]);
-      fireEvent.click(anchors[0]);
-    }
+    fireEvent.mouseOver(anchor);
+    fireEvent.click(anchor);
 
     expect(navigatedAgents).toEqual([]);
     expect(openedExternalUrls).toEqual(["paseo://invalid"]);
@@ -264,10 +273,11 @@ describe("MarkdownRenderer paseo:// agent deep links (browser)", () => {
       toast: createTestToast(toastCalls),
     });
 
-    const anchors = await waitForAnchors(container, 1);
+    const anchor = await waitForSingleAnchor(container);
     await settleRender();
 
-    if (anchors[0]) fireEvent.click(anchors[0]);
+    expect(container.querySelectorAll("a")).toHaveLength(1);
+    fireEvent.click(anchor);
 
     expect(navigatedAgents).toEqual([]);
     expect(directoryLookups).toEqual([]);
