@@ -5070,6 +5070,93 @@ describe("ForgeService", () => {
   );
 
   it.each(["feature", "123"])(
+    "prefers the fork PR carrying the checkout's commit for branch %s on an Enterprise fork clone",
+    async (branch) => {
+      vi.useRealTimers();
+      const cwd = mkdtempSync(join(tmpdir(), "github-enterprise-two-prs-"));
+      try {
+        execFileSync("git", ["init", "-q", cwd]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "origin",
+          "https://github.acme.internal/me/repo.git",
+        ]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "upstream",
+          "https://github.acme.internal/acme/repo.git",
+        ]);
+        const forkSha = "2222222222222222222222222222222222222222";
+        const upstreamPullRequest = JSON.parse(
+          currentPullRequestJson({
+            url: "https://github.acme.internal/acme/repo/pull/42",
+            headRefName: branch,
+            headRepositoryOwner: { login: "acme" },
+          }),
+        );
+        const forkPullRequest = JSON.parse(
+          currentPullRequestJson({
+            number: 7,
+            url: "https://github.acme.internal/acme/repo/pull/7",
+            headRefName: branch,
+            headRefOid: forkSha,
+            headRepositoryOwner: { login: "me" },
+          }),
+        );
+        const runner: GitHubCommandRunner = async (args) => {
+          if (args[0] === "api") {
+            if (args[1] === "graphql") {
+              return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+            }
+            const ownPulls =
+              args[1]?.startsWith("repos/acme/repo/pulls?") &&
+              args[1].includes(`head=me%3A${branch}`);
+            return {
+              stdout: JSON.stringify(ownPulls ? [{ number: 7, head: { sha: forkSha } }] : []),
+              stderr: "",
+            };
+          }
+          if (args[0] === "repo") {
+            const fork = args[2] === "me/repo" || args[2] === "github.acme.internal/me/repo";
+            return {
+              stdout: JSON.stringify({
+                owner: { login: fork ? "me" : "acme" },
+                name: "repo",
+                parent: fork ? { owner: { login: "acme" }, name: "repo" } : null,
+              }),
+              stderr: "",
+            };
+          }
+          if (args[1] === "view") {
+            const pullRequest = args[2] === "7" ? forkPullRequest : upstreamPullRequest;
+            return { stdout: JSON.stringify(pullRequest), stderr: "" };
+          }
+          return { stdout: JSON.stringify([upstreamPullRequest]), stderr: "" };
+        };
+        const service = createGitHubService({
+          ttlMs: 0,
+          runner,
+          resolveGhPath: async () => "/usr/bin/gh",
+          resolveRepoHost: async () => "github.acme.internal",
+        });
+
+        await expect(
+          service.getCurrentPullRequestStatus({ cwd, headRef: branch, headSha: forkSha }),
+        ).resolves.toMatchObject({ number: 7, repoOwner: "acme" });
+        service.dispose?.();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["feature", "123"])(
     "finds the user's own fork PR for branch %s on an Enterprise fork clone",
     async (branch) => {
       vi.useRealTimers();

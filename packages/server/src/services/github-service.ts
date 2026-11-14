@@ -3091,6 +3091,39 @@ function isSameRepositoryPullRequestCandidate(candidate: ResolvedPullRequestCand
   return owner !== undefined && owner === candidate.status.repoOwner?.toLowerCase();
 }
 
+async function findCurrentPullRequestViewMatch(options: {
+  cwd: string;
+  headRef: string;
+  headSha?: string;
+  headRepositoryOwner?: string;
+  explicitRepo?: boolean;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<ResolvedPullRequestCandidate | null> {
+  const viewCandidate = await tryCurrentPullRequestBranchView(options);
+  if (!viewCandidate) return null;
+  return pickPullRequestCandidate({
+    candidates: [viewCandidate],
+    headRef: options.headRef,
+    headSha: options.headSha,
+    headRepositoryOwner: options.headRepositoryOwner,
+  });
+}
+
+// Bare `gh pr view` picks the PR from the branch's tracking config. Named
+// repositories lose that, so a same-repository PR whose head is not the
+// checkout's commit must not shadow the user's fork PR on the same branch.
+function isViewMatchForCheckout(
+  viewMatch: ResolvedPullRequestCandidate,
+  checkout: { explicitRepo?: boolean; headRepositoryOwner?: string; headSha?: string },
+): boolean {
+  return (
+    !checkout.explicitRepo ||
+    checkout.headRepositoryOwner !== undefined ||
+    checkout.headSha === undefined ||
+    viewMatch.headSha === checkout.headSha
+  );
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
@@ -3100,16 +3133,8 @@ async function resolveCurrentPullRequestView(options: {
   originRepository?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
-  const viewCandidate = await tryCurrentPullRequestBranchView(options);
-  const viewMatch = viewCandidate
-    ? pickPullRequestCandidate({
-        candidates: [viewCandidate],
-        headRef: options.headRef,
-        headSha: options.headSha,
-        headRepositoryOwner: options.headRepositoryOwner,
-      })
-    : null;
-  if (viewMatch?.status.state === "open") {
+  const viewMatch = await findCurrentPullRequestViewMatch(options);
+  if (viewMatch?.status.state === "open" && isViewMatchForCheckout(viewMatch, options)) {
     return viewMatch.status;
   }
 
