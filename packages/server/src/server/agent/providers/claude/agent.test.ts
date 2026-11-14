@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -2912,6 +2912,14 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
 
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
+  // Limits are capped by Claude Code's auto-compact window, so keep the developer's ~/.claude out.
+  let configDir: string;
+  beforeAll(async () => {
+    configDir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-context-usage-"));
+  });
+  afterAll(async () => {
+    await fs.rm(configDir, { recursive: true, force: true });
+  });
 
   interface QueryFactoryForTurnsOptions {
     getContextUsage?: ReturnType<typeof vi.fn>;
@@ -2936,11 +2944,10 @@ describe("ClaudeAgentSession context window usage", () => {
       queryFactory: createQueryFactoryForTurns(turns, options),
       resolveBinary: async () => "/test/claude/bin",
     });
-    return await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: options?.model,
-    });
+    return await client.createSession(
+      { provider: "claude", cwd: process.cwd(), model: options?.model },
+      { env: { CLAUDE_CONFIG_DIR: configDir } },
+    );
   }
 
   test("emits canonical task snapshots from Claude TaskCreate results", async () => {
