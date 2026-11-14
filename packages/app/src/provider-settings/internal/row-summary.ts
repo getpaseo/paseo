@@ -36,11 +36,12 @@ function readBlocker(
   entry: ProviderEntry,
   { state, action }: InstallationFacts,
 ): RowSummary | null {
-  if (!entry.enabled) return { kind: "disabled" };
+  // A missing CLI wins over Disabled, so the row offers no switch that turning on would take away.
+  // Without an inspection a disabled provider is only Disabled: the host never probes it.
   const inspection = state.status === "ready" ? state.installation?.inspection : undefined;
-  if (entry.status === "unavailable" || inspection?.status === "not_installed") {
-    return { kind: "notInstalled" };
-  }
+  if (inspection?.status === "not_installed") return { kind: "notInstalled" };
+  if (!entry.enabled) return { kind: "disabled" };
+  if (entry.status === "unavailable") return { kind: "notInstalled" };
   if (entry.status === "error") return { kind: "failing", message: entry.error?.trim() || null };
   const operation = action?.current?.operation;
   if (operation?.status === "failed") {

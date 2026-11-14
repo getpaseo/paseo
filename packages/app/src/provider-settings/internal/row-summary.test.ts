@@ -120,6 +120,20 @@ describe("provider row summary", () => {
     });
   });
 
+  it("calls a disabled provider whose CLI is missing Not installed, so turning it on changes nothing", () => {
+    const missing: Read = {
+      ...oldHost,
+      state: { status: "ready", installation: { inspection: { status: "not_installed" } } },
+    };
+    expect(readRowSummary(entry({ enabled: false, status: "unavailable" }), missing)).toEqual({
+      kind: "notInstalled",
+    });
+    // A disabled provider is never probed, so without an inspection it is only Disabled.
+    expect(readRowSummary(entry({ enabled: false, status: "unavailable" }), oldHost)).toEqual({
+      kind: "disabled",
+    });
+  });
+
   it("holds the line until the installation is read", () => {
     const reading: Read = { ...oldHost, state: { status: "loading" } };
     expect(readRowSummary(entry(), reading)).toEqual({ kind: "pending" });
