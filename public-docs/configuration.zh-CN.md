@@ -82,6 +82,24 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 心智模型见 [Provider](/docs/providers)，Paseo 可以启动的全部 Agent 见[支持的 Provider](/docs/supported-providers)。要让 Claude 指向兼容 Anthropic 的端点（Z.AI、Alibaba/Qwen）、使用多个配置、自定义二进制文件、ACP Agent，以及了解 `additionalModels` 的合并行为，见[自定义 Provider](/docs/custom-providers)。完整的字段参考在 GitHub 上的 [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md)。
 
+## 系统提示词 {#system-prompts}
+
+在 `config.json` 中设置 `daemon.appendSystemPrompt`，为 Agent 会话请求附加的系统指令：
+
+```json
+{
+  "daemon": {
+    "appendSystemPrompt": "Always answer in haiku."
+  }
+}
+```
+
+指令能否传递取决于 Provider 适配器。Paseo 的 ACP 适配器无法应用 `daemon.appendSystemPrompt` 或单个 Agent 的 `systemPrompt`，包括插件钩子提供的指令。这一限制适用于使用 `extends: "acp"` 的自定义 Provider，也适用于使用 ACP 适配器的内置 Provider。这些指令不会通过 Paseo 传递给 Provider。请使用支持指令传递的 Provider，或通过 Agent 自身支持的机制配置指令。
+
+配置了非空白指令时，ACP 适配器会在每次打开交互式会话时记录一条警告，恢复会话时也一样。警告会标明 Provider 和受影响的字段，不会记录指令内容。仅用于读取历史记录的会话不会触发警告。
+
+配置重新加载成功、`paseo daemon config get` 的输出或持久化配置中存在相应字段，只能确认配置状态，不能证明指令已传递给 Provider。即使所选适配器无法应用这些指令，Paseo 仍会保留请求的配置。
+
 ## 空闲运行时 {#idle-runtimes}
 
 当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲一小时后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 你的主机 → Agents** 中关闭 **释放空闲 Agent**，或设置：

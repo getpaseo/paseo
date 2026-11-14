@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import pino from "pino";
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -2864,6 +2865,131 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 
 describe("ACPAgentSession", () => {
+  test.each([
+    {
+      name: "daemon instructions",
+      prompts: { daemonAppendSystemPrompt: "Always answer in haiku." },
+      expectedFields: [["daemon.appendSystemPrompt"]],
+    },
+    {
+      name: "per-agent instructions",
+      prompts: { systemPrompt: "  private-system-sentinel  " },
+      expectedFields: [["systemPrompt"]],
+    },
+    {
+      name: "both instruction fields",
+      prompts: {
+        systemPrompt: "  private-system-sentinel  ",
+        daemonAppendSystemPrompt: "\nAlways answer in haiku.\nprivate-multiline-sentinel\n",
+      },
+      expectedFields: [["systemPrompt", "daemon.appendSystemPrompt"]],
+    },
+    {
+      name: "blank per-agent instructions",
+      prompts: { systemPrompt: " \n ", daemonAppendSystemPrompt: "Always answer in haiku." },
+      expectedFields: [["daemon.appendSystemPrompt"]],
+    },
+    {
+      name: "blank daemon instructions",
+      prompts: { systemPrompt: "private-system-sentinel", daemonAppendSystemPrompt: "" },
+      expectedFields: [["systemPrompt"]],
+    },
+    {
+      name: "undefined instructions",
+      prompts: {},
+      expectedFields: [],
+    },
+    {
+      name: "empty instructions",
+      prompts: { systemPrompt: "", daemonAppendSystemPrompt: "" },
+      expectedFields: [],
+    },
+    {
+      name: "whitespace-only instructions",
+      prompts: { systemPrompt: " \t ", daemonAppendSystemPrompt: "\n \t" },
+      expectedFields: [],
+    },
+    {
+      name: "interactive resume",
+      prompts: {
+        systemPrompt: "private-system-sentinel",
+        daemonAppendSystemPrompt: "Always answer in haiku.",
+      },
+      resumePurpose: "interactive" as const,
+      expectedFields: [["systemPrompt", "daemon.appendSystemPrompt"]],
+    },
+    {
+      name: "history-only resume",
+      prompts: {
+        systemPrompt: "private-system-sentinel",
+        daemonAppendSystemPrompt: "Always answer in haiku.",
+      },
+      resumePurpose: "history" as const,
+      expectedFields: [],
+    },
+  ])(
+    "reports unsupported system instructions: $name",
+    ({ prompts, resumePurpose, expectedFields }) => {
+      const records: Record<string, unknown>[] = [];
+      const logger = pino(
+        { level: "warn" },
+        {
+          write(record) {
+            records.push(JSON.parse(record));
+          },
+        },
+      );
+
+      const session = new ACPAgentSession(
+        {
+          provider: "custom-acp",
+          cwd: "/tmp/paseo-acp-test",
+          ...prompts,
+          title: "private-config-sentinel",
+        },
+        {
+          provider: "custom-acp",
+          logger,
+          defaultCommand: ["custom-acp"],
+          defaultModes: [],
+          capabilities: {
+            supportsStreaming: true,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: true,
+            supportsMcpServers: true,
+            supportsReasoningStream: true,
+            supportsToolInvocations: true,
+          },
+          launchEnv: { API_KEY: "private-env-sentinel" },
+          ...(resumePurpose
+            ? {
+                resumePurpose,
+                handle: { provider: "custom-acp", sessionId: "existing-session" },
+              }
+            : {}),
+        },
+      );
+
+      expect(session.provider).toBe("custom-acp");
+      expect(records).toEqual(
+        expectedFields.map((unsupportedFields) =>
+          expect.objectContaining({
+            level: 40,
+            provider: "custom-acp",
+            unsupportedFields,
+            msg: expect.stringContaining("cannot apply system instructions"),
+          }),
+        ),
+      );
+      const output = JSON.stringify(records);
+      expect(output).not.toContain("Always answer in haiku.");
+      expect(output).not.toContain("private-system-sentinel");
+      expect(output).not.toContain("private-multiline-sentinel");
+      expect(output).not.toContain("private-config-sentinel");
+      expect(output).not.toContain("private-env-sentinel");
+    },
+  );
+
   test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
     const session = new ACPAgentSession(
       {

@@ -151,6 +151,8 @@ Z.AI 通过兼容 Anthropic 的端点提供 GLM 模型。把 `ANTHROPIC_BASE_URL
 
 任何通过 stdio 使用 [ACP](https://agentclientprotocol.com) 的 Agent，都可以用 `extends: "acp"` 和 `command` 添加。Paseo 启动该进程并发送 `initialize` JSON-RPC 请求，Agent 在运行时报告它的能力、模式和模型。
 
+配置指令前，请参阅[系统提示词](/docs/configuration#system-prompts)，了解 ACP 适配器的限制和支持的替代方式。
+
 ```json
 {
   "agents": {

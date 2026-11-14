@@ -64,6 +64,7 @@ import {
   type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
+import { composeSystemPromptParts } from "../system-prompt.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -1847,6 +1848,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.initialHandle = options.handle;
     this.resumePurpose = options.resumePurpose ?? "interactive";
     this.config = { ...config, provider: options.provider };
+    if (
+      this.resumePurpose === "interactive" &&
+      composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt)
+    ) {
+      const unsupportedFields: string[] = [];
+      if (config.systemPrompt?.trim()) {
+        unsupportedFields.push("systemPrompt");
+      }
+      if (config.daemonAppendSystemPrompt?.trim()) {
+        unsupportedFields.push("daemon.appendSystemPrompt");
+      }
+      this.logger.warn(
+        { unsupportedFields },
+        "ACP adapter cannot apply system instructions from the configured fields; these instructions will not reach this provider through Paseo. Use a provider with a supported instruction channel or configure instructions through the agent's own supported mechanism.",
+      );
+    }
     this.currentMode = config.modeId ?? null;
     this.currentModel = config.model ?? null;
     this.thinkingOptionId = config.thinkingOptionId ?? null;

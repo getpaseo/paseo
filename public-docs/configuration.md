@@ -84,6 +84,24 @@ Agent providers, both the first-class ones Paseo ships with and custom entries y
 
 See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 
+## System prompts {#system-prompts}
+
+Set `daemon.appendSystemPrompt` in `config.json` to request additional system instructions for agent sessions:
+
+```json
+{
+  "daemon": {
+    "appendSystemPrompt": "Always answer in haiku."
+  }
+}
+```
+
+Delivery depends on the provider adapter. Paseo's ACP adapter cannot apply `daemon.appendSystemPrompt` or per-agent `systemPrompt`, including instructions supplied by plugin hooks. This applies to custom providers using `extends: "acp"` and built-in providers that use the ACP adapter. These instructions do not reach the provider through Paseo. Use a provider with a supported instruction channel or configure instructions through the agent's own supported mechanism.
+
+When nonblank instructions are configured, the ACP adapter logs one warning per interactive session opening, including resume. The warning identifies the provider and affected fields without logging instruction text. History-only sessions do not warn.
+
+A successful config reload, `paseo daemon config get`, or fields present in persisted configuration confirms configuration state, not delivery to the provider. Paseo retains the requested configuration even when the selected adapter cannot apply it.
+
 ## Idle runtimes
 
 Paseo releases resumable idle agent processes after one hour when its daemon baseline allows
