@@ -1,5 +1,9 @@
 import { expect, test } from "../support/fixtures";
-import { openCommandCenter } from "../support/helpers/command-center";
+import {
+  expectCommandCenterTab,
+  openCommandCenter,
+  selectCommandCenterTab,
+} from "../support/helpers/command-center";
 import {
   delayDirectorySuggestionResponses,
   holdDirectorySuggestionResponses,
@@ -17,6 +21,7 @@ import {
 } from "../support/helpers/command-center-scroll";
 import { expectFileTabOpen } from "../support/helpers/file-explorer";
 import { gotoWorkspace } from "../support/helpers/launcher";
+import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const FILE_PATH =
@@ -67,7 +72,7 @@ test("workspace file search stays geometrically stable through delayed loading a
 
     const panel = page.getByTestId("command-center-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
-    await expect(panel.getByRole("button", { name: "Files" })).toBeVisible();
+    await expectCommandCenterTab(panel, "Files");
     await startCommandCenterLayoutObservation(page);
 
     await panel.getByTestId("command-center-input").fill(FILE_NAME);
@@ -97,26 +102,66 @@ test("workspace file search stays geometrically stable through delayed loading a
   }
 });
 
-test("dropping the files scope leaves the search row the same height", async ({ page }) => {
+test("command center tabs rotate with Tab and never move the header", async ({ page }) => {
   const seeded = await seedWorkspace({
-    repoPrefix: "command-center-file-search-scope-",
-    title: "Scope chip height",
+    repoPrefix: "command-center-tabs-",
+    title: "Tab rotation",
   });
 
   try {
     await gotoWorkspace(page, seeded.workspaceId);
-    await page.keyboard.press("Meta+P");
-
     const panel = page.getByTestId("command-center-panel");
-    await expect(panel).toBeVisible({ timeout: 30_000 });
     const header = panel.getByTestId("command-center-header");
-    const scoped = await header.boundingBox();
+    const input = panel.getByTestId("command-center-input");
 
-    await page.getByTestId("command-center-files-scope").click();
-    await expect(page.getByTestId("command-center-files-scope")).toHaveCount(0);
-    const unscoped = await header.boundingBox();
+    await test.step("⌘P opens on Files and Backspace on an empty field returns to All", async () => {
+      await page.keyboard.press("Meta+P");
+      await expect(panel).toBeVisible({ timeout: 30_000 });
+      await expectCommandCenterTab(panel, "Files");
+      await page.keyboard.press("Backspace");
+      await expectCommandCenterTab(panel, "All");
+    });
 
-    expect(scoped?.height).toBe(unscoped?.height);
+    const headerOnAll = await header.boundingBox();
+
+    await test.step("Tab walks forward and wraps; Shift+Tab walks back", async () => {
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Workspaces");
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Files");
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Actions");
+      expect(await header.boundingBox()).toEqual(headerOnAll);
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "All");
+      await page.keyboard.press("Shift+Tab");
+      await expectCommandCenterTab(panel, "Actions");
+      await page.keyboard.press("Shift+Tab");
+      await expectCommandCenterTab(panel, "Files");
+    });
+
+    await test.step("rotating keeps the query", async () => {
+      await input.fill("tab rot");
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Actions");
+      await expect(input).toHaveValue("tab rot");
+    });
+
+    await test.step("clicking a tab keeps typing in the search field", async () => {
+      await selectCommandCenterTab(panel, "Workspaces");
+      await page.keyboard.press("Backspace");
+      await expect(input).toHaveValue("tab ro");
+      await expect(
+        panel.getByTestId(`command-center-workspace-${getServerId()}:${seeded.workspaceId}`),
+      ).toBeVisible();
+    });
+
+    await test.step("⌘K opens on All", async () => {
+      await page.keyboard.press("Escape");
+      await expect(panel).not.toBeVisible();
+      await page.keyboard.press("Meta+K");
+      await expectCommandCenterTab(panel, "All");
+    });
   } finally {
     await seeded.cleanup();
   }

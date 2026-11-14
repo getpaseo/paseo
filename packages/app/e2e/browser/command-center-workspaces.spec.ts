@@ -4,7 +4,12 @@ import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { createIdleAgent } from "../support/helpers/archive-tab";
 import { expectAgentTabActive } from "../support/helpers/launcher";
-import { openCommandCenter } from "../support/helpers/command-center";
+import {
+  commandCenterSection,
+  expectCommandCenterTab,
+  openCommandCenter,
+  selectCommandCenterTab,
+} from "../support/helpers/command-center";
 import { addOfflineHostAndReload } from "../support/helpers/hosts";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -21,9 +26,7 @@ const AGENT_TITLE = "Fix checkout retries";
 test.describe("Command center workspaces", () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test("agent and workspace results retain their icons and overlay live status", async ({
-    page,
-  }) => {
+  test("workspace results overlay live status", async ({ page }) => {
     const workspace = await seedRunningMockAgentWorkspace({
       repoPrefix: "command-center-status-",
       title: "Review checkout retries",
@@ -34,15 +37,13 @@ test.describe("Command center workspaces", () => {
       await openAgentRoute(page, workspace);
       await expectAgentTabActive(page, workspace.agentId);
       const panel = await openCommandCenter(page);
-      const agent = panel.getByTestId(`command-center-agent-${getServerId()}:${workspace.agentId}`);
+      // Recent workspaces leaves out the open one; the Workspaces tab lists every workspace.
+      await selectCommandCenterTab(panel, "Workspaces");
       const row = panel.getByTestId(
         `command-center-workspace-${getServerId()}:${workspace.workspaceId}`,
       );
-      await expect(agent.getByRole("progressbar", { name: "Agent running" })).toBeVisible();
       await expect(row.getByRole("progressbar", { name: "Agent running" })).toBeVisible();
-      await expect(agent.getByRole("img", { name: "Mock agent" })).toBeVisible();
       await workspace.client.cancelAgent(workspace.agentId);
-      await expect(agent.getByRole("progressbar")).toHaveCount(0);
       await expect(row.getByRole("progressbar")).toHaveCount(0);
     } finally {
       await workspace.cleanup();
@@ -80,9 +81,11 @@ test.describe("Command center workspaces", () => {
       });
 
       const panel = await openCommandCenter(page);
+      await selectCommandCenterTab(panel, "Workspaces");
       const row = panel.getByTestId(
         `command-center-workspace-${getServerId()}:${seeded.workspaceId}`,
       );
+      const agentLine = row.getByTestId("command-center-workspace-agent");
       await expect(row).toBeVisible({ timeout: 30_000 });
       await expect(row).toContainText(WORKSPACE_TITLE);
       await expect(row).toContainText(WORKSPACE_BRANCH);
@@ -92,62 +95,80 @@ test.describe("Command center workspaces", () => {
       await expect(subtitle).toContainText(PRIMARY_HOST_LABEL);
       await expect(subtitle).toContainText(seeded.projectDisplayName);
       await expect(subtitle).toContainText(WORKSPACE_BRANCH);
+      await expect(agentLine).toHaveCount(0);
 
-      // The agent subtitle is unchanged by the shared-helper refactor.
-      const agentRow = panel.getByTestId(`command-center-agent-${getServerId()}:${agent.id}`);
-      await expect(agentRow).toContainText(AGENT_TITLE);
-      await expect(agentRow).toContainText(PRIMARY_HOST_LABEL);
-      await expect(agentRow).toContainText(WORKSPACE_TITLE);
-      await expect(agentRow).not.toContainText(seeded.repoPath);
-
-      const workspaceSectionTop = await panel
-        .getByText("Workspaces", { exact: true })
-        .evaluate((element) => element.getBoundingClientRect().top);
-      const agentSectionTop = await panel
-        .getByText("Agents", { exact: true })
-        .evaluate((element) => element.getBoundingClientRect().top);
-      expect(workspaceSectionTop).toBeLessThan(agentSectionTop);
-
-      const input = panel.getByTestId("command-center-input");
-      await input.fill(PRIMARY_HOST_LABEL);
-      await expect(row).toBeVisible();
-      await expect(agentRow).toBeVisible();
-
-      await input.fill(WORKSPACE_BRANCH);
-      await expect(row).toBeVisible();
-      await expect(agentRow).not.toBeVisible();
-
-      await input.fill(WORKSPACE_TITLE);
-      await expect(row).toBeVisible();
-      await expect(agentRow).toBeVisible();
-
-      await input.fill(seeded.repoPath);
-      await expect(agentRow).toBeVisible();
-      await expect(row).not.toBeVisible();
-
-      // The project name is now part of the workspace searchText.
-      await input.fill(seeded.projectDisplayName);
-      await expect(row).toBeVisible();
-
-      await input.fill(AGENT_TITLE);
-      await expect(agentRow).toBeVisible();
-      await expect(row).not.toBeVisible();
-
-      await input.fill(WORKSPACE_TITLE);
-      await page.keyboard.press("Enter");
-
-      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId), {
-        timeout: 30_000,
+      await test.step("a workspace matches on its own fields", async () => {
+        const input = panel.getByTestId("command-center-input");
+        for (const query of [
+          PRIMARY_HOST_LABEL,
+          WORKSPACE_BRANCH,
+          WORKSPACE_TITLE,
+          seeded.projectDisplayName,
+        ]) {
+          await input.fill(query);
+          await expect(row).toBeVisible();
+          await expect(agentLine).toHaveCount(0);
+        }
+        // `cwd` is never shown, so it must never match.
+        await input.fill(seeded.repoPath);
+        await expect(row).not.toBeVisible();
       });
 
-      await test.step("find an agent and open its workspace tab", async () => {
-        const agentPanel = await openCommandCenter(page);
-        await agentPanel.getByTestId("command-center-input").fill(AGENT_TITLE);
+      await test.step("an agent title finds its workspace and names the agent", async () => {
+        await panel.getByTestId("command-center-input").fill(AGENT_TITLE);
+        await expect(agentLine).toHaveText(AGENT_TITLE);
+        await expect(panel.getByText("Agents", { exact: true })).toHaveCount(0);
         await page.keyboard.press("Enter");
         await expectAgentTabActive(page, agent.id);
       });
+
+      await test.step("a workspace match opens the workspace", async () => {
+        const searchAgain = await openCommandCenter(page);
+        await expectCommandCenterTab(searchAgain, "All");
+        await searchAgain.getByTestId("command-center-input").fill(WORKSPACE_TITLE);
+        await page.keyboard.press("Enter");
+        await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId), {
+          timeout: 30_000,
+        });
+      });
     } finally {
       await seeded.cleanup();
+    }
+  });
+
+  test("All leads with the three most recent workspaces other than the open one", async ({
+    page,
+  }) => {
+    const older = [];
+    for (const title of ["Recent oldest", "Recent third", "Recent second", "Recent newest"]) {
+      older.push(await seedWorkspace({ repoPrefix: "command-center-recent-", title }));
+    }
+    const current = await seedWorkspace({
+      repoPrefix: "command-center-recent-",
+      title: "Open one",
+    });
+    try {
+      await page.goto(buildHostWorkspaceRoute(getServerId(), current.workspaceId));
+      const panel = await openCommandCenter(page);
+      await expectCommandCenterTab(panel, "All");
+      await expect(commandCenterSection(panel, "Recent workspaces")).toBeVisible();
+      const rowOf = (workspaceId: string) =>
+        panel.getByTestId(`command-center-workspace-${getServerId()}:${workspaceId}`);
+
+      await expect(rowOf(older[3].workspaceId)).toBeVisible({ timeout: 30_000 });
+      await expect(rowOf(older[2].workspaceId)).toBeVisible();
+      await expect(rowOf(older[1].workspaceId)).toBeVisible();
+      await expect(rowOf(older[0].workspaceId)).toHaveCount(0);
+      await expect(rowOf(current.workspaceId)).toHaveCount(0);
+      await expect(commandCenterSection(panel, "Workspaces")).toHaveCount(0);
+
+      // The newest recent workspace is selected, so Enter goes straight back to it.
+      await page.keyboard.press("Enter");
+      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), older[3].workspaceId), {
+        timeout: 30_000,
+      });
+    } finally {
+      for (const seeded of [current, ...older]) await seeded.cleanup();
     }
   });
 
@@ -229,7 +250,7 @@ test.describe("Compact sidebar inspection", () => {
       title: "Compact destination",
     });
     try {
-      const agent = await createIdleAgent(seeded.client, {
+      await createIdleAgent(seeded.client, {
         cwd: seeded.repoPath,
         workspaceId: seeded.workspaceId,
         title: "Compact root agent",
@@ -246,7 +267,10 @@ test.describe("Compact sidebar inspection", () => {
       await openSidebar(page);
       const agentSearch = await openCommandCenter(page);
       await agentSearch.getByTestId("command-center-input").fill("Compact root agent");
-      await agentSearch.getByTestId(`command-center-agent-${getServerId()}:${agent.id}`).click();
+      await agentSearch
+        .getByTestId(`command-center-workspace-${getServerId()}:${seeded.workspaceId}`)
+        .getByTestId("command-center-workspace-agent")
+        .click();
       await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
       await expect(
         page.getByRole("textbox", { name: "Message agent...", exact: true }),

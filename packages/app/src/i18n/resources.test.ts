@@ -327,7 +327,8 @@ describe("translation resources", () => {
     expect(en.shell.commandCenter.noMatches).toBe("No matches");
     expect(en.shell.commandCenter.actions).toBe("Actions");
     expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
-    expect(en.shell.commandCenter.agents).toBe("Agents");
+    expect(en.shell.commandCenter.recentWorkspaces).toBe("Recent workspaces");
+    expect(en.shell.commandCenter.tabs.all).toBe("All");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
     expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");

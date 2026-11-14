@@ -152,9 +152,7 @@ export function useKeyboardShortcuts({
         if (action.nextOpen) {
           captureFocusRestore();
         }
-        useKeyboardShortcutsStore
-          .getState()
-          .setCommandCenterOpen(action.nextOpen, action.scope ?? null);
+        useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen, action.tab);
         return true;
       }
       case "shortcuts-dialog-toggle":
