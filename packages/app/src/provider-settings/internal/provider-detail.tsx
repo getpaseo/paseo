@@ -43,7 +43,12 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
     void refresh([provider]);
     refreshInstallation();
   }, [provider, refresh, refreshInstallation]);
-  const presence = readDetailPresence({ provider, connected, entries, error });
+  // Remembered so a provider removed from this page isn't then called missing while it closes.
+  const [foundProvider, setFoundProvider] = useState<string | null>(null);
+  const wasFound = foundProvider === provider;
+  const presence = readDetailPresence({ provider, connected, entries, error, wasFound });
+  if (presence.kind === "found" && !wasFound) setFoundProvider(provider);
+  if (presence.kind === "removed") return null;
   if (presence.kind !== "found") return <AbsentProvider presence={presence} />;
 
   const entry = presence.entry;
@@ -73,7 +78,11 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
   );
 }
 
-function AbsentProvider({ presence }: { presence: Exclude<DetailPresence, { kind: "found" }> }) {
+function AbsentProvider({
+  presence,
+}: {
+  presence: Exclude<DetailPresence, { kind: "found" | "removed" }>;
+}) {
   const { t } = useTranslation();
   const messages = {
     loading: t("settings.providers.loading"),

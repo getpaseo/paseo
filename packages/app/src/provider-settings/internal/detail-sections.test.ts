@@ -65,25 +65,61 @@ describe("provider detail presence", () => {
 
   it("finds the provider among the host's providers", () => {
     expect(
-      readDetailPresence({ provider: "codex", connected: true, entries: loaded, error: null }),
+      readDetailPresence({
+        provider: "codex",
+        connected: true,
+        entries: loaded,
+        error: null,
+        wasFound: false,
+      }),
     ).toEqual({ kind: "found", entry: loaded[1] });
   });
 
   it("is loading until the host's providers arrive", () => {
     expect(
-      readDetailPresence({ provider: "codex", connected: true, entries: undefined, error: null }),
+      readDetailPresence({
+        provider: "codex",
+        connected: true,
+        entries: undefined,
+        error: null,
+        wasFound: false,
+      }),
     ).toEqual({ kind: "loading" });
   });
 
   it("says the provider is missing once the host's providers have arrived without it", () => {
     expect(
-      readDetailPresence({ provider: "gone", connected: true, entries: loaded, error: null }),
+      readDetailPresence({
+        provider: "gone",
+        connected: true,
+        entries: loaded,
+        error: null,
+        wasFound: false,
+      }),
     ).toEqual({ kind: "missing" });
+  });
+
+  it("shows nothing for a provider it already showed that then left, as when it is removed", () => {
+    expect(
+      readDetailPresence({
+        provider: "gone",
+        connected: true,
+        entries: loaded,
+        error: null,
+        wasFound: true,
+      }),
+    ).toEqual({ kind: "removed" });
   });
 
   it("says the host is offline rather than loading forever", () => {
     expect(
-      readDetailPresence({ provider: "codex", connected: false, entries: undefined, error: null }),
+      readDetailPresence({
+        provider: "codex",
+        connected: false,
+        entries: undefined,
+        error: null,
+        wasFound: false,
+      }),
     ).toEqual({ kind: "offline" });
   });
 
@@ -94,6 +130,7 @@ describe("provider detail presence", () => {
         connected: true,
         entries: undefined,
         error: "Request timed out",
+        wasFound: false,
       }),
     ).toEqual({ kind: "failed", message: "Request timed out" });
   });
