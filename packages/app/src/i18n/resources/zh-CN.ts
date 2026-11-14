@@ -121,6 +121,14 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "已保存在此设备上，主机重新连接后发送。",
+      sending: "发送中…",
+      needsReview: "请检查发送结果。可使用相同的消息 ID 重试或丢弃。",
+      retry: "重试发送",
+      discard: "丢弃已保存的消息",
+      attachmentMessage: "带附件的消息",
+    },
     placeholders: {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",

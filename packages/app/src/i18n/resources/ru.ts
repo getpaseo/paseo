@@ -122,6 +122,14 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Сохранено на этом устройстве. Отправится при подключении хоста.",
+      sending: "Отправка…",
+      needsReview: "Проверьте доставку. Повторите с тем же ID сообщения или удалите его.",
+      retry: "Повторить отправку",
+      discard: "Удалить сохранённое сообщение",
+      attachmentMessage: "Сообщение с вложениями",
+    },
     placeholders: {
       desktop: "Напишите агенту сообщение, отметьте @files или используйте /commands и /skills.",
       mobile: "Сообщение,@files,/commands",

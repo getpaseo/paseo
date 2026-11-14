@@ -117,6 +117,15 @@ export const en = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Saved on this device. Sends when the host reconnects.",
+      sending: "Sending…",
+      needsReview:
+        "Delivery may have succeeded. Check the agent timeline before retrying or discarding.",
+      retry: "Retry delivery",
+      discard: "Discard saved message",
+      attachmentMessage: "Message with attachments",
+    },
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",

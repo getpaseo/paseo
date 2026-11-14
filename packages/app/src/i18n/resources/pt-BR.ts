@@ -122,6 +122,14 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Salvo neste dispositivo. Será enviado quando o host reconectar.",
+      sending: "Enviando…",
+      needsReview: "Verifique a entrega. Tente novamente com o mesmo ID ou descarte a mensagem.",
+      retry: "Tentar enviar novamente",
+      discard: "Descartar mensagem salva",
+      attachmentMessage: "Mensagem com anexos",
+    },
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",
