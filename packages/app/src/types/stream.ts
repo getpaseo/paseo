@@ -157,10 +157,14 @@ export function appendSubmittedUserMessage(input: {
   if (!clientMessageId) {
     throw new Error("Submitted user message requires client identity");
   }
-  const alreadyExists = [...input.tail, ...input.head].some(
-    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
+  const existing = [...input.tail, ...input.head].find(
+    (item): item is UserMessageItem =>
+      item.kind === "user_message" && item.clientMessageId === clientMessageId,
   );
-  if (alreadyExists) {
+  if (existing) {
+    if (!isUnreconciledLocalUserMessage(existing)) {
+      return { tail: input.tail, head: input.head };
+    }
     throw new Error(`Submitted user message already exists: ${clientMessageId}`);
   }
   return input.head.length > 0

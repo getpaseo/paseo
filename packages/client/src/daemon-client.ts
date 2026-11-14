@@ -8101,7 +8101,15 @@ export class DaemonClient {
               if (waiter) {
                 this.waiters.delete(waiter);
               }
-              wrappedReject(timeoutError);
+              wrappedReject(
+                waiter?.submitted
+                  ? new DaemonConnectionError(timeoutError.message, timeoutError.code, {
+                      serverId: this.destinationServerId,
+                      outcome: "unknown",
+                      cause: timeoutError,
+                    })
+                  : timeoutError,
+              );
             }, timeout)
           : null;
 
