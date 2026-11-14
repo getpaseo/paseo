@@ -20,6 +20,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
+import { MessageReceipts } from "../message-receipts/index.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
@@ -14419,3 +14420,114 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+for (const origin of [
+  { name: "human", source: undefined },
+  { name: "agent", source: { kind: "agent-message" as const, agentId: "sender" } },
+]) {
+  test(`pending ${origin.name} receipts recover after manager restart and provider replay`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "message-receipt-restart-"));
+    const registryPath = join(workdir, "agents");
+    const receiptPath = join(workdir, "receipts");
+    const history: AgentStreamEvent[] = [];
+    class ReceiptSession extends TestAgentSession {
+      override async startTurn(
+        prompt: AgentPromptInput,
+        options?: AgentRunOptions,
+      ): Promise<{ turnId: string }> {
+        if (typeof prompt !== "string") throw new Error("Expected an enveloped text prompt");
+        history.push({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: prompt,
+            messageId: "provider-native-message",
+            clientMessageId: options?.clientMessageId,
+          },
+        });
+        return super.startTurn();
+      }
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield* history;
+      }
+    }
+    class ReceiptClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new ReceiptSession(config);
+      }
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ) {
+        return new ReceiptSession({ ...config, provider: "codex", cwd: workdir });
+      }
+    }
+    const store = new RecordingTimelineStore();
+    const first = new AgentManager({
+      clients: { codex: new ReceiptClient() },
+      registry: new AgentStorage(registryPath, logger),
+      durableTimelineStore: store,
+      logger,
+    });
+    let restored: AgentManager | null = null;
+    let agentId: string | null = null;
+    let sends = 0;
+    try {
+      const agent = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      const messageId = "message-to-reconcile";
+      const prepared = prepareAgentMessage("hello", origin.source, messageId);
+      const request = { agentId: agent.id, messageId, request: { text: prepared.prompt } };
+      await expect(
+        new MessageReceipts(receiptPath).send({
+          ...request,
+          send: async () => {
+            sends++;
+            await first.runAgent(agent.id, prepared.prompt, { clientMessageId: messageId });
+            throw new Error("acknowledgement lost");
+          },
+        }),
+      ).rejects.toThrow("acknowledgement lost");
+      await first.flush();
+      await first.closeAgent(agent.id);
+      await first.flush();
+      const storage = new AgentStorage(registryPath, logger);
+      restored = new AgentManager({
+        clients: { codex: new ReceiptClient() },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+      await ensureAgentLoaded(agent.id, { agentManager: restored, agentStorage: storage, logger });
+      expect(restored.getTimeline(agent.id)).toEqual([]);
+      await expect(restored.hasAcceptedSubmittedMessage(agent.id, messageId)).resolves.toBe(true);
+      await restored.hydrateTimelineFromProvider(agent.id, { force: true });
+      await restored.flush();
+      const manager = restored;
+      await new MessageReceipts(receiptPath).send({
+        ...request,
+        isAccepted: () => manager.hasAcceptedSubmittedMessage(agent.id, messageId),
+        send: async () => {
+          sends++;
+        },
+      });
+      expect(sends).toBe(1);
+      await restored.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "not accepted",
+        clientMessageId: "rejected",
+        messageId: "rejected",
+      });
+      await restored.flush();
+      await expect(restored.hasAcceptedSubmittedMessage(agent.id, "rejected")).resolves.toBe(false);
+    } finally {
+      if (restored && agentId) await restored.closeAgent(agentId);
+      await first.flush();
+      await restored?.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+}

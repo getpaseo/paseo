@@ -61,9 +61,13 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
-An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
-accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
-work. Inspect the agent before choosing a new message ID. Receipts contain identity and request
+For an unfinished delivery, the daemon checks the submitted message's provider acceptance evidence
+before reporting `agent_request_outcome_unknown`. It reads live and persisted acceptance metadata,
+then checks native provider history when a restart or replay has lost that metadata. Delivered agent
+envelopes use the same message identity as human prompts. Positive evidence settles the receipt
+without resending. A timeline row alone is insufficient: rejected prompts are
+retained there too. Without positive evidence, automatic resubmission could duplicate work; inspect
+the agent before choosing a new message ID. Receipts contain identity and request
 hashes, never prompts, environment values, or credentials.
 
 Before messaging an archived workspace, call `workspace.recovery.inspect.request`, then

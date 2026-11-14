@@ -96,7 +96,11 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
+import {
+  agentMessageTimelineId,
+  parseAgentMessage,
+  projectAgentMessages,
+} from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
   PASEO_MCP_SERVER_NAME,
@@ -1408,6 +1412,32 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  async hasAcceptedSubmittedMessage(agentId: string, clientMessageId: string): Promise<boolean> {
+    const agent = this.requireSessionAgent(agentId);
+    const matches = (item: AgentTimelineItem): boolean => {
+      if (item.type === "user_message") return item.clientMessageId === clientMessageId;
+      return (
+        item.type === "tool_call" &&
+        item.agentMessage !== undefined &&
+        item.callId === agentMessageTimelineId(clientMessageId)
+      );
+    };
+    const accepted = (row: AgentTimelineRow): boolean =>
+      matches(row.item) &&
+      (row.item.type === "tool_call" || Boolean(row.turnId || row.providerMessageId));
+    if (this.timelineStore.getRows(agentId).some(accepted)) return true;
+    if (this.durableTimelineStore) {
+      const committed = await this.durableTimelineStore.getCommittedRows(agentId);
+      if (committed.some(accepted)) return true;
+    }
+    // A restart may restore only sequence state, and replay strips row metadata.
+    // Native history contains delivered inputs; manager-only rejected rows do not.
+    for await (const event of agent.session.streamHistory()) {
+      if (event.type === "timeline" && projectAgentMessages(event.item).some(matches)) return true;
+    }
+    return false;
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
