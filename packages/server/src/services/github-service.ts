@@ -2181,11 +2181,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             host,
             `${owner}/${name}`,
           );
-          if (remoteNames.length === 0) {
-            throw new Error(
-              `No Git remote matches ${host}/${owner}/${name}; add a remote for the selected GitHub repository before checking out this pull request`,
-            );
-          }
 
           const parsed = await runGhJson(
             [
@@ -3359,7 +3354,9 @@ async function resolveGitHubCheckoutRemotes(
       matches.push(name);
     }
   }
-  return matches;
+  // A clone made before a repository was renamed or transferred keeps the old
+  // owner/name in its remote URL, and GitHub still serves pull refs from it.
+  return matches.length > 0 ? matches : ["origin", "upstream"];
 }
 
 async function resolveGitHubDefaultRepoSlug(cwd: string, host: string): Promise<string | null> {

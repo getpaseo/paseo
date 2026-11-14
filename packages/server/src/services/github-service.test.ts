@@ -881,6 +881,38 @@ describe("ForgeService", () => {
     }
   });
 
+  it("checks out from origin when origin still uses a renamed repository's old name", async () => {
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-checkout-renamed-"));
+    execFileSync("git", ["init", "-q", cwd]);
+    execFileSync("git", [
+      "-C",
+      cwd,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/old-owner/old-name.git",
+    ]);
+    try {
+      const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+
+      const target = await service.getPullRequestCheckoutTarget({ cwd, number: 526 });
+
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+      ]);
+      expect(runner.calls[1]?.args).toContain("owner=getpaseo");
+      service.dispose?.();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
     const runner = createRunner([
       currentPullRequestJson({ url: "https://github.acme.internal/acme/repo/pull/42" }),
@@ -4976,8 +5008,11 @@ describe("ForgeService", () => {
         expect.objectContaining({ title: "fork" }),
       ]);
       execFileSync("git", ["-C", cwd, "config", "remote.origin.gh-resolved", "missing/repo"]);
-      const missingRepoRunner: GitHubCommandRunner = async () => ({
-        stdout: JSON.stringify({ owner: { login: "missing" }, name: "repo" }),
+      const missingRepoRunner: GitHubCommandRunner = async (args) => ({
+        stdout:
+          args[0] === "api"
+            ? pullRequestCheckoutTargetJson()
+            : JSON.stringify({ owner: { login: "missing" }, name: "repo" }),
         stderr: "",
       });
       const missingRepoService = createGitHubService({
@@ -4985,9 +5020,12 @@ describe("ForgeService", () => {
         resolveGhPath: async () => "/usr/bin/gh",
         resolveRepoHost: async () => "github.acme.internal",
       });
-      await expect(
-        missingRepoService.getPullRequestCheckoutTarget({ cwd, number: 526 }),
-      ).rejects.toThrow("No Git remote matches github.acme.internal/missing/repo");
+      expect(
+        (await missingRepoService.getPullRequestCheckoutTarget({ cwd, number: 526 })).checkoutRefs,
+      ).toEqual([
+        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+      ]);
       missingRepoService.dispose?.();
       service.dispose?.();
     } finally {
