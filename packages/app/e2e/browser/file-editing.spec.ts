@@ -15,6 +15,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { holdNextPreviewLoad } from "../support/helpers/image-preview";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -36,6 +37,15 @@ interface LinkedFile {
 
 function editor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
+}
+
+async function expectTallImageFrame(frame: Locator): Promise<void> {
+  await expect
+    .poll(async () => {
+      const box = await frame.boundingBox();
+      return box ? box.height - box.width : 0;
+    })
+    .toBeGreaterThan(0);
 }
 
 function hasHorizontalOverflow(element: HTMLElement): boolean {
@@ -753,6 +763,10 @@ test.describe("CodeMirror workspace file editing", () => {
     const imagePath = path.join(workspace.repoPath, "pixel.png");
     await writeFile(markdownPath, "# First heading\n", "utf8");
     await writeFile(imagePath, RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "shape.svg"),
+      await readFile(path.resolve(__dirname, "../mobile/fixtures/native-preview.svg")),
+    );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
 
@@ -785,7 +799,7 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
-    const imageCanvas = page.getByTestId("image-file-preview-canvas");
+    const imageCanvas = visibleFilePane.getByTestId("image-file-preview-canvas");
     await expect(imageCanvas).toBeVisible();
     await imageCanvas.hover();
     const transformedContent = imageCanvas.locator(":scope > div").first();
@@ -798,6 +812,34 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+
+    await openWorkspaceFile(page, "shape.svg");
+    await expect(imageCanvas).toBeVisible();
+    await expect(image).toBeVisible();
+    await expect(image).toHaveJSProperty("complete", true);
+    await expect(image).toHaveJSProperty("naturalWidth", 240);
+
+    const oldSource = await image.evaluate((element: HTMLImageElement) => ({
+      url: element.currentSrc,
+      width: element.naturalWidth,
+      height: element.naturalHeight,
+    }));
+    const pendingLoad = await holdNextPreviewLoad(visibleFilePane, oldSource.url);
+    try {
+      await writeFile(
+        path.join(workspace.repoPath, "shape.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240"><rect width="160" height="240" fill="green"/></svg>',
+      );
+      await expect.poll(() => image.getAttribute("src")).not.toBe(oldSource.url);
+      await pendingLoad.wait();
+      // Native can deliver the old source's queued event to this new listener.
+      await pendingLoad.deliver(oldSource);
+      await expect(imageCanvas).toHaveCount(0);
+    } finally {
+      await pendingLoad.release();
+    }
+    await expect(imageCanvas).toBeVisible();
+    await expectTallImageFrame(transformedContent);
   });
 
   test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {

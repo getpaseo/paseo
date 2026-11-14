@@ -20,6 +20,23 @@ const resolvePackageEntry = (packageName: string) => {
 export default defineConfig({
   plugins: [
     {
+      name: "bundle-expo-runtime",
+      // Expo initializes import.meta through a literal require of TypeScript.
+      // Bundle that boundary so Node need not resolve Metro's extensionless require.
+      async transform(_source, id) {
+        if (!id.endsWith("/expo/src/winter/runtime.ts")) return;
+        const result = await build({
+          entryPoints: [id],
+          bundle: true,
+          format: "esm",
+          platform: "neutral",
+          define: { __DEV__: "false" },
+          write: false,
+        });
+        return { code: result.outputFiles[0].text, map: null };
+      },
+    },
+    {
       name: "markdown-wasm-commonjs-export",
       transform(source, id) {
         // The ESM package contains a CommonJS WASM factory. Metro handles the

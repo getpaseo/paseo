@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Image, View, type StyleProp, type ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { useCallback, useMemo, useState } from "react";
+import { Image, type ImageLoadEventData } from "expo-image";
+import { View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { ViewportFitOptions, ViewportSize } from "./geometry";
 import { ZoomableViewport } from "./index";
 import type { ZoomableViewportAction } from "./types";
+
+const ViewportImage = withUnistyles(Image);
 
 interface ZoomableImageProps {
   uri: string;
@@ -34,36 +37,27 @@ export function ZoomableImage({
   testID = "zoomable-image",
   wheelActivation = "always",
 }: ZoomableImageProps) {
-  const [loadedSize, setLoadedSize] = useState<ViewportSize | null>(null);
-  const resolvedSize = contentSize ?? loadedSize;
-  const source = useMemo(() => ({ uri }), [uri]);
-
-  useEffect(() => {
-    if (contentSize) return;
-    let active = true;
-    setLoadedSize(null);
-    Image.getSize(
-      uri,
-      (width, height) => {
-        if (active && width > 0 && height > 0) setLoadedSize({ width, height });
-      },
-      () => {
-        if (active) onError?.();
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [contentSize, onError, uri]);
+  const source = useMemo(() => ({ uri: normalizeImageUri(uri) }), [uri]);
+  const [loadedImage, setLoadedImage] = useState<{ uri: string; size: ViewportSize } | null>(null);
+  const resolvedSize = contentSize ?? (loadedImage?.uri === source.uri ? loadedImage.size : null);
+  const handleLoad = useCallback(
+    ({ source: { url, width, height } }: ImageLoadEventData) => {
+      if (url === source.uri && width > 0 && height > 0) {
+        setLoadedImage({ uri: source.uri, size: { width, height } });
+      }
+    },
+    [source.uri],
+  );
 
   if (!resolvedSize) {
     return (
       <View style={[styles.root, style]} testID={testID}>
-        <Image
+        <ViewportImage
           accessibilityLabel={accessibilityLabel}
           accessibilityRole="image"
           onError={onError}
-          resizeMode="contain"
+          onLoad={handleLoad}
+          contentFit="contain"
           source={source}
           style={styles.image}
           testID={`${testID}-image`}
@@ -85,15 +79,24 @@ export function ZoomableImage({
       testID={testID}
       wheelActivation={wheelActivation}
     >
-      <Image
+      <ViewportImage
         onError={onError}
-        resizeMode="contain"
+        contentFit="contain"
         source={source}
         style={styles.image}
         testID={`${testID}-image`}
       />
     </ZoomableViewport>
   );
+}
+
+// Use the same URL spelling as the decoder while preserving opaque native URIs.
+function normalizeImageUri(uri: string): string {
+  try {
+    return new URL(uri).href;
+  } catch {
+    return uri;
+  }
 }
 
 const styles = StyleSheet.create(() => ({

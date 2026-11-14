@@ -14,6 +14,12 @@ const tsgoEntry = path.join(
   "bin/tsgo.js",
 );
 
+it("the test environment loads Expo Image", async () => {
+  const { Image } = await import("expo-image");
+
+  expect(Image).toEqual(expect.any(Function));
+});
+
 it("the test configuration typechecks with Expo's generated environment declaration", () => {
   const fixtureDir = mkdtempSync(path.join(appDir, ".vitest-expo-env-"));
   try {
