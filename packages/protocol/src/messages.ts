@@ -3787,6 +3787,9 @@ export const VoiceInputStateMessageSchema = z.object({
   type: z.literal("voice_input_state"),
   payload: z.object({
     isSpeaking: z.boolean(),
+    // Sent only to clients with the voice_deferred_barge_in capability: the transcript
+    // of sound heard during a reply has the user's words, so the reply stops.
+    playback: z.literal("stop").optional(),
   }),
 });
 

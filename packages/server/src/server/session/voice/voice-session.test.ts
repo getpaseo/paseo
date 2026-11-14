@@ -4,7 +4,12 @@ import { EventEmitter } from "node:events";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
-import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
+import {
+  VoiceSession,
+  hasSpokenWord,
+  isEchoOfReplyText,
+  type VoiceSessionHost,
+} from "./voice-session.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
@@ -20,6 +25,10 @@ import type {
 } from "../../speech/turn-detection-provider.js";
 
 const VOICE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
+// The reply whose speakerphone echo came back as "A bicycle began a day." on an iPhone.
+const BICYCLE_REPLY =
+  "The bicycle began in 1817 with Karl Drais, a German inventor who built a two-wheeled, " +
+  "steerable machine called the running machine, or draisine, which riders pushed along with their feet.";
 
 class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
   public readonly requiredSampleRate = 16000;
@@ -79,6 +88,7 @@ function createFakeHost(): FakeVoiceHost {
     },
     interruptAgentIfRunning: async () => {},
     hasActiveAgentRun: () => false,
+    supportsDeferredBargeIn: () => false,
   };
 }
 
@@ -112,6 +122,7 @@ function createVoiceSession(tts: TextToSpeechProvider | null = null) {
   return {
     voiceSession,
     detector,
+    turnDetection,
     sttSession,
     host,
     speak: (args: Parameters<VoiceSpeakHandler>[0]) => {
@@ -119,6 +130,19 @@ function createVoiceSession(tts: TextToSpeechProvider | null = null) {
       return speakHandler(args);
     },
   };
+}
+
+const FAKE_TTS: TextToSpeechProvider = {
+  async synthesizeSpeech() {
+    return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+  },
+};
+
+/** What the client is told about sound during a reply: speech state and transcripts. */
+function bargeInMessages(host: FakeVoiceHost): SessionOutboundMessage[] {
+  return host.emitted.filter(
+    (message) => message.type === "voice_input_state" || message.type === "transcription_result",
+  );
 }
 
 function isAudioOutput(message: SessionOutboundMessage): boolean {
@@ -164,6 +188,571 @@ describe("VoiceSession streaming transcription", () => {
       await voiceSession.cleanup();
       await playback.catch(() => {});
     }
+  });
+
+  test.each(["", "S-", "Sna-", "Mm-hmm.", "uh, um", "..."])(
+    "keeps a reply playing and tells the client nothing when the transcript is %j",
+    async (transcript) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      const interrupted: string[] = [];
+      host.interruptAgentIfRunning = async (agentId) => {
+        interrupted.push(agentId);
+      };
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "A spoken response." });
+      try {
+        await waitForAudioOutput(host);
+        detector.emit("speech_started");
+        await settle();
+        detector.emit("speech_stopped");
+        await settle();
+        sttSession.emitCommitted({ segmentId: "noise", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "noise", transcript, isFinal: true });
+        await settle();
+
+        expect(bargeInMessages(host)).toEqual([]);
+        expect(interrupted).toEqual([]);
+        expect(host.spokenInput).toEqual([]);
+
+        const audio = host.emitted.find(isAudioOutput);
+        if (audio?.type !== "audio_output") throw new Error("no audio output");
+        voiceSession.handleAudioPlayed(audio.payload.id);
+        await playback;
+      } finally {
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("on a speakerphone, a transcript of the reply's own words leaves the reply playing", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: BICYCLE_REPLY });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "echo", previousSegmentId: null });
+      sttSession.emitTranscript({
+        segmentId: "echo",
+        transcript: "A bicycle began a day.",
+        isFinal: true,
+      });
+      await settle();
+
+      expect(bargeInMessages(host)).toEqual([]);
+      expect(host.spokenInput).toEqual([]);
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test.each([
+    { transcript: "Is the baseball in season.", stops: false },
+    { transcript: "No, the short version.", stops: true },
+  ])(
+    "right after a reply's audio starts, $transcript stops the reply: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "Here's the bicycle in six sentences." });
+      try {
+        await waitForAudioOutput(host);
+        detector.emit("speech_started");
+        await settle();
+        detector.emit("speech_stopped");
+        await settle();
+        sttSession.emitCommitted({ segmentId: "leak", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "leak", transcript, isFinal: true });
+        await settle();
+
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test.each([
+    { transcript: "The English rounders?", stops: true },
+    {
+      transcript: "grew out of older bat-and-ball games like English rounders",
+      stops: false,
+    },
+  ])(
+    "well into a reply, its own words $transcript stop it: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({
+        text: "Baseball grew out of older bat-and-ball games like English rounders.",
+      });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        detector.emit("speech_started");
+        await vi.advanceTimersByTimeAsync(0);
+        detector.emit("speech_stopped");
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitCommitted({ segmentId: "quote", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "quote", transcript, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test.each([
+    { transcript: "Hello", stops: false },
+    { transcript: "Yeah.", stops: false },
+    { transcript: "Yeah, okay, got it.", stops: false },
+    { transcript: "Okay, I see.", stops: false },
+    { transcript: "Okay, stop.", stops: true },
+    { transcript: "Louder.", stops: true },
+    { transcript: "Go on", stops: true },
+  ])(
+    "well into a reply, the lone transcript $transcript stops it: $stops",
+    async ({ transcript, stops }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "Here's the bicycle in six sentences." });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        detector.emit("speech_started");
+        await vi.advanceTimersByTimeAsync(0);
+        detector.emit("speech_stopped");
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitCommitted({ segmentId: "one", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "one", transcript, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bargeInMessages(host).some((message) => message.type === "voice_input_state")).toBe(
+          stops,
+        );
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("once a reply's audio has played for a few seconds, unrelated words stop it", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "Here's the bicycle in six sentences." });
+    try {
+      await waitForAudioOutput(host);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(3500);
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(0);
+      detector.emit("speech_stopped");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: null });
+      sttSession.emitTranscript({
+        segmentId: "words",
+        transcript: "Is the baseball in season.",
+        isFinal: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      vi.useRealTimers();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test.each([
+    { transcript: "stop", reply: "A spoken response." },
+    { transcript: "wait, stop", reply: "A spoken response." },
+    { transcript: "Wait, when did the bicycle begin?", reply: BICYCLE_REPLY },
+  ])(
+    "stops the reply only once the user's words $transcript are transcribed",
+    async ({ transcript, reply }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      const interrupted: string[] = [];
+      host.interruptAgentIfRunning = async (agentId) => {
+        interrupted.push(agentId);
+      };
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: reply });
+      try {
+        await waitForAudioOutput(host);
+        detector.emit("speech_started");
+        await settle();
+        detector.emit("speech_stopped");
+        await settle();
+        expect(bargeInMessages(host)).toEqual([]);
+        expect(interrupted).toEqual([]);
+
+        sttSession.emitCommitted({ segmentId: "words", previousSegmentId: null });
+        sttSession.emitTranscript({ segmentId: "words", transcript, isFinal: true });
+        await settle();
+
+        expect(bargeInMessages(host)).toEqual([
+          expect.objectContaining({
+            type: "transcription_result",
+            payload: expect.objectContaining({ text: transcript }),
+          }),
+          { type: "voice_input_state", payload: { isSpeaking: false, playback: "stop" } },
+        ]);
+        expect(interrupted).toEqual([VOICE_AGENT_ID]);
+        expect(host.spokenInput).toEqual([{ agentId: VOICE_AGENT_ID, text: transcript }]);
+        await playback;
+      } finally {
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("sound while the agent is still working does not interrupt it; the user's words do", async () => {
+    const { voiceSession, detector, sttSession, host } = createVoiceSession();
+    host.supportsDeferredBargeIn = () => true;
+    host.hasActiveAgentRun = () => true;
+    const interrupt = vi.fn(async () => {});
+    host.interruptAgentIfRunning = interrupt;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    try {
+      // The app's thinking tone, picked up by the microphone.
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "tone", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "tone", transcript: "", isFinal: true });
+      await settle();
+      expect(bargeInMessages(host)).toEqual([]);
+      expect(interrupt).not.toHaveBeenCalled();
+
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: "tone" });
+      sttSession.emitTranscript({
+        segmentId: "words",
+        transcript: "Make it three sentences.",
+        isFinal: true,
+      });
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+      expect(interrupt).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() =>
+        expect(host.spokenInput).toEqual([
+          { agentId: VOICE_AGENT_ID, text: "Make it three sentences." },
+        ]),
+      );
+    } finally {
+      await voiceSession.cleanup();
+    }
+  });
+
+  test.each([
+    { capable: true, confirmMs: 350 },
+    { capable: false, confirmMs: undefined },
+  ])(
+    "asks the detector to report sound after $confirmMs ms when the client defers barge-in: $capable",
+    async ({ capable, confirmMs }) => {
+      const { voiceSession, turnDetection, host } = createVoiceSession();
+      host.supportsDeferredBargeIn = () => capable;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      try {
+        const [params] = vi.mocked(turnDetection.createSession).mock.calls[0];
+        expect(params.confirmMs).toBe(confirmMs);
+      } finally {
+        await voiceSession.cleanup();
+      }
+    },
+  );
+
+  test.each([
+    { second: "S-", stops: false, sent: [] as string[] },
+    { second: "Skip to the last one.", stops: true, sent: ["Skip to the last one."] },
+  ])(
+    "judges a second pending clip ($second) by the same rules after the first was noise",
+    async ({ second, stops, sent }) => {
+      const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+      host.supportsDeferredBargeIn = () => true;
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      const playback = speak({ text: "A spoken response." });
+      try {
+        await waitForAudioOutput(host);
+        vi.useFakeTimers();
+        await vi.advanceTimersByTimeAsync(3500);
+        // Two sounds stop before either transcript arrives.
+        for (let i = 0; i < 2; i++) {
+          detector.emit("speech_started");
+          await vi.advanceTimersByTimeAsync(0);
+          detector.emit("speech_stopped");
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        sttSession.emitCommitted({ segmentId: "first", previousSegmentId: null });
+        sttSession.emitCommitted({ segmentId: "second", previousSegmentId: "first" });
+        sttSession.emitTranscript({ segmentId: "first", transcript: "", isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+        sttSession.emitTranscript({ segmentId: "second", transcript: second, isFinal: true });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(
+          host.emitted.some(
+            (message) =>
+              message.type === "voice_input_state" && message.payload.playback === "stop",
+          ),
+        ).toBe(stops);
+        expect(host.spokenInput.map((input) => input.text)).toEqual(sent);
+      } finally {
+        vi.useRealTimers();
+        await voiceSession.cleanup();
+        await playback.catch(() => {});
+      }
+    },
+  );
+
+  test("in a language other than English, a one-word command stops the reply", async () => {
+    const detector = new FakeVoiceTurnDetectionSession();
+    const sttSession = new FakeVoiceSttSession();
+    const host = createFakeHost();
+    host.supportsDeferredBargeIn = () => true;
+    let speakHandler: VoiceSpeakHandler | undefined;
+    const voiceSession = new VoiceSession({
+      host,
+      logger: pino({ level: "silent" }),
+      sessionId: "voice-session-fr",
+      sttLanguage: "fr",
+      tts: FAKE_TTS,
+      stt: { id: "local", createSession: () => sttSession },
+      voice: { turnDetection: { id: "local", createSession: () => detector } },
+      voiceBridge: {
+        registerVoiceSpeakHandler: (_id, handler) => {
+          speakHandler = handler;
+        },
+      },
+    });
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speakHandler!({ text: "Voici l'histoire du téléphone en huit phrases." });
+    try {
+      await waitForAudioOutput(host);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(3500);
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(0);
+      detector.emit("speech_stopped");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "fr", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "fr", transcript: "Arrête.", isFinal: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      vi.useRealTimers();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("a lone 'Stop.' stops a reply that says the word itself, even as its audio starts", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "Press the red button to stop the timer." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "stop", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "stop", transcript: "Stop.", isFinal: true });
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("still defers the next sound after a transcription error", async () => {
+    const { voiceSession, detector, host } = createVoiceSession();
+    host.supportsDeferredBargeIn = () => true;
+    host.hasActiveAgentRun = () => true;
+    const interrupt = vi.fn(async () => {});
+    host.interruptAgentIfRunning = interrupt;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    try {
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      detector.emit("error", new Error("transcription unavailable"));
+      await settle();
+      detector.emit("speech_started");
+      await settle();
+      expect(bargeInMessages(host)).toEqual([]);
+      expect(interrupt).not.toHaveBeenCalled();
+    } finally {
+      await voiceSession.cleanup();
+    }
+  });
+
+  test("after a transcription error, an earlier sound's late transcript does not use up the next one's checks", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      detector.emit("error", new Error("transcription unavailable"));
+      await settle();
+
+      // The user starts speaking before the earlier sound's transcript arrives.
+      detector.emit("speech_started");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "noise", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "noise", transcript: "", isFinal: true });
+      await settle();
+      expect(bargeInMessages(host)).toEqual([]);
+
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId: "words", previousSegmentId: "noise" });
+      sttSession.emitTranscript({
+        segmentId: "words",
+        transcript: "Wait, look at the other file instead.",
+        isFinal: true,
+      });
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("repeated noise bursts leave the reply playing while their transcripts are pending", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    const interrupted: string[] = [];
+    host.interruptAgentIfRunning = async (agentId) => {
+      interrupted.push(agentId);
+    };
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+
+      // Second noise burst arrives before the first final transcript settles.
+      detector.emit("speech_started");
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+
+      sttSession.emitCommitted({ segmentId: "noise-2", previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId: "noise-2", transcript: "", isFinal: true });
+      await settle();
+
+      expect(bargeInMessages(host)).toEqual([]);
+      expect(interrupted).toEqual([]);
+
+      const audio = host.emitted.find(isAudioOutput);
+      if (audio?.type !== "audio_output") throw new Error("no audio output");
+      voiceSession.handleAudioPlayed(audio.payload.id);
+      await playback;
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("transcribes unbroken sound during a reply after four seconds without waiting for silence", async () => {
+    const { voiceSession, detector, sttSession, host, speak } = createVoiceSession(FAKE_TTS);
+    host.supportsDeferredBargeIn = () => true;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: BICYCLE_REPLY });
+    try {
+      await waitForAudioOutput(host);
+      vi.useFakeTimers();
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(3900);
+      expect(sttSession.commitCount).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sttSession.commitCount).toBe(1);
+
+      // The sound carries on, so the detector reports it again as a new clip.
+      detector.emit("speech_started");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "long", previousSegmentId: null });
+      sttSession.emitTranscript({
+        segmentId: "long",
+        transcript: "Stop. What year was that?",
+        isFinal: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: false, playback: "stop" },
+      });
+
+      // The rest of the sound is decided on its own transcript, again without a word to the client.
+      const toldSoFar = bargeInMessages(host).length;
+      detector.emit("speech_stopped");
+      await vi.advanceTimersByTimeAsync(0);
+      sttSession.emitCommitted({ segmentId: "tail", previousSegmentId: "long" });
+      sttSession.emitTranscript({ segmentId: "tail", transcript: "", isFinal: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(bargeInMessages(host)).toHaveLength(toldSoFar);
+    } finally {
+      vi.useRealTimers();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+    expect(host.spokenInput.map((input) => input.text)).toEqual(["Stop. What year was that?"]);
   });
 
   test("session abort stops later audio even when the speak tool supplies its own signal", async () => {
@@ -325,4 +914,64 @@ describe("VoiceSession streaming transcription", () => {
 
     await voiceSession.cleanup();
   });
+});
+
+describe("isEchoOfReplyText", () => {
+  test.each([
+    "A bicycle began a day.",
+    "The bicycle began in 1817 with Karl Drais.",
+    "a German inventor",
+    "Drais.",
+  ])("counts %j as the reply's echo", (text) => {
+    expect(isEchoOfReplyText(text, [BICYCLE_REPLY])).toBe(true);
+  });
+
+  test.each([
+    "Stop.",
+    "Wait, the bicycle began when?",
+    "Wait, when did the bicycle begin?",
+    "What year was that?",
+    "Tell me about cars instead.",
+    "",
+  ])("counts %j as the user's speech", (text) => {
+    expect(isEchoOfReplyText(text, [BICYCLE_REPLY])).toBe(false);
+  });
+
+  test("matches echo whose years were transcribed as words", () => {
+    expect(
+      isEchoOfReplyText(
+        "Philip Rice experimented with transmitting sound electrically in eighteen.",
+        [
+          "Antonio Meucci and Johann Philipp Reis experimented with transmitting sound electrically. In 1876, Alexander Graham Bell was granted the first patent.",
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  test("matches nothing without a reply", () => {
+    expect(isEchoOfReplyText("A bicycle began a day.", [])).toBe(false);
+  });
+});
+
+describe("hasSpokenWord", () => {
+  test.each(["stop", "No.", "OK", "wait, stop", "well-known", "停", "l'eau"])(
+    "counts %j as speech",
+    (text) => {
+      expect(hasSpokenWord(text)).toBe(true);
+    },
+  );
+
+  test("counts a word in another script as noise when the language is Latin-script", () => {
+    expect(hasSpokenWord("咳嗽", "en")).toBe(false);
+    expect(hasSpokenWord("咳嗽", "en-US")).toBe(false);
+    expect(hasSpokenWord("咳嗽", "zh")).toBe(true);
+    expect(hasSpokenWord("stop 咳", "en")).toBe(true);
+  });
+
+  test.each(["", "S-", "Sna-", "Snarf-- uh", "Mm-hmm.", "uh, um", "...", "I"])(
+    "counts %j as noise",
+    (text) => {
+      expect(hasSpokenWord(text)).toBe(false);
+    },
+  );
 });

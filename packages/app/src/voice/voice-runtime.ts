@@ -180,7 +180,11 @@ export interface VoiceRuntime {
   onAssistantAudioStarted(serverId: string): void;
   onAssistantAudioFinished(serverId: string): void;
   onTranscriptionResult(serverId: string, text: string): void;
-  onServerSpeechStateChanged(serverId: string, isSpeaking: boolean): void;
+  /**
+   * `playback: "stop"` arrives without `isSpeaking` when the daemon decided on the
+   * transcript, not on detected sound, that the user interrupted the reply.
+   */
+  onServerSpeechStateChanged(serverId: string, isSpeaking: boolean, playback?: "stop"): void;
   onTurnEvent(serverId: string, agentId: string, eventType: TurnEventType): void;
 }
 
@@ -897,14 +901,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       stopCue();
     },
 
-    onServerSpeechStateChanged(serverId, isSpeaking) {
+    onServerSpeechStateChanged(serverId, isSpeaking, playbackAction) {
       if (serverId !== state.snapshot.activeServerId || !state.snapshot.isVoiceMode) {
         return;
       }
 
       state.serverSpeechDetected = isSpeaking;
       state.serverSpeechStartedAt = isSpeaking ? (state.serverSpeechStartedAt ?? Date.now()) : null;
-      if (isSpeaking) {
+      if (isSpeaking || playbackAction === "stop") {
         const shouldInterruptPlayback =
           state.snapshot.phase === "playing" || playback.groups.size > 0;
         resetPlaybackState();

@@ -20,5 +20,9 @@ export interface TurnDetectionSession {
 
 export interface TurnDetectionProvider {
   id: "openai" | "local" | (string & {});
-  createSession(params: { logger: pino.Logger }): TurnDetectionSession;
+  /**
+   * `confirmMs` is how long sound must last before `speech_started` fires. Providers
+   * without such a setting ignore it.
+   */
+  createSession(params: { logger: pino.Logger; confirmMs?: number }): TurnDetectionSession;
 }
