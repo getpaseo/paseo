@@ -1,39 +1,83 @@
-import { useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
+import type { NavigationProp } from "@react-navigation/native";
+import { useLocalSearchParams, useNavigation } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import {
   ComposerEditingScope,
   WorkspaceComposerEditingSessionsProvider,
 } from "@/composer/editing-session";
-import { NewWorkspaceScreen } from "@/screens/new-workspace-screen";
+import { NewWorkspaceScreen, type NewWorkspacePlacement } from "@/screens/new-workspace-screen";
 import { buildNewWorkspaceDraftKey } from "@/stores/draft-keys";
 
 /** New workspace drafts share one editing-session home, keyed like a tab by draft. */
 const NEW_WORKSPACE_SESSIONS_KEY = "new-workspace";
 
-export default function NewWorkspaceRoute() {
-  const params = useLocalSearchParams<{
-    serverId?: string;
-    dir?: string;
-    name?: string;
+function placementKey(
+  placement: {
+    serverId: string;
+    sourceDirectory?: string;
+    displayName?: string;
     projectId?: string;
-    draftId?: string;
-  }>();
+  },
+  draftId?: string,
+) {
+  return JSON.stringify([
+    draftId ?? null,
+    placement.serverId,
+    placement.sourceDirectory ?? null,
+    placement.displayName ?? null,
+    placement.projectId ?? null,
+  ]);
+}
+
+type NewWorkspaceRouteParams = Partial<
+  Record<"serverId" | "dir" | "name" | "projectId" | "draftId", string>
+>;
+
+export default function NewWorkspaceRoute() {
+  const navigation = useNavigation<NavigationProp<{ new: NewWorkspaceRouteParams }, "new">>();
+  const params = useLocalSearchParams<NewWorkspaceRouteParams>();
   const serverId = typeof params.serverId === "string" ? params.serverId : "";
   const sourceDirectory = typeof params.dir === "string" ? params.dir : undefined;
   const displayName = typeof params.name === "string" ? params.name : undefined;
   const projectId = typeof params.projectId === "string" ? params.projectId : undefined;
   const draftId = typeof params.draftId === "string" ? params.draftId : undefined;
-  const screenKey = JSON.stringify([
-    serverId,
-    sourceDirectory ?? null,
-    displayName ?? null,
-    projectId ?? null,
-    draftId ?? null,
-  ]);
-
-  // The shell remounts this route when the viewport crosses the compact breakpoint;
-  // the draft's editing session (fullscreen, retained caret) lives above the shell.
+  const routePlacementKey = placementKey(
+    { serverId, sourceDirectory, displayName, projectId },
+    draftId,
+  );
+  const [routeIdentity, setRouteIdentity] = useState({
+    placementKey: routePlacementKey,
+    publishedPlacementKey: null as string | null,
+    generation: 0,
+    context: { serverId, sourceDirectory, displayName, projectId },
+  });
+  if (routeIdentity.placementKey !== routePlacementKey) {
+    // Our URL mirror preserves the draft; a new navigation owns a new selection context.
+    const isPlacementMirror = routeIdentity.publishedPlacementKey === routePlacementKey;
+    setRouteIdentity({
+      placementKey: routePlacementKey,
+      publishedPlacementKey: null,
+      generation: routeIdentity.generation + (isPlacementMirror ? 0 : 1),
+      context: isPlacementMirror
+        ? routeIdentity.context
+        : { serverId, sourceDirectory, displayName, projectId },
+    });
+  }
+  const handlePlacementChange = useCallback(
+    (placement: NewWorkspacePlacement) => {
+      const nextPlacementKey = placementKey(placement, draftId);
+      if (nextPlacementKey === routePlacementKey) return;
+      setRouteIdentity((current) => ({ ...current, publishedPlacementKey: nextPlacementKey }));
+      navigation.setParams({
+        serverId: placement.serverId,
+        dir: placement.sourceDirectory,
+        name: placement.displayName,
+        projectId: placement.projectId,
+      });
+    },
+    [draftId, navigation, routePlacementKey],
+  );
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const sessionTabIds = useMemo(() => [draftKey], [draftKey]);
 
@@ -45,12 +89,13 @@ export default function NewWorkspaceRoute() {
       >
         <ComposerEditingScope tabId={draftKey} targetKey={draftKey}>
           <NewWorkspaceScreen
-            key={screenKey}
-            serverId={serverId}
-            sourceDirectory={sourceDirectory}
-            displayName={displayName}
-            projectId={projectId}
+            key={`${draftKey}:${routeIdentity.generation}`}
+            serverId={routeIdentity.context.serverId}
+            sourceDirectory={routeIdentity.context.sourceDirectory}
+            displayName={routeIdentity.context.displayName}
+            projectId={routeIdentity.context.projectId}
             draftId={draftId}
+            onPlacementChange={handlePlacementChange}
           />
         </ComposerEditingScope>
       </WorkspaceComposerEditingSessionsProvider>

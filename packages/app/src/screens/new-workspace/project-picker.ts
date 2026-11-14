@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
 import { isWorkspaceArchivePending } from "@/contexts/session-workspace-upserts";
 import {
@@ -32,6 +32,7 @@ interface NewWorkspaceProjectPickerInput {
 interface NewWorkspaceProjectPickerState {
   selectedProject: HostProjectListItem | null;
   selectedSourceDirectory: string | null;
+  hasManualProjectSelection: boolean;
   projectPickerOptions: ComboboxOptionType[];
   projectByOptionId: Map<string, HostProjectListItem>;
   selectedProjectOptionId: string;
@@ -111,9 +112,10 @@ export function useNewWorkspaceProjectPicker({
     routeProjectViewKey: routeProjectContextViewKey,
     allowAllProjects,
   });
-  const manualSelectionContextKey = createManualProjectSelectionContextKey({
-    routeProjectViewKey: routeProjectContextViewKey,
-  });
+  // Mirroring placement into the route does not start a new draft.
+  const manualSelectionContextKey = useRef(
+    createManualProjectSelectionContextKey({ routeProjectViewKey: routeProjectContextViewKey }),
+  ).current;
   const shouldPreserveMissingProject = useCallback(
     (project: HostProjectListItem) =>
       hasPendingArchiveForProject({
@@ -183,6 +185,7 @@ export function useNewWorkspaceProjectPicker({
   );
 
   return {
+    hasManualProjectSelection: activeSelection.source === "manual",
     selectedProject,
     selectedSourceDirectory: selectedProject
       ? getHostProjectSourceDirectory(selectedProject, selectedServerId)
