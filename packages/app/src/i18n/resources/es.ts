@@ -3132,6 +3132,7 @@ export const es: TranslationResources = {
       },
       detail: {
         backToProviders: "Volver a proveedores",
+        notOnHost: "Este proveedor no está en este host",
         enabled: "Activado",
         unavailableTitle: "{{name}} no está disponible",
         troubleshooting: "Solución de problemas",

@@ -3100,6 +3100,7 @@ export const ja: TranslationResources = {
       },
       detail: {
         backToProviders: "プロバイダーに戻る",
+        notOnHost: "このホストにはこのプロバイダーがありません",
         enabled: "有効",
         unavailableTitle: "{{name}} は利用できません",
         troubleshooting: "トラブルシューティング",
