@@ -215,7 +215,6 @@ export function ToastViewport({
   // Keep the bottom anchor and its contents together while the native exit retains the view.
   const content = toast ? (
     <Animated.View
-      key={toast.id}
       entering={toastEntering}
       exiting={toastExiting}
       style={
