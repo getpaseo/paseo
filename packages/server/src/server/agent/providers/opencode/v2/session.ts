@@ -378,13 +378,15 @@ export class OpenCodeV2Session implements AgentSession {
     await this.reconnectIfExited();
     const model = this.info.model;
     if (!model) throw new Error("Select an OpenCode model before changing its variant");
-    await this.client.session.switchModel({
-      sessionID: this.id,
-      model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) },
-    });
-    this.config.thinkingOptionId = variant ?? undefined;
+    const nextModel = modelRef(`${model.providerID}/${model.id}`, variant);
+    await this.client.session.switchModel({ sessionID: this.id, model: nextModel });
+    this.config.thinkingOptionId = nextModel.variant;
     this.info = await this.client.session.get({ sessionID: this.id });
-    this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
+    this.emit({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: nextModel.variant ?? null,
+    });
   }
   /** The agent manager sends one apply at a time, so a failed one restores exactly what it changed. */
   async applyOptions(options: ProviderOptions): Promise<void> {

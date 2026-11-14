@@ -548,6 +548,65 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("creates a session with Default without sending a variant", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "test/model",
+      thinkingOptionId: "default",
+    });
+    try {
+      expect(harness.creates[0]?.model).toEqual({ providerID: "test", id: "model" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("Default clears a selected variant from the wire, runtime, and persistence", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "test", id: "model", variant: "medium" };
+    const switches: Parameters<V2Api["session"]["switchModel"]>[0][] = [];
+    harness.api.session.switchModel = async (input) => {
+      switches.push(input);
+      harness.info.model = input.model;
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "test/model",
+      thinkingOptionId: "medium",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.setThinkingOption!("default");
+      expect(switches).toEqual([
+        { sessionID: "session", model: { providerID: "test", id: "model" } },
+      ]);
+      expect((await session.getRuntimeInfo()).thinkingOptionId).toBeNull();
+      expect(session.describePersistence().metadata?.thinkingOptionId).toBeUndefined();
+      expect(events).toContainEqual({
+        type: "thinking_option_changed",
+        provider: "opencode",
+        thinkingOptionId: null,
+      });
+      await session.startTurn("use the base model");
+      await expect.poll(() => harness.prompts).toEqual(["use the base model"]);
+      expect(harness.info.model).toEqual({ providerID: "test", id: "model" });
+    } finally {
+      await session.close();
+    }
+  });
+
   test.each([
     { variants: ["medium", "custom"], selected: "medium", expected: "medium" },
     { variants: ["custom"], selected: "custom", expected: "custom" },
