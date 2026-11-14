@@ -10,34 +10,32 @@ import Animated, {
 import { scheduleOnUI } from "react-native-worklets";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
-  SYNCED_LOADER_DOT_COUNT,
+  SYNCED_LOADER_STILL_ELAPSED_MS,
+  type SyncedLoaderDotFrame,
+  getSyncedLoaderDotFrames,
   getSyncedLoaderDotOpacity,
-  getSyncedLoaderStep,
+  getSyncedLoaderElapsed,
 } from "@/components/synced-loader-state";
 
-const GRID_COLUMNS = 2;
-const DOT_KEYS = Array.from({ length: SYNCED_LOADER_DOT_COUNT }, (_, i) => `dot-${i}`);
-const sharedStep = makeMutable(0);
+// One UI-thread clock drives every loader on screen. It runs only while a loader listens to it.
+const sharedElapsed = makeMutable(0);
 const activeLoaderCount = makeMutable(0);
 const clockRunning = makeMutable(false);
-let nextStepListenerId = 1;
+let nextListenerId = 1;
 
-function advanceSharedStep(): void {
+function advanceSharedElapsed(): void {
   "worklet";
   if (activeLoaderCount.value === 0) {
     clockRunning.value = false;
     return;
   }
 
-  const nextStep = getSyncedLoaderStep(Date.now());
-  if (sharedStep.value !== nextStep) {
-    sharedStep.value = nextStep;
-  }
-  requestAnimationFrame(advanceSharedStep);
+  sharedElapsed.value = getSyncedLoaderElapsed(Date.now());
+  requestAnimationFrame(advanceSharedElapsed);
 }
 
-function registerStepListener(
-  step: SharedValue<number>,
+function registerLoader(
+  elapsed: SharedValue<number>,
   registered: SharedValue<boolean>,
   listenerId: number,
 ): void {
@@ -47,137 +45,104 @@ function registerStepListener(
   }
 
   registered.value = true;
-  step.value = getSyncedLoaderStep(Date.now());
-  sharedStep.addListener(listenerId, (nextStep) => {
-    step.value = nextStep;
+  elapsed.value = getSyncedLoaderElapsed(Date.now());
+  sharedElapsed.addListener(listenerId, (next) => {
+    elapsed.value = next;
   });
   activeLoaderCount.value += 1;
 
   if (!clockRunning.value) {
     clockRunning.value = true;
-    sharedStep.value = step.value;
-    requestAnimationFrame(advanceSharedStep);
+    sharedElapsed.value = elapsed.value;
+    requestAnimationFrame(advanceSharedElapsed);
   }
 }
 
-function unregisterStepListener(registered: SharedValue<boolean>, listenerId: number): void {
+function unregisterLoader(
+  elapsed: SharedValue<number>,
+  registered: SharedValue<boolean>,
+  listenerId: number,
+): void {
   "worklet";
   if (!registered.value) {
     return;
   }
 
   registered.value = false;
-  sharedStep.removeListener(listenerId);
+  sharedElapsed.removeListener(listenerId);
   activeLoaderCount.value -= 1;
+  elapsed.value = SYNCED_LOADER_STILL_ELAPSED_MS;
 }
 
-function useSyncedLoaderStep(active: boolean, reduceMotion: boolean): SharedValue<number> {
-  // The local value lets retained loaders detach from the app-wide clock without
-  // unmounting their animated views or leaving hidden style worklets subscribed.
-  const step = useSharedValue(reduceMotion ? 0 : getSyncedLoaderStep(Date.now()));
+function useSyncedLoaderElapsed(animate: boolean): SharedValue<number> {
+  // Each loader keeps a local value fed by the shared clock. A retained loader can then detach
+  // from the clock without unmounting its animated views or leaving hidden style worklets
+  // subscribed.
+  const elapsed = useSharedValue(
+    animate ? getSyncedLoaderElapsed(Date.now()) : SYNCED_LOADER_STILL_ELAPSED_MS,
+  );
   const registered = useSharedValue(false);
-  const [listenerId] = useState(() => nextStepListenerId++);
+  const [listenerId] = useState(() => nextListenerId++);
 
   useLayoutEffect(() => {
-    if (!active || reduceMotion) {
+    if (!animate) {
       return;
     }
 
-    scheduleOnUI(registerStepListener, step, registered, listenerId);
+    scheduleOnUI(registerLoader, elapsed, registered, listenerId);
     return () => {
-      scheduleOnUI(unregisterStepListener, registered, listenerId);
+      scheduleOnUI(unregisterLoader, elapsed, registered, listenerId);
     };
-  }, [active, listenerId, reduceMotion, registered, step]);
+  }, [animate, elapsed, listenerId, registered]);
 
-  return step;
+  return elapsed;
 }
 
+/** Native running loader. Web has its own implementation in `synced-loader.web.tsx`. */
 export function SyncedLoader({ size = 10, color }: { size?: number; color: string }) {
   const active = useRetainedPanelActive();
   const reduceMotion = useReducedMotion();
-  const step = useSyncedLoaderStep(active, reduceMotion);
-
-  // The 2x3 grid fills `size` exactly on its long axis: the dot is whatever is left after
-  // the two gaps, not a floored integer. Flooring cost the grid up to a third of a dot per
-  // row — at size 10 it drew 8pt of ink in a 10pt box and read as a small mark in a large
-  // slot. Fractional dots are fine here; these are sub-pixel radii on a moving glyph.
-  const gap = Math.max(1, Math.round(size * 0.12));
-  const dotSize = Math.max(2, (size - gap * 2) / 3);
-  const gridWidth = dotSize * 2 + gap;
-  const gridHeight = dotSize * 3 + gap * 2;
-
-  const gridStyle = useMemo(
-    () => ({ width: gridWidth, height: gridHeight }),
-    [gridHeight, gridWidth],
-  );
-  const containerStyle = useMemo(
-    () =>
-      ({
-        width: size,
-        height: size,
-        alignItems: "center",
-        justifyContent: "center",
-      }) as const,
-    [size],
-  );
+  const elapsed = useSyncedLoaderElapsed(active && !reduceMotion);
+  const frames = useMemo(() => getSyncedLoaderDotFrames(size), [size]);
+  const containerStyle = useMemo(() => ({ width: size, height: size }), [size]);
 
   return (
     <View style={containerStyle}>
-      <View style={gridStyle}>
-        {Array.from({ length: SYNCED_LOADER_DOT_COUNT }).map((_, dotIndex) => {
-          const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
-          const columnIndex = dotIndex % GRID_COLUMNS;
-
-          return (
-            <SpinnerDot
-              key={DOT_KEYS[dotIndex]}
-              color={color}
-              dotSize={dotSize}
-              dotIndex={dotIndex}
-              step={step}
-              left={columnIndex * (dotSize + gap)}
-              top={rowIndex * (dotSize + gap)}
-            />
-          );
-        })}
-      </View>
+      {frames.map((frame, dot) => (
+        <LoaderDot key={frame.key} dot={dot} frame={frame} color={color} elapsed={elapsed} />
+      ))}
     </View>
   );
 }
 
-function SpinnerDot({
+function LoaderDot({
+  dot,
+  frame,
   color,
-  dotSize,
-  dotIndex,
-  step,
-  left,
-  top,
+  elapsed,
 }: {
+  dot: number;
+  frame: SyncedLoaderDotFrame;
   color: string;
-  dotSize: number;
-  dotIndex: number;
-  step: SharedValue<number>;
-  left: number;
-  top: number;
+  elapsed: SharedValue<number>;
 }) {
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: getSyncedLoaderDotOpacity(step.value, dotIndex),
+    opacity: getSyncedLoaderDotOpacity(elapsed.value, dot),
   }));
-
   const dotStyle = useMemo(
     () => [
       animatedStyle,
       {
-        width: dotSize,
-        height: dotSize,
-        borderRadius: dotSize / 2,
-        backgroundColor: color,
         position: "absolute" as const,
-        left,
-        top,
+        left: frame.left,
+        top: frame.top,
+        width: frame.size,
+        height: frame.size,
+        borderRadius: frame.size / 2,
+        backgroundColor: color,
       },
     ],
-    [animatedStyle, dotSize, color, left, top],
+    [animatedStyle, color, frame],
   );
 
   return <Animated.View style={dotStyle} />;
