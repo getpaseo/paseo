@@ -213,7 +213,9 @@ function useScroller(
   }>({ options, resultSet: 0, restsAt: "composer" });
   let next = scroller;
   if (next.options !== options) {
-    next = { options, resultSet: next.resultSet + 1, restsAt: "composer" };
+    next = isSameResultSet(next.options, options)
+      ? { ...next, options }
+      : { options, resultSet: next.resultSet + 1, restsAt: "composer" };
   }
   const restsAt = endSelected(options, selectedIndex) ?? next.restsAt;
   if (restsAt !== next.restsAt) {
@@ -223,6 +225,16 @@ function useScroller(
     setScroller(next);
   }
   return { key: `${next.resultSet}:${next.restsAt}`, restsAt: next.restsAt };
+}
+
+/** The composer builds a new list on every keystroke and refetch, often of the results it had. */
+function isSameResultSet(
+  shown: readonly AutocompleteOption[],
+  arrived: readonly AutocompleteOption[],
+): boolean {
+  return (
+    shown.length === arrived.length && shown.every((option, row) => option.id === arrived[row].id)
+  );
 }
 
 /** The end of the list the selection sits at, if it sits at one. The best match is last. */
