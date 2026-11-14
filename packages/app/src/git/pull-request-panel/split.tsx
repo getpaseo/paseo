@@ -31,6 +31,9 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const [overview, activityHeader, activityTimeline] = Children.toArray(children);
   const insets = useSafeAreaInsets();
   const [overviewShare, setOverviewShare] = useState(DEFAULT_OVERVIEW_SHARE);
+  // The pointer's share while a drag is in progress. The saved share is decided once, when the
+  // drag ends, so moves along the way cannot overwrite the share the overview had before it.
+  const [dragShare, setDragShare] = useState<number | null>(null);
   const [splitHeight, setSplitHeight] = useState(0);
   const [overviewHeight, setOverviewHeight] = useState(0);
   const [overviewContentHeight, setOverviewContentHeight] = useState(0);
@@ -44,8 +47,13 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const handleOverviewContentSizeChange = useCallback((_width: number, height: number) => {
     setOverviewContentHeight(height);
   }, []);
+  const handlePreviewResize = useCallback((_groupId: string, sizes: number[]) => {
+    const [share] = sizes;
+    if (share !== undefined) setDragShare(share);
+  }, []);
   const handleResize = useCallback(
     (_groupId: string, sizes: number[]) => {
+      setDragShare(null);
       const [share] = sizes;
       if (share === undefined || splitHeight <= 0) return;
       const contentShare = overviewContentHeight / splitHeight;
@@ -64,12 +72,13 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   // Changes pane's docked Commits section does. The split is measured inside that padding: the
   // overview's percentage height resolves against this box, so the drag must use the same one.
   const rootStyle = useMemo(() => [styles.root, { paddingBottom: insets.bottom }], [insets.bottom]);
+  const drawnShare = dragShare ?? overviewShare;
   const overviewStyle = useMemo(
     () =>
       activityOpen
-        ? [styles.overviewShared, { maxHeight: `${overviewShare * 100}%` as const }]
+        ? [styles.overviewShared, { maxHeight: `${drawnShare * 100}%` as const }]
         : styles.overviewFill,
-    [activityOpen, overviewShare],
+    [activityOpen, drawnShare],
   );
 
   return (
@@ -92,7 +101,7 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
             index={0}
             sizes={separatorSizes}
             containerSize={splitHeight}
-            onPreviewResizeSplit={handleResize}
+            onPreviewResizeSplit={handlePreviewResize}
             onResizeSplit={handleResize}
           />
         ) : (
