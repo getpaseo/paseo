@@ -426,9 +426,11 @@ test("#6155: real Codex and OpenCode stores share an account but keep agent fail
   );
   const env = { HOME: fixtureHome, CODEX_HOME: fixtureHome, XDG_DATA_HOME: data };
   const lookup = { home: fixtureHome, env, platform: "linux" as const, now: () => 1_000 };
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => id === "agent",
-    usageSession: () => ({ provider: "codex", env, sessionKey: "launch" }),
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => id === "agent",
+      usageSession: () => ({ provider: "codex", env, sessionKey: "launch" }),
+    },
   });
   registry.register({
     id: "codex",

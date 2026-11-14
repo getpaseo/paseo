@@ -1726,9 +1726,11 @@ test("Muse reports belong only to the session's account and remain available glo
     ["muse-work", { provider: "muse", env: configEnv, sessionKey: "muse-work" }],
     ["muse-unknown", { provider: "muse", env: { HOME: "/usage/unknown" }, sessionKey: "unknown" }],
   ]);
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => sessions.has(id),
-    usageSession: (id) => sessions.get(id) ?? null,
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    },
   });
   registry.register(usage.registration());
 

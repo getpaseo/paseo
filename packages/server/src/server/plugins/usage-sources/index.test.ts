@@ -1,8 +1,14 @@
 import { expect, test } from "vitest";
-import { UsageSourceRegistry } from "./index.js";
+import { UsageSourceRegistry, type AgentUsageLookup } from "./index.js";
+import {
+  createUsageReportFile,
+  type UsageReportFile,
+  type UsageReportStore,
+} from "./usage-report-file.js";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   discoverSession as discoverCursorSession,
   fetchUsage as fetchCursorUsage,
@@ -36,9 +42,11 @@ test("#7142: host usage retains distinct Cursor accounts after their individual 
         env: { XDG_CONFIG_HOME: configHome },
       });
     }
-    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-      hasAgent: (id) => sessions.has(id),
-      usageSession: (id) => sessions.get(id) ?? null,
+    const registry = new UsageSourceRegistry({
+      agents: {
+        hasAgent: (id) => sessions.has(id),
+        usageSession: (id) => sessions.get(id) ?? null,
+      },
     });
     const fetchApi: typeof fetch = async (_url, init) => {
       const authorization = new Headers(init?.headers).get("Authorization") ?? "";
@@ -106,7 +114,7 @@ test("discovery preserves account IDs and updates input after token rotation", a
 test("coalesces per account, caches errors, and refreshes only requested IDs", async () => {
   let now = 0;
   const counts = new Map<string, number>();
-  const registry = new UsageSourceRegistry(() => now);
+  const registry = new UsageSourceRegistry({ now: () => now });
   registry.register(
     source({
       id: "source",
@@ -141,7 +149,7 @@ test("coalesces per account, caches errors, and refreshes only requested IDs", a
 
 test("legacy listing uses oldest fetchedAt", async () => {
   let now = 1000;
-  const registry = new UsageSourceRegistry(() => now);
+  const registry = new UsageSourceRegistry({ now: () => now });
   registry.register(
     source({
       id: "source",
@@ -181,7 +189,7 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
 
 test("rediscovery removes an old account from targeted refreshes", async () => {
   let now = 0;
-  const registry = new UsageSourceRegistry(() => now, 100);
+  const registry = new UsageSourceRegistry({ now: () => now, ttlMs: 100 });
   let account = "old";
   registry.register(source({ id: "source", discover: async () => [{ key: account, input: {} }] }));
   await registry.listReports();
@@ -195,9 +203,11 @@ test("rediscovery removes an old account from targeted refreshes", async () => {
 
 test("discovery failures log once while other sources still report", async () => {
   const warnings: unknown[][] = [];
-  const registry = new UsageSourceRegistry(Date.now, 300_000, {
-    warn: (...args: unknown[]) => {
-      warnings.push(args);
+  const registry = new UsageSourceRegistry({
+    logger: {
+      warn: (...args: unknown[]) => {
+        warnings.push(args);
+      },
     },
   });
   const err = new Error("subprocess stopped");
@@ -219,9 +229,11 @@ test("discovery failures log once while other sources still report", async () =>
 
 test("a failed fetch is logged as well as reported", async () => {
   const warnings: unknown[][] = [];
-  const registry = new UsageSourceRegistry(Date.now, 300_000, {
-    warn: (...args: unknown[]) => {
-      warnings.push(args);
+  const registry = new UsageSourceRegistry({
+    logger: {
+      warn: (...args: unknown[]) => {
+        warnings.push(args);
+      },
     },
   });
   const err = new Error("Rate limited by Claude. Try again in 38m.");
@@ -240,7 +252,7 @@ test("a failed fetch is logged as well as reported", async () => {
 });
 
 test("legacy listing distinguishes labeled accounts and preserves unlabeled names", async () => {
-  const registry = new UsageSourceRegistry(() => 1000);
+  const registry = new UsageSourceRegistry({ now: () => 1000 });
   registry.register(
     source({
       id: "claude",
@@ -381,9 +393,11 @@ test("session discovery reuses accounts, separates launches, and retains live ag
   const existing = new Set(["one", "two", "closed"]);
   const discoveries: string[] = [];
   let fetches = 0;
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => existing.has(id),
-    usageSession: (id) => sessions.get(id) ?? null,
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => existing.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    },
   });
   registry.register({
     id: "claude",
@@ -420,7 +434,7 @@ test("session discovery reuses accounts, separates launches, and retains live ag
 });
 
 test("reports arrive independently and a hung fetch settles as an error before completion", async () => {
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 25);
+  const registry = new UsageSourceRegistry({ deadlineMs: 25 });
   let finishSlow!: (value: unknown) => void;
   const slow = new Promise<unknown>((resolve) => {
     finishSlow = resolve;
@@ -468,9 +482,11 @@ test("#6155: agent reports use only their session login despite host and sibling
     ["codex-agent", { provider: "codex", env: {}, sessionKey: "codex-launch" }],
     ["opencode-agent", { provider: "opencode", env: {}, sessionKey: "opencode-launch" }],
   ]);
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => sessions.has(id),
-    usageSession: (id) => sessions.get(id) ?? null,
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    },
   });
   const codexError = { status: "error", error: "Codex usage API returned 500" };
   const expired = {
@@ -524,9 +540,11 @@ test("a working agent login never uses another harness's failure or host fallbac
     ["working", { provider: "codex", env: {}, sessionKey: "one" }],
     ["broken", { provider: "opencode", env: {}, sessionKey: "two" }],
   ]);
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => sessions.has(id),
-    usageSession: (id) => sessions.get(id) ?? null,
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    },
   });
   const available = {
     status: "available",
@@ -562,9 +580,11 @@ test("concurrent host and agent requests never share a different login's pending
   const slow = new Promise<unknown>((resolve) => {
     finish = resolve;
   });
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: () => true,
-    usageSession: () => ({ provider: "codex", env: {}, sessionKey: "launch" }),
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "codex", env: {}, sessionKey: "launch" }),
+    },
   });
   registry.register({
     id: "codex",
@@ -581,9 +601,11 @@ test("concurrent host and agent requests never share a different login's pending
 });
 
 test("duplicate logins across scopes appear only once in the host's errors", async () => {
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: () => true,
-    usageSession: () => ({ provider: "codex", env: {}, sessionKey: "launch" }),
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "codex", env: {}, sessionKey: "launch" }),
+    },
   });
   registry.register({
     id: "codex",
@@ -607,7 +629,7 @@ test("duplicate logins across scopes appear only once in the host's errors", asy
 });
 
 test("a hung login records its own timeout and still tries the next login", async () => {
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, undefined, 25);
+  const registry = new UsageSourceRegistry({ deadlineMs: 25 });
   registry.register({
     id: "codex",
     label: "Codex",
@@ -630,7 +652,7 @@ test("retains the last successful poll across failures, cache expiry, and recove
     status: "available",
     windows: [{ id: "week", label: "Weekly", usedPct: 42 }],
   };
-  const registry = new UsageSourceRegistry(() => now);
+  const registry = new UsageSourceRegistry({ now: () => now });
   registry.register(
     source({
       id: "quota",
@@ -706,9 +728,11 @@ test("successful history is isolated by login set and pruned when identities ret
 test("host fallback history never supplies an agent's failed login, and removed agents lose history", async () => {
   const sessions = new Map([["agent", { provider: "codex", env: {}, sessionKey: "one" }]]);
   let available = true;
-  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
-    hasAgent: (id) => sessions.has(id),
-    usageSession: (id) => sessions.get(id) ?? null,
+  const registry = new UsageSourceRegistry({
+    agents: {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    },
   });
   registry.register({
     id: "source",
@@ -741,7 +765,7 @@ test("a timed out poll retains successful values and late completion cannot repl
   let now = 1000;
   let finish!: (value: unknown) => void;
   let slow = false;
-  const registry = new UsageSourceRegistry(() => now, 300_000, undefined, undefined, 10);
+  const registry = new UsageSourceRegistry({ now: () => now, deadlineMs: 10 });
   registry.register(
     source({
       id: "source",
@@ -770,7 +794,7 @@ test("a timed out poll retains successful values and late completion cannot repl
 test("attempt ordering keeps its timestamp while retained freshness records successful completion", async () => {
   let now = 1000;
   let available = true;
-  const registry = new UsageSourceRegistry(() => now);
+  const registry = new UsageSourceRegistry({ now: () => now });
   registry.register(
     source({
       id: "source",
@@ -797,7 +821,7 @@ test("failed discovery preserves history until discovery confirms account remova
   let discoveryFails = false;
   let present = true;
   let available = true;
-  const registry = new UsageSourceRegistry(() => 1000, 300_000, { warn: () => {} });
+  const registry = new UsageSourceRegistry({ now: () => 1000, logger: { warn: () => {} } });
   registry.register(
     source({
       id: "source",
@@ -827,4 +851,321 @@ test("failed discovery preserves history until discovery confirms account remova
   expect(await registry.listReports()).toEqual([]);
   present = true;
   expect((await registry.listReports())[0]?.lastSuccessful).toBeUndefined();
+});
+
+function weekly(usedPct: number) {
+  return { status: "available", windows: [{ id: "week", label: "Weekly", usedPct }] };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test("an expired report streams before its refetch replaces it", async () => {
+  let now = 0;
+  const refetchStarted = deferred<void>();
+  const refetch = deferred<unknown>();
+  let fetches = 0;
+  const registry = new UsageSourceRegistry({ now: () => now });
+  registry.register(
+    source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => {
+        fetches += 1;
+        if (fetches === 1) return weekly(42);
+        refetchStarted.resolve();
+        return refetch.promise;
+      },
+    }),
+  );
+  const [expired] = await registry.listReports();
+  now = 300_000;
+  const streamed: UsageReportEntry[] = [];
+  const request = registry.listReports({
+    streamExpired: true,
+    onReport: (entry) => streamed.push(entry),
+  });
+  await refetchStarted.promise;
+  expect(streamed).toEqual([expired]);
+  refetch.resolve(weekly(43));
+  const [refetched] = await request;
+  expect(refetched?.report).toEqual(weekly(43));
+  expect(streamed).toEqual([expired, refetched]);
+});
+
+test("a refresh never streams the expired copy", async () => {
+  let now = 0;
+  let usedPct = 42;
+  const registry = new UsageSourceRegistry({ now: () => now });
+  registry.register(
+    source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => weekly(usedPct),
+    }),
+  );
+  await registry.listReports();
+  now = 300_000;
+  usedPct = 43;
+  const streamed: UsageReportEntry[] = [];
+  const refreshed = await registry.listReports({
+    forceRefresh: true,
+    streamExpired: true,
+    onReport: (entry) => streamed.push(entry),
+  });
+  expect(streamed).toEqual(refreshed);
+  expect(refreshed[0]?.report).toEqual(weekly(43));
+});
+
+test("a caller that does not keep the later copy gets each report once", async () => {
+  let now = 0;
+  let usedPct = 42;
+  const registry = new UsageSourceRegistry({ now: () => now });
+  registry.register(
+    source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => weekly(usedPct),
+    }),
+  );
+  await registry.listReports();
+  now = 300_000;
+  usedPct = 43;
+  const streamed: UsageReportEntry[] = [];
+  const listed = await registry.listReports({ onReport: (entry) => streamed.push(entry) });
+  expect(streamed).toEqual(listed);
+  expect(listed[0]?.report).toEqual(weekly(43));
+});
+
+const silent = { warn: () => {} };
+
+function reportFile(file: string) {
+  return createUsageReportFile({ filePath: file, logger: silent });
+}
+
+/** `open` hands out stores on one file; each one's queued writes land before the file is removed. */
+async function withReportFile(
+  run: (file: string, open: () => UsageReportFile) => Promise<void>,
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "usage-reports-"));
+  const file = join(root, "usage", "reports.json");
+  const stores: UsageReportFile[] = [];
+  try {
+    await run(file, () => {
+      const store = reportFile(file);
+      stores.push(store);
+      return store;
+    });
+  } finally {
+    await Promise.all(stores.map((store) => store.flush()));
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function registryWith(
+  store: UsageReportStore,
+  now: () => number = Date.now,
+  agents?: AgentUsageLookup,
+) {
+  return new UsageSourceRegistry({ now, logger: silent, agents, store });
+}
+
+async function savedIds(file: string): Promise<string[]> {
+  return (await reportFile(file).load()).map((retained) => retained.entry.id).sort();
+}
+
+test("a restarted daemon shows saved reports, then refetches the expired ones", async () => {
+  await withReportFile(async (file, open) => {
+    let now = 0;
+    let usedPct = 42;
+    let fetches = 0;
+    const fixture = source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => {
+        fetches += 1;
+        return weekly(usedPct);
+      },
+    });
+    const store = open();
+    const before = registryWith(store, () => now);
+    before.register(fixture);
+    const [saved] = await before.listReports();
+    await store.flush();
+
+    const fresh = registryWith(open(), () => now);
+    fresh.register(fixture);
+    expect(await fresh.listReports()).toEqual([saved]);
+    expect(fetches).toBe(1);
+
+    const restarted = registryWith(open(), () => now);
+    restarted.register(fixture);
+    now = 300_000;
+    usedPct = 43;
+    const streamed: UsageReportEntry[] = [];
+    const [refetched] = await restarted.listReports({
+      streamExpired: true,
+      onReport: (entry) => streamed.push(entry),
+    });
+    expect(refetched?.report).toEqual(weekly(43));
+    expect(streamed).toEqual([saved, refetched]);
+  });
+});
+
+test("a saved success still backs a failed poll after a restart", async () => {
+  await withReportFile(async (file, open) => {
+    let report: unknown = weekly(42);
+    const fixture = source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => report,
+    });
+    const store = open();
+    const before = registryWith(store);
+    before.register(fixture);
+    const [success] = await before.listReports();
+    await store.flush();
+
+    const after = registryWith(open());
+    after.register(fixture);
+    report = { status: "error", error: "Rate limited" };
+    const [failure] = await after.listReports({ forceRefresh: true });
+    expect(failure?.lastSuccessful).toEqual({
+      fetchedAt: success?.successfulAt,
+      report: success?.report,
+    });
+  });
+});
+
+test("saved reports wait for a source that registers late", async () => {
+  await withReportFile(async (file, open) => {
+    const late = source({
+      id: "late",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => weekly(1),
+    });
+    const early = source({ id: "early", discover: async () => [{ key: "a", input: {} }] });
+    const store = open();
+    const before = registryWith(store);
+    before.register(late);
+    before.register(early);
+    const saved = await before.listReports();
+    await store.flush();
+
+    const afterStore = open();
+    const after = registryWith(afterStore);
+    after.register(early);
+    await after.listReports({ forceRefresh: true });
+    await afterStore.flush();
+    expect(await savedIds(file)).toEqual(["early:a", "late:account"]);
+
+    after.register(late);
+    const streamed: UsageReportEntry[] = [];
+    await after.listReports({ streamExpired: true, onReport: (entry) => streamed.push(entry) });
+    expect(streamed.filter((entry) => entry.id === "late:account")).toEqual(
+      saved.filter((entry) => entry.id === "late:account"),
+    );
+  });
+});
+
+test("an agent's list keeps saved reports of accounts outside its scope", async () => {
+  await withReportFile(async (file, open) => {
+    const fixture = source({
+      id: "source",
+      discover: async (scope) =>
+        (scope.kind === "global" ? ["a", "b"] : ["a"]).map((key) => ({ key, input: { key } })),
+    });
+    const store = open();
+    const before = registryWith(store);
+    before.register(fixture);
+    await before.listReports();
+    await store.flush();
+
+    const afterStore = open();
+    const after = registryWith(afterStore, Date.now, {
+      hasAgent: (id) => id === "agent",
+      usageSession: (id) =>
+        id === "agent" ? { provider: "source", sessionKey: "launch", env: {} } : null,
+    });
+    after.register(fixture);
+    await after.listReports({ agentId: "agent", forceRefresh: true });
+    await afterStore.flush();
+    expect(await savedIds(file)).toEqual(["source:a", "source:b"]);
+  });
+});
+
+test("an account retired by discovery loses its saved report and history", async () => {
+  await withReportFile(async (file, open) => {
+    let accounts = ["a", "b"];
+    let failing = false;
+    const fixture = source({
+      id: "source",
+      discover: async () => accounts.map((key) => ({ key, input: { key } })),
+      fetch: async () => (failing ? { status: "error", error: "failed" } : weekly(1)),
+    });
+    const store = open();
+    const before = registryWith(store);
+    before.register(fixture);
+    await before.listReports();
+    await store.flush();
+
+    const afterStore = open();
+    const after = registryWith(afterStore);
+    after.register(fixture);
+    accounts = ["a"];
+    await after.listReports();
+    await afterStore.flush();
+    expect(await savedIds(file)).toEqual(["source:a"]);
+
+    accounts = ["a", "b"];
+    failing = true;
+    const relisted = await after.listReports({ forceRefresh: true });
+    expect(relisted.find((entry) => entry.id === "source:b")?.lastSuccessful).toBeUndefined();
+
+    accounts = [];
+    expect(await after.listReports()).toEqual([]);
+    await afterStore.flush();
+    expect(await savedIds(file)).toEqual([]);
+  });
+});
+
+test("report file writes land in call order", async () => {
+  await withReportFile(async (file, open) => {
+    const store = open();
+    const entry = (id: string) => ({
+      key: id,
+      at: 0,
+      entry: {
+        id,
+        sourceId: "source",
+        sourceLabel: "Source",
+        account: {},
+        fetchedAt: "2026-11-13T00:00:00.000Z",
+        report: { status: "available" as const, windows: [] },
+      },
+    });
+    void store.save([entry("first")]);
+    void store.save([entry("second")]);
+    await store.flush();
+    expect(await savedIds(file)).toEqual(["second"]);
+  });
+});
+
+test("an unreadable report file starts empty and logs why", async () => {
+  await withReportFile(async (file) => {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, "{not json");
+    const warnings: unknown[] = [];
+    const store = createUsageReportFile({
+      filePath: file,
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
+    });
+    expect(await store.load()).toEqual([]);
+    expect(warnings).toHaveLength(1);
+  });
 });

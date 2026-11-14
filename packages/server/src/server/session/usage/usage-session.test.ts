@@ -16,6 +16,7 @@ test("lists reports from usage sources", async () => {
   };
   const usage = new UsageSession({
     isEnabled: () => true,
+    keepsLaterReport: () => false,
     emit: (message) => emitted.push(message),
     runtime: {
       async listUsageReports(options) {
@@ -42,6 +43,7 @@ test("surfaces a legacy usage-list failure as an rpc_error envelope", async () =
   const emitted: SessionOutboundMessage[] = [];
   const usage = new UsageSession({
     isEnabled: () => true,
+    keepsLaterReport: () => false,
     emit: (message) => emitted.push(message),
     runtime: {
       async listUsageReports() {
@@ -64,6 +66,7 @@ test("request failures terminate with an error response and no updates", async (
   const emitted: SessionOutboundMessage[] = [];
   const usage = new UsageSession({
     isEnabled: () => true,
+    keepsLaterReport: () => false,
     emit: (message) => emitted.push(message),
     logger: pino({ level: "silent" }),
   });
@@ -82,6 +85,7 @@ test("off rejects both protocols before runtime discovery and turning on restore
   const emitted: SessionOutboundMessage[] = [];
   const usage = new UsageSession({
     isEnabled: () => enabled,
+    keepsLaterReport: () => false,
     emit: (message) => emitted.push(message),
     logger: pino({ level: "silent" }),
     runtime: {
@@ -107,4 +111,27 @@ test("off rejects both protocols before runtime discovery and turning on restore
   await usage.handleListReports({ type: "usage.list_reports.request", requestId: "on" });
   expect(calls).toBe(1);
   expect(emitted[2]).toMatchObject({ payload: { error: null } });
+});
+
+test("asks for expired copies only for clients that keep the later report", async () => {
+  const requested: Array<boolean | undefined> = [];
+  for (const keepsLaterReport of [true, false]) {
+    const usage = new UsageSession({
+      isEnabled: () => true,
+      keepsLaterReport: () => keepsLaterReport,
+      emit: () => {},
+      runtime: {
+        async listUsageReports(options) {
+          requested.push(options.streamExpired);
+          return [];
+        },
+        async listLegacyUsage() {
+          return { fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] };
+        },
+      },
+      logger: pino({ level: "silent" }),
+    });
+    await usage.handleListReports({ type: "usage.list_reports.request", requestId: "list" });
+  }
+  expect(requested).toEqual([true, false]);
 });
