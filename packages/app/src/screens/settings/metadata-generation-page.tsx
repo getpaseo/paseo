@@ -23,11 +23,9 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   const configuredProvider = configuredProviders?.[0] ?? null;
   const providers = useMemo(
     () =>
-      buildSelectableProviderSelectorProviders(
-        snapshot.entries,
-        true,
-        configuredProvider?.provider ?? null,
-      ),
+      buildSelectableProviderSelectorProviders(snapshot.entries, {
+        selectedProvider: configuredProvider?.provider ?? null,
+      }),
     [configuredProvider?.provider, snapshot.entries],
   );
   const savedMode: SelectionMode = configuredProvider ? "preferred" : "automatic";
