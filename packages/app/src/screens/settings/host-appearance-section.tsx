@@ -233,6 +233,7 @@ function BadgePreview({
         backdrop="surfaceSidebar"
         currentBranch={null}
         projectName={null}
+        repositoryName={null}
         hostBadge={hostBadge}
         prHint={null}
         serviceSummary={null}
