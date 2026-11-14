@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
 import { spawnProcess } from "@getpaseo/plugin/server";
 import { signalProcess } from "./signals.js";
 import { createInterface } from "node:readline";
@@ -181,7 +182,28 @@ interface ProbeOptions {
   launch: ProviderLaunch;
   args: string[];
   cwd?: string;
+  timeoutMs?: number;
 }
+
+const PROBE_EXIT_TIMEOUT_MS = 1_000;
+
+async function waitForExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await once(child, "exit", { signal: controller.signal });
+  } catch (error) {
+    if (!(error instanceof Error && error.name === "AbortError")) throw error;
+    // The timeout is authoritative; this bound only avoids waiting on inherited pipes.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function probe(options: ProbeOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(options.launch.command, [...options.launch.args, ...options.args], {
@@ -192,13 +214,29 @@ export function probe(options: ProbeOptions): Promise<string> {
     });
     let stdout = "";
     let stderr = "";
-    const deadline = setTimeout(() => {
-      const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
-      void termination.then(() => {
-        reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
-        return undefined;
-      }, reject);
-    }, 10_000);
+    let settled = false;
+    let timeoutError: AntigravityError | null = null;
+    let deadline: NodeJS.Timeout;
+    function finish(error: AntigravityError | null, output?: string): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (error) reject(error);
+      else resolve(output ?? "");
+    }
+    deadline = setTimeout(() => {
+      const error = new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT");
+      timeoutError = error;
+      void (async () => {
+        try {
+          await signalGroup(child, "SIGKILL");
+        } catch {
+          // The timeout remains authoritative if the child exited before termination.
+        }
+        await waitForExit(child, PROBE_EXIT_TIMEOUT_MS);
+        finish(error);
+      })();
+    }, options.timeoutMs ?? 10_000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -206,14 +244,17 @@ export function probe(options: ProbeOptions): Promise<string> {
       stderr = (stderr + chunk.toString()).slice(-8192);
     });
     child.on("error", (error: Error) => {
-      clearTimeout(deadline);
-      reject(new AntigravityError(error.message, "SPAWN_ERROR"));
+      if (timeoutError) return;
+      finish(new AntigravityError(error.message, "SPAWN_ERROR"));
     });
     child.on("close", (code) => {
-      clearTimeout(deadline);
-      if (code === 0) resolve(stdout);
+      if (timeoutError) {
+        finish(timeoutError);
+        return;
+      }
+      if (code === 0) finish(null, stdout);
       else
-        reject(
+        finish(
           new AntigravityError(
             diagnostic(stderr.trim() || `agy exited with code ${code}`),
             "PROBE_ERROR",
