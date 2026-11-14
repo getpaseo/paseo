@@ -124,7 +124,11 @@ export class Session {
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       this.failTurn(new AntigravityError(error.message));
-      await driver.stop("interrupt");
+      try {
+        await driver.stop("interrupt");
+      } catch (cleanupError) {
+        console.error("Antigravity driver cleanup failed", cleanupError);
+      }
     }
   }
 
@@ -149,7 +153,23 @@ export class Session {
     if (this.state.type !== "running") return;
     const { driver, turn } = this.state;
     this.state = { type: "stopping", driver };
-    await driver.stop("interrupt");
+    try {
+      await driver.stop("interrupt");
+    } catch (error) {
+      this.finishTools(turn, "failed");
+      this.emit({
+        type: "session.turn",
+        sessionId: this.options.id,
+        turnId: turn.id,
+        state: "failed",
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+          code: "ANTIGRAVITY_ERROR",
+        },
+      });
+      this.state = { type: "dormant" };
+      throw error;
+    }
     this.finishTools(turn, "canceled");
     this.emit({
       type: "session.turn",
@@ -163,20 +183,33 @@ export class Session {
   async close(): Promise<void> {
     const state = this.state;
     this.state = { type: "closed" };
+    let stopError: unknown;
     try {
       if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
+    } catch (error) {
+      stopError = error;
     } finally {
       await this.promptFiles.close();
     }
     if (state.type === "running") {
-      this.finishTools(state.turn, "canceled");
+      const failed = stopError !== undefined;
+      this.finishTools(state.turn, failed ? "failed" : "canceled");
       this.emit({
         type: "session.turn",
         sessionId: this.options.id,
         turnId: state.turn.id,
-        state: "canceled",
+        state: failed ? "failed" : "canceled",
+        ...(failed
+          ? {
+              error: {
+                message: stopError instanceof Error ? stopError.message : String(stopError),
+                code: "ANTIGRAVITY_ERROR",
+              },
+            }
+          : {}),
       });
     }
+    if (stopError !== undefined) throw stopError;
   }
 
   private publishFullAccessNotice(): void {
@@ -196,13 +229,21 @@ export class Session {
   private async ensureDriver(): Promise<void> {
     if (this.state.type === "closed") throw new AntigravityError("Antigravity session is closed");
     if (this.state.type === "stopping") {
-      await this.state.driver.stop("interrupt");
+      try {
+        await this.state.driver.stop("interrupt");
+      } catch (error) {
+        console.error("Antigravity driver cleanup failed", error);
+      }
       this.state = { type: "dormant" };
     }
     if (this.state.type === "idle" && this.state.driver.selection !== selection(this.config)) {
       const driver = this.state.driver;
       this.state = { type: "stopping", driver };
-      await driver.stop("close");
+      try {
+        await driver.stop("close");
+      } catch (error) {
+        console.error("Antigravity driver cleanup failed", error);
+      }
       this.state = { type: "dormant" };
     }
     if (this.state.type !== "dormant") return;
@@ -232,7 +273,11 @@ export class Session {
         });
     } catch (error) {
       this.state = { type: "dormant" };
-      await driver.stop("interrupt");
+      try {
+        await driver.stop("interrupt");
+      } catch (cleanupError) {
+        console.error("Antigravity startup cleanup failed", cleanupError);
+      }
       throw error;
     }
   }
@@ -331,11 +376,16 @@ export class Session {
 
   private retire(driver: Driver): void {
     this.state = { type: "stopping", driver };
-    void driver.stop("interrupt").then(() => {
-      if (this.state.type === "stopping" && this.state.driver === driver)
-        this.state = { type: "dormant" };
-      return undefined;
-    });
+    void driver
+      .stop("interrupt")
+      .catch((error) => {
+        console.error("Antigravity driver cleanup failed", error);
+      })
+      .then(() => {
+        if (this.state.type === "stopping" && this.state.driver === driver)
+          this.state = { type: "dormant" };
+        return undefined;
+      });
   }
 
   private finishTools(turn: Turn, status: "completed" | "failed" | "canceled"): void {
