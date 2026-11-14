@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import os from "node:os";
 import path from "node:path";
 
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import { resolvePaseoHome } from "../../paseo-home.js";
 
 export interface ProviderImageOutput {
   path?: string | null;
@@ -18,11 +18,13 @@ export interface MaterializedProviderImage {
   path: string;
 }
 
+// Keep this basename compatible with provider-image Markdown in existing timelines.
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
-const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
 
+// Persist images across process lifetimes. Age-based cleanup would delete files
+// still referenced by transcripts; any future cleanup must account for references.
 let materializedImageAttachmentDir: string | null = null;
 // Serialize materializations: one decoder and one file operation at a time, including
 // concurrent history replay and live turns. A rejected operation must not poison the queue.
@@ -37,14 +39,14 @@ async function getMaterializedImageAttachmentDir(): Promise<string> {
         return materializedImageAttachmentDir;
       }
     } catch {
-      /* Temp storage may have been removed between turns. */
+      /* Attachment storage may have been removed between turns. */
     }
   }
-  materializedImageAttachmentDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX),
-  );
-  await fs.chmod(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
-  return materializedImageAttachmentDir;
+  const dir = path.join(resolvePaseoHome(), PROVIDER_IMAGE_ATTACHMENT_DIR);
+  await fs.mkdir(dir, { recursive: true, mode: PRIVATE_ATTACHMENT_DIR_MODE });
+  await fs.chmod(dir, PRIVATE_ATTACHMENT_DIR_MODE);
+  materializedImageAttachmentDir = dir;
+  return dir;
 }
 
 function getImageExtension(mimeType: string): string {
@@ -71,6 +73,7 @@ function getImageExtension(mimeType: string): string {
 export const MAX_PROVIDER_IMAGE_BYTES = 128 * 1024 * 1024;
 const BASE64_CHUNK_CHARACTERS = 256 * 1024; // Multiple of four; decode units stay aligned.
 
+// Content-addressed filenames deduplicate repeated image bytes across restarts.
 export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
