@@ -1,5 +1,11 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import {
+  discoverACPSkills,
+  expandSkillPrompt,
+  mergeSkillCommands,
+  type DiscoveredACPSkill,
+} from "./acp-skill-commands.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -514,6 +520,11 @@ interface ACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
+  /**
+   * The user home the skill roots resolve against. Production leaves this
+   * unset and gets the process's own home; tests point it at a fixture.
+   */
+  homeDir?: string;
 }
 
 interface ACPAgentSessionOptions {
@@ -550,6 +561,8 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  /** The user home the skill roots resolve against; unset means the real one. */
+  homeDir?: string;
 }
 
 export interface SpawnedACPProcess {
@@ -988,6 +1001,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
+  private readonly homeDir?: string;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -1018,6 +1032,7 @@ export class ACPAgentClient implements AgentClient {
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
     this.now = options.now ?? Date.now;
+    this.homeDir = options.homeDir;
   }
 
   async createSession(
@@ -1058,6 +1073,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        homeDir: this.homeDir,
       },
     );
     await session.initializeNewSession();
@@ -1118,6 +1134,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      homeDir: this.homeDir,
     });
     await session.initializeResumedSession();
     return session;
@@ -1802,12 +1819,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private cachedCommands: AgentSlashCommand[] = [];
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
+  private discoveredSkills: DiscoveredACPSkill[] = [];
+  /** Set once a skill scan has finished, so an empty result is not rescanned. */
+  private skillsDiscovered: Promise<readonly DiscoveredACPSkill[]> | null = null;
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  /**
+   * Set when a turn is interrupted before its prompt reached the agent.
+   *
+   * `startTurn` waits for the skill scan before it can send anything. A Stop
+   * during that wait has nothing to cancel at the agent, so the request is
+   * recorded here and the turn ends without sending a prompt.
+   */
+  private pendingTurnInterrupt = false;
+  /**
+   * Whether the current turn's prompt has reached the agent. Until it has,
+   * a Stop has nothing to cancel at the agent.
+   */
+  private promptSentToAgent = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1815,10 +1848,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
+  private readonly homeDir?: string;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
+    this.homeDir = options.homeDir;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
@@ -2026,6 +2061,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.pendingTurnInterrupt = false;
+    this.promptSentToAgent = false;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -2036,11 +2073,30 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const child = this.child;
     const failOnDisconnect = () => void this.failDisconnectedTurn(turnId, child);
     connection.signal.addEventListener("abort", failOnDisconnect, { once: true });
+
+    const expandedPrompt = await this.expandSkillPrompt(prompt);
+
+    // The prompt is prepared asynchronously, so the user can stop the turn
+    // before it reaches the agent. Sending it anyway would start work after
+    // the user asked for it to stop.
+    if (this.pendingTurnInterrupt) {
+      this.pendingTurnInterrupt = false;
+      connection.signal.removeEventListener("abort", failOnDisconnect);
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return { turnId };
+    }
+
+    this.promptSentToAgent = true;
     void connection
       .prompt({
         sessionId: this.sessionId,
         messageId,
-        prompt: toACPContentBlocks(prompt),
+        prompt: toACPContentBlocks(expandedPrompt),
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
@@ -2060,6 +2116,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       .finally(() => connection.signal.removeEventListener("abort", failOnDisconnect));
 
     return { turnId };
+  }
+
+  /**
+   * Expand a leading `/name` that names a skill Paseo discovered but the agent
+   * did not advertise. See `expandSkillPrompt` in acp-skill-commands for the
+   * shared rules; the agent expands its own advertised commands itself.
+   *
+   * The agent's command inventory must be settled first. A provider publishes
+   * its commands in batches, so a name that is not advertised yet may still be
+   * the agent's own command. Expanding a local skill over it would take the
+   * command away from the agent that owns it.
+   */
+  private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
+    await this.ensureSkillsDiscovered();
+    await this.waitForCommandInventory();
+    const advertisedNames = new Set(this.cachedCommands.map((command) => command.name));
+    return expandSkillPrompt(prompt, this.discoveredSkills, advertisedNames);
   }
 
   // The SDK aborts the connection without rejecting the pending prompt, and before the child's
@@ -2159,12 +2232,85 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async listCommands(): Promise<AgentSlashCommand[]> {
     if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
-      return this.cachedCommands;
+      await this.ensureSkillsDiscovered();
+      return this.mergeDiscoveredSkills(this.cachedCommands);
     }
 
     await this.waitForCommandsToSettle();
     this.settleCommandsReady();
-    return this.cachedCommands;
+    await this.ensureSkillsDiscovered();
+    return this.mergeDiscoveredSkills(this.cachedCommands);
+  }
+
+  /**
+   * Wait until the agent's command inventory is complete.
+   *
+   * Providers that publish their commands in batches need this: without it a
+   * name that has not arrived yet looks like a name nobody owns. The wait is
+   * bounded by `initialCommandsWaitTimeoutMs` and skipped for providers that
+   * publish once or not at all.
+   */
+  private async waitForCommandInventory(): Promise<void> {
+    if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
+      return;
+    }
+    await this.waitForCommandsToSettle();
+    this.settleCommandsReady();
+  }
+
+  /**
+   * Scan the configured roots once and cache the result. Discovery failures are
+   * swallowed: a missing or unreadable skill directory is the common case, and
+   * it must never block listing commands or starting a turn.
+   *
+   * The roots are the ones the ACP agents themselves read. Claude Code and its
+   * emulators look in `<cwd>/.claude/skills` and `~/.claude/skills`, while the
+   * AGENTS.md convention (which ZCode, opencode and Paseo all follow) keeps
+   * skills in `<cwd>/.agents/skills` and `~/.agents/skills`. An agent that
+   * only advertises a subset leaves the rest invisible to Paseo, so both
+   * conventions are scanned. Project roots win over user roots.
+   */
+  private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
+    if (this.skillsDiscovered) {
+      return this.skillsDiscovered;
+    }
+    // Cache the promise, not just the result: an empty scan is a real answer,
+    // and concurrent callers must not each walk the filesystem.
+    this.skillsDiscovered = (async () => {
+      try {
+        this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to discover ACP skills");
+        this.discoveredSkills = [];
+      }
+      return this.discoveredSkills;
+    })();
+    return this.skillsDiscovered;
+  }
+
+  /**
+   * The skill directories for this session's workspace and the user's home.
+   *
+   * Earlier roots win, so the project's own skills shadow the user's.
+   */
+  private resolveSkillRoots(): readonly string[] {
+    const cwd = this.config.cwd;
+    const home = this.homeDir ?? homedir();
+    return [
+      path.join(cwd, ".agents", "skills"),
+      path.join(cwd, ".claude", "skills"),
+      path.join(home, ".agents", "skills"),
+      path.join(home, ".claude", "skills"),
+    ];
+  }
+
+  /**
+   * Offer skills the agent cannot expand itself alongside its advertised
+   * commands. A name the agent already advertises wins: the agent will expand
+   * that one, so Paseo must not duplicate it.
+   */
+  private mergeDiscoveredSkills(agentCommands: AgentSlashCommand[]): AgentSlashCommand[] {
+    return mergeSkillCommands(agentCommands, this.discoveredSkills);
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -2690,6 +2836,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
+      // The prompt may still be on its way to the agent, in which case there
+      // is nothing to cancel there yet. Record the stop so `startTurn` does
+      // not send a prompt the user already cancelled.
+      if (!this.promptSentToAgent) {
+        this.pendingTurnInterrupt = true;
+      }
       await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
