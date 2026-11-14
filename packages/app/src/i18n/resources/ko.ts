@@ -1713,7 +1713,7 @@ export const ko: TranslationResources = {
         },
         providers: {
           label: "제공자",
-          title: "에이전트",
+          title: "제공자",
           description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
         },
         projects: {

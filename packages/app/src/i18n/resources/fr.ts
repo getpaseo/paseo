@@ -1747,7 +1747,7 @@ export const fr: TranslationResources = {
         },
         providers: {
           label: "Fournisseurs",
-          title: "Vos agents",
+          title: "Vos fournisseurs",
           description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
         },
         projects: {

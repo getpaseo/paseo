@@ -1734,7 +1734,7 @@ export const ptBR: TranslationResources = {
         },
         providers: {
           label: "Provedores",
-          title: "Seus agentes",
+          title: "Seus provedores",
           description: "O Paseo usa as CLIs de agentes já instaladas neste computador",
         },
         projects: {

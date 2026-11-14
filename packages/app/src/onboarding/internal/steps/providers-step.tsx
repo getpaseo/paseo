@@ -1,17 +1,44 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { View } from "react-native";
-import { ProviderList } from "@/provider-settings";
-import { useProviderSettingsStore } from "@/stores/provider-settings-store";
+import { ProviderDetailSheet, ProviderList, type ProviderSheetFrame } from "@/provider-settings";
+import { SETUP_CARD_FRAME } from "../setup-card";
+
+/** Provider sheets cover the setup card and return to it, so they read as pages of setup. */
+const SETUP_SHEET_FRAME: ProviderSheetFrame = { ...SETUP_CARD_FRAME, returns: true };
+
+interface OpenedProvider {
+  provider: string;
+  visible: boolean;
+}
 
 export function ProvidersStep({ serverId }: { serverId: string }) {
-  const openProviderSheet = useProviderSettingsStore((state) => state.open);
+  // The provider outlives `visible` so the sheet can animate out.
+  const [opened, setOpened] = useState<OpenedProvider | null>(null);
   const openProvider = useCallback(
-    (providerId: string) => openProviderSheet({ serverId, provider: providerId }),
-    [openProviderSheet, serverId],
+    (provider: string) => setOpened({ provider, visible: true }),
+    [],
+  );
+  const closeProvider = useCallback(
+    () => setOpened((current) => (current ? { ...current, visible: false } : null)),
+    [],
   );
   return (
     <View>
-      <ProviderList serverId={serverId} onOpenProvider={openProvider} />
+      <ProviderList
+        serverId={serverId}
+        onOpenProvider={openProvider}
+        sheetFrame={SETUP_SHEET_FRAME}
+      />
+      {opened ? (
+        <ProviderDetailSheet
+          key={opened.provider}
+          serverId={serverId}
+          provider={opened.provider}
+          visible={opened.visible}
+          onClose={closeProvider}
+          frame={SETUP_SHEET_FRAME}
+        />
+      ) : null}
     </View>
   );
 }

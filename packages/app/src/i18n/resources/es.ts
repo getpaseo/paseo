@@ -1749,7 +1749,7 @@ export const es: TranslationResources = {
         },
         providers: {
           label: "Proveedores",
-          title: "Tus agentes",
+          title: "Tus proveedores",
           description: "Paseo usa las CLI de agentes que ya están en este ordenador",
         },
         projects: {

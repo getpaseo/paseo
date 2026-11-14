@@ -1702,7 +1702,7 @@ export const ar: TranslationResources = {
         },
         providers: {
           label: "المزوّدون",
-          title: "وكلاؤك",
+          title: "مزوّدوك",
           description: "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر",
         },
         projects: {

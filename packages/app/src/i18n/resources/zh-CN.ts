@@ -1685,7 +1685,7 @@ export const zhCN: TranslationResources = {
         },
         providers: {
           label: "提供方",
-          title: "你的代理",
+          title: "你的提供方",
           description: "Paseo 使用这台电脑上已安装的代理 CLI",
         },
         projects: {

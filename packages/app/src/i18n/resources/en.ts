@@ -1728,7 +1728,7 @@ export const en = {
         },
         providers: {
           label: "Providers",
-          title: "Your agents",
+          title: "Your providers",
           description: "Paseo runs the agent CLIs already on this computer",
         },
         projects: {
