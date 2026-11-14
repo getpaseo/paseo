@@ -15,6 +15,7 @@ class Runtime {
   closed = false;
   resumable = true;
   activity = 0;
+  readOnlySince: number | undefined;
   parentAgentId: string | undefined;
   probe: (() => Promise<boolean>) | undefined;
   admitClose: (() => Promise<void>) | undefined;
@@ -29,6 +30,7 @@ class Runtime {
       provider: "test",
       sessionId: this.resumable ? this.id : null,
       lastActivityAt: activity,
+      readOnlySince: this.readOnlySince,
       isEligible: () => !this.closed && !this.busy && this.activity === activity,
       canStopRuntime: this.probe,
       closeIfEligible: async (eligible) => {
@@ -41,7 +43,7 @@ class Runtime {
     };
   }
 }
-function scenario(enabled = true) {
+function scenario(enabled = true, idlePeriodMs?: number) {
   const runtime = new Runtime();
   const runtimes = [runtime];
   let time = 0;
@@ -49,6 +51,7 @@ function scenario(enabled = true) {
   let tick!: () => void;
   const cleanup = createIdleRuntimeCleanup({
     enabled,
+    idlePeriodMs,
     logger: createTestLogger(),
     now: () => time,
     runtimes: () => runtimes.filter((item) => !item.closed).map((item) => item.capture()),
@@ -292,3 +295,62 @@ test("disabling lets a started close finish but prevents the next closure in tha
     { agentId: "sibling", provider: "test", sessionId: "sibling" },
   ]);
 });
+
+test("a configured idle period replaces the one-hour default", async () => {
+  const s = scenario(true, 15 * 60_000);
+  expect((await s.sweep(14)).collected).toEqual([]);
+  expect((await s.sweep(15)).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+  ]);
+});
+
+test("a live idle period change applies to existing idle clocks on the next sweep", async () => {
+  const s = scenario();
+  expect((await s.sweep(20)).collected).toEqual([]);
+  s.cleanup.setIdlePeriodMs(15 * 60_000);
+  expect((await s.sweep(20)).collected).toHaveLength(1);
+});
+
+test("lengthening the idle period retains a runtime the shorter period would collect", async () => {
+  const s = scenario(true, 15 * 60_000);
+  s.cleanup.setIdlePeriodMs(90 * 60_000);
+  expect((await s.sweep(61)).collected).toEqual([]);
+  expect((await s.sweep(90)).collected).toHaveLength(1);
+});
+
+test("a runtime that only served reads is collected two minutes after the latest read", async () => {
+  const s = scenario();
+  s.runtime.readOnlySince = 30 * 60_000;
+  expect((await s.sweep(31)).collected).toEqual([]);
+  s.runtime.readOnlySince = 31 * 60_000;
+  expect((await s.sweep(32)).collected).toEqual([]);
+  expect((await s.sweep(33)).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+  ]);
+});
+
+test("a read-only runtime still waits for activity newer than the read", async () => {
+  const s = scenario();
+  s.runtime.readOnlySince = 0;
+  s.runtime.activity = 5 * 60_000;
+  expect((await s.sweep(6)).collected).toEqual([]);
+  expect((await s.sweep(7)).collected).toHaveLength(1);
+});
+
+test.each(["foreground", "finish subscription", "veto"])(
+  "a read-only runtime keeps the %s protection and restarts its grace afterwards",
+  async (blocker) => {
+    const s = scenario();
+    s.runtime.readOnlySince = 0;
+    if (blocker === "foreground") s.runtime.busy = true;
+    else if (blocker === "finish subscription") s.protect(true);
+    else s.runtime.probe = async () => false;
+    expect((await s.sweep(10)).collected).toEqual([]);
+    s.runtime.busy = false;
+    s.protect(false);
+    s.runtime.probe = async () => true;
+    expect((await s.sweep(11)).collected).toEqual([]);
+    expect((await s.sweep(12)).collected).toEqual([]);
+    expect((await s.sweep(13)).collected).toHaveLength(1);
+  },
+);

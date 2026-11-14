@@ -204,6 +204,10 @@ const MutableRelayConfigSchema = z
   })
   .passthrough();
 
+export const IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT = 60;
+export const IDLE_RUNTIME_CLEANUP_MINUTES_MIN = 5;
+export const IDLE_RUNTIME_CLEANUP_MINUTES_MAX = 1440;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -240,6 +244,8 @@ export const MutableDaemonConfigSchema = z
     // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
     // Persisted host-wide value, applied live by the daemon.
     idleRuntimeCleanup: z.boolean().optional(),
+    // Minutes without activity before an idle runtime is released. Applied live by the daemon.
+    idleRuntimeCleanupMinutes: z.number().int().positive().optional(),
     // COMPAT(restartRecovery): added in v0.14.0, keep optional for older hosts.
     resumeOnStartup: z.boolean().optional(),
     resumePrompt: z.string().optional(),
@@ -269,6 +275,12 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
+    idleRuntimeCleanupMinutes: z
+      .number()
+      .int()
+      .min(IDLE_RUNTIME_CLEANUP_MINUTES_MIN)
+      .max(IDLE_RUNTIME_CLEANUP_MINUTES_MAX)
+      .optional(),
     resumeOnStartup: z.boolean().optional(),
     resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),

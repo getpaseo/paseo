@@ -84,13 +84,21 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 ## 空闲运行时 {#idle-runtimes}
 
-当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲一小时后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 你的主机 → Agents** 中关闭 **释放空闲 Agent**，或设置：
+当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲达到主机的空闲期（默认一小时）后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 你的主机 → Agents** 中关闭 **释放空闲 Agent**，或设置：
 
 ```json
 { "agents": { "idleRuntimeCleanup": false } }
 ```
 
-此设置默认为 `true`。在设置中更改后立即生效；配置文件中的更改在重新加载配置后生效。重新启用会保留现有的空闲计时。没有单个 Agent 的设置。不提供运行时安全检查的 Provider 使用相同的 daemon 基础条件和一小时空闲期。活动中的工作、后代 Agent 和待发送的完成通知都会阻止清理。ACP 适配器还会在 ACP 终端仍运行时保留运行时，即使终端没有输出；已退出的终端不会阻止清理。此检查不检查 Provider 内部启动的进程。
+要修改 Agent 空闲多久后被释放，请设置 `agents.idleRuntimeCleanupMinutes`（默认 `60`，范围 `5` 到 `1440`）：
+
+```json
+{ "agents": { "idleRuntimeCleanupMinutes": 15 } }
+```
+
+只为读取时间线而重新加载、之后没有收到提示词的 Agent，会在最近一次读取两分钟后被释放。
+
+`idleRuntimeCleanup` 默认为 `true`。在设置中更改后立即生效；配置文件中的更改在重新加载配置后生效。重新启用会保留现有的空闲计时。没有单个 Agent 的设置。不提供运行时安全检查的 Provider 使用相同的 daemon 基础条件和空闲期。活动中的工作、后代 Agent 和待发送的完成通知都会阻止清理。ACP 适配器还会在 ACP 终端仍运行时保留运行时，即使终端没有输出；已退出的终端不会阻止清理。此检查不检查 Provider 内部启动的进程。
 
 ## worktree {#worktrees}
 

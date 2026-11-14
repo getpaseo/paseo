@@ -13453,6 +13453,7 @@ function runtimeCleanup(manager: AgentManager) {
 }
 
 function idleCleanupHarness() {
+  let now = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-protection-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const commands: AgentPromptInput[] = [];
@@ -13500,7 +13501,12 @@ function idleCleanupHarness() {
       return recordPrompts(session);
     }
   })();
-  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    now: () => now,
+  });
   onTestFinished(async () => {
     closeGate = undefined;
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
@@ -13527,7 +13533,10 @@ function idleCleanupHarness() {
         workspaceId: undefined,
         labels,
       }),
-    later: (minutes: number) => new Date(Date.now() + minutes * 60_000),
+    advance: (minutes: number) => {
+      now += minutes * 60_000;
+    },
+    later: (minutes: number) => new Date(now + minutes * 60_000),
   };
 }
 
@@ -14418,4 +14427,85 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
+});
+
+async function collectedAgentForReads(h: ReturnType<typeof idleCleanupHarness>) {
+  const agent = await h.create();
+  h.probes[0] = async () => true;
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  expect(h.manager.getAgent(agent.id)).toBeNull();
+  const read = () =>
+    ensureAgentLoaded(agent.id, {
+      agentManager: h.manager,
+      agentStorage: h.storage,
+      logger,
+      purpose: "history",
+    });
+  return { agent, read };
+}
+
+test("a timeline read of a collected agent releases its runtime two minutes after the read", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  expect(h.manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  expect((await h.sweep({ now: h.later(1) })).collected).toEqual([]);
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
+  expect(h.manager.getAgent(agent.id)).toBeNull();
+});
+
+test("another read of a read-only runtime restarts its two-minute grace", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  const firstReadAt = h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince;
+  expect(typeof firstReadAt).toBe("number");
+  h.advance(1);
+  await read();
+  const sinceFirstRead = new Date(firstReadAt! + 2 * 60_000);
+  expect((await h.sweep({ now: sinceFirstRead })).collected).toEqual([]);
+  expect(h.manager.getAgent(agent.id)?.id).toBe(agent.id);
+  expect((await h.sweep({ now: h.later(2) })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
+});
+
+test.each(["prompt", "mode change"])(
+  "a %s after a timeline read restores the configured idle period",
+  async (use) => {
+    const h = idleCleanupHarness();
+    const { agent, read } = await collectedAgentForReads(h);
+    await read();
+    if (use === "prompt") await h.manager.runAgent(agent.id, "continue");
+    else await h.manager.setAgentMode(agent.id, "plan");
+    expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeUndefined();
+    expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+    expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  },
+);
+
+test("an out-of-band command after a timeline read ends the read-only grace", async () => {
+  const h = idleCleanupHarness();
+  const { agent, read } = await collectedAgentForReads(h);
+  await read();
+  expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeDefined();
+  await h.manager.tryRunOutOfBand(agent.id, "/maintenance");
+  expect(h.manager.getRuntimeCleanupCandidates()[0]?.readOnlySince).toBeUndefined();
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+});
+
+test("a timeline read of a resident agent keeps its configured idle period", async () => {
+  const h = idleCleanupHarness();
+  const agent = await h.create();
+  h.probes[0] = async () => true;
+  await ensureAgentLoaded(agent.id, {
+    agentManager: h.manager,
+    agentStorage: h.storage,
+    logger,
+    purpose: "history",
+  });
+  expect((await h.sweep({ now: h.later(3) })).collected).toEqual([]);
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
 });

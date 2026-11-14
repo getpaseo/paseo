@@ -199,6 +199,7 @@ import type {
   PluginSource,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
+import { IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT } from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -468,6 +469,7 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   idleRuntimeCleanup?: boolean;
+  idleRuntimeCleanupMinutes?: number;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
@@ -575,6 +577,14 @@ function resolveReloadEnv(config: PaseoDaemonConfig): NodeJS.ProcessEnv {
   return config.configReload?.env ?? process.env;
 }
 
+function initialIdleRuntimeCleanupConfig(config: ResolvedDaemonSettings) {
+  return {
+    idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
+    idleRuntimeCleanupMinutes:
+      config.idleRuntimeCleanupMinutes ?? IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT,
+  };
+}
+
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -600,7 +610,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
-    idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
+    ...initialIdleRuntimeCleanupConfig(config),
     resumeOnStartup: config.resumeOnStartup === true,
     resumePrompt: config.resumePrompt ?? "Resume working.",
     appendSystemPrompt: config.appendSystemPrompt ?? "",
@@ -1520,6 +1530,7 @@ export async function createPaseoDaemon(
 
   const idleRuntimeCleanup = createIdleRuntimeCleanup({
     enabled: daemonConfigStore.get().idleRuntimeCleanup !== false,
+    idlePeriodMs: idlePeriodMsOf(daemonConfigStore.get().idleRuntimeCleanupMinutes),
     runtimes: () => agentManager.getRuntimeCleanupCandidates(),
     isProtected: (agentId) =>
       finishSubscriptions.hasPendingForCaller(agentId) ||
@@ -2092,10 +2103,24 @@ async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promi
   );
 }
 
+function idlePeriodMsOf(minutes: unknown): number {
+  return (typeof minutes === "number" ? minutes : IDLE_RUNTIME_CLEANUP_MINUTES_DEFAULT) * 60_000;
+}
+
 export function connectIdleRuntimeCleanupConfig(
   store: DaemonConfigStore,
-  cleanup: Pick<ReturnType<typeof createIdleRuntimeCleanup>, "setEnabled">,
+  cleanup: Pick<ReturnType<typeof createIdleRuntimeCleanup>, "setEnabled" | "setIdlePeriodMs">,
 ): () => void {
   cleanup.setEnabled(store.get().idleRuntimeCleanup !== false);
-  return store.onFieldChange("idleRuntimeCleanup", (value) => cleanup.setEnabled(value !== false));
+  cleanup.setIdlePeriodMs(idlePeriodMsOf(store.get().idleRuntimeCleanupMinutes));
+  const unsubscribeEnabled = store.onFieldChange("idleRuntimeCleanup", (value) =>
+    cleanup.setEnabled(value !== false),
+  );
+  const unsubscribePeriod = store.onFieldChange("idleRuntimeCleanupMinutes", (value) =>
+    cleanup.setIdlePeriodMs(idlePeriodMsOf(value)),
+  );
+  return () => {
+    unsubscribeEnabled();
+    unsubscribePeriod();
+  };
 }
