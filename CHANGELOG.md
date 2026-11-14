@@ -1,5 +1,9 @@
 # Changelog
 
+### Fixed
+
+- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8269](https://github.com/getpaseo/paseo/pull/8269))
+
 ## 0.16.0-beta.2 - 2026-11-11
 
 - **Background tasks:** Paseo now shows the background tasks an agent is running, such as shells and monitors, above the composer, with a Stop button for each. Works with Claude Code, Codex and OpenCode v2. ([#6220](https://github.com/getpaseo/paseo/pull/6220), [#9162](https://github.com/getpaseo/paseo/pull/9162) by [@fxlelouarn](https://github.com/fxlelouarn))

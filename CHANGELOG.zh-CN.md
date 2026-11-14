@@ -1,5 +1,9 @@
 # Changelog
 
+### 修复
+
+- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8269](https://github.com/getpaseo/paseo/pull/8269))
+
 ## 0.16.0-beta.2 - 2026-11-11
 
 - **后台任务**：Paseo 现在会在 Composer 上方显示 Agent 正在运行的后台任务，例如 shell 和监视器，每项都带“停止”按钮。支持 Claude Code、Codex 和 OpenCode v2。 ([#6220](https://github.com/getpaseo/paseo/pull/6220), [#9162](https://github.com/getpaseo/paseo/pull/9162)，贡献者：[@fxlelouarn](https://github.com/fxlelouarn))
