@@ -193,18 +193,46 @@ function AutocompleteStatusRow({ status }: { status: AutocompleteStatus }) {
   );
 }
 
+type ListEnd = "composer" | "far";
+
 /**
- * Counts the result sets a list has shown. Each set gets its own scroller, which starts at the
- * composer with only the rows nearest it. A scroller that outlived its results would keep its scroll
- * position and its mounted window: on native a scroll command reaches the screen after the rows it
- * was meant for, and the window is ten times the rows the popover shows.
+ * The scroller a list is shown in: one for each result set, resting at one end of it. A scroller
+ * starts at its resting end with only the rows nearest it, so the list opens against the composer
+ * and reaches the far end when the selection wraps there without mounting the rows in between.
+ * A scroller that outlived its results would keep its scroll position and its mounted rows: on
+ * native a scroll command reaches the screen after the rows it was meant for.
  */
-function useResultSetGeneration(options: readonly AutocompleteOption[]): number {
-  const [shown, setShown] = useState({ options, generation: 0 });
-  if (shown.options !== options) {
-    setShown({ options, generation: shown.generation + 1 });
+function useScroller(
+  options: readonly AutocompleteOption[],
+  selectedIndex: number,
+): { key: string; restsAt: ListEnd } {
+  const [scroller, setScroller] = useState<{
+    options: readonly AutocompleteOption[];
+    resultSet: number;
+    restsAt: ListEnd;
+  }>({ options, resultSet: 0, restsAt: "composer" });
+  let next = scroller;
+  if (next.options !== options) {
+    next = { options, resultSet: next.resultSet + 1, restsAt: "composer" };
   }
-  return shown.generation;
+  const restsAt = endSelected(options, selectedIndex) ?? next.restsAt;
+  if (restsAt !== next.restsAt) {
+    next = { ...next, restsAt };
+  }
+  if (next !== scroller) {
+    setScroller(next);
+  }
+  return { key: `${next.resultSet}:${next.restsAt}`, restsAt: next.restsAt };
+}
+
+/** The end of the list the selection sits at, if it sits at one. The best match is last. */
+function endSelected(
+  options: readonly AutocompleteOption[],
+  selectedIndex: number,
+): ListEnd | null {
+  if (selectedIndex === options.length - 1) return "composer";
+  if (selectedIndex === 0) return "far";
+  return null;
 }
 
 const FULLY_VISIBLE = { itemVisiblePercentThreshold: 100 };
@@ -218,33 +246,39 @@ function keyOfOption(option: AutocompleteOption): string {
 }
 
 interface AutocompleteRowsProps {
-  /** Nearest the composer first. */
+  /** Nearest the resting end first. */
   rows: readonly AutocompleteOption[];
   selectedRow: number;
+  restsAt: ListEnd;
   maxHeight: number;
   onSelect: (option: AutocompleteOption) => void;
 }
 
 /**
- * The rows, read upward from the composer. The list is inverted: its resting scroll position is the
- * composer edge and the rows nearest it mount first, so a list of any length opens where it rests.
+ * The rows, read from the end the list rests at. Against the composer the list is inverted. Either
+ * way its resting scroll position is that end and the rows nearest it mount first, so a list of any
+ * length opens where it rests.
  */
-function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: AutocompleteRowsProps) {
+function AutocompleteRows({
+  rows,
+  selectedRow,
+  restsAt,
+  maxHeight,
+  onSelect,
+}: AutocompleteRowsProps) {
   const isCompact = useIsCompactFormFactor();
   const listRef = useRef<FlatList<AutocompleteOption>>(null);
   const fullyVisibleRows = useRef<{ first: number; last: number } | null>(null);
-  const rowCount = rows.length;
 
-  // The row the keyboard selected, until it has been brought into the viewport. A row that has
-  // not mounted has no position yet: the list is sent towards it and asked again as rows mount.
-  const pendingReveal = useRef<{ row: number; rowCount: number } | null>(null);
-  const isPendingRowMounted = useRef(true);
+  // The row the keyboard selected, until it has been brought into the viewport. The row at the
+  // other end is never revealed here: selecting it gives the list a scroller that rests there.
+  const pendingReveal = useRef<number | null>(null);
+  const isPendingRowMeasured = useRef(true);
   const revealPendingRow = useCallback(() => {
     const list = listRef.current;
-    const pending = pendingReveal.current;
+    const row = pendingReveal.current;
     const visible = fullyVisibleRows.current;
-    if (!list || !pending || !visible) return;
-    const { row } = pending;
+    if (!list || row === null || !visible) return;
     const span = visible.last - visible.first;
     if (row >= visible.first && row <= visible.last) {
       pendingReveal.current = null;
@@ -252,14 +286,14 @@ function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: Autocomple
       list.scrollToOffset({ offset: 0, animated: false });
       pendingReveal.current = null;
       fullyVisibleRows.current = { first: 0, last: span };
-    } else if (row === pending.rowCount - 1) {
-      list.scrollToEnd({ animated: false });
     } else {
       // The row comes in at the edge it was beyond.
       const isNearer = row < visible.first;
-      isPendingRowMounted.current = true;
+      isPendingRowMeasured.current = true;
       list.scrollToIndex({ index: row, viewPosition: isNearer ? 0 : 1, animated: false });
-      if (!isPendingRowMounted.current) return;
+      // A row that has not mounted has no position yet: the list was sent towards it instead, and
+      // is asked again as rows mount.
+      if (!isPendingRowMeasured.current) return;
       pendingReveal.current = null;
       // The list reports what it shows after it has scrolled; the next key press may come first.
       fullyVisibleRows.current = isNearer
@@ -269,7 +303,7 @@ function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: Autocomple
   }, []);
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
-      isPendingRowMounted.current = false;
+      isPendingRowMeasured.current = false;
       listRef.current?.scrollToOffset({
         offset: info.index * info.averageItemLength,
         animated: false,
@@ -278,9 +312,9 @@ function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: Autocomple
     [],
   );
   useEffect(() => {
-    pendingReveal.current = selectedRow < 0 ? null : { row: selectedRow, rowCount };
+    pendingReveal.current = selectedRow < 0 ? null : selectedRow;
     revealPendingRow();
-  }, [revealPendingRow, rowCount, selectedRow]);
+  }, [revealPendingRow, selectedRow]);
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<AutocompleteOption>[] }) => {
@@ -307,7 +341,7 @@ function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: Autocomple
   return (
     <FlatList
       ref={listRef}
-      inverted
+      inverted={restsAt === "composer"}
       data={rows}
       renderItem={renderRow}
       keyExtractor={keyOfOption}
@@ -335,8 +369,15 @@ export function Autocomplete({
   maxHeight = DEFAULT_MAX_HEIGHT,
 }: AutocompleteProps) {
   const { t } = useTranslation();
-  const resultSetGeneration = useResultSetGeneration(options);
-  const rows = useMemo(() => options.toReversed(), [options]);
+  const scroller = useScroller(options, selectedIndex);
+  const rows = useMemo(
+    () => (scroller.restsAt === "composer" ? options.toReversed() : options),
+    [options, scroller.restsAt],
+  );
+  const selectedRow =
+    scroller.restsAt === "composer" && selectedIndex >= 0
+      ? options.length - 1 - selectedIndex
+      : selectedIndex;
   const containerStyle = useMemo(() => [styles.container, { maxHeight }], [maxHeight]);
 
   const noResultsMessage = t("common.empty.noResults");
@@ -356,9 +397,10 @@ export function Autocomplete({
   return (
     <View style={containerStyle}>
       <AutocompleteRows
-        key={resultSetGeneration}
+        key={scroller.key}
         rows={rows}
-        selectedRow={selectedIndex < 0 ? -1 : options.length - 1 - selectedIndex}
+        selectedRow={selectedRow}
+        restsAt={scroller.restsAt}
         maxHeight={maxHeight}
         onSelect={onSelect}
       />

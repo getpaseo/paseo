@@ -516,6 +516,44 @@ it("reveals the row the arrow keys select, including across the wrap to the far 
   await expect.poll(() => bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER);
 });
 
+/** The label of the row at the top of the popover's box. */
+function topRowInView(): string | null {
+  const popover = rectOf("composer-autocomplete-popover");
+  if (!popover) return null;
+  const rows = mountedRows()
+    .map((row) => ({ rect: row.getBoundingClientRect(), label: row.getAttribute("aria-label") }))
+    .filter(({ rect }) => rect.top >= popover.top - 0.5 && rect.bottom <= popover.bottom + 0.5)
+    .toSorted((a, b) => a.rect.top - b.rect.top);
+  return rows[0]?.label?.split(",")[0] ?? null;
+}
+
+/**
+ * The far end of a long list is not mounted while the list rests against the composer. Scrolling to
+ * it as rows mounted painted the list at several places on the way.
+ */
+it("jumps between the two ends in one frame when the arrow keys wrap", async () => {
+  const options = commandOptions("skill", 100);
+  render(<Screen visible={false} options={options} />);
+  render(<Screen visible options={options} />);
+  await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const restingAtComposer = topRowInView();
+
+  const toFarEnd = recordPaintedFrames(topRowInView);
+  await changeAndPaint(<Screen visible options={options} selectedFromBest={99} />);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  toFarEnd.stop();
+  expect([...new Set(toFarEnd.frames)]).toEqual(["/skill-100"]);
+  expect(isRowInView("/skill-100")).toBe(true);
+
+  const toComposer = recordPaintedFrames(topRowInView);
+  await changeAndPaint(<Screen visible options={options} selectedFromBest={0} />);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  toComposer.stop();
+  expect([...new Set(toComposer.frames)]).toEqual([restingAtComposer]);
+  expect(bestMatchAgainstPopoverBottom("/skill-1")).toBe(LIST_PADDING_AND_BORDER);
+});
+
 it("scrolls towards rows further from the composer when the wheel turns up", async () => {
   const options = commandOptions("skill", 100);
   render(<Screen visible={false} options={options} />);
