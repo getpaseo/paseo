@@ -17,8 +17,8 @@ interface UsageModalProps {
 
 /**
  * Usage over the current screen: a dialog on wide layouts, a bottom sheet on compact ones. It
- * shows the usage host's reports with pins, and the host filter, Refresh all, and Settings in its
- * title row.
+ * shows the usage host's reports with pins, Refresh all and Settings in its title row, and the
+ * host filter at the top of its body.
  */
 export function UsageModal(props: UsageModalProps) {
   const { t } = useTranslation();
@@ -56,10 +56,10 @@ function HostUsageModal({
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
-  const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
+  const { view, refresh, controls, hostFilter } = useHostUsageWithControls(hostSelection);
   const { display } = useUsageDisplay(view.kind === "ready" ? view.reports : []);
   return (
-    <UsageModalFrame {...props} actions={controls}>
+    <UsageModalFrame {...props} actions={controls} hostFilter={hostFilter}>
       <View testID={`usage-host-${serverId}`}>
         <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
       </View>
@@ -72,8 +72,9 @@ function UsageModalFrame({
   onClose,
   onDismiss,
   actions,
+  hostFilter,
   children,
-}: UsageModalProps & { actions?: ReactNode; children: ReactNode }) {
+}: UsageModalProps & { actions?: ReactNode; hostFilter?: ReactNode; children: ReactNode }) {
   const { t } = useTranslation();
   const title = t(builtinSidebarNavLabelKey("usage"));
   const header = useMemo(() => ({ title, actions }), [actions, title]);
@@ -87,6 +88,7 @@ function UsageModalFrame({
       contextBridge={null}
       testID="usage-modal"
     >
+      {hostFilter}
       <View testID="usage-modal-body">{children}</View>
     </AdaptiveModalSheet>
   );
