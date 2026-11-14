@@ -120,7 +120,7 @@ describe("managed Git plugin sources", () => {
     });
   }, 30_000);
 
-  it("offers current default HEAD after installing a tag", async () => {
+  it("pins a tag install to the tag instead of offering the default HEAD as its update", async () => {
     const repository = await createRepository();
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
     roots.push(home);
@@ -185,9 +185,12 @@ describe("managed Git plugin sources", () => {
     sources.commit("tagged-example", tagged.record);
     expect(await sources.status("tagged-example", tagged.directory)).toMatchObject({
       currentCommit: initial,
-      latestCommit: latest,
-      updateAvailable: true,
+      latestCommit: initial,
+      updateAvailable: false,
     });
+    expect(
+      (await sources.preview("tagged-example", tagged.directory)).target,
+    ).toMatchObject({ commit: initial, ref: "v1" });
   }, 30_000);
   it("resolves branch, tag and commit installs against changed default HEAD and preserves the reviewed commit", async () => {
     const repository = await createRepository();
@@ -213,11 +216,18 @@ describe("managed Git plugin sources", () => {
     const previews = await Promise.all(
       installations.map(({ id, candidate }) => sources.preview(id, candidate.directory)),
     );
-    for (const preview of previews)
+    // Unpinned and commit-hash installs track the default branch; named-ref pins follow their own ref.
+    const expectations = [
+      { outcome: "update", target: { commit: reviewed } },
+      { outcome: "current", target: { commit: initial, ref: "main" } },
+      { outcome: "current", target: { commit: initial, ref: "v1" } },
+      { outcome: "update", target: { commit: reviewed } },
+    ];
+    for (const [index, preview] of previews.entries())
       expect(preview).toMatchObject({
-        outcome: "update",
+        outcome: expectations[index]!.outcome,
         current: { currentRevision: initial },
-        target: { commit: reviewed },
+        target: expectations[index]!.target,
       });
     await writeFile(path.join(repository, "revision.txt"), "moved after review");
     const moved = await commitAll(repository, "move again");
@@ -248,6 +258,81 @@ describe("managed Git plugin sources", () => {
     expect(
       await restarted.preview(id, updated.directory, { kind: "git", ref: initial.slice(0, 8) }),
     ).toMatchObject({ target: { commit: initial } });
+  }, 30_000);
+  it("keeps a branch-pinned install on its branch instead of proposing the default branch head as an update", async () => {
+    const repository = await createRepository();
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-pin-"));
+    roots.push(home);
+    const remote = pathToFileURL(repository).href;
+    const sources = new ManagedPluginSources(home);
+
+    // The reported fork state: the default branch sits behind the fix branch the install pins to.
+    await runGitCommand(["checkout", "-b", "fix/two"], { cwd: repository });
+    await writeFile(path.join(repository, "fix.txt"), "pinned");
+    const pinned = await commitAll(repository, "fix ahead of default");
+    const candidate = await sources.place(
+      "pinned",
+      await sources.prepareInstall({ source: remote, ref: "fix/two" }),
+    );
+    sources.commit("pinned", candidate.record);
+    const metadataPath = path.join(home, "plugins", "sources.json");
+    expect(JSON.parse(await readFile(metadataPath, "utf8"))["pinned"]).toEqual({
+      kind: "git",
+      remote,
+      ref: "fix/two",
+    });
+
+    // The default branch moving is not an update for the pinned install, even when it is behind the pin.
+    await runGitCommand(["checkout", "main"], { cwd: repository });
+    await writeFile(path.join(repository, "default.txt"), "default");
+    const defaultHead = await commitAll(repository, "default branch moves");
+    expect(await sources.preview("pinned", candidate.directory)).toMatchObject({
+      outcome: "current",
+      target: { commit: pinned, ref: "fix/two" },
+    });
+
+    // The pin advances when its own branch advances, and applying keeps the pin.
+    await runGitCommand(["checkout", "fix/two"], { cwd: repository });
+    await writeFile(path.join(repository, "fix.txt"), "pinned again");
+    const ahead = await commitAll(repository, "fix branch advances");
+    const preview = await sources.preview("pinned", candidate.directory);
+    expect(preview).toMatchObject({
+      outcome: "update",
+      target: { commit: ahead, ref: "fix/two" },
+    });
+    const restarted = new ManagedPluginSources(home);
+    const updated = await restarted.place(
+      "pinned",
+      await restarted.prepareUpdate(preview.proposal!, candidate.directory),
+    );
+    expect(await restarted.describe("pinned", updated.directory)).toMatchObject({
+      currentRevision: ahead,
+    });
+    expect(JSON.parse(await readFile(metadataPath, "utf8"))["pinned"]).toEqual({
+      kind: "git",
+      remote,
+      ref: "fix/two",
+    });
+
+    // An explicit --ref selection re-pins the install onto the chosen ref.
+    const repin = await restarted.preview("pinned", updated.directory, {
+      kind: "git",
+      ref: "main",
+    });
+    expect(repin).toMatchObject({ outcome: "update", target: { commit: defaultHead, ref: "main" } });
+    const moved = await restarted.place(
+      "pinned",
+      await restarted.prepareUpdate(repin.proposal!, updated.directory),
+    );
+    sources.commit("pinned", moved.record);
+    expect(JSON.parse(await readFile(metadataPath, "utf8"))["pinned"]).toEqual({
+      kind: "git",
+      remote,
+      ref: "main",
+    });
+    expect(await restarted.describe("pinned", moved.directory)).toMatchObject({
+      currentRevision: defaultHead,
+    });
   }, 30_000);
   it(
     "uses retained acquisition remote when credential rewriting changes origin, preserving nested identity",
