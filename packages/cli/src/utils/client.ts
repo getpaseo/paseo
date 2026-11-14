@@ -236,6 +236,8 @@ interface AgentLike {
   title?: string | null;
 }
 
+const FULL_AGENT_UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /**
  * Resolve an agent ID from a partial ID or name.
  * Supports:
@@ -251,6 +253,11 @@ export function resolveAgentId(idOrName: string, agents: AgentLike[]): string | 
   }
 
   const query = idOrName.toLowerCase();
+
+  // A complete agent UUID is an exact identity, never a name search fallback.
+  if (FULL_AGENT_UUID_PATTERN.test(idOrName)) {
+    return agents.find((a) => a.id.toLowerCase() === query)?.id ?? null;
+  }
 
   // Try exact ID match first
   const exactMatch = agents.find((a) => a.id === idOrName);
