@@ -10,6 +10,96 @@ import { messages } from "./history.js";
 import { buildOpenCodeSubagentSubtitle } from "../subagent-presentation.js";
 
 import type { V2Api } from "./api.js";
+
+async function visitSessionChildren(
+  client: V2Api,
+  parentID: string,
+  visit: (info: SessionInfo) => Promise<void>,
+  visited = new Set([parentID]),
+): Promise<void> {
+  let cursor: string | undefined;
+  do {
+    const page = await client.session.list({ ...(cursor ? { cursor } : { parentID }), limit: 100 });
+    for (const child of page.data) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      await visit(child);
+      await visitSessionChildren(client, child.id, visit, visited);
+    }
+    cursor = page.cursor.next ?? undefined;
+  } while (cursor);
+}
+
+function childPresentation(
+  info: SessionInfo,
+  rootID: string,
+  active: Awaited<ReturnType<V2Api["session"]["active"]>>,
+): ProviderSubagentInputEvent {
+  let status: "running" | "failed" | "canceled" | "completed" = "completed";
+  if (active[info.id]) status = "running";
+  else if (info.outcome === "failed") status = "failed";
+  else if (info.outcome === "interrupted") status = "canceled";
+  const subtitle = buildOpenCodeSubagentSubtitle({
+    agentName: info.agent,
+    modelId: info.model?.id,
+    variant: info.model?.variant,
+    totalTokens:
+      info.tokens.input +
+      info.tokens.output +
+      info.tokens.reasoning +
+      info.tokens.cache.read +
+      info.tokens.cache.write,
+  });
+  return {
+    type: "upsert",
+    id: info.id,
+    parentSubagentId: info.parentID === rootID ? null : info.parentID,
+    title: info.title ?? null,
+    ...(subtitle ? { subtitle } : {}),
+    status,
+    cwd: info.location.directory,
+    timestamp: new Date(info.time.updated).toISOString(),
+  };
+}
+
+function childTimeline(id: string, events: AgentStreamEvent[]): AgentStreamEvent[] {
+  return events.flatMap((event): AgentStreamEvent[] =>
+    event.type === "timeline"
+      ? [
+          {
+            type: "provider_subagent",
+            provider: "opencode",
+            event: { type: "timeline", id, item: event.item, timestamp: event.timestamp },
+          },
+        ]
+      : [],
+  );
+}
+
+export async function readSessionChildrenHistory(
+  client: V2Api,
+  rootID: string,
+): Promise<AgentStreamEvent[]> {
+  const children: SessionInfo[] = [];
+  await visitSessionChildren(client, rootID, async (info) => {
+    children.push(info);
+  });
+  if (children.length === 0) return [];
+  const active = await client.session.active();
+  const events: AgentStreamEvent[] = [];
+  for (const info of children) {
+    events.push({
+      type: "provider_subagent",
+      provider: "opencode",
+      event: childPresentation(info, rootID, active),
+    });
+    await new V2Timeline(false).messages(await messages(client, info.id), (event) => {
+      events.push(...childTimeline(info.id, [event]));
+    });
+  }
+  return events;
+}
+
 interface ChildrenOptions {
   client(): V2Api;
   id: string;
@@ -40,18 +130,9 @@ export class SessionChildren {
     }
   }
   async reconcile(parentID: string) {
-    let cursor: string | undefined;
-    do {
-      const page = await this.options.client().session.list({
-        ...(cursor ? { cursor } : { parentID }),
-        limit: 100,
-      });
-      for (const child of page.data) {
-        await this.reconcileChild(child);
-        await this.reconcile(child.id);
-      }
-      cursor = page.cursor.next ?? undefined;
-    } while (cursor);
+    await visitSessionChildren(this.options.client(), parentID, (info) =>
+      this.reconcileChild(info),
+    );
   }
   private async reconcileChild(info: SessionInfo) {
     await this.options.reconcilePermissions(info.id);
@@ -62,31 +143,7 @@ export class SessionChildren {
       this.options.bindChild?.(info.id);
     }
     const active = await this.options.client().session.active();
-    let status: "running" | "failed" | "canceled" | "completed" = "completed";
-    if (active[info.id]) status = "running";
-    else if (info.outcome === "failed") status = "failed";
-    else if (info.outcome === "interrupted") status = "canceled";
-    const subtitle = buildOpenCodeSubagentSubtitle({
-      agentName: info.agent,
-      modelId: info.model?.id,
-      variant: info.model?.variant,
-      totalTokens:
-        info.tokens.input +
-        info.tokens.output +
-        info.tokens.reasoning +
-        info.tokens.cache.read +
-        info.tokens.cache.write,
-    });
-    const presentation: ProviderSubagentInputEvent = {
-      type: "upsert",
-      id: info.id,
-      parentSubagentId: info.parentID === this.options.id ? null : info.parentID,
-      title: info.title ?? null,
-      ...(subtitle ? { subtitle } : {}),
-      status,
-      cwd: info.location.directory,
-      timestamp: new Date(info.time.updated).toISOString(),
-    };
+    const presentation = childPresentation(info, this.options.id, active);
     const signature = JSON.stringify(presentation);
     if (this.childStates.get(info.id) !== signature) {
       this.childStates.set(info.id, signature);

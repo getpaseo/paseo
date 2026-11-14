@@ -9,6 +9,8 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentOptionControl,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -165,6 +167,7 @@ const INTERRUPTED_TURN_CLEANUP_WAIT_MS =
   INTERRUPT_TIMEOUT_MS + INTERRUPTED_TURN_TERMINATE_TIMEOUT_MS + 500;
 // Turns whose commands are remembered; older turns are forgotten first.
 const INTERRUPTED_TURN_TRACKED_TURNS = 16;
+const PERSISTED_SUBAGENT_HISTORY_CONCURRENCY = 8;
 const CODEX_PROVIDER = "codex" as const;
 // These native provider identities belong to Codex, not to an older custom
 // Paseo provider. Never include them in a custom provider's legacy import scan.
@@ -3736,7 +3739,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly goalsEnabled: boolean = false,
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
-    private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly initialResumePurpose: NonNullable<
+      AgentResumeSessionOptions["purpose"]
+    > = "interactive",
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3792,6 +3797,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       return;
     }
+
+    // Interactive resume may start a goal before the caller can subscribe.
+    // Dedicated history reads use connectForHistory and do not buffer live turns.
+    if (this.resumeHandle?.sessionId && this.subscribers.size === 0) this.startupEvents ??= [];
 
     const connectionPromise = this.establishConnection();
     this.connectionPromise = connectionPromise;
@@ -3893,6 +3902,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resolvedSandboxPolicy = sandbox ?? null;
     if (sandbox?.type !== "workspaceWrite") return;
     this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(sandbox);
+  }
+
+  async connectForHistory(): Promise<void> {
+    if (this.connectionState !== "disconnected") return;
+    try {
+      // Reads through a temporary app-server that is disposed before this resolves,
+      // so the archived thread never gets an interactive writer.
+      this.stagedHistory = await this.readArchivedHistory();
+      this.connectionState = "history-ready";
+    } catch (error) {
+      await this.closeAfterConnectFailure(error);
+    }
+  }
+
+  private async closeAfterConnectFailure(error: unknown): Promise<never> {
+    try {
+      await this.close();
+    } catch (closeError) {
+      this.logger.warn(
+        { err: closeError, connectError: error },
+        "Failed to close Codex app-server after connection failure",
+      );
+    }
+    throw error;
   }
 
   private createClosedError(): Error {
@@ -4263,23 +4296,56 @@ export class CodexAppServerAgentSession implements AgentSession {
     }));
     const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
     while (queue.length > 0 && visitedThreadIds.size < 100) {
-      const next = queue.shift();
-      if (!next || visitedThreadIds.has(next.route.childThreadId)) {
-        continue;
-      }
-      visitedThreadIds.add(next.route.childThreadId);
-      this.registerSubAgentToolCall({
-        timelineItem: next.route.toolCall,
-        rawItem: { agentThreadId: next.route.childThreadId },
-        parentCallId: next.parentCallId,
-        parentSubagentId: next.parentSubagentId,
-      });
-      try {
-        const childHistory = await loadCodexThreadHistoryTimeline({
-          client,
-          threadId: next.route.childThreadId,
-          cwd: this.config.cwd ?? null,
+      const batch: Array<{
+        route: PersistedSubAgentRoute;
+        parentCallId: string | null;
+        parentSubagentId: string | null;
+      }> = [];
+      while (
+        batch.length < PERSISTED_SUBAGENT_HISTORY_CONCURRENCY &&
+        queue.length > 0 &&
+        visitedThreadIds.size < 100
+      ) {
+        const next = queue.shift();
+        if (!next || visitedThreadIds.has(next.route.childThreadId)) {
+          continue;
+        }
+        visitedThreadIds.add(next.route.childThreadId);
+        this.registerSubAgentToolCall({
+          timelineItem: next.route.toolCall,
+          rawItem: { agentThreadId: next.route.childThreadId },
+          parentCallId: next.parentCallId,
+          parentSubagentId: next.parentSubagentId,
         });
+        batch.push(next);
+      }
+
+      const results = await Promise.all(
+        batch.map(async (next) => {
+          try {
+            return {
+              next,
+              childHistory: await loadCodexThreadHistoryTimeline({
+                threadId: next.route.childThreadId,
+                cwd: this.config.cwd ?? null,
+                client,
+              }),
+              error: null,
+            };
+          } catch (error) {
+            return { next, childHistory: null, error };
+          }
+        }),
+      );
+
+      for (const { next, childHistory, error } of results) {
+        if (error || !childHistory) {
+          this.logger.trace(
+            { err: error, childThreadId: next.route.childThreadId },
+            "Failed to load persisted Codex child history",
+          );
+          continue;
+        }
         for (const entry of childHistory.timeline) {
           this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
         }
@@ -4290,11 +4356,6 @@ export class CodexAppServerAgentSession implements AgentSession {
             parentSubagentId: next.route.childThreadId,
           });
         }
-      } catch (error) {
-        this.logger.trace(
-          { err: error, childThreadId: next.route.childThreadId },
-          "Failed to load persisted Codex child history",
-        );
       }
     }
   }
@@ -7908,7 +7969,6 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
-      "interactive",
     );
     await session.connect();
     return session;
@@ -7920,6 +7980,55 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
+    const session = await this.createPersistedSession(handle, overrides, launchContext, options);
+    await session.connect();
+    return session;
+  }
+
+  async readSessionHistory(
+    handle: { sessionId: string; metadata?: Record<string, unknown> },
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const environment = buildCodexAppServerEnv(this.runtimeSettings, context?.env);
+    const spawn = await this.prepareAppServerSpawn({
+      environment,
+      goalsEnabled: false,
+      agentId: context?.agentId,
+    });
+    const session = new CodexAppServerAgentSession(
+      {
+        provider: CODEX_PROVIDER,
+        cwd: context?.cwd ?? metadata.cwd ?? process.cwd(),
+        modeId: DEFAULT_CODEX_MODE_ID,
+      },
+      handle,
+      this.logger,
+      async () => spawn(),
+      { ...this.sessionDeps(context?.env), environment },
+      false,
+      false,
+      false,
+      context?.agentId,
+    );
+    try {
+      await session.connectForHistory();
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  private async createPersistedSession(
+    handle: { sessionId: string; metadata?: Record<string, unknown> },
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
+  ): Promise<CodexAppServerAgentSession> {
     const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const merged: AgentSessionConfig = {
       ...storedConfig,
@@ -7935,7 +8044,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       agentId: launchContext?.agentId,
     });
-    const session = new CodexAppServerAgentSession(
+    return new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
@@ -7947,8 +8056,6 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
     );
-    await session.connect();
-    return session;
   }
 
   async listImportableSessions(
