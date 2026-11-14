@@ -426,9 +426,7 @@ describe("loadTranscriptHistory", () => {
       },
     ]);
 
-    expect(
-      await loadTranscriptHistory({ conversationId: "conv-unpaired", appDataDir }),
-    ).toEqual([
+    expect(await loadTranscriptHistory({ conversationId: "conv-unpaired", appDataDir })).toEqual([
       {
         item: {
           type: "tool_call",
@@ -459,9 +457,9 @@ describe("loadTranscriptHistory", () => {
       },
     ]);
 
-    expect(
-      await loadTranscriptHistory({ conversationId: "does-not-exist", appDataDir }),
-    ).toEqual([]);
+    expect(await loadTranscriptHistory({ conversationId: "does-not-exist", appDataDir })).toEqual(
+      [],
+    );
     expect(await loadTranscriptHistory({ conversationId: "../escape", appDataDir })).toEqual([]);
     expect(await loadTranscriptHistory({ conversationId: "conv:ads", appDataDir })).toEqual([]);
   });

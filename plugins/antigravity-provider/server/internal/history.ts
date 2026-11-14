@@ -107,9 +107,7 @@ export interface ResolveAntigravityAppDataDirOptions {
 }
 
 /** Resolves Antigravity CLI's app data directory matching `agy` env precedence. */
-export function resolveAntigravityAppDataDir(
-  options: ResolveAntigravityAppDataDirOptions,
-): string {
+export function resolveAntigravityAppDataDir(options: ResolveAntigravityAppDataDirOptions): string {
   const { launchEnv, sessionEnv } = options;
   const configured = firstEnvValue([sessionEnv, launchEnv], "ANTIGRAVITY_APP_DATA_DIR");
   if (configured) return configured;
