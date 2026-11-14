@@ -182,8 +182,7 @@ export function useProviderInstallation(input: {
   if (!supported || !installed) updates = { status: "hidden" };
   else if (updatesQuery.isPending || refreshUpdates.isPending) updates = { status: "loading" };
   else if (updatesQuery.isError) updates = { status: "error", message: updatesQuery.error.message };
-  else if (updatesQuery.data) updates = { status: "ready", updateCheck: updatesQuery.data };
-  else updates = { status: "hidden" };
+  else updates = { status: "ready", updateCheck: updatesQuery.data ?? null };
 
   return { state, updates, action, refresh };
 }

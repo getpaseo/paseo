@@ -290,9 +290,10 @@ holds for an hour while `inspect` reports the same version string. Report every 
 the check compares, such as Muse's build, or a CLI updated outside Paseo keeps its stale answer. `update` runs for minutes, streams output, and is aborted only when the daemon
 stops.
 
-The app shows **Update** only when a check answers `available` and the provider declares `update`.
-**Update** and **Update instructions** live in the Updates row, which needs a check. A provider
-with `update` or `updateUrl` and no check, such as Copilot or OpenCode, shows neither.
+The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
+for a provider that declares `update`, or **Update instructions** for one that declares only
+`updateUrl`, whatever the check answers and whether the provider has one. The check's answer shows
+beside the action when it has one. Copilot and OpenCode have no check, so they show **Update** alone.
 
 Write the success message for the provider's process model. A CLI that Paseo starts once per agent
 uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,

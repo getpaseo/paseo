@@ -493,8 +493,9 @@ Answers:
 Paseo shows `version`, `versions` and `message` as written and does not parse, sort or compare
 them. It reuses a `current` or `available` answer for up to an hour while `inspect` reports the
 same `version`, so include in `version` everything `checkForUpdates` compares. It keeps the last 65,536 characters of `report` output. An answer that does not match these
-shapes is an error. **Update** appears only when `checkForUpdates` answers `available` and you
-declare `update`; without `update`, Paseo offers `updateUrl` instead.
+shapes is an error. **Update** appears once `inspect` reports the CLI installed and you declare
+`update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
+offers `updateUrl` on the same terms.
 
 ### Usage sources
 

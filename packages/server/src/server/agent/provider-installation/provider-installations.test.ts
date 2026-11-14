@@ -819,6 +819,11 @@ describe("provider updates", () => {
       updateUrl: "https://example.com/update",
       canUpdate: true,
     });
+    // The update never depends on a check: this provider has none, and it still updates.
+    await expect(installations.checkForUpdates("codex")).resolves.toBeNull();
+    const done = settled(installations);
+    installations.update("codex");
+    await expect(done).resolves.toMatchObject({ operation: { status: "succeeded" } });
 
     const plain = new ProviderInstallations({
       logger: createTestLogger(),

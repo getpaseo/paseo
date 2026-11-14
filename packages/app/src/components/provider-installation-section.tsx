@@ -24,11 +24,14 @@ export type ProviderInstallationState =
   | { status: "ready"; installation: ProviderInstallation | null }
   | { status: "error"; message: string };
 
-/** `hidden` until the provider is installed, and when it cannot check for updates. */
+/**
+ * What the provider's update check knows. `hidden` until the provider is installed. A null
+ * `updateCheck` means the provider cannot check; the check only informs, and never gates Update.
+ */
 export type ProviderUpdatesState =
   | { status: "hidden" }
   | { status: "loading" }
-  | { status: "ready"; updateCheck: ProviderInstallationUpdateCheck }
+  | { status: "ready"; updateCheck: ProviderInstallationUpdateCheck | null }
   | { status: "error"; message: string };
 
 /** Running the provider's own update. Absent when the host cannot report updates. */
@@ -59,6 +62,7 @@ export function ProviderInstallationSection({
     !state.installation?.installUrl
   )
     return null;
+  const installation = state.status === "ready" ? state.installation : null;
 
   return (
     <View style={settingsStyles.section} testID="provider-installation">
@@ -69,18 +73,15 @@ export function ProviderInstallationSection({
       </View>
       <View style={settingsStyles.card}>
         <InstallationRow state={state} />
-        {updates.status !== "hidden" && state.status === "ready" ? (
+        {installation?.inspection?.status === "installed" ? (
           <UpdatesRow
             updates={updates}
-            updateUrl={state.installation?.updateUrl}
-            action={state.installation?.canUpdate ? action : undefined}
+            updateUrl={installation.updateUrl}
+            action={installation.canUpdate ? action : undefined}
           />
         ) : null}
         {action && (action.current || action.startError) ? (
-          <UpdateRunRow
-            action={action}
-            updateUrl={state.status === "ready" ? state.installation?.updateUrl : undefined}
-          />
+          <UpdateRunRow action={action} updateUrl={installation?.updateUrl} />
         ) : null}
       </View>
     </View>
@@ -178,95 +179,98 @@ function InstallationRow({ state }: { state: ProviderInstallationState }) {
   );
 }
 
+/**
+ * The update the provider offers, with what its check knows beside it. Update, or the update
+ * instructions, stay in place whatever the check says: an answer can be an hour old, and the
+ * provider's own updater reports when there is nothing newer.
+ */
 function UpdatesRow({
   updates,
   updateUrl,
   action,
 }: {
-  updates: Exclude<ProviderUpdatesState, { status: "hidden" }>;
+  updates: ProviderUpdatesState;
   updateUrl: string | undefined;
   /** Present when the provider runs its own update. */
   action: ProviderUpdateAction | undefined;
 }) {
   const { t } = useTranslation();
+  const updateCheck = updates.status === "ready" ? updates.updateCheck : null;
+  const offersUpdate = Boolean(action || updateUrl);
+  // With nothing to offer, the row waits until the check has something to say.
+  if (!offersUpdate && !updateCheck && updates.status !== "error") return null;
 
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-updates">
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {updateCheck?.status === "available"
+            ? t("settings.providers.installation.updateAvailable")
+            : t("settings.providers.installation.updates")}
+        </Text>
+        <UpdateCheckSummary updates={updates} />
+      </View>
+      <UpdateButton action={action} updateUrl={updateUrl} />
+    </View>
+  );
+}
+
+function UpdateCheckSummary({ updates }: { updates: ProviderUpdatesState }) {
+  const { t } = useTranslation();
   if (updates.status === "loading") {
     return (
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.providers.installation.updates")}</Text>
-        <View style={styles.trailing}>
-          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          <Text style={styles.value}>{t("settings.providers.installation.checking")}</Text>
-        </View>
+      <View style={styles.trailing}>
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+        <Text style={settingsStyles.rowHint}>{t("settings.providers.installation.checking")}</Text>
       </View>
     );
   }
+  if (updates.status === "hidden") return null;
   const updateCheck = updates.status === "ready" ? updates.updateCheck : null;
+  if (updates.status === "ready" && !updateCheck) return null;
   if (updateCheck?.status === "current") {
     return (
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.providers.installation.updates")}</Text>
-        <Text style={styles.value} testID="provider-updates-current">
-          {t("settings.providers.installation.upToDate")}
-        </Text>
-      </View>
+      <Text style={settingsStyles.rowHint} testID="provider-updates-current">
+        {t("settings.providers.installation.upToDate")}
+      </Text>
     );
   }
   if (updateCheck?.status === "available") {
     // Versions are opaque; drop repeats so each one keys its own line.
     const versions = [...new Set(updateCheck.versions ?? [])];
     return (
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-updates">
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>
-            {t("settings.providers.installation.updateAvailable")}
+      <>
+        {versions.map((version) => (
+          <Text
+            key={version}
+            style={styles.availableVersion}
+            selectable
+            dataSet={CODE_SURFACE_DATASET}
+            testID="provider-updates-version"
+          >
+            {version}
           </Text>
-          {versions.map((version) => (
-            <Text
-              key={version}
-              style={styles.availableVersion}
-              selectable
-              dataSet={CODE_SURFACE_DATASET}
-              testID="provider-updates-version"
-            >
-              {version}
-            </Text>
-          ))}
-          {updateCheck.message ? (
-            <Text style={settingsStyles.rowHint}>{updateCheck.message}</Text>
-          ) : null}
-        </View>
-        <AvailableUpdateButton action={action} updateUrl={updateUrl} />
-      </View>
+        ))}
+        {updateCheck.message ? (
+          <Text style={settingsStyles.rowHint}>{updateCheck.message}</Text>
+        ) : null}
+      </>
     );
   }
   // A check that threw, timed out or could not tell is never shown as up to date.
-  let message: string | undefined;
-  if (updates.status === "error") message = updates.message;
-  else if (updateCheck?.status === "unknown" || updateCheck?.status === "error")
-    message = updateCheck.message;
+  const message = updates.status === "error" ? updates.message : updateCheck?.message;
   return (
-    <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-updates">
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>
-          {t("settings.providers.installation.updatesFailed")}
-        </Text>
-        {message ? <Text style={settingsStyles.rowHint}>{message}</Text> : null}
-        {updateUrl ? (
-          <View style={styles.link}>
-            <ExternalLink
-              href={updateUrl}
-              label={t("settings.providers.installation.updateInstructions")}
-            />
-          </View>
-        ) : null}
-      </View>
-    </View>
+    <>
+      <Text style={settingsStyles.rowHint} testID="provider-updates-unchecked">
+        {t("settings.providers.installation.updatesFailed")}
+      </Text>
+      {message ? <Text style={settingsStyles.rowHint}>{message}</Text> : null}
+    </>
   );
 }
 
 /** Update runs the provider's updater; without one, the provider's update guide opens. */
-function AvailableUpdateButton({
+function UpdateButton({
   action,
   updateUrl,
 }: {
