@@ -38,7 +38,7 @@
     "tree-kill": "^1.2.2",
     "ws": "^8.14.2",
     "yaml": "^2.8.4",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/mime-types": "^3.0.1",
