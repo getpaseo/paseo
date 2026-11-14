@@ -805,7 +805,8 @@ export function createWorkerTerminalManager(
     const liveIds = new Set(listed.map((item) => item.terminal.id));
     const cachedIds = new Set([...recordsById.keys(), ...closingRecordsById.keys()]);
     for (const terminalId of cachedIds) {
-      if (!liveIds.has(terminalId))
+      const record = recordsById.get(terminalId) ?? closingRecordsById.get(terminalId);
+      if (!liveIds.has(terminalId) && record?.exitInfo === null)
         handleTerminalExitEvent({
           type: "terminalExit",
           terminalId,

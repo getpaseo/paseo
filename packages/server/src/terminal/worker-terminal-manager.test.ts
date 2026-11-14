@@ -1641,14 +1641,21 @@ it("delivers missed exits for hidden closes during adoption or confirmed retry e
     const exits: TerminalExitInfo[] = [];
     session.onExit((exit) => exits.push(exit));
     ownedManager.killTerminal(id);
-    return { info, state, exits };
+    return { info, state, exits, session };
   }
   const viaConfirmation = createClosingLaunch("via-confirmation");
   const viaAdoption = createClosingLaunch("via-adoption");
+  const observed = createClosingLaunch("observed-exit");
+  const observedExit = { exitCode: 17, signal: null, lastOutputLines: ["failed"] };
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: observed.info.id,
+    info: observedExit,
+  });
   const initialStops = worker.sentMessages.filter(
     (request) => request.type === "killTerminalAndWait",
   );
-  expect(initialStops).toHaveLength(2);
+  expect(initialStops).toHaveLength(3);
   for (const request of initialStops) {
     worker.emitWorkerMessage({
       type: "response",
@@ -1676,19 +1683,22 @@ it("delivers missed exits for hidden closes during adoption or confirmed retry e
   const unknownExit = { exitCode: null, signal: null, lastOutputLines: [] };
   expect(viaConfirmation.exits).toEqual([]);
   expect(viaAdoption.exits).toEqual([unknownExit]);
-  expect(ownedManager.getClosingTerminals?.()).toHaveLength(2);
+  expect(ownedManager.getClosingTerminals?.()).toHaveLength(3);
+  expect(observed.session.getExitInfo()).toEqual(observedExit);
 
   const retries = [
     ownedManager.killTerminalAndWait(viaConfirmation.info.id),
     ownedManager.killTerminalAndWait(viaAdoption.info.id),
+    ownedManager.killTerminalAndWait(observed.info.id),
   ];
-  for (const request of worker.sentMessages.slice(-2)) {
+  for (const request of worker.sentMessages.slice(-3)) {
     if (request.type !== "killTerminalAndWait") throw new Error("Expected close retry");
     worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
   }
   await Promise.all(retries);
   expect(viaConfirmation.exits).toEqual([unknownExit]);
   expect(viaAdoption.exits).toEqual([unknownExit]);
+  expect(observed.exits).toEqual([observedExit]);
   expect(ownedManager.getClosingTerminals?.()).toEqual([]);
   expect(ownedManager.getTerminal(viaConfirmation.info.id)).toBeUndefined();
   expect(ownedManager.getTerminal(viaAdoption.info.id)).toBeUndefined();
