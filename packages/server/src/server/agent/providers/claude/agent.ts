@@ -35,7 +35,6 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -60,9 +59,7 @@ import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
-import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
-import { mapTaskStatus } from "./subagents/task-status.js";
-import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
+import { observeReplaySubagents } from "./subagents/replay-source.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
 import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
@@ -5579,19 +5576,12 @@ class ClaudeAgentSession implements AgentSession {
   private async ingestPersistedSidechains(
     history: ClaudeReplayHistory,
   ): Promise<ClaudeReplayOwnership> {
-    const parentFacts = await readClaudeReplayParentFacts(history.parentEntries);
+    const parentFacts = history.parentFacts;
 
-    // Replay produces the same observations the live task protocol produces, then folds them
-    // with the same function, so identity and status are derived once for both paths.
-    const subagents = [];
-    for (const subagent of history.subagents) {
-      subagents.push({
-        ...subagent,
-        parentFacts: await readClaudeReplayParentFacts(subagent.entries),
-      });
-    }
+    // Indexing already collected ownership facts from every source. Only replay
+    // their visible payloads here; a facts-only pass rereads the whole transcript.
     const subagentReplay = await observeReplaySubagents({
-      subagents,
+      subagents: history.subagents,
       parent: parentFacts,
       convertEntry: (entry) => this.convertHistoryEntry(entry),
     });
@@ -6457,80 +6447,6 @@ function labelReplayedSubagentCard(
   const facts = subagentToolCalls.get(item.callId);
   if (!facts) return item;
   return { ...item, detail: buildClaudeSubagentCardDetail(facts) };
-}
-
-/**
- * Collect what the parent transcript knows about its Task calls, in the shape the shared replay
- * source consumes. The agentId scrape is kept only as a fallback for sessions recorded before
- * Claude Code wrote the meta sidecar.
- */
-async function readClaudeReplayParentFacts(
-  entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
-): Promise<ClaudeReplayParentFacts> {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
-  const linksByAgentId = new Map<string, { toolCallId: string }>();
-  const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
-  for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
-    }
-    const content = toObjectRecord(entry.message)?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toObjectRecord(value);
-      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
-      if (declaration) toolCalls.set(declaration.id, declaration.identity);
-      if (
-        entry.type !== "user" ||
-        block?.type !== "tool_result" ||
-        typeof block.tool_use_id !== "string"
-      )
-        continue;
-      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
-        outcomes.set(block.tool_use_id, {
-          status: block.is_error === true ? "failed" : "completed",
-        });
-      const agentId = readLegacyClaudeSubagentId(block.content);
-      if (agentId)
-        linksByAgentId.set(agentId, {
-          toolCallId: block.tool_use_id,
-        });
-    }
-  }
-  return {
-    toolCalls,
-    linksByAgentId,
-    outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
-  };
-}
-
-function readClaudeReplayTaskDeclaration(
-  entryType: unknown,
-  block: Record<string, unknown> | undefined,
-): {
-  id: string;
-  identity: { title?: string; description?: string };
-} | null {
-  if (
-    entryType !== "assistant" ||
-    block?.type !== "tool_use" ||
-    (block.name !== "Task" && block.name !== "Agent") ||
-    typeof block.id !== "string"
-  )
-    return null;
-  const input = toObjectRecord(block.input);
-  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-  const description = readNonEmptyString(input?.description);
-  return {
-    id: block.id,
-    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
-  };
-}
-
-function readLegacyClaudeSubagentId(content: unknown): string | undefined {
-  return /agentId:\s*([\w-]+)/.exec(JSON.stringify(content))?.[1];
 }
 
 interface ClaudeHistoryEntry {

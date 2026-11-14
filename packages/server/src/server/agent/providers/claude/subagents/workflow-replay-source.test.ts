@@ -41,6 +41,15 @@ function parentEntries(
 }
 
 describe("Claude workflow replay", () => {
+  it("does not read the parent transcript when there are no workflows", async () => {
+    const source: AsyncIterable<ClaudeWorkflowParentEntry> = {
+      [Symbol.asyncIterator]() {
+        throw new Error("Unnecessary parent transcript replay");
+      },
+    };
+    expect(await observeReplayWorkflows({ workflows: [], parentEntries: source })).toEqual([]);
+  });
+
   it("parses the persisted run summary observed from Claude Code 2.1.220", async () => {
     expect(
       parseClaudeWorkflowRun(
