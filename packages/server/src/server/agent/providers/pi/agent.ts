@@ -22,6 +22,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptInput,
   type AgentProvider,
+  type AgentRequestTiming,
   type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
@@ -198,6 +199,8 @@ export interface PiRpcAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   runtime?: PiRuntime;
   usagePollScheduler?: PiUsagePollScheduler;
+  /** Injectable wall clock for deterministic timing tests. */
+  now?: () => number;
 }
 
 interface PiPromptPayload {
@@ -257,6 +260,7 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
+  now?: () => number;
 }
 
 interface PiResumeConfig {
@@ -1202,6 +1206,11 @@ export class PiRpcAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
+  private activeAssistantStartedAt: number | null = null;
+  private activeAssistantStartInferred = false;
+  private activeAssistantFirstDeltaAt: number | null = null;
+  private activeAssistantLastDeltaAt: number | null = null;
+  private activeAssistantSawReasoning = false;
   private activeTurnStarted = false;
   private activeTurnStartedEmitted = false;
   private pendingSettledMessages: PiAgentMessage[] | null = null;
@@ -1221,6 +1230,7 @@ export class PiRpcAgentSession implements AgentSession {
   private state: PiSessionState;
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
+  private readonly now: () => number;
   private readonly usagePoller: PiUsagePoller;
   private closed = false;
   private runtimeDead = false;
@@ -1257,6 +1267,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.closeAfterHistory = options.closeAfterHistory ?? false;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
+    this.now = options.now ?? (() => Date.now());
     this.extensionHost = createPiExtensionHost(this.logger);
     this.extensionHost.follow((event) => {
       if (!this.closeController.signal.aborted) this.emit(event);
@@ -1318,6 +1329,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.usagePoller.startTurn();
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
+    this.resetAssistantTiming();
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
@@ -1368,6 +1380,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.resetAssistantTiming();
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
@@ -1567,6 +1580,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.resetAssistantTiming();
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.emit({
@@ -1591,6 +1605,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnStartedEmitted = false;
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
+      this.resetAssistantTiming();
       this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.emit({
@@ -2203,6 +2218,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     const turnId = this.activeTurnId ?? undefined;
     this.usagePoller.stopTurn();
+    this.resetAssistantTiming();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeTurnStarted = false;
@@ -2452,6 +2468,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.assistantMessageEvent.type === "text_delta") {
       // Pi-compatible runtimes may emit updates without a preceding message_start.
       this.activeAssistantMessageId ??= event.message?.responseId || randomUUID();
+      this.noteAssistantActivity(false, event.message?.timestamp);
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -2465,6 +2482,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.assistantMessageEvent.type === "thinking_delta") {
+      this.noteAssistantActivity(true, event.message?.timestamp);
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -2474,13 +2492,106 @@ export class PiRpcAgentSession implements AgentSession {
           text: event.assistantMessageEvent.delta ?? "",
         },
       });
+      return;
+    }
+    if (
+      event.assistantMessageEvent.type === "toolcall_start" ||
+      event.assistantMessageEvent.type === "toolcall_delta" ||
+      event.assistantMessageEvent.type === "toolcall_end"
+    ) {
+      this.noteAssistantActivity(false, event.message?.timestamp);
     }
   }
 
   private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = event.message.responseId || null;
+      this.beginAssistantTiming(event.message.timestamp ?? this.now());
     }
+  }
+
+  private beginAssistantTiming(baseAt = this.now(), inferred = false): void {
+    this.activeAssistantStartedAt = baseAt;
+    this.activeAssistantStartInferred = inferred;
+    this.activeAssistantFirstDeltaAt = null;
+    this.activeAssistantLastDeltaAt = null;
+    this.activeAssistantSawReasoning = false;
+  }
+
+  private noteAssistantActivity(reasoning: boolean, timestamp?: number): void {
+    const now = this.now();
+    if (this.activeAssistantStartedAt === null) {
+      this.beginAssistantTiming(timestamp ?? now, timestamp === undefined);
+    } else if (this.activeAssistantStartInferred && timestamp !== undefined) {
+      this.activeAssistantStartedAt = timestamp;
+      this.activeAssistantStartInferred = false;
+    }
+    this.activeAssistantFirstDeltaAt ??= now;
+    this.activeAssistantLastDeltaAt = now;
+    if (reasoning) this.activeAssistantSawReasoning = true;
+  }
+
+  private resetAssistantTiming(): void {
+    this.activeAssistantStartedAt = null;
+    this.activeAssistantStartInferred = false;
+    this.activeAssistantFirstDeltaAt = null;
+    this.activeAssistantLastDeltaAt = null;
+    this.activeAssistantSawReasoning = false;
+  }
+
+  // The optional-field assembly is deliberately flat; splitting it hides the
+  // wire shape without reducing real branching.
+  // eslint-disable-next-line complexity
+  private emitAssistantTiming(
+    message: Extract<PiAgentMessage, { role: "assistant" }>,
+    turnId: string | undefined,
+  ): void {
+    const stopReason = (message.stopReason ?? "").toLowerCase();
+    if (
+      stopReason === "aborted" ||
+      stopReason === "error" ||
+      (message.errorMessage?.trim().length ?? 0) > 0
+    ) {
+      this.resetAssistantTiming();
+      return;
+    }
+    if (message.timestamp !== undefined) this.activeAssistantStartInferred = false;
+    const startedAt = message.timestamp ?? this.activeAssistantStartedAt;
+    if (startedAt === null) return;
+    const firstDeltaAt = this.activeAssistantFirstDeltaAt;
+    const lastDeltaAt = this.activeAssistantLastDeltaAt;
+    const finishedAt = this.now();
+    const timing: AgentRequestTiming = {
+      scope: "request",
+      durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
+      reasoningStreamed: this.activeAssistantSawReasoning,
+    };
+    const requestId = message.responseId ?? this.activeAssistantMessageId ?? undefined;
+    if (requestId !== undefined) timing.requestId = requestId;
+    if (turnId !== undefined) timing.turnId = turnId;
+    const model = message.responseModel ?? modelToId(this.state.model) ?? undefined;
+    if (model !== undefined) timing.model = model;
+    if (firstDeltaAt !== null && !this.activeAssistantStartInferred) {
+      timing.timeToFirstTokenMs = Math.max(0, Math.round(firstDeltaAt - startedAt));
+    }
+    if (firstDeltaAt !== null && lastDeltaAt !== null) {
+      const generationMs = Math.max(0, Math.round(lastDeltaAt - firstDeltaAt));
+      if (generationMs > 0) timing.generationMs = generationMs;
+    }
+    if (typeof message.usage?.output === "number") {
+      timing.outputTokens = message.usage.output;
+    }
+    if (typeof message.usage?.reasoning === "number") {
+      timing.reasoningTokens = message.usage.reasoning;
+    }
+    if (message.stopReason !== undefined) timing.stopReason = message.stopReason;
+    this.emit({
+      type: "request_timing",
+      provider: this.provider,
+      timing,
+      ...(turnId === undefined ? {} : { turnId }),
+    });
+    this.resetAssistantTiming();
   }
 
   private handleMessageEnd(
@@ -2488,6 +2599,7 @@ export class PiRpcAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      this.emitAssistantTiming(event.message, turnId);
       this.activeAssistantMessageId = null;
       return;
     }
@@ -2559,12 +2671,14 @@ export class PiRpcAgentSession implements AgentSession {
       (errorMessage || isPiAbortedTerminalResponse(messages))
     ) {
       this.interruptingTurn.error = errorMessage ?? "Pi turn failed";
+      this.resetAssistantTiming();
       return;
     }
     this.interruptingTurn = null;
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
+    this.resetAssistantTiming();
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
@@ -2607,6 +2721,7 @@ export class PiRpcAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtime?: PiRuntime;
   private readonly usagePollScheduler?: PiUsagePollScheduler;
+  private readonly now?: () => number;
 
   constructor(options: PiRpcAgentClientOptions) {
     this.provider = PI_PROVIDER;
@@ -2615,6 +2730,7 @@ export class PiRpcAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.runtime = options.runtime;
     this.usagePollScheduler = options.usagePollScheduler;
+    this.now = options.now;
   }
 
   async createSession(
@@ -2659,6 +2775,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        now: this.now,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2746,6 +2863,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        now: this.now,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);

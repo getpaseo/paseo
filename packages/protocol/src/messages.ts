@@ -294,6 +294,7 @@ import type {
   AgentRuntimeInfo,
   AgentTimelineItem,
   AgentProviderNotice,
+  AgentRequestTiming,
   ToolCallDetail,
   ToolCallTimelineItem,
   AgentUsage,
@@ -475,6 +476,20 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+});
+
+const AgentRequestTimingSchema: z.ZodType<AgentRequestTiming> = z.object({
+  scope: z.enum(["request", "turn"]),
+  requestId: z.string().optional(),
+  turnId: z.string().optional(),
+  model: z.string().optional(),
+  timeToFirstTokenMs: z.number().optional(),
+  generationMs: z.number().optional(),
+  durationMs: z.number(),
+  outputTokens: z.number().optional(),
+  reasoningTokens: z.number().optional(),
+  reasoningStreamed: z.boolean(),
+  stopReason: z.string().optional(),
 });
 
 const McpStdioServerConfigSchema = z.object({
@@ -926,6 +941,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   /** Opaque. Changes whenever the accounts this agent reports usage for can change. */
   usageScopeKey: z.string().optional(),
   lastUsage: AgentUsageSchema.optional(),
+  /** Latest completed request/turn timing; not a live in-progress value. */
+  lastRequestTiming: AgentRequestTimingSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),

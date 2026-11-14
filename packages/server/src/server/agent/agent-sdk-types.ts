@@ -3,6 +3,7 @@ import type {
   AgentOptionSelectControl,
   AgentOptionToggleControl,
   AgentProviderNotice,
+  AgentRequestTiming,
   AgentTaskItem,
   JsonValue,
   ProviderOptions,
@@ -17,6 +18,7 @@ export type {
   AgentOptionSelectControl,
   AgentOptionToggleControl,
   AgentProviderNotice,
+  AgentRequestTiming,
   AgentTaskItem,
 };
 
@@ -415,6 +417,7 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
+  | { type: "request_timing"; provider: AgentProvider; timing: AgentRequestTiming; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {

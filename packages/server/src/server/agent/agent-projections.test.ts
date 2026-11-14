@@ -491,6 +491,74 @@ describe("toAgentPayload", () => {
     ).not.toHaveProperty("lastError");
   });
 
+  it("projects and sanitizes lastRequestTiming", () => {
+    const agent = createManagedAgent({
+      lastRequestTiming: {
+        scope: "request",
+        requestId: "response-1",
+        turnId: "turn-1",
+        model: "test-model",
+        timeToFirstTokenMs: 120,
+        generationMs: 900,
+        durationMs: 1400,
+        outputTokens: 100,
+        reasoningTokens: 20,
+        reasoningStreamed: false,
+        stopReason: "end_turn",
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+    expect(payload.lastRequestTiming).toEqual(agent.lastRequestTiming);
+    expect(payload.lastRequestTiming).not.toBe(agent.lastRequestTiming);
+  });
+
+  it("drops invalid lastRequestTiming values", () => {
+    const agent = createManagedAgent({
+      lastRequestTiming: {
+        scope: "turn",
+        durationMs: Number.NaN,
+        reasoningStreamed: true,
+      },
+    });
+
+    expect(toAgentPayload(agent).lastRequestTiming).toBeUndefined();
+  });
+
+  it("drops lastRequestTiming when TTFT or generation exceeds duration", () => {
+    for (const lastRequestTiming of [
+      {
+        scope: "request" as const,
+        durationMs: 100,
+        timeToFirstTokenMs: 101,
+        reasoningStreamed: true,
+      },
+      { scope: "request" as const, durationMs: 100, generationMs: 101, reasoningStreamed: true },
+    ]) {
+      const agent = createManagedAgent({ lastRequestTiming });
+      expect(toAgentPayload(agent).lastRequestTiming).toBeUndefined();
+    }
+  });
+
+  it("drops invalid optional timing numbers but keeps the sample", () => {
+    const agent = createManagedAgent({
+      lastRequestTiming: {
+        scope: "request",
+        durationMs: 100,
+        timeToFirstTokenMs: Number.NaN,
+        generationMs: -1,
+        outputTokens: Number.POSITIVE_INFINITY,
+        reasoningStreamed: true,
+      },
+    });
+
+    expect(toAgentPayload(agent).lastRequestTiming).toEqual({
+      scope: "request",
+      durationMs: 100,
+      reasoningStreamed: true,
+    });
+  });
+
   it("omits lastUsage when not available", () => {
     const agent = createManagedAgent({ lastUsage: undefined });
     const payload = toAgentPayload(agent);

@@ -163,9 +163,10 @@ function createSession(
   options: {
     terminateProcess?: ProcessTerminator;
     launchEnv?: Record<string, string>;
+    now?: () => number;
   } = {},
 ): ACPAgentSession {
-  const { terminateProcess, launchEnv } = options;
+  const { terminateProcess, launchEnv, now } = options;
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -186,6 +187,7 @@ function createSession(
       },
       ...(terminateProcess ? { terminateProcess } : {}),
       ...(launchEnv ? { launchEnv } : {}),
+      ...(now ? { now } : {}),
     },
   );
 }
@@ -3238,6 +3240,125 @@ describe("ACPAgentSession", () => {
       turnId,
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("emits turn timing before turn_completed and excludes tool execution gap", async () => {
+    let clock = 1_000;
+    const session = createSession({ now: () => clock });
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+    clock = 1_100;
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "hi" },
+      } as SessionUpdate,
+    });
+    clock = 1_200;
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "thinking" },
+      } as SessionUpdate,
+    });
+    clock = 1_300;
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      } as SessionUpdate,
+    });
+    clock = 1_400;
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "there" },
+      } as SessionUpdate,
+    });
+    clock = 1_500;
+    resolvePrompt({ stopReason: "end_turn", usage: { outputTokens: 5 } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const timings = events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "request_timing" }> =>
+        event.type === "request_timing",
+    );
+    expect(timings).toHaveLength(1);
+    const timing = timings[0];
+    expect(timing).toMatchObject({
+      type: "request_timing",
+      provider: "claude-acp",
+      turnId,
+      timing: {
+        scope: "turn",
+        turnId,
+        timeToFirstTokenMs: 100,
+        generationMs: 200,
+        durationMs: 500,
+        reasoningStreamed: true,
+        stopReason: "end_turn",
+      },
+    });
+    expect(timing?.timing).not.toHaveProperty("outputTokens");
+    const timingIndex = events.indexOf(timing!);
+    const completedIndex = events.findIndex((event) => event.type === "turn_completed");
+    expect(timingIndex).toBeGreaterThan(-1);
+    expect(completedIndex).toBeGreaterThan(timingIndex);
+  });
+
+  test("does not emit request timing for a cancelled turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = openPromptConnection(prompt);
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.startTurn("hello");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "partial" },
+      } as SessionUpdate,
+    });
+    resolvePrompt({ stopReason: "cancelled" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events.some((event) => event.type === "request_timing")).toBe(false);
+    expect(events.some((event) => event.type === "turn_canceled")).toBe(true);
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {

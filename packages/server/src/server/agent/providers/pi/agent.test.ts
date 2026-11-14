@@ -66,11 +66,13 @@ test("Pi RPC timeout defaults to 60 seconds and accepts an override", () => {
 function createClient(
   pi = new FakePi(),
   usagePollScheduler?: PiUsagePollScheduler,
+  now?: () => number,
 ): PiRpcAgentClient {
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
     ...(usagePollScheduler ? { usagePollScheduler } : {}),
+    ...(now ? { now } : {}),
   });
 }
 
@@ -363,6 +365,13 @@ class SessionEvents {
     return this.events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
         event.type === "usage_updated",
+    );
+  }
+
+  timingEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "request_timing" }> =>
+        event.type === "request_timing",
     );
   }
 
@@ -2420,6 +2429,225 @@ describe("PiRpcAgentSession", () => {
       usage: expect.objectContaining({ contextWindowUsedTokens: 150 }),
     });
     expect(events.turnCompletedEvents()).toHaveLength(1);
+  });
+
+  test("emits one request timing per assistant message with TTFT and generation window", async () => {
+    let clock = 1_000;
+    const pi = new FakePi();
+    const client = createClient(pi, undefined, () => clock);
+    const session = (await client.createSession(createConfig())) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-1", timestamp: 900 },
+    });
+    clock = 1_100;
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+    clock = 1_150;
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "thinking_delta", delta: "thinking" },
+    });
+    clock = 1_160;
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    clock = 1_170;
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"x":' },
+    });
+    clock = 1_180;
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-1" },
+      assistantMessageEvent: { type: "toolcall_end", contentIndex: 0 },
+    });
+    clock = 1_200;
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        responseId: "response-1",
+        responseModel: "test-model",
+        stopReason: "stop",
+        timestamp: 900,
+        usage: { output: 20, reasoning: 5 },
+      },
+    });
+
+    expect(events.timingEvents()).toEqual([
+      {
+        type: "request_timing",
+        provider: "pi",
+        turnId,
+        timing: {
+          scope: "request",
+          requestId: "response-1",
+          turnId,
+          model: "test-model",
+          timeToFirstTokenMs: 200,
+          generationMs: 80,
+          durationMs: 300,
+          outputTokens: 20,
+          reasoningTokens: 5,
+          reasoningStreamed: true,
+          stopReason: "stop",
+        },
+      },
+    ]);
+
+    await session.close();
+  });
+
+  test("emits a time-only request timing when Pi omits usage", async () => {
+    const pi = new FakePi();
+    const session = (await createClient(pi).createSession(createConfig())) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-no-usage" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-no-usage" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        responseId: "response-no-usage",
+        stopReason: "stop",
+      },
+    });
+
+    const [timing] = events.timingEvents();
+    expect(timing?.timing).toMatchObject({
+      scope: "request",
+      requestId: "response-no-usage",
+      reasoningStreamed: false,
+      stopReason: "stop",
+    });
+    expect(timing?.timing).not.toHaveProperty("outputTokens");
+    await session.close();
+  });
+
+  test("lazily starts timing when Pi omits message_start", async () => {
+    let clock = 1_000;
+    const pi = new FakePi();
+    const client = createClient(pi, undefined, () => clock);
+    const session = (await client.createSession(createConfig())) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-no-start" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+    clock = 1_200;
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        responseId: "response-no-start",
+        stopReason: "stop",
+        timestamp: 900,
+        usage: { output: 1 },
+      },
+    });
+
+    const [timing] = events.timingEvents();
+    expect(timing?.timing).toMatchObject({
+      scope: "request",
+      requestId: "response-no-start",
+      outputTokens: 1,
+      timeToFirstTokenMs: 100,
+      durationMs: 300,
+    });
+    await session.close();
+  });
+
+  test("omits TTFT when the request start is permanently unknown", async () => {
+    let clock = 1_000;
+    const pi = new FakePi();
+    const client = createClient(pi, undefined, () => clock);
+    const session = (await client.createSession(createConfig())) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-no-start-no-ts" },
+      assistantMessageEvent: { type: "text_delta", delta: "hello" },
+    });
+    clock = 1_200;
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        responseId: "response-no-start-no-ts",
+        stopReason: "stop",
+        usage: { output: 1 },
+      },
+    });
+
+    const [timing] = events.timingEvents();
+    expect(timing?.timing).toMatchObject({
+      scope: "request",
+      requestId: "response-no-start-no-ts",
+      durationMs: 200,
+      outputTokens: 1,
+    });
+    expect(timing?.timing).not.toHaveProperty("timeToFirstTokenMs");
+    await session.close();
+  });
+
+  test("does not emit request timing for an aborted assistant message", async () => {
+    const pi = new FakePi();
+    const session = (await createClient(pi).createSession(createConfig())) as PiRpcAgentSession;
+    const events = new SessionEvents(session);
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [], responseId: "response-abort" },
+    });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        responseId: "response-abort",
+        stopReason: "aborted",
+        usage: { output: 1 },
+      },
+    });
+
+    expect(events.timingEvents()).toEqual([]);
+    await session.close();
   });
 
   test("does not re-emit unchanged usage during a turn or at completion", async () => {

@@ -33,6 +33,15 @@ export interface PiToolCallContent {
 
 export type PiAssistantContent = PiTextContent | PiThinkingContent | PiToolCallContent;
 
+export interface PiUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+  totalTokens?: number;
+}
+
 export type PiAgentMessage =
   | {
       role: "user";
@@ -54,6 +63,9 @@ export type PiAgentMessage =
       responseModel?: string;
       errorMessage?: string | null;
       stopReason?: string;
+      /** Unix milliseconds when the request started, as reported by Pi. */
+      timestamp?: number;
+      usage?: PiUsage;
     }
   | {
       role: "toolResult";
@@ -157,6 +169,9 @@ export interface PiRpcResponse {
 export type PiAssistantMessageEvent =
   | { type: "text_delta"; delta?: string }
   | { type: "thinking_delta"; delta?: string }
+  | { type: "toolcall_start"; contentIndex?: number; partial?: unknown }
+  | { type: "toolcall_delta"; contentIndex?: number; delta?: string; partial?: unknown }
+  | { type: "toolcall_end"; contentIndex?: number; partial?: unknown }
   | { type: "start" | "text_start" | "text_end" | "thinking_start" | "thinking_end" | "done" };
 
 export type PiAgentSessionEvent =

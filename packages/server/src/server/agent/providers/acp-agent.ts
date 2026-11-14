@@ -82,6 +82,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type AgentRequestTiming,
   type AgentResumePurpose,
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
@@ -550,6 +551,7 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  now?: () => number;
 }
 
 export interface SpawnedACPProcess {
@@ -1031,6 +1033,7 @@ export class ACPAgentClient implements AgentClient {
       { ...config, provider: this.provider },
       {
         provider: this.provider,
+        now: this.now,
         usageProvider: this.usageProvider,
         logger: this.logger,
         runtimeSettings: this.runtimeSettings,
@@ -1089,6 +1092,7 @@ export class ACPAgentClient implements AgentClient {
     const providerOptions = ACPProviderOptionsSchema.parse(mergedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
+      now: this.now,
       usageProvider: this.usageProvider,
       logger: this.logger,
       runtimeSettings: this.runtimeSettings,
@@ -1807,6 +1811,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
+  private readonly now: () => number;
+  private turnStartedAt: number | null = null;
+  private turnFirstActivityAt: number | null = null;
+  private turnStreamStartedAt: number | null = null;
+  private turnLastActivityAt: number | null = null;
+  private turnStreamMs = 0;
+  private turnSawReasoning = false;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -1818,6 +1829,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
+    this.now = options.now ?? Date.now;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
@@ -2025,6 +2037,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
+    this.beginTurnTiming();
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
@@ -3238,15 +3251,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
         const item = this.createMessageTimelineItem("assistant_message", update);
+        if (item) this.noteTurnActivity(false);
         return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
       case "agent_thought_chunk": {
         this.fallbackAssistantMessageId = null;
         const item = this.createMessageTimelineItem("reasoning", update);
+        if (item) this.noteTurnActivity(true);
         return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
       case "tool_call":
         this.fallbackAssistantMessageId = null;
+        this.noteTurnActivity(false);
+        this.closeTurnStreamWindow();
         return [
           ...pendingUserEvents,
           ...this.handleToolCallUpdate(update.toolCallId, update, undefined),
@@ -3505,11 +3522,74 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
+  private beginTurnTiming(): void {
+    this.turnStartedAt = this.now();
+    this.turnFirstActivityAt = null;
+    this.turnStreamStartedAt = null;
+    this.turnLastActivityAt = null;
+    this.turnStreamMs = 0;
+    this.turnSawReasoning = false;
+  }
+
+  private noteTurnActivity(reasoning: boolean): void {
+    if (this.turnStartedAt === null) return;
+    const now = this.now();
+    this.turnFirstActivityAt ??= now;
+    this.turnStreamStartedAt ??= now;
+    this.turnLastActivityAt = now;
+    if (reasoning) this.turnSawReasoning = true;
+  }
+
+  private closeTurnStreamWindow(endAt = this.now()): void {
+    if (this.turnStreamStartedAt === null) return;
+    this.turnStreamMs += Math.max(0, endAt - this.turnStreamStartedAt);
+    this.turnStreamStartedAt = null;
+  }
+
+  private resetTurnTiming(): void {
+    this.turnStartedAt = null;
+    this.turnFirstActivityAt = null;
+    this.turnStreamStartedAt = null;
+    this.turnLastActivityAt = null;
+    this.turnStreamMs = 0;
+    this.turnSawReasoning = false;
+  }
+
+  private emitTurnTiming(response: PromptResponse, turnId: string): void {
+    this.closeTurnStreamWindow(this.turnLastActivityAt ?? this.now());
+    const startedAt = this.turnStartedAt;
+    if (startedAt === null) return;
+    const finishedAt = this.now();
+    const generationMs = Math.max(0, Math.round(this.turnStreamMs));
+    const timing: AgentRequestTiming = {
+      scope: "turn",
+      turnId,
+      durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
+      ...(this.turnFirstActivityAt === null
+        ? {}
+        : {
+            timeToFirstTokenMs: Math.max(0, Math.round(this.turnFirstActivityAt - startedAt)),
+          }),
+      ...(generationMs === 0 ? {} : { generationMs }),
+      reasoningStreamed: this.turnSawReasoning,
+      stopReason: response.stopReason,
+      ...(this.currentModel === null ? {} : { model: this.currentModel }),
+    };
+    this.pushEvent({
+      type: "request_timing",
+      provider: this.provider,
+      timing,
+      turnId,
+    });
+    this.resetTurnTiming();
+  }
+
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
       case "cancelled":
+        this.resetTurnTiming();
         this.synthesizeCanceledToolCalls();
         this.finishTurn({
           type: "turn_canceled",
@@ -3523,6 +3603,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "max_turn_requests":
       case "refusal":
       default:
+        this.emitTurnTiming(response, turnId);
         this.finishTurn({
           type: "turn_completed",
           provider: this.provider,
@@ -3605,6 +3686,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions(
       (pending) => event.type !== "turn_completed" || pending.turnId === event.turnId,
     );
+    this.resetTurnTiming();
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
