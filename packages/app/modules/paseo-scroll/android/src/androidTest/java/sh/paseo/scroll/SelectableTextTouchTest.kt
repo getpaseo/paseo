@@ -65,9 +65,11 @@ class SelectableTextTouchTest {
   @Test fun longPressSelectsAWordAndKeepsTheOffset() {
     val timeline = openTimeline(edge = Edge.TOP)
 
+    val word = timeline.wordAt(visibleY = EDGE_Y + 100)
+
     timeline.longPress(visibleY = EDGE_Y + 100)
 
-    assertTrue("The long press selects text", timeline.textHasSelection())
+    assertEquals("Selected text", word, timeline.selectedText())
     assertEquals("Offset after the long press", OFFSET, timeline.settledScrollY())
   }
 
@@ -107,11 +109,30 @@ class SelectableTextTouchTest {
       return focused
     }
 
-    fun textHasSelection(): Boolean {
+    fun selectedText(): String {
       awaitFrames(2)
-      var selected = false
-      instrumentation.runOnMainSync { selected = text.hasSelection() }
+      var selected = ""
+      instrumentation.runOnMainSync {
+        selected = text.text.substring(text.selectionStart, text.selectionEnd)
+      }
       return selected
+    }
+
+    /** The word under [visibleY] at the current offset. */
+    fun wordAt(visibleY: Int): String {
+      var word = ""
+      instrumentation.runOnMainSync {
+        val chars = text.text
+        val y = scroll.scrollY + visibleY - text.top
+        val offset = text.getOffsetForPosition(TOUCH_X - text.left, y.toFloat())
+        var start = offset
+        var end = offset
+        while (start > 0 && chars[start - 1].isLetterOrDigit()) start--
+        while (end < chars.length && chars[end].isLetterOrDigit()) end++
+        word = chars.substring(start, end)
+      }
+      assertTrue("The touch lands on a word", word.isNotEmpty())
+      return word
     }
 
     fun settledScrollY(): Int {
@@ -135,7 +156,7 @@ class SelectableTextTouchTest {
     private fun touch(downTime: Long, action: Int, visibleY: Int) {
       val location = IntArray(2)
       instrumentation.runOnMainSync { scroll.getLocationOnScreen(location) }
-      val x = location[0] + WIDTH / 2f
+      val x = location[0] + TOUCH_X
       val y = location[1] + visibleY.toFloat()
       val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
       instrumentation.sendPointerSync(event)
@@ -207,6 +228,7 @@ class SelectableTextTouchTest {
 
   private companion object {
     const val WIDTH = 600
+    const val TOUCH_X = WIDTH / 2f
     const val VIEWPORT = 800
     const val CONTENT_HEIGHT = 4000
     const val OFFSET = 1200
