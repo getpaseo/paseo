@@ -121,6 +121,7 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "عرض الرسالة",
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
@@ -183,6 +184,7 @@ export const ar: TranslationResources = {
       removeReview: "إزالة مرفق المراجعة",
     },
     errors: {
+      messageNotFound: "هذه الرسالة ليست في المحادثة بعد.",
       failedToSend: "فشل في إرسال الرسالة",
       failedToCreateAgent: "فشل في إنشاء الوكيل",
       noHostSelected: "لم يتم تحديد مضيف",

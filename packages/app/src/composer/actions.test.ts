@@ -477,7 +477,11 @@ describe("dispatchComposerAgentMessage", () => {
         encodeImages: passthroughEncodeImages,
         submission: stream,
       }),
-    ).rejects.toBe(rejection);
+    ).rejects.toMatchObject({
+      cause: rejection,
+      message: rejection.message,
+      clientMessageId: expect.any(String),
+    });
 
     expect(stream.head.get("agent")).toEqual([]);
     expect(stream.tail.get("agent") ?? []).toEqual([]);
@@ -497,7 +501,11 @@ describe("dispatchComposerAgentMessage", () => {
         encodeImages: passthroughEncodeImages,
         submission: stream,
       }),
-    ).rejects.toBe(transportError);
+    ).rejects.toMatchObject({
+      cause: transportError,
+      message: transportError.message,
+      clientMessageId: expect.any(String),
+    });
 
     expect(stream.tail.get("agent") ?? []).toEqual([]);
   });
@@ -520,7 +528,11 @@ describe("dispatchComposerAgentMessage", () => {
         encodeImages: passthroughEncodeImages,
         submission,
       }),
-    ).rejects.toBe(transportError);
+    ).rejects.toMatchObject({
+      cause: transportError,
+      message: transportError.message,
+      clientMessageId: expect.any(String),
+    });
   });
 
   it("surfaces an ambiguous failure even when a concurrent canonical echo was observed", async () => {
@@ -542,7 +554,11 @@ describe("dispatchComposerAgentMessage", () => {
         submission,
         activeTurnBehavior: "steer",
       }),
-    ).rejects.toBe(transportError);
+    ).rejects.toMatchObject({
+      cause: transportError,
+      message: transportError.message,
+      clientMessageId: expect.any(String),
+    });
   });
 
   it("sends text + image data + structured attachments and appends user_message to the tail when head is empty", async () => {

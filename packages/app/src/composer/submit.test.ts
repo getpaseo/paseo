@@ -1,3 +1,4 @@
+import { ComposerMessageSubmissionError } from "./submission/error";
 import { describe, expect, it, vi } from "vitest";
 import { submitAgentInput } from "./submit";
 
@@ -16,6 +17,34 @@ function createDeferredPromise<T>() {
 }
 
 describe("submitAgentInput", () => {
+  it("pairs the failed submission identity with its error", async () => {
+    const errors: Array<{ message: string | null; clientMessageId?: string }> = [];
+    const result = await submitAgentInput({
+      message: "Locate this message",
+      attachments: [],
+      isAgentRunning: false,
+      canSubmit: true,
+      queueMessage: () => {},
+      submitMessage: async () => {
+        throw new ComposerMessageSubmissionError({
+          clientMessageId: "failed-message",
+          message: "Delivery uncertain",
+          cause: new Error("Disconnected"),
+        });
+      },
+      clearDraft: () => {},
+      setUserInput: () => {},
+      setAttachments: () => {},
+      setSendError: (message, clientMessageId) => errors.push({ message, clientMessageId }),
+      setIsProcessing: () => {},
+    });
+    expect(result).toBe("failed");
+    expect(errors).toEqual([
+      { message: null, clientMessageId: undefined },
+      { message: "Delivery uncertain", clientMessageId: "failed-message" },
+    ]);
+  });
+
   it("clears the composer before an in-flight submit resolves", async () => {
     const deferred = createDeferredPromise<void>();
     const queueMessage = vi.fn();

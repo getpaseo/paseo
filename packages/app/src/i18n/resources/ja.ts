@@ -122,6 +122,7 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "メッセージを表示",
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",
@@ -184,6 +185,7 @@ export const ja: TranslationResources = {
       removeReview: "レビュー添付ファイルを削除",
     },
     errors: {
+      messageNotFound: "このメッセージはまだ会話にありません。",
       failedToSend: "メッセージの送信に失敗しました",
       failedToCreateAgent: "エージェントの作成に失敗しました",
       noHostSelected: "ホストが選択されていません",

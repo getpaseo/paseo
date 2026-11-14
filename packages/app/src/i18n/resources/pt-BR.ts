@@ -122,6 +122,7 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "Ver mensagem",
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",
@@ -184,6 +185,7 @@ export const ptBR: TranslationResources = {
       removeReview: "Remover anexo de revisão",
     },
     errors: {
+      messageNotFound: "Esta mensagem ainda não está na conversa.",
       failedToSend: "Falha ao enviar mensagem",
       failedToCreateAgent: "Falha ao criar agente",
       noHostSelected: "Nenhum host selecionado",

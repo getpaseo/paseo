@@ -148,6 +148,16 @@ export function isUnreconciledLocalUserMessage(message: UserMessageItem): boolea
   );
 }
 
+export function findSubmittedUserMessage(
+  tail: readonly StreamItem[],
+  head: readonly StreamItem[],
+  clientMessageId: string,
+): UserMessageItem | undefined {
+  const matches = (item: StreamItem): item is UserMessageItem =>
+    item.kind === "user_message" && item.clientMessageId === clientMessageId;
+  return tail.find(matches) ?? head.find(matches);
+}
+
 export function appendSubmittedUserMessage(input: {
   tail: StreamItem[];
   head: StreamItem[];

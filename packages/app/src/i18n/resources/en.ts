@@ -117,6 +117,7 @@ export const en = {
     },
   },
   composer: {
+    viewMessage: "View message",
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
@@ -179,6 +180,7 @@ export const en = {
       removeReview: "Remove review attachment",
     },
     errors: {
+      messageNotFound: "This message is not in the conversation yet.",
       failedToSend: "Failed to send message",
       failedToCreateAgent: "Failed to create agent",
       noHostSelected: "No host selected",

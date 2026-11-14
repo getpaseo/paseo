@@ -122,6 +122,7 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    viewMessage: "Ver mensaje",
     placeholders: {
       desktop: "Envíe un mensaje al agente, etiquete@fileso use/commandsy/skills",
       mobile: "Mensaje,@files,/commands",
@@ -184,6 +185,7 @@ export const es: TranslationResources = {
       removeReview: "Eliminar archivo adjunto de reseña",
     },
     errors: {
+      messageNotFound: "Este mensaje aún no está en la conversación.",
       failedToSend: "No se pudo enviar el mensaje",
       failedToCreateAgent: "No se pudo crear el agente",
       noHostSelected: "Ningún anfitrión seleccionado",
