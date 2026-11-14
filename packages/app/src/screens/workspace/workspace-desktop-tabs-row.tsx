@@ -552,7 +552,7 @@ export interface WorkspaceDesktopTabsRowProps {
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   onCreateNewTab: (input: { paneId?: string }) => void;
-  onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
+  onReorderTabs: (nextTabs: WorkspaceTabDescriptor[], movedTabId: string) => void;
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
@@ -1286,8 +1286,11 @@ function ResolvedWorkspaceDesktopTabsRow({
   }, [layout.requiresHorizontalScrollFallback]);
 
   const handleDragEnd = useCallback(
-    (nextTabs: ResolvedWorkspaceDesktopTabRowItem[]) => {
-      onReorderTabs(nextTabs.map((tab) => tab.tab));
+    (nextTabs: ResolvedWorkspaceDesktopTabRowItem[], movedTabId: string) => {
+      onReorderTabs(
+        nextTabs.map((tab) => tab.tab),
+        movedTabId,
+      );
     },
     [onReorderTabs],
   );

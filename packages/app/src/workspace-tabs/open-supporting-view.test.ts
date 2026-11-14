@@ -311,7 +311,12 @@ describe("automatic PR placement", () => {
       intent: "background",
       placement: { mode: "prefer", paneId: "explorer" },
     });
-    store.reorderTabsInPane(WORKSPACE_KEY, "explorer", ["pull_request", "files", "changes_tree"]);
+    store.reorderTabsInPane({
+      workspaceKey: WORKSPACE_KEY,
+      paneId: "explorer",
+      tabIds: ["pull_request", "files", "changes_tree"],
+      movedTabId: "pull_request",
+    });
     const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
     autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "explorer" });
     autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "side" });
