@@ -28,19 +28,98 @@ index 73466dd..8440ac9 100644
  
    auto textSize = textLayoutManager_
 diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-index 9e429b8..1d10014 100644
+index 1794b53..eca5e57 100644
 --- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
 +++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+@@ -33,8 +33,8 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+     return mOnPasteListener
+   }
+ 
 -  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
 -    val ic = super.onCreateInputConnection(outAttrs)
 +  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
 +    val ic = super.onCreateInputConnection(outAttrs) ?: return null
-@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+ 
+     EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("*/*"))
+ 
+@@ -55,6 +55,6 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+       true
+     }
+ 
 -    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+   }
+ }
+diff --git a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+index 59ff531..4f41481 100644
+--- a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
++++ b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+@@ -146,7 +146,12 @@ - (void)unregisterTextInput:(NSString *)nativeID
+ 
+         UIView *view = self.registeredViews[nativeID];
+         if (view) {
+-            [self removeDynamicSubclassing:view];
++            // A recycled view may already belong to another registration; only
++            // tear down interception while this nativeID still owns the view.
++            NSString *ownerNativeID = objc_getAssociatedObject(view, kPasteInputNativeIDKey);
++            if (!ownerNativeID || [ownerNativeID isEqualToString:nativeID]) {
++                [self removeDynamicSubclassing:view];
++            }
+             [self.registeredViews removeObjectForKey:nativeID];
+         }
+     });
+@@ -330,7 +335,12 @@ - (void)applyDynamicSubclassing:(UIView *)view config:(NSDictionary *)config nat
+ 
+     // Check if already subclassed
+     if (objc_getAssociatedObject(view, kOriginalClassKey)) {
+-        // Already subclassed, just update config
++        // Already subclassed. Fabric recycles the backing text view of an unmounted
++        // input (for example one inside a `display: none` subtree) and hands it to
++        // another TextInput, so the view must follow its current owner: otherwise
++        // paste events keep carrying the previous owner's nativeID.
++        objc_setAssociatedObject(view, kPasteInputModuleKey, self, OBJC_ASSOCIATION_ASSIGN);
++        objc_setAssociatedObject(view, kPasteInputNativeIDKey, nativeID, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+         objc_setAssociatedObject(view, kPasteInputConfigKey, config, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+         [self applySmartPunctuationSettings:view config:config];
+         return;
+@@ -425,6 +435,26 @@ - (void)removeDynamicSubclassing:(UIView *)view
+ 
+ #pragma mark - Intercepted Methods (C functions for IMP)
+ 
++/**
++ * Whether the view still sits under the component view its nativeID
++ * ("PasteInput_{tag}") was registered for. A recycled backing view keeps its
++ * associated objects, so a stale registration must not claim the paste.
++ */
++static BOOL pasteInputViewBelongsToNativeID(UIView *view, NSString *nativeID)
++{
++    NSArray<NSString *> *components = [nativeID componentsSeparatedByString:@"_"];
++    if (components.count < 2) {
++        return NO;
++    }
++    NSInteger viewTag = [components[1] integerValue];
++    for (UIView *current = view; current != nil; current = current.superview) {
++        if (current.tag == viewTag) {
++            return YES;
++        }
++    }
++    return NO;
++}
++
+ /**
+  * Intercepted paste: implementation
+  */
+@@ -435,7 +465,7 @@ static void pasteInputInterceptedPasteIMP(id self, SEL _cmd, id sender)
+     NSString *nativeID = objc_getAssociatedObject(self, kPasteInputNativeIDKey);
+     Class originalClass = objc_getAssociatedObject(self, kOriginalClassKey);
+ 
+-    if (!module || !nativeID) {
++    if (!module || !nativeID || !pasteInputViewBelongsToNativeID(self, nativeID)) {
+         if (originalClass) {
+             struct objc_super superData = {
+                 .receiver = self,
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
-index 51b9dfa..501badf 100644
+index 51b9dfa..3aad79b 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 @@ -54,17 +54,25 @@ function PasteInputIOSComponent(props, forwardedRef) {
@@ -80,7 +159,33 @@ index 51b9dfa..501badf 100644
  
    // Register/unregister with native module on mount/unmount
    (0, _react.useEffect)(() => {
-@@ -125,17 +133,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
+@@ -112,9 +120,24 @@ function PasteInputIOSComponent(props, forwardedRef) {
+       });
+     }
+   }, [disableCopyPaste, smartPunctuation]);
++  // Fabric can drop and recreate the native view while this component stays
++  // mounted (a `display: none` ancestor unmounts host views on iOS). Pasting
++  // needs focus, so re-register on focus to bind the current native view.
++  const {
++    onFocus
++  } = textInputProps;
+   return /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNative.TextInput, {
+     ref: textInputRef,
+-    ...textInputProps
++    ...textInputProps,
++    onFocus: event => {
++      if (nativeIDRef.current) {
++        _NativePasteInputModule.default.registerTextInput(nativeIDRef.current, {
++          disableCopyPaste,
++          smartPunctuation
++        });
++      }
++      onFocus?.(event);
++    }
+   });
+ }
+ function PasteInputAndroidComponent(props, forwardedRef) {
+@@ -125,17 +148,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
    const pasteTextInputRef = (0, _react.useRef)(null);
  
    // Expose the PasteTextInput ref to parent components (same as iOS)
@@ -157,7 +262,7 @@ index 5119e65..287216a 100644
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
-index 75fe015..1d3cd64 100644
+index 75fe015..b962940 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
 @@ -49,17 +49,25 @@ function PasteInputIOSComponent(props, forwardedRef) {
@@ -197,7 +302,33 @@ index 75fe015..1d3cd64 100644
  
    // Register/unregister with native module on mount/unmount
    useEffect(() => {
-@@ -120,17 +128,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
+@@ -107,9 +115,24 @@ function PasteInputIOSComponent(props, forwardedRef) {
+       });
+     }
+   }, [disableCopyPaste, smartPunctuation]);
++  // Fabric can drop and recreate the native view while this component stays
++  // mounted (a `display: none` ancestor unmounts host views on iOS). Pasting
++  // needs focus, so re-register on focus to bind the current native view.
++  const {
++    onFocus
++  } = textInputProps;
+   return /*#__PURE__*/_jsx(TextInput, {
+     ref: textInputRef,
+-    ...textInputProps
++    ...textInputProps,
++    onFocus: event => {
++      if (nativeIDRef.current) {
++        NativePasteInputModule.registerTextInput(nativeIDRef.current, {
++          disableCopyPaste,
++          smartPunctuation
++        });
++      }
++      onFocus?.(event);
++    }
+   });
+ }
+ function PasteInputAndroidComponent(props, forwardedRef) {
+@@ -120,17 +143,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
    const pasteTextInputRef = useRef(null);
  
    // Expose the PasteTextInput ref to parent components (same as iOS)
@@ -274,7 +405,7 @@ index 39bd607..f2b1d2f 100644
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
 diff --git a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx b/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
-index 12befab..0d23ca5 100644
+index 12befab..c0701c3 100644
 --- a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
 +++ b/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
 @@ -64,17 +64,25 @@ function PasteInputIOSComponent(
@@ -314,7 +445,34 @@ index 12befab..0d23ca5 100644
  
      // Register/unregister with native module on mount/unmount
      useEffect(() => {
-@@ -143,17 +151,15 @@ function PasteInputAndroidComponent(
+@@ -131,7 +139,25 @@ function PasteInputIOSComponent(
+         }
+     }, [disableCopyPaste, smartPunctuation]);
+ 
+-    return <TextInput ref={textInputRef} {...textInputProps} />;
++    // Fabric can drop and recreate the native view while this component stays
++    // mounted (a `display: none` ancestor unmounts host views on iOS). Pasting
++    // needs focus, so re-register on focus to bind the current native view.
++    const { onFocus } = textInputProps;
++    return (
++        <TextInput
++            ref={textInputRef}
++            {...textInputProps}
++            onFocus={(event) => {
++                if (nativeIDRef.current) {
++                    NativePasteInputModule.registerTextInput(
++                        nativeIDRef.current,
++                        { disableCopyPaste, smartPunctuation }
++                    );
++                }
++                onFocus?.(event);
++            }}
++        />
++    );
+ }
+ 
+ function PasteInputAndroidComponent(
+@@ -143,17 +169,15 @@ function PasteInputAndroidComponent(
      const pasteTextInputRef = useRef<PasteTextInputInstance>(null);
  
      // Expose the PasteTextInput ref to parent components (same as iOS)
