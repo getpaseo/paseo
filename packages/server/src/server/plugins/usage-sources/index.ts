@@ -142,6 +142,7 @@ export class UsageSourceRegistry {
       kind: "session",
       provider: session.provider,
       model: session.model,
+      ...(session.args ? { args: [...session.args] } : {}),
       env: session.env,
     });
     // A query that finishes after a resume must not publish the previous launch's mapping.
