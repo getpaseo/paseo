@@ -63,6 +63,7 @@ export function ProviderInstallationSection({
   )
     return null;
   const installation = state.status === "ready" ? state.installation : null;
+  const run = action ? readUpdateRun(action) : null;
 
   return (
     <View style={settingsStyles.section} testID="provider-installation">
@@ -80,9 +81,7 @@ export function ProviderInstallationSection({
             action={installation.canUpdate ? action : undefined}
           />
         ) : null}
-        {action && (action.starting || action.current || action.startError) ? (
-          <UpdateRunRow action={action} updateUrl={installation?.updateUrl} />
-        ) : null}
+        {run ? <UpdateRunRow run={run} updateUrl={installation?.updateUrl} /> : null}
       </View>
     </View>
   );
@@ -274,8 +273,8 @@ function isUpdating(action: ProviderUpdateAction): boolean {
 }
 
 /**
- * Update runs the provider's updater; without one, the provider's update guide opens. While an
- * update starts or runs the button only disables: the update's own row shows its progress.
+ * Update runs the provider's updater; without one, the provider's update guide opens. The button
+ * carries the update's progress from the tap until it settles.
  */
 function UpdateButton({
   action,
@@ -293,10 +292,12 @@ function UpdateButton({
       <Button
         variant="outline"
         onPress={action.start}
-        disabled={isUpdating(action)}
+        loading={isUpdating(action)}
         testID="provider-update-start"
       >
-        {t("settings.providers.installation.update")}
+        {isUpdating(action)
+          ? t("settings.providers.installation.updating")
+          : t("settings.providers.installation.update")}
       </Button>
     );
   if (!updateUrl) return null;
@@ -307,50 +308,47 @@ function UpdateButton({
   );
 }
 
+type UpdateRun =
+  | { status: "running"; update: ProviderInstallationUpdate }
+  | { status: "succeeded" | "failed"; update: ProviderInstallationUpdate }
+  | { status: "refused"; message: string };
+
 /**
- * What the update's row shows. From the tap until the host answers, the row already shows the
- * update starting, so its progress never moves. A refused start replaces the previous result.
+ * What the update's row shows, or null for nothing. While the update starts or runs, Update shows
+ * its progress and the row holds only the output so far. A new start clears the previous result.
  */
-function readUpdateRun(action: ProviderUpdateAction): {
-  status: ProviderInstallationUpdate["operation"]["status"];
-  update: ProviderInstallationUpdate | null;
-} {
-  if (isUpdating(action) && action.current?.operation.status !== "running") {
-    return { status: "running", update: null };
+function readUpdateRun(action: ProviderUpdateAction): UpdateRun | null {
+  const update = action.current;
+  if (isUpdating(action)) {
+    return update?.operation.status === "running" && update.output.length > 0
+      ? { status: "running", update }
+      : null;
   }
-  if (action.startError || !action.current) return { status: "failed", update: null };
-  return { status: action.current.operation.status, update: action.current };
+  if (action.startError) return { status: "refused", message: action.startError };
+  if (!update || update.operation.status === "running") return null;
+  return { status: update.operation.status, update };
 }
 
-function UpdateRunRow({
-  action,
-  updateUrl,
-}: {
-  action: ProviderUpdateAction;
-  updateUrl: string | undefined;
-}) {
+function UpdateRunRow({ run, updateUrl }: { run: UpdateRun; updateUrl: string | undefined }) {
   const { t } = useTranslation();
   const scroll = useRef<ScrollView>(null);
   const followOutput = useCallback(() => scroll.current?.scrollToEnd({ animated: false }), []);
-  const { status, update } = readUpdateRun(action);
-  let title = t("settings.providers.installation.updateFailed");
-  if (status === "running") title = t("settings.providers.installation.updating");
-  else if (status === "succeeded") title = t("settings.providers.installation.updated");
-  let message = action.startError ?? undefined;
-  if (update && update.operation.status !== "running") message = update.operation.message;
+  const update = run.status === "refused" ? null : run.update;
   const output = update?.output.map((entry) => entry.text).join("") ?? "";
+  let message: string | undefined;
+  if (run.status === "refused") message = run.message;
+  else if (run.update.operation.status !== "running") message = run.update.operation.message;
 
   return (
     <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-update-run">
       <View style={settingsStyles.rowContent}>
-        <View style={styles.status}>
+        {run.status === "running" ? null : (
           <Text style={settingsStyles.rowTitle} testID="provider-update-status">
-            {title}
+            {run.status === "succeeded"
+              ? t("settings.providers.installation.updated")
+              : t("settings.providers.installation.updateFailed")}
           </Text>
-          {status === "running" ? (
-            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          ) : null}
-        </View>
+        )}
         {message ? (
           <Text style={settingsStyles.rowHint} selectable testID="provider-update-message">
             {message}
@@ -359,7 +357,9 @@ function UpdateRunRow({
         {output ? (
           <ScrollView
             ref={scroll}
-            style={styles.output}
+            style={
+              run.status === "running" ? styles.output : [styles.output, styles.outputAfterResult]
+            }
             contentContainerStyle={styles.outputContent}
             onContentSizeChange={followOutput}
             // Android scrolls a ScrollView nested in the provider sheet only with this flag.
@@ -380,7 +380,7 @@ function UpdateRunRow({
             </Text>
           </ScrollView>
         ) : null}
-        {status === "failed" && updateUrl ? (
+        {(run.status === "failed" || run.status === "refused") && updateUrl ? (
           <View style={styles.link}>
             <ExternalLink
               href={updateUrl}
@@ -396,9 +396,11 @@ function UpdateRunRow({
 const styles = StyleSheet.create((theme) => ({
   output: {
     maxHeight: 240,
-    marginTop: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface0,
+  },
+  outputAfterResult: {
+    marginTop: theme.spacing[2],
   },
   outputContent: {
     padding: theme.spacing[3],
@@ -413,13 +415,6 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
-  },
-  status: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    // The small spinner's height on every platform, so the line keeps its height when it settles.
-    minHeight: 20,
   },
   trailing: {
     flexDirection: "row",
