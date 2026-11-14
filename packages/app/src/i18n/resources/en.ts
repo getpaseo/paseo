@@ -1728,7 +1728,7 @@ export const en = {
         },
         providers: {
           label: "Providers",
-          title: "Your agents",
+          title: "Your providers",
           description: "Paseo runs the agent CLIs already on this computer",
         },
         projects: {
@@ -3142,6 +3142,22 @@ export const en = {
     providers: {
       title: "Providers",
       addProvider: "Add provider",
+      list: {
+        add: "Provider",
+        updatingTo: "Updating to {{version}}...",
+      },
+      detail: {
+        backToProviders: "Back to providers",
+        notOnHost: "This provider isn't on this host",
+        enabled: "Enabled",
+        unavailableTitle: "{{name}} isn't available",
+        troubleshooting: "Troubleshooting",
+        status: "Provider status",
+        checked: "Checked {{time}}",
+        diagnosticReport: "Diagnostic report",
+        dangerZone: "Danger zone",
+        removeHint: "Deletes this provider from config.json",
+      },
       providerDetails: "{{name}} provider details",
       enableProvider: "Enable {{name}}",
       unavailable: "Connect to this host to see providers",
@@ -3183,6 +3199,7 @@ export const en = {
         retrying: "Retrying...",
         noSearchMatches: "No models match your search",
         noneDetected: "No models detected",
+        noCustom: "No custom models",
         discovered: "Discovered",
         custom: "Custom models",
         updated: "Updated {{time}}",

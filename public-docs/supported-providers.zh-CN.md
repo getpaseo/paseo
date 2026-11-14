@@ -95,13 +95,13 @@ Paseo MCP 工具和引导功能不可用。你自己为 `agy` 配置的 MCP 服�
 
 ### fx {#fx}
 
-在 daemon 主机上[安装 fx](https://fx.sh/docs/getting-started/installation)，并[连接一个模型提供方](https://fx.sh/docs/getting-started/authentication)，例如运行 `fx login`。在 **设置 → Hosts → 你的主机 → Providers** 中，在目录里找到 **fx** 并选择 **Add**。Paseo 会启动 `fx acp`，并使用你的 fx 凭据和设置。在 fx 拿到凭据之前，该 provider 会显示 fx 给出的登录提示。
+在 daemon 主机上[安装 fx](https://fx.sh/docs/getting-started/installation)，并[连接一个模型提供方](https://fx.sh/docs/getting-started/authentication)，例如运行 `fx login`。在 **设置 → Hosts → 你的主机 → Providers** 中，选择 **+ Provider**，找到 **fx** 并选择 **添加**。Paseo 会启动 `fx acp`，并使用你的 fx 凭据和设置。在 fx 拿到凭据之前，该 provider 会显示 fx 给出的登录提示。
 
 模型列表来自当前的 fx 提供方，运行 `fx provider` 可以更改新 Agent 使用的列表。更改 Agent 的权限模式也会更改 fx 保存的权限模式。fx 支持的功能见 [fx 的 ACP 指南](https://fx.sh/docs/using-fx/acp)。如果 `fx` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers)，并在参数中保留 `acp`。
 
 ### Hoplite {#hoplite}
 
-在 daemon 主机上安装 [Hoplite CLI](https://hoplite.sh/docs/cli) 并运行 `hoplite login`。在 **设置 → Hosts → 你的主机 → Providers** 中，在目录里找到 **Hoplite** 并选择 **添加**。Paseo 会通过通用 ACP 适配器启动 `hoplite acp`。
+在 daemon 主机上安装 [Hoplite CLI](https://hoplite.sh/docs/cli) 并运行 `hoplite login`。在 **设置 → Hosts → 你的主机 → Providers** 中，选择 **+ Provider**，找到 **Hoplite** 并选择 **添加**。Paseo 会通过通用 ACP 适配器启动 `hoplite acp`。
 
 Hoplite 在云端工作区中运行 Agent。请打开一个关联了 Hoplite 项目的仓库，或者设置 `agents.providers.hoplite.env.HOPLITE_PROJECT_ID`，在所有地方使用同一个项目。如果既没有关联的仓库也没有固定的项目，发现过程会报告 `No Hoplite project`。你的本地文件和 Paseo 的回环 MCP 工具在该云端工作区中不可用。
 

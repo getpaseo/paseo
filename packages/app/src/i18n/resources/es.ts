@@ -1749,7 +1749,7 @@ export const es: TranslationResources = {
         },
         providers: {
           label: "Proveedores",
-          title: "Tus agentes",
+          title: "Tus proveedores",
           description: "Paseo usa las CLI de agentes que ya están en este ordenador",
         },
         projects: {
@@ -3076,6 +3076,22 @@ export const es: TranslationResources = {
     providers: {
       title: "Proveedores",
       addProvider: "Agregar proveedor",
+      list: {
+        add: "Proveedor",
+        updatingTo: "Actualizando a {{version}}...",
+      },
+      detail: {
+        backToProviders: "Volver a proveedores",
+        notOnHost: "Este proveedor no está en este host",
+        enabled: "Activado",
+        unavailableTitle: "{{name}} no está disponible",
+        troubleshooting: "Solución de problemas",
+        status: "Estado del proveedor",
+        checked: "Comprobado {{time}}",
+        diagnosticReport: "Informe de diagnóstico",
+        dangerZone: "Zona de peligro",
+        removeHint: "Elimina este proveedor de config.json",
+      },
       providerDetails: "Detalles del proveedor{{name}}",
       enableProvider: "Habilitar{{name}}",
       unavailable: "Conéctese a este host para ver proveedores",
@@ -3117,6 +3133,7 @@ export const es: TranslationResources = {
         retrying: "Reintentando...",
         noSearchMatches: "Ningún modelo coincide con tu búsqueda",
         noneDetected: "No se detectaron modelos",
+        noCustom: "No hay modelos personalizados",
         discovered: "descubierto",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",

@@ -1720,7 +1720,7 @@ export const ja: TranslationResources = {
         },
         providers: {
           label: "プロバイダー",
-          title: "エージェント",
+          title: "プロバイダー",
           description: "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います",
         },
         projects: {
@@ -3044,6 +3044,22 @@ export const ja: TranslationResources = {
     providers: {
       title: "プロバイダー",
       addProvider: "プロバイダーを追加",
+      list: {
+        add: "プロバイダー",
+        updatingTo: "{{version}} に更新中...",
+      },
+      detail: {
+        backToProviders: "プロバイダーに戻る",
+        notOnHost: "このホストにはこのプロバイダーがありません",
+        enabled: "有効",
+        unavailableTitle: "{{name}} は利用できません",
+        troubleshooting: "トラブルシューティング",
+        status: "プロバイダーの状態",
+        checked: "{{time}}に確認",
+        diagnosticReport: "診断レポート",
+        dangerZone: "危険な操作",
+        removeHint: "このプロバイダーを config.json から削除します",
+      },
       providerDetails: "{{name}}プロバイダーの詳細",
       enableProvider: "{{name}}を有効にする",
       unavailable: "プロバイダーを見るにはこのホストに接続してください",
@@ -3085,6 +3101,7 @@ export const ja: TranslationResources = {
         retrying: "再試行中...",
         noSearchMatches: "検索に一致するモデルがありません",
         noneDetected: "モデルが検出されませんでした",
+        noCustom: "カスタムモデルはありません",
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",

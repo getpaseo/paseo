@@ -23,6 +23,7 @@ import {
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
@@ -73,6 +74,7 @@ export interface SheetHeader {
 const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFill };
 const NATIVE_DIALOG_SNAP_POINTS = ["100%"];
+const HEADER_ICON_SIZE = 16;
 
 const styles = StyleSheet.create((theme) => ({
   nativeDialogSurface: {
@@ -136,6 +138,15 @@ const styles = StyleSheet.create((theme) => ({
   closeButton: {
     padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
+  },
+  headerIconButtonInactive: {
+    opacity: theme.opacity[50],
+  },
+  headerIconBox: {
+    width: HEADER_ICON_SIZE,
+    height: HEADER_ICON_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
   },
   // Without a header the close button floats over the card's top-right corner.
   floatingClose: {
@@ -345,31 +356,55 @@ function SheetContent({ style, children }: { style: StyleProp<ViewStyle>; childr
 
 /**
  * An icon action in a sheet header's trailing rail, drawn like the Close button so a header's
- * actions line up with it at one size. Pass it through `SheetHeader.actions`.
+ * actions line up with it at one size. Pass it through `SheetHeader.actions`. Like `Button`, a
+ * loading action shows a spinner in place of its icon and, like a disabled one, is dimmed and
+ * cannot be pressed.
  */
 export function SheetHeaderIconButton({
   icon: Icon,
   accessibilityLabel,
   onPress,
+  loading = false,
+  disabled = false,
   testID,
 }: {
   icon: LucideIcon;
   accessibilityLabel: string;
   onPress: () => void;
+  loading?: boolean;
+  disabled?: boolean;
   testID?: string;
 }) {
   const { theme } = useUnistyles();
+  const inactive = disabled || loading;
+  const style = useMemo(
+    () => [styles.closeButton, inactive && styles.headerIconButtonInactive],
+    [inactive],
+  );
+  const accessibilityState = useMemo(
+    () => ({ disabled: inactive, busy: loading }),
+    [inactive, loading],
+  );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={styles.closeButton}
+      accessibilityState={accessibilityState}
+      disabled={inactive}
+      style={style}
       onPress={onPress}
       testID={testID}
     >
-      {({ pressed }) => (
-        <Icon size={16} color={pressed ? theme.colors.foreground : theme.colors.foregroundMuted} />
-      )}
+      {({ pressed }) => {
+        const color = pressed ? theme.colors.foreground : theme.colors.foregroundMuted;
+        if (!loading) return <Icon size={HEADER_ICON_SIZE} color={color} />;
+        // The spinner sits in the icon's box, so the header does not move while it runs.
+        return (
+          <View style={styles.headerIconBox}>
+            <LoadingSpinner size={HEADER_ICON_SIZE} color={color} />
+          </View>
+        );
+      }}
     </Pressable>
   );
 }
@@ -539,6 +574,11 @@ export interface AdaptiveModalSheetProps {
    * corner, and the compact sheet closes from its handle.
    */
   header?: SheetHeader;
+  /**
+   * Leave out the header's close button when `header.back` is the only way out, as for a sheet
+   * that stands in for a page of the surface beneath it. Escape still closes the sheet.
+   */
+  showCloseButton?: boolean;
   visible: boolean;
   onClose: () => void;
   onDismiss?: () => void;
@@ -569,6 +609,7 @@ export interface AdaptiveModalSheetProps {
  */
 function CompactSheetBody({
   header,
+  showCloseButton,
   onClose,
   testID,
   footer,
@@ -579,6 +620,7 @@ function CompactSheetBody({
   children,
 }: {
   header?: SheetHeader;
+  showCloseButton: boolean;
   onClose: () => void;
   testID?: string;
   footer: ReactNode;
@@ -608,7 +650,14 @@ function CompactSheetBody({
   );
   return (
     <SheetVisibleFrame footer={footerView}>
-      {header ? <SheetHeaderView header={header} onClose={onClose} testID={testID} /> : null}
+      {header ? (
+        <SheetHeaderView
+          header={header}
+          onClose={onClose}
+          showCloseButton={showCloseButton}
+          testID={testID}
+        />
+      ) : null}
       <View style={[styles.compactStaticContent, bodyStyle]}>
         {scrollable ? (
           <ScrollView
@@ -635,6 +684,7 @@ function CompactSheetBody({
 
 export function AdaptiveModalSheet({
   header,
+  showCloseButton = true,
   visible,
   onClose,
   onDismiss,
@@ -762,6 +812,7 @@ export function AdaptiveModalSheet({
         <OverlayLayerProvider layer={modalLayer}>
           <CompactSheetBody
             header={header}
+            showCloseButton={showCloseButton}
             onClose={onClose}
             testID={testID}
             footer={footerView}
@@ -781,7 +832,9 @@ export function AdaptiveModalSheet({
     desktopHeight == null ? styles.desktopStaticContent : styles.compactStaticContent;
   const cardInner = (
     <OverlayLayerProvider layer={modalLayer}>
-      {header ? <SheetHeaderView header={header} onClose={onClose} /> : null}
+      {header ? (
+        <SheetHeaderView header={header} onClose={onClose} showCloseButton={showCloseButton} />
+      ) : null}
       <View style={[scrollable ? styles.desktopScrollContainer : desktopStaticStyle, bodyStyle]}>
         {scrollable ? (
           <ScrollView

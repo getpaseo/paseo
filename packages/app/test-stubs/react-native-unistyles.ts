@@ -1,9 +1,13 @@
+import { createElement, type ComponentType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
 const testTheme = {
   colorScheme: "light",
+  // The light theme's colours, so a `withUnistyles` mapping finds every key it reads, with the
+  // values below pinned so a test can name the colour it expects.
   colors: {
+    ...lightTheme.colors,
     syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
@@ -142,7 +146,23 @@ export const StyleSheet = {
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+type ThemeMapping = (theme: typeof testTheme, rt: object) => Record<string, unknown>;
+
+/**
+ * Applies the theme mapping and `uniProps` the way the runtime does: mapped props first, then
+ * `uniProps`, then the props the caller passed, so components that read colours through the
+ * theme get real values instead of undefined.
+ */
+export const withUnistyles = <T>(Component: T, mapping?: ThemeMapping): T => {
+  function Unistyled({ uniProps, ...props }: { uniProps?: ThemeMapping }) {
+    return createElement(Component as ComponentType<Record<string, unknown>>, {
+      ...mapping?.(testTheme, {}),
+      ...uniProps?.(testTheme, {}),
+      ...props,
+    });
+  }
+  return Unistyled as T;
+};
 
 export const useUnistyles = () => ({
   theme: testTheme,

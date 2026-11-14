@@ -97,7 +97,7 @@ async function hasFocusWithin(locator: Locator): Promise<boolean> {
 async function expectProviderSettingsVisible(page: Page) {
   await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Add model" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Diagnostic", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Diagnostic report" })).toBeVisible();
 }
 
 async function exerciseProviderSettingsStack(page: Page) {
@@ -109,7 +109,7 @@ async function exerciseProviderSettingsStack(page: Page) {
   await expect(page.getByPlaceholder("e.g. openai/gpt-5")).not.toBeVisible({ timeout: 10_000 });
   await expectProviderSettingsVisible(page);
 
-  await page.getByRole("button", { name: "Diagnostic", exact: true }).click();
+  await page.getByRole("button", { name: "Diagnostic report" }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Refresh diagnostic/ }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
@@ -118,7 +118,7 @@ async function exerciseProviderSettingsStack(page: Page) {
 
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expectProviderSettingsVisible(page);
-  await expect(page.getByText("Updated just now", { exact: true })).toBeVisible({
+  await expect(page.getByText("Checked just now", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
 }

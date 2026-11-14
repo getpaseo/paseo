@@ -7,6 +7,7 @@ import {
   buildOpenProjectRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
+  buildProviderSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
   type HostSectionSlug,
@@ -39,7 +40,8 @@ export type SettingsView =
   | { kind: "root" }
   | { kind: "section"; section: SettingsSectionSlug }
   | { kind: "host"; serverId: string; section: HostSectionSlug }
-  | { kind: "project"; serverId: string; projectId: string };
+  | { kind: "project"; serverId: string; projectId: string }
+  | { kind: "provider"; serverId: string; providerId: string };
 
 export function openHostOverview(serverId: string): void {
   router.push(buildSettingsHostSectionRoute(serverId, "host"));
@@ -47,6 +49,10 @@ export function openHostOverview(serverId: string): void {
 
 export function openProjectSettings(serverId: string, projectId: string): void {
   router.push(buildProjectSettingsRoute(serverId, projectId));
+}
+
+export function openProviderSettings(serverId: string, providerId: string): void {
+  router.push(buildProviderSettingsRoute(serverId, providerId));
 }
 
 export function returnFromSettings(view: SettingsView): void {
@@ -69,5 +75,6 @@ export function returnFromSettings(view: SettingsView): void {
   let parent: Href = buildSettingsRoute();
   if (view.kind === "plugin") parent = buildSettingsHostSectionRoute(view.serverId, "plugins");
   if (view.kind === "project") parent = buildProjectsSettingsRoute(view.serverId);
+  if (view.kind === "provider") parent = buildSettingsHostSectionRoute(view.serverId, "providers");
   router.dismissTo(parent as Href);
 }

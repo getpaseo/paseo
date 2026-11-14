@@ -1685,7 +1685,7 @@ export const zhCN: TranslationResources = {
         },
         providers: {
           label: "提供方",
-          title: "你的代理",
+          title: "你的提供方",
           description: "Paseo 使用这台电脑上已安装的代理 CLI",
         },
         projects: {
@@ -2976,6 +2976,22 @@ export const zhCN: TranslationResources = {
     providers: {
       title: "Providers",
       addProvider: "添加 Provider",
+      list: {
+        add: "Provider",
+        updatingTo: "正在更新到 {{version}}...",
+      },
+      detail: {
+        backToProviders: "返回 Provider 列表",
+        notOnHost: "此 Host 上没有这个 Provider",
+        enabled: "已启用",
+        unavailableTitle: "{{name}} 不可用",
+        troubleshooting: "故障排查",
+        status: "Provider 状态",
+        checked: "{{time}}检查",
+        diagnosticReport: "诊断报告",
+        dangerZone: "危险操作",
+        removeHint: "从 config.json 中删除此 Provider",
+      },
       providerDetails: "{{name}} Provider 详情",
       enableProvider: "启用 {{name}}",
       unavailable: "连接到这个 Host 以查看 Providers",
@@ -3017,6 +3033,7 @@ export const zhCN: TranslationResources = {
         retrying: "正在重试...",
         noSearchMatches: "没有匹配搜索的 Model",
         noneDetected: "未检测到 Model",
+        noCustom: "没有自定义模型",
         discovered: "已发现",
         custom: "自定义 Models",
         updated: "已更新 {{time}}",

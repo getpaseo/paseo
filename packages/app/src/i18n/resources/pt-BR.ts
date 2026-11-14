@@ -1734,7 +1734,7 @@ export const ptBR: TranslationResources = {
         },
         providers: {
           label: "Provedores",
-          title: "Seus agentes",
+          title: "Seus provedores",
           description: "O Paseo usa as CLIs de agentes já instaladas neste computador",
         },
         projects: {
@@ -3057,6 +3057,22 @@ export const ptBR: TranslationResources = {
     providers: {
       title: "Provedores",
       addProvider: "Adicionar provedor",
+      list: {
+        add: "Provedor",
+        updatingTo: "Atualizando para {{version}}...",
+      },
+      detail: {
+        backToProviders: "Voltar para provedores",
+        notOnHost: "Este provedor não está neste host",
+        enabled: "Ativado",
+        unavailableTitle: "{{name}} não está disponível",
+        troubleshooting: "Solução de problemas",
+        status: "Status do provedor",
+        checked: "Verificado {{time}}",
+        diagnosticReport: "Relatório de diagnóstico",
+        dangerZone: "Zona de perigo",
+        removeHint: "Exclui este provedor do config.json",
+      },
       providerDetails: "Detalhes do provedor {{name}}",
       enableProvider: "Ativar {{name}}",
       unavailable: "Conecte-se a este host para ver provedores",
@@ -3098,6 +3114,7 @@ export const ptBR: TranslationResources = {
         retrying: "Tentando novamente...",
         noSearchMatches: "Nenhum modelo corresponde à sua busca",
         noneDetected: "Nenhum modelo detectado",
+        noCustom: "Nenhum modelo personalizado",
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",

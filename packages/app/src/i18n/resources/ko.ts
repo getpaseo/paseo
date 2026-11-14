@@ -1713,7 +1713,7 @@ export const ko: TranslationResources = {
         },
         providers: {
           label: "제공자",
-          title: "에이전트",
+          title: "제공자",
           description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
         },
         projects: {
@@ -3029,6 +3029,22 @@ export const ko: TranslationResources = {
     providers: {
       title: "프로바이더",
       addProvider: "프로바이더 추가",
+      list: {
+        add: "프로바이더",
+        updatingTo: "{{version}}(으)로 업데이트 중...",
+      },
+      detail: {
+        backToProviders: "프로바이더로 돌아가기",
+        notOnHost: "이 호스트에 없는 프로바이더입니다",
+        enabled: "사용",
+        unavailableTitle: "{{name}}을(를) 사용할 수 없습니다",
+        troubleshooting: "문제 해결",
+        status: "프로바이더 상태",
+        checked: "{{time}} 확인됨",
+        diagnosticReport: "진단 보고서",
+        dangerZone: "위험 구역",
+        removeHint: "config.json에서 이 프로바이더를 삭제합니다",
+      },
       providerDetails: "{{name}} 프로바이더 세부 정보",
       enableProvider: "{{name}} 활성화",
       unavailable: "프로바이더를 보려면 이 호스트에 연결하세요",
@@ -3071,6 +3087,7 @@ export const ko: TranslationResources = {
         retrying: "다시 시도 중...",
         noSearchMatches: "검색과 일치하는 모델이 없습니다",
         noneDetected: "감지된 모델이 없습니다",
+        noCustom: "사용자 지정 모델 없음",
         discovered: "발견됨",
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",

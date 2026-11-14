@@ -1747,7 +1747,7 @@ export const fr: TranslationResources = {
         },
         providers: {
           label: "Fournisseurs",
-          title: "Vos agents",
+          title: "Vos fournisseurs",
           description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
         },
         projects: {
@@ -3083,6 +3083,22 @@ export const fr: TranslationResources = {
     providers: {
       title: "Fournisseurs",
       addProvider: "Ajouter un fournisseur",
+      list: {
+        add: "Fournisseur",
+        updatingTo: "Mise à jour vers {{version}}…",
+      },
+      detail: {
+        backToProviders: "Retour aux fournisseurs",
+        notOnHost: "Ce fournisseur n'est pas sur cet hôte",
+        enabled: "Activé",
+        unavailableTitle: "{{name}} n'est pas disponible",
+        troubleshooting: "Dépannage",
+        status: "État du fournisseur",
+        checked: "Vérifié {{time}}",
+        diagnosticReport: "Rapport de diagnostic",
+        dangerZone: "Zone de danger",
+        removeHint: "Supprime ce fournisseur de config.json",
+      },
       providerDetails: "Détails du fournisseur {{name}}",
       enableProvider: "Activer {{name}}",
       unavailable: "Connectez-vous à cet hôte pour voir les fournisseurs",
@@ -3125,6 +3141,7 @@ export const fr: TranslationResources = {
         retrying: "Nouvelle tentative…",
         noSearchMatches: "Aucun modèle ne correspond à votre recherche",
         noneDetected: "Aucun modèle détecté",
+        noCustom: "Aucun modèle personnalisé",
         discovered: "Détectés",
         custom: "Modèles personnalisés",
         updated: "Mis à jour {{time}}",

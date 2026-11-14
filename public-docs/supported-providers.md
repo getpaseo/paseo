@@ -107,8 +107,8 @@ The in-app catalog is the canonical, version-pinned source. Anything not listed 
 
 [Install fx](https://fx.sh/docs/getting-started/installation) on your daemon host and
 [connect a provider](https://fx.sh/docs/getting-started/authentication), for example with
-`fx login`. In **Settings → Hosts → your host → Providers**, find **fx** in the catalog and
-choose **Add**. Paseo launches `fx acp` and uses your fx credentials and settings. Until fx has
+`fx login`. In **Settings → Hosts → your host → Providers**, select **+ Provider**, find **fx**
+and choose **Add**. Paseo launches `fx acp` and uses your fx credentials and settings. Until fx has
 credentials, the provider reports the sign-in message from fx.
 
 The model list comes from your active fx provider, so run `fx provider` to change the list a new
@@ -120,8 +120,8 @@ the arguments.
 ### Hoplite
 
 Install the [Hoplite CLI](https://hoplite.sh/docs/cli) on your daemon host and run
-`hoplite login`. In **Settings → Hosts → your host → Providers**, find **Hoplite**
-in the catalog and choose **Add**. Paseo launches `hoplite acp` through the generic ACP adapter.
+`hoplite login`. In **Settings → Hosts → your host → Providers**, select **+ Provider**, find
+**Hoplite** and choose **Add**. Paseo launches `hoplite acp` through the generic ACP adapter.
 
 Hoplite runs the agent in a cloud workspace. Open a repository linked to a Hoplite project,
 or set `agents.providers.hoplite.env.HOPLITE_PROJECT_ID` to use one project everywhere.

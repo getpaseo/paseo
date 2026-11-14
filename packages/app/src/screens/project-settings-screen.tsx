@@ -5,7 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
+import { MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import type {
   PaseoConfigRaw,
@@ -29,6 +29,7 @@ import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/components/settings/headings/settings-group";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
+import { SettingsBackLink, SettingsDetailHeader } from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
@@ -170,16 +171,11 @@ function NoEditableTarget({
 function BackToProjectsButton({ onPress }: { onPress: () => void }) {
   const { t } = useTranslation();
   return (
-    <Button
-      testID="project-settings-back-link"
-      accessibilityLabel={t("settings.project.backToProjects")}
+    <SettingsBackLink
+      label={t("settings.project.backToProjects")}
       onPress={onPress}
-      variant="ghost"
-      leftIcon={ArrowLeft}
-      style={styles.backButton}
-    >
-      {t("settings.project.backToProjects")}
-    </Button>
+      testID="project-settings-back-link"
+    />
   );
 }
 
@@ -260,33 +256,51 @@ function ProjectSettingsBody({
   const handleReload = useCallback(() => {
     void readQuery.refetch();
   }, [readQuery]);
+  const backLink = useMemo(
+    () =>
+      showBackToProjects
+        ? {
+            label: t("settings.project.backToProjects"),
+            onPress: onBackToProjects,
+            testID: "project-settings-back-link",
+          }
+        : undefined,
+    [onBackToProjects, showBackToProjects, t],
+  );
+  const titleIcon = useMemo(
+    () => (
+      <ProjectTitleIcon
+        iconDataUri={projectIconDataUri}
+        projectName={selectedHost.projectName}
+        projectViewKey={project.viewKey}
+      />
+    ),
+    [project.viewKey, projectIconDataUri, selectedHost.projectName],
+  );
+  const editButton = useMemo(
+    () => (
+      <Pressable
+        testID="project-edit-button"
+        accessibilityRole="button"
+        accessibilityLabel={t("settings.project.edit.title")}
+        onPress={openEditSheet}
+        hitSlop={8}
+        style={styles.editButton}
+      >
+        <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
+      </Pressable>
+    ),
+    [openEditSheet, t],
+  );
 
   return (
     <View role="main" style={styles.body}>
-      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
-
-      <View style={styles.headerBlock}>
-        <View style={styles.titleRow}>
-          <ProjectTitleIcon
-            iconDataUri={projectIconDataUri}
-            projectName={selectedHost.projectName}
-            projectViewKey={project.viewKey}
-          />
-          <Text style={styles.projectTitle} numberOfLines={1}>
-            {selectedHost.projectName}
-          </Text>
-          <Pressable
-            testID="project-edit-button"
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.project.edit.title")}
-            onPress={openEditSheet}
-            hitSlop={8}
-            style={styles.editButton}
-          >
-            <Pencil size={ICON_SIZE} color={styles.iconColor.color} />
-          </Pressable>
-        </View>
-      </View>
+      <SettingsDetailHeader
+        back={backLink}
+        icon={titleIcon}
+        title={selectedHost.projectName}
+        trailing={editButton}
+      />
 
       <ProjectEditSheet
         // A new instance per open seeds the form from the project as it stands now.
@@ -1107,26 +1121,6 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     padding: theme.spacing[4],
     gap: theme.spacing[2],
-  },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 0,
-  },
-  headerBlock: {
-    marginTop: theme.spacing[2],
-    marginBottom: theme.spacing[4],
-    gap: theme.spacing[2],
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  projectTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-    flexShrink: 1,
   },
   editButton: {
     padding: theme.spacing[1],

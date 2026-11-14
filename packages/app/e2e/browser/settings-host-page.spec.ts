@@ -15,6 +15,9 @@ import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon
 import { getServerId } from "../support/helpers/server-id";
 import {
   expectSettingsHeader,
+  expectProviderNotOnHost,
+  expectProviderPageLoaded,
+  gotoProviderPage,
   openSettingsHost,
   openHostSection,
   expectHostLabelDisplayed,
@@ -259,6 +262,20 @@ test.describe("Settings host page", () => {
     await openHostSection(page, serverId, "host");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
+  });
+});
+
+test.describe("provider page from its URL", () => {
+  test("loads a provider's page on a cold visit", async ({ page }) => {
+    await gotoAppShell(page);
+    await gotoProviderPage(page, getServerId(), "claude");
+    await expectProviderPageLoaded(page, "Claude");
+  });
+
+  test("says a provider the host doesn't have isn't on this host", async ({ page }) => {
+    await gotoAppShell(page);
+    await gotoProviderPage(page, getServerId(), "not-a-provider");
+    await expectProviderNotOnHost(page);
   });
 });
 
