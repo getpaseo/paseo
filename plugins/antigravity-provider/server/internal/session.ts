@@ -13,7 +13,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
-import { PromptFiles } from "./prompt.js";
+import { commands, PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
@@ -74,7 +74,7 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    this.emit({ type: "session.commands", sessionId: this.options.id, commands });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -84,8 +84,8 @@ export class Session {
         "Antigravity already has an active turn; wait for it to finish",
         "TURN_ACTIVE",
       );
-    const { text, nativeText } = await this.promptFiles.encode(prompt);
-    await this.ensureDriver();
+    const { text, nativeText, slashCommands } = await this.promptFiles.encode(prompt);
+    await this.ensureDriver(slashCommands);
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
     const turn: Turn = {
@@ -114,13 +114,13 @@ export class Session {
       clientMessageId: prompt.clientMessageId,
       text,
     });
-    const driverText =
-      this.firstMessage && this.config.systemPrompt
-        ? `${this.config.systemPrompt}\n\n${nativeText}`
-        : nativeText;
+    // A prefix would hide a command's leading slash, so the first message after
+    // it carries the system prompt instead.
+    const prefix = this.firstMessage && this.config.systemPrompt && slashCommands !== true;
+    const driverText = prefix ? `${this.config.systemPrompt}\n\n${nativeText}` : nativeText;
     try {
       await driver.prompt(driverText);
-      this.firstMessage = false;
+      if (slashCommands !== true) this.firstMessage = false;
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       this.failTurn(new AntigravityError(error.message));
@@ -193,13 +193,21 @@ export class Session {
     });
   }
 
-  private async ensureDriver(): Promise<void> {
+  /**
+   * Respawns an idle driver whose selection changed, or whose slash-command
+   * expansion differs from what the next prompt requires (`null` accepts either).
+   */
+  private async ensureDriver(slashCommands: boolean | null = null): Promise<void> {
     if (this.state.type === "closed") throw new AntigravityError("Antigravity session is closed");
     if (this.state.type === "stopping") {
       await this.state.driver.stop("interrupt");
       this.state = { type: "dormant" };
     }
-    if (this.state.type === "idle" && this.state.driver.selection !== selection(this.config)) {
+    if (
+      this.state.type === "idle" &&
+      (this.state.driver.selection !== selection(this.config) ||
+        (slashCommands !== null && this.state.driver.slashCommands !== slashCommands))
+    ) {
       const driver = this.state.driver;
       this.state = { type: "stopping", driver };
       await driver.stop("close");
@@ -211,6 +219,7 @@ export class Session {
       launch: this.options.launch,
       config: this.config,
       conversationId: this.conversationId,
+      slashCommands: slashCommands ?? false,
       onFrame: (frame) => this.accept(frame),
       onExit: (error) => this.failTurn(error),
     });

@@ -115,6 +115,23 @@ async function harness(env: Record<string, string> = {}) {
   function prompt(text: string) {
     return message([{ type: "text", text }]);
   }
+  async function command(name: string, args: string) {
+    const clientMessageId = `prompt-${events.length}`;
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "s",
+      prompt: {
+        clientMessageId,
+        delivery: "auto",
+        input: { type: "command", name, arguments: args },
+      },
+    });
+    await wait(
+      (event) =>
+        event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
+    );
+    return clientMessageId;
+  }
   async function completed(clientMessageId: string) {
     const result = events.find(
       (event) =>
@@ -150,6 +167,7 @@ async function harness(env: Record<string, string> = {}) {
     open,
     prompt,
     message,
+    command,
     completed,
     records,
     persistence,
@@ -160,6 +178,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.command",
     "prompt.image",
     "session.configure",
     "session.persistence",
@@ -506,6 +525,47 @@ it("defers model and mode changes until the next prompt, then respawns with vali
       error: expect.objectContaining({ code: "INVALID_MODEL" }),
     }),
   );
+});
+
+it("publishes /goal and toggles native slash expansion only when a prompt requires it", async () => {
+  const h = await harness();
+  await h.open();
+  expect(h.events.find((event) => event.type === "session.commands")).toMatchObject({
+    commands: [{ name: "goal", argumentHint: "<objective>" }],
+  });
+  const goal = await h.command("goal", "  ship the release  ");
+  await h.completed(goal);
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({ type: "user_message", text: "/goal ship the release" }),
+    }),
+  );
+  await h.completed(await h.prompt("HELLO"));
+  await h.completed(await h.prompt("/etc/hosts looks wrong"));
+  const records = await h.records();
+  const launches = records
+    .filter((entry) => entry.args?.includes("--input-format"))
+    .map((entry) => entry.args.includes("--disable-slash-commands"));
+  // open, /goal respawn, HELLO reuses the expanding driver, a literal slash respawns.
+  expect(launches).toEqual([true, false, true]);
+  expect(
+    records.filter((entry) => entry.input).map((entry) => entry.input.message.content),
+  ).toEqual(["/goal ship the release", "SYSTEM PREFIX\n\nHELLO", "/etc/hosts looks wrong"]);
+});
+
+it("rejects unknown commands before writing to native stdin", async () => {
+  const h = await harness();
+  await h.open();
+  const id = await h.command("plan", "");
+  expect(
+    h.events.find(
+      (event) => event.type === "session.prompt_result" && event.clientMessageId === id,
+    ),
+  ).toMatchObject({
+    result: { type: "failed", error: { message: "Antigravity command is unavailable: /plan" } },
+  });
+  expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
 });
 
 it("resumes after connection close without replay or another system prefix", async () => {
