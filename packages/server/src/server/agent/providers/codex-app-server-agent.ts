@@ -5666,6 +5666,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         case "set": {
           await this.client.request("thread/goal/set", {
             threadId: this.currentThreadId,
+            origin: "user",
             objective: subcommand.objective,
             status: "active",
           });
@@ -5674,6 +5675,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         case "pause": {
           await this.client.request("thread/goal/set", {
             threadId: this.currentThreadId,
+            origin: "user",
             status: "paused",
           });
           return "Goal paused.";
@@ -5681,6 +5683,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         case "resume": {
           await this.client.request("thread/goal/set", {
             threadId: this.currentThreadId,
+            origin: "user",
             status: "active",
           });
           return "Goal resumed.";
@@ -5688,6 +5691,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         case "clear": {
           await this.client.request("thread/goal/clear", {
             threadId: this.currentThreadId,
+            origin: "user",
           });
           return "Goal cleared.";
         }

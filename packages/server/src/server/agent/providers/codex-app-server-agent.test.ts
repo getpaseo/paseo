@@ -6558,6 +6558,7 @@ describe("Codex app-server provider", () => {
       method: "thread/goal/set",
       params: {
         threadId: "test-thread",
+        origin: "user",
         objective: "ship feature",
         status: "active",
       },
