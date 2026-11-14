@@ -848,6 +848,7 @@ export const ja: TranslationResources = {
         },
         viewPr: "PRを表示",
         createPr: {
+          ...en.workspace.git.actions.createPr,
           label: "PRを作成",
           pending: "PRを作成中...",
           success: "PRが作成されました",

@@ -844,6 +844,7 @@ export const ar: TranslationResources = {
         },
         viewPr: "عرض PR",
         createPr: {
+          ...en.workspace.git.actions.createPr,
           label: "إنشاء PR",
           pending: "إنشاء PR...",
           success: "تم إنشاء PR",

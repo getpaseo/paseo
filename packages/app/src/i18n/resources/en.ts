@@ -846,6 +846,18 @@ export const en = {
           label_mr: "Create MR",
           pending_mr: "Creating MR...",
           success_mr: "MR Created",
+          relatedIssueTitle: "Related issue #{{number}}",
+          linkIssue: "Link issue",
+          skipIssue: "Skip",
+          closeIssueTitle: "Close issue #{{number}} when merged?",
+          closeIssueMessage:
+            "Choose Close to add a closing reference, or Reference only to link without closing.",
+          closeIssue: "Close on merge",
+          referenceOnly: "Reference only",
+          previewTitle: "Review pull request",
+          draftState: "Draft",
+          readyState: "Ready for review",
+          confirmCreate: "Create pull request",
         },
         mergeBranch: {
           label: "Merge locally",

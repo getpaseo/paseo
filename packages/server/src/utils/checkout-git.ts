@@ -4380,6 +4380,25 @@ export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
 export type ReviewDecision = "approved" | "changes_requested" | "pending" | null;
 
+export async function capturePrCheckoutState(
+  cwd: string,
+  requestedBaseRef?: string,
+  context?: CheckoutContext,
+) {
+  const head = await getCurrentBranch(cwd);
+  const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
+  const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
+  if (!head || !base) throw new Error("Unable to determine PR head and base");
+  const git = async (...args: string[]) => (await runGitCommand(args, { cwd })).stdout.trim();
+  return {
+    head,
+    base,
+    headSha: await git("rev-parse", "HEAD"),
+    baseSha: await git("rev-parse", base),
+    origin: await git("remote", "get-url", "origin"),
+  };
+}
+
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
@@ -4415,6 +4434,7 @@ export async function createPullRequest(
     cwd,
     title: options.title,
     body: options.body,
+    draft: options.draft,
     head,
     base: normalizedBase,
   });

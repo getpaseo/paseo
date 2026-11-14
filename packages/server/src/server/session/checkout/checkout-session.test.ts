@@ -161,7 +161,7 @@ function makeCheckoutSession(options?: {
     },
     generatePullRequestText: async (cwd, baseRef) => {
       generatorCalls.generatePullRequestText.push({ cwd, baseRef });
-      return { title: "", body: "" };
+      return { title: "", body: "", draft: false };
     },
     ...options?.gitMetadataGenerator,
   };
@@ -1789,6 +1789,7 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
       baseRef: "main",
       title: "Feature",
       body: "Description",
+      draft: true,
       requestId: "right-base",
     });
     expect(emitted.at(-1)).toMatchObject({
@@ -1802,11 +1803,236 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
         head: created.branchName,
         title: "Feature",
         body: "Description",
+        draft: true,
       },
     ]);
     expect(git(remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(
       git(restored.worktreePath, "rev-parse", "HEAD"),
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("previews related issues and creates only explicitly approved issue links", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "paseo-pr-preview-")));
+  const repo = join(root, "repo");
+  const remote = join(root, "remote.git");
+  const paseoHome = join(root, "home");
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+  try {
+    git(root, "init", "-b", "main", repo);
+    git(repo, "config", "user.name", "Test");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "commit", "--allow-empty", "-m", "base");
+    git(root, "init", "--bare", remote);
+    git(repo, "remote", "add", "origin", remote);
+    git(repo, "push", "-u", "origin", "main");
+    const created = await createWorktree({
+      cwd: repo,
+      paseoHome,
+      worktreeSlug: "preview-pr",
+      source: {
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/main",
+        branchName: "preview-pr",
+      },
+    });
+    writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
+    git(created.worktreePath, "add", "feature.txt");
+    git(created.worktreePath, "commit", "-m", "feature");
+    const requests: Array<Parameters<ForgeService["createPullRequest"]>[0]> = [];
+    const searches: Array<Parameters<ForgeService["listIssues"]>[0]> = [];
+    let issueOpen = true;
+    let generatedBody = "Retries transient failures.";
+    let duringGeneration = () => {};
+    const service: ForgeService = {
+      ...createGitHubService(),
+      listIssues: async (input) => {
+        searches.push(input);
+        return [
+          {
+            number: 7,
+            title: "Retry failure",
+            url: "https://example.com/issues/7",
+            state: issueOpen ? "open" : "closed",
+            body: null,
+            labels: [],
+            updatedAt: "2026-10-23T00:00:00Z",
+          },
+          {
+            number: 8,
+            title: "Old retry failure",
+            url: "https://example.com/issues/8",
+            state: "closed",
+            body: null,
+            labels: [],
+            updatedAt: "2026-10-23T00:00:00Z",
+          },
+        ];
+      },
+      createPullRequest: async (input) => {
+        requests.push(input);
+        return { url: "https://example.com/pull/1", number: 1 };
+      },
+    };
+    const { checkout, emitted } = makeCheckoutSession({
+      paseoHome,
+      git: { resolveForge: async () => ({ forge: "github", host: "github.com", service }) },
+      gitMetadataGenerator: {
+        generatePullRequestText: async () => {
+          duringGeneration();
+          return {
+            title: "Fix retry failure",
+            body: generatedBody,
+            draft: true,
+            issueSearchQuery: "retry failure",
+          };
+        },
+      },
+    });
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      requestId: "legacy-create",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: { message: "Project PR instructions require a preview before creation" } },
+    });
+    expect(requests).toEqual([]);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: {
+        error: null,
+        url: null,
+        proposal: {
+          title: "Fix retry failure",
+          draft: true,
+          issues: [{ number: 7, title: "Retry failure" }],
+        },
+      },
+    });
+    expect(requests).toEqual([]);
+    const previewResponse = emitted.at(-1) as Extract<
+      SessionOutboundMessage,
+      { type: "checkout_pr_create_response" }
+    >;
+    const proposalId = previewResponse.payload.proposal?.id ?? "";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId,
+      issueLinks: [{ number: 8, relation: "close" }],
+      requestId: "unapproved",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: { message: "Issue links must be selected from the PR preview" } },
+    });
+    expect(requests).toEqual([]);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId,
+      issueLinks: [{ number: 7, relation: "close" }],
+      requestId: "approved",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: null, number: 1 },
+    });
+    expect(searches).toHaveLength(1);
+    expect(requests).toEqual([
+      {
+        cwd: created.worktreePath,
+        base: "main",
+        head: created.branchName,
+        title: "Fix retry failure",
+        body: "Retries transient failures.\n\nCloses https://example.com/issues/7",
+        draft: true,
+      },
+    ]);
+
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview-before-close",
+    });
+    const freshProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    issueOpen = false;
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: freshProposal?.id,
+      issueLinks: [{ number: 7, relation: "close" }],
+      requestId: "issue-closed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: null, number: 1 },
+    });
+    // A closed or lower-ranked issue is still the same approved identity.
+    expect(requests).toHaveLength(2);
+    generatedBody = "Closes\n#7";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "unsafe-body",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: expect.stringContaining("issue-closing directives") },
+      },
+    });
+    generatedBody = "Retries transient failures.";
+    duringGeneration = () => {
+      git(created.worktreePath, "commit", "--allow-empty", "-m", "concurrent change");
+    };
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "generation-race",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: "Branch or base changed during PR generation; preview the PR again" },
+      },
+    });
+    duringGeneration = () => {};
+
+    issueOpen = true;
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview-before-commit",
+    });
+    const staleProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    git(created.worktreePath, "commit", "--allow-empty", "-m", "new change");
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: staleProposal?.id,
+      requestId: "branch-changed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
+    });
+    expect(requests).toHaveLength(2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
