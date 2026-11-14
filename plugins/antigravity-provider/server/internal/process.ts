@@ -182,6 +182,8 @@ interface ProbeOptions {
   args: string[];
   cwd?: string;
 }
+// `agy models` takes about 16 s on a Raspberry Pi 5.
+export const PROBE_TIMEOUT_MS = 30_000;
 export function probe(options: ProbeOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(options.launch.command, [...options.launch.args, ...options.args], {
@@ -198,7 +200,7 @@ export function probe(options: ProbeOptions): Promise<string> {
         reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
         return undefined;
       }, reject);
-    }, 10_000);
+    }, PROBE_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
