@@ -69,6 +69,8 @@ export interface DesktopRuntimeConfig {
   daemonLogPath?: string;
   /** Initial manageBuiltInDaemon setting. Defaults to false. */
   manageBuiltInDaemon?: boolean;
+  /** Initial mocked desktop window state for titlebar interaction tests. */
+  windowMaximized?: boolean;
   /** Daemon listen address reported by desktop_daemon_status. Defaults to 127.0.0.1:6767. */
   daemonListen?: string;
   /** Keep start_desktop_daemon pending to hold the desktop startup blocker open. */
@@ -112,6 +114,8 @@ declare global {
     __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
     __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
     __desktopDaemonStartRequested?: boolean;
+    __desktopWindowMaximized?: boolean;
+    __desktopWindowToggleMaximizeCount?: number;
   }
 }
 
@@ -143,6 +147,7 @@ export async function installDesktopRuntime(
     let daemonRunning = true;
     let currentPid: number | null = cfg.daemonPid ?? null;
     let ownedByDesktop = cfg.ownedByDesktop ?? false;
+    let windowMaximized = cfg.windowMaximized ?? false;
     let manualUpdateAdmitted = false;
     window.__desktopDaemonStartRequested = false;
 
@@ -218,6 +223,14 @@ export async function installDesktopRuntime(
       };
       getPendingOpenProject: () => Promise<string | null>;
       events: { on: () => Promise<() => void> };
+      window: {
+        getCurrentWindow: () => {
+          toggleMaximize: () => Promise<void>;
+          isMaximized: () => Promise<boolean>;
+          isFullscreen: () => Promise<boolean>;
+          onResized: () => Promise<() => void>;
+        };
+      };
       editor?: {
         listTargets: () => Promise<DesktopEditorTargetConfig[]>;
         openTarget: (input: DesktopEditorOpenRecord) => Promise<void>;
@@ -300,6 +313,19 @@ export async function installDesktopRuntime(
       },
       getPendingOpenProject: async () => null,
       events: { on: async () => () => undefined },
+      window: {
+        getCurrentWindow: () => ({
+          toggleMaximize: async () => {
+            windowMaximized = !windowMaximized;
+            window.__desktopWindowMaximized = windowMaximized;
+            window.__desktopWindowToggleMaximizeCount =
+              (window.__desktopWindowToggleMaximizeCount ?? 0) + 1;
+          },
+          isMaximized: async () => windowMaximized,
+          isFullscreen: async () => false,
+          onResized: async () => () => undefined,
+        }),
+      },
     };
 
     if (cfg.editorTargets) {
@@ -312,6 +338,8 @@ export async function installDesktopRuntime(
     }
 
     window.__capturedDialogOpenCalls = [];
+    window.__desktopWindowMaximized = windowMaximized;
+    window.__desktopWindowToggleMaximizeCount = 0;
     (window as unknown as { paseoDesktop: unknown }).paseoDesktop = desktopBridge;
   }, config);
 }
