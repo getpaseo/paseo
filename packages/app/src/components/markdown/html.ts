@@ -1,5 +1,7 @@
 import { Parser } from "htmlparser2";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTable } from "micromark-extension-gfm-table";
 import { decodeString } from "micromark-util-decode-string";
 import type { Nodes } from "mdast";
 
@@ -53,6 +55,7 @@ export function normalizeMarkdownHtml(source: string): string {
     } else if ("children" in node) node.children.forEach(protectCode);
   }
   protectCode(tree);
+  const tableRanges = collectTableRanges(source, codeRanges);
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number): string => {
@@ -84,7 +87,16 @@ export function normalizeMarkdownHtml(source: string): string {
       : /^\s*$/.test(source.slice(0, offset));
     previousTag = { name, end: offset + raw.length };
     if (EMPHASIS[name]) return EMPHASIS[name];
-    const boundary = layoutBoundary(name, source, raw, offset, closing, startsAfterBoundary);
+    const inTable = tableRanges.some(({ start, end }) => offset >= start && offset < end);
+    const boundary = layoutBoundary(
+      name,
+      source,
+      raw,
+      offset,
+      closing,
+      startsAfterBoundary,
+      inTable,
+    );
     if (boundary !== null) return boundary;
     if (name === "a") return markdownAnchor(raw, closing, links);
     if (name === "img" && !closing) {
@@ -167,8 +179,14 @@ function layoutBoundary(
   offset: number,
   closing: boolean,
   startsAfterBoundary: boolean,
+  inTable: boolean,
 ): string | null {
-  if (name === "br") return closing ? "" : "  \n";
+  // Inside GFM table cells, emit ` \u2028` so row boundaries stay intact while giving URLs/autolinks
+  // a whitespace terminator before the cell-scoped parser turns ` \u2028` back into a `LineBreak` node.
+  if (name === "br") {
+    if (closing) return "";
+    return inTable ? " \u2028" : "  \n";
+  }
   if (name === "summary") return closing ? "**\n\n" : "**";
   if (name === "details")
     return (closing ? offset + raw.length === source.length : offset === 0) ? "" : "\n\n";
@@ -176,4 +194,68 @@ function layoutBoundary(
   if ((name === "td" || name === "th") && closing)
     return /^<t[dh]\b/i.test(source.slice(offset + raw.length)) ? " " : "";
   return null;
+}
+
+function hasNonWhitespaceAfterNewline(value: string): boolean {
+  const lastNewline = value.lastIndexOf("\n");
+  return /[^\s]/.test(lastNewline === -1 ? value : value.slice(lastNewline + 1));
+}
+
+function isTableWrapperTag(raw: string, inCode: boolean): boolean {
+  if (inCode) return false;
+  if (raw.startsWith("<!--")) return true;
+  const name = /^<\/?([A-Za-z][A-Za-z0-9-]*)/.exec(raw)?.[1].toLowerCase();
+  return name === "summary" || name === "details" || (name !== undefined && BLOCK_TAGS.has(name));
+}
+
+function collectTableRanges(
+  source: string,
+  codeRanges: readonly { start: number; end: number }[],
+): { start: number; end: number }[] {
+  let cursor = 0;
+  let codeIndex = 0;
+  let lineHasPrefixText = false;
+  // Advance line/code state monotonically in a single forward pass so large single-line HTML tables stay O(n)
+  // while nested leading wrappers (e.g. `<details><summary>Results</summary><div>| A | B |`) follow
+  // line breaks introduced by earlier masked tags.
+  const tableSource = source.replace(HTML, (raw, offset: number) => {
+    for (let index = cursor; index < offset; index++) {
+      const code = source.charCodeAt(index);
+      if (code === 10) lineHasPrefixText = false;
+      else if (code !== 32 && code !== 9 && code !== 13) lineHasPrefixText = true;
+    }
+    cursor = offset + raw.length;
+    while (codeIndex < codeRanges.length && codeRanges[codeIndex].end <= offset) codeIndex++;
+    const inCode = codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].start;
+    if (!isTableWrapperTag(raw, inCode)) {
+      if (inCode || /^<code\b/i.test(raw)) {
+        if (hasNonWhitespaceAfterNewline(raw)) lineHasPrefixText = true;
+        else if (raw.includes("\n")) lineHasPrefixText = false;
+      } else if (raw.includes("\n")) {
+        lineHasPrefixText = false;
+      }
+      return raw;
+    }
+    const blanked = raw.replace(/[^\n]/g, " ");
+    if (!lineHasPrefixText && blanked.length > 0 && !blanked.endsWith("\n")) {
+      return `${blanked.slice(0, -1)}\n`;
+    }
+    if (blanked.includes("\n")) lineHasPrefixText = false;
+    return blanked;
+  });
+  const tableRanges: { start: number; end: number }[] = [];
+  function findTables(node: Nodes) {
+    if (node.type === "table" && node.position) {
+      const start = node.position.start.offset;
+      const end = node.position.end.offset;
+      if (start !== undefined && end !== undefined) tableRanges.push({ start, end });
+    } else if ("children" in node) node.children.forEach(findTables);
+  }
+  findTables(
+    fromMarkdown(tableSource, {
+      extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }, gfmTable()],
+      mdastExtensions: [gfmTableFromMarkdown()],
+    }),
+  );
+  return tableRanges;
 }
