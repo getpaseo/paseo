@@ -70,7 +70,7 @@ describe("provider detail presence", () => {
         connected: true,
         entries: loaded,
         error: null,
-        wasFound: false,
+        removingHere: false,
       }),
     ).toEqual({ kind: "found", entry: loaded[1] });
   });
@@ -82,7 +82,7 @@ describe("provider detail presence", () => {
         connected: true,
         entries: undefined,
         error: null,
-        wasFound: false,
+        removingHere: false,
       }),
     ).toEqual({ kind: "loading" });
   });
@@ -94,19 +94,19 @@ describe("provider detail presence", () => {
         connected: true,
         entries: loaded,
         error: null,
-        wasFound: false,
+        removingHere: false,
       }),
     ).toEqual({ kind: "missing" });
   });
 
-  it("shows nothing for a provider it already showed that then left, as when it is removed", () => {
+  it("shows nothing for a provider this page is removing once it leaves the list", () => {
     expect(
       readDetailPresence({
         provider: "gone",
         connected: true,
         entries: loaded,
         error: null,
-        wasFound: true,
+        removingHere: true,
       }),
     ).toEqual({ kind: "removed" });
   });
@@ -118,7 +118,7 @@ describe("provider detail presence", () => {
         connected: false,
         entries: undefined,
         error: null,
-        wasFound: false,
+        removingHere: false,
       }),
     ).toEqual({ kind: "offline" });
   });
@@ -130,7 +130,7 @@ describe("provider detail presence", () => {
         connected: true,
         entries: undefined,
         error: "Request timed out",
-        wasFound: false,
+        removingHere: false,
       }),
     ).toEqual({ kind: "failed", message: "Request timed out" });
   });

@@ -2,9 +2,11 @@ import type { Dialog } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import {
   expectProviderInstalledInSettings,
+  expectProviderNotOnHost,
   installAcpCatalogProvider,
   leaveProviderDetail,
   openAddProvider,
@@ -96,7 +98,7 @@ async function expectMissingNoticeNeverShown(page: Page): Promise<void> {
  * config patch. Hold the answer so the test always sees that order.
  */
 async function delayConfigResponses(page: Page): Promise<void> {
-  await page.routeWebSocket(/.*/, (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
     ws.onMessage((message) => server.send(message));
     server.onMessage((message) => {
@@ -150,6 +152,33 @@ test.describe("provider removal", () => {
         }),
       ).toHaveCount(0);
       await expectProviderSource(client, undefined);
+    } finally {
+      await removeCustomProvider(client).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  test("says a provider removed elsewhere while its page is open isn't on this host", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const client = await connectDaemonClient<ProviderRemovalDaemonClient>({
+      clientIdPrefix: "provider-removal-e2e",
+    });
+
+    try {
+      await removeCustomProvider(client);
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openSettingsHost(page, getServerId());
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await openAddProvider(page);
+      await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
+      await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);
+      await openProviderDetail(page, CUSTOM_PROVIDER.name);
+
+      await removeCustomProvider(client);
+      await expectProviderNotOnHost(page);
     } finally {
       await removeCustomProvider(client).catch(() => undefined);
       await client.close().catch(() => undefined);
