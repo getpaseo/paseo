@@ -14,6 +14,7 @@ import type {
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
+import { readHistory } from "./history.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
@@ -60,7 +61,12 @@ export class Session {
     validateSelection(this.config, options.catalog());
   }
 
-  async open(requestId: string, capabilities: readonly string[]): Promise<void> {
+  async open(
+    requestId: string,
+    capabilities: readonly string[],
+    history: "replay" | "skip",
+  ): Promise<void> {
+    const restoredId = this.conversationId;
     await this.ensureDriver();
     this.emit({
       type: "session.opened",
@@ -74,6 +80,15 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
+    if (history === "replay" && restoredId) {
+      for (const { item, timestamp } of await readHistory({
+        conversationId: restoredId,
+        env: { ...this.options.launch.env, ...this.config.env },
+        systemPrompt: this.config.systemPrompt,
+      })) {
+        this.emit({ type: "timeline.item", sessionId: this.options.id, item, timestamp });
+      }
+    }
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
