@@ -37,6 +37,10 @@ function turnEnd() {
   return { type: "result", subtype: "success", is_error: false };
 }
 
+function sessionIdle() {
+  return { type: "system", subtype: "session_state_changed", state: "idle" };
+}
+
 const WAKEUP_RESULT =
   "Next wakeup scheduled for 01:58:00 (in 205s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.";
 const CRON_RESULT =
@@ -315,6 +319,23 @@ describe("ClaudeScheduledWakeups", () => {
     expect(wakeups.dropLost()).toBeUndefined();
     clock.set("2026-11-13T20:10:00.000Z");
     expect(wakeups.dropLost()).toBeNull();
+  });
+
+  test("does not take an idle state that trails the previous turn for the end of this one", () => {
+    const clock = createClock("2026-11-13T18:54:35.073Z");
+    const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
+    scheduleBoth(clock, wakeups);
+    wakeups.observe(turnEnd());
+    // A prompt starts the next turn, the previous turn's idle state lands in it, and a tool call
+    // then runs for 45 minutes with nothing else on the stream.
+    wakeups.observe(fire(null));
+    wakeups.observe(sessionIdle());
+    clock.set("2026-11-13T19:40:00.000Z");
+    expect(wakeups.nextLossAt()).toBeNull();
+    expect(wakeups.dropLost()).toBeUndefined();
+    expect(wakeups.hasPending()).toBe(true);
+    expect(wakeups.observe(turnEnd())).toBeUndefined();
+    expect(wakeups.nextLossAt()).toBe(Date.parse("2026-11-13T20:10:00.000Z"));
   });
 
   test("does not hand a fire to a lost job", () => {

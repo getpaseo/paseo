@@ -978,6 +978,11 @@ async function createPumpedClaudeSession() {
     });
   }
 
+  /** Claude reports nothing running, which can arrive late, inside the next turn. */
+  function reportIdle(): Promise<void> {
+    return push({ type: "system", subtype: "session_state_changed", state: "idle" });
+  }
+
   /** Claude starts the turn its `/loop` wakeup scheduled. */
   function fireWakeup(): Promise<void> {
     toolCalls += 1;
@@ -997,6 +1002,7 @@ async function createPumpedClaudeSession() {
     startTurn,
     endTurn,
     scheduleWakeup,
+    reportIdle,
     fireWakeup,
   };
 }
@@ -1102,6 +1108,31 @@ test("Claude session drops a wakeup that never fires once it is half an hour lat
     await vi.advanceTimersByTimeAsync(1);
     expect(wakes.at(-1)).toBeNull();
     expect(await claude.session.canStopRuntime!()).toBe(true);
+  } finally {
+    stop();
+    vi.useRealTimers();
+    await claude.session.close();
+  }
+});
+
+test("Claude session keeps a wakeup through a long turn that a late idle state lands in", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const claude = await createPumpedClaudeSession();
+  const { wakes, stop } = recordScheduledWakes(claude.session);
+  try {
+    await claude.startTurn("check back in a few minutes");
+    await claude.scheduleWakeup(205);
+    await claude.endTurn();
+    const wakeAt = wakes.at(-1);
+
+    await claude.startTurn("run the long migration");
+    await claude.reportIdle();
+    // A tool call runs for an hour; the wakeup comes due meanwhile and waits for the turn.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(wakes.at(-1)).toBe(wakeAt);
+    await claude.endTurn();
+    expect(wakes.at(-1)).toBe(wakeAt);
+    expect(await claude.session.canStopRuntime!()).toBe(false);
   } finally {
     stop();
     vi.useRealTimers();

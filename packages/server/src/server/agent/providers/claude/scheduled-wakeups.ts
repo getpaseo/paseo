@@ -52,9 +52,9 @@ export class ClaudeScheduledWakeups {
   private loopDueAt: number | null = null;
   private published: string | null = null;
   /**
-   * When Claude's main session last finished a turn, or null while one runs. Read from the brackets
-   * the session uses for mainTurnInFlight, plus the main session's own messages, since an idle state
-   * can trail the previous turn and land in the next one.
+   * When Claude's main session last finished a turn, or null while one runs. Only the turn's result
+   * ends it: Claude's idle session state can trail the previous turn and land inside the next one,
+   * where a long tool call may send nothing else for an hour.
    */
   private idleSince: number | null = null;
 
@@ -92,8 +92,8 @@ export class ClaudeScheduledWakeups {
       this.observeFire(record.wakeup_source);
     } else if (record.type === "system" && record.subtype === "init") {
       this.idleSince = null;
-    } else if (endsTurn(record)) {
-      this.idleSince ??= this.now();
+    } else if (record.type === "result") {
+      this.idleSince = this.now();
     }
     return this.publish();
   }
@@ -276,16 +276,6 @@ export class ClaudeScheduledWakeups {
     this.published = next;
     return next;
   }
-}
-
-/** The main session's turn is over: its result, or Claude's own idle state. */
-function endsTurn(record: Record<string, unknown>): boolean {
-  if (record.type === "result") return true;
-  return (
-    record.type === "system" &&
-    record.subtype === "session_state_changed" &&
-    record.state === "idle"
-  );
 }
 
 /** Claude rounds the due time, so its "(in Ns)" is more precise than the requested delay. */
