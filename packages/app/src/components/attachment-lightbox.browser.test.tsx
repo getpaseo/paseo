@@ -27,11 +27,18 @@ function createPng(width: number, height: number): Promise<Blob> {
 
 function noop() {}
 
-/** What the next paint will show: the lightbox image box, and whether the error state is up. */
+function isPainted(element: Element): boolean {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    if (Number(getComputedStyle(node).opacity) === 0) return false;
+  }
+  return true;
+}
+
+/** What the next paint will show: the visible lightbox image box, and whether the error is up. */
 function sampleFrame(): FrameSample {
   const image = document.querySelector('[data-testid="attachment-lightbox-image"]');
   const rect = image?.getBoundingClientRect();
-  const visible = rect && rect.width > 0 && rect.height > 0;
+  const visible = image && rect && rect.width > 0 && rect.height > 0 && isPainted(image);
   return {
     image: visible
       ? {
@@ -80,16 +87,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function renderLightbox(source: ImageLightboxSource | null) {
+  root.render(
+    <SafeAreaProvider>
+      <WindowLayoutProvider>
+        <AttachmentLightbox source={source} onClose={noop} />
+      </WindowLayoutProvider>
+    </SafeAreaProvider>,
+  );
+}
+
 async function expectOpeningPaintsOnlyTheFittedImage(source: ImageLightboxSource) {
-  const samples = await recordOpening(() => {
-    root.render(
-      <SafeAreaProvider>
-        <WindowLayoutProvider>
-          <AttachmentLightbox source={source} onClose={noop} />
-        </WindowLayoutProvider>
-      </SafeAreaProvider>,
-    );
-  });
+  const samples = await recordOpening(() => renderLightbox(source));
   const fitted = samples.at(-1)?.image;
 
   expect(fitted, "the image never settled").toBeTruthy();
@@ -110,6 +119,19 @@ describe("AttachmentLightbox opening in the browser", () => {
     });
 
     await expectOpeningPaintsOnlyTheFittedImage({ type: "attachment", metadata });
+  });
+
+  it("paints only the fitted image when the same attachment opens again", async () => {
+    const metadata = await persistAttachmentFromBlob({
+      blob: await createPng(2400, 1600),
+      mimeType: "image/png",
+      fileName: "screenshot.png",
+    });
+    const source: ImageLightboxSource = { type: "attachment", metadata };
+
+    await expectOpeningPaintsOnlyTheFittedImage(source);
+    await act(async () => renderLightbox(null));
+    await expectOpeningPaintsOnlyTheFittedImage(source);
   });
 
   it("paints the fitted timeline image as its first image frame", async () => {
