@@ -19,6 +19,7 @@ import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { KeyboardTranslateView, useKeyboardAnchor, useKeyboardShift } from "@/keyboard/shift";
 import { PopoverFrame } from "./internal/frame";
 import type { AnchorAtRest } from "./internal/placement";
@@ -61,7 +62,9 @@ export function AutocompletePopover({
   const anchor = useKeyboardAnchor();
   const { measureAtRest } = anchor;
   const measurementGeneration = useRef(0);
-  const canMeasure = visible && (options.length === 0 || selectedIndex >= 0);
+  // A retained panel stays mounted while hidden; its anchor cannot be measured until it shows.
+  const isPanelActive = useRetainedPanelActive();
+  const canMeasure = isPanelActive && visible && (options.length === 0 || selectedIndex >= 0);
 
   const remeasure = useCallback(() => {
     if (!canMeasure) return;

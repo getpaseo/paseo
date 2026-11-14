@@ -6,6 +6,7 @@ import { View } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { RetainedPanel } from "@/components/retained-panel";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import type { AutocompleteOption } from "./autocomplete";
 import { AutocompletePopover } from "./autocomplete-popover";
@@ -81,26 +82,34 @@ function Providers({ children }: { children: ReactNode }): ReactNode {
 
 interface ScreenProps {
   visible: boolean;
+  panelActive?: boolean;
   inputHeight?: number;
   composerWidth?: number;
 }
 
-function Screen({ visible, inputHeight = 120, composerWidth = 358 }: ScreenProps): ReactNode {
+function Screen({
+  visible,
+  panelActive = true,
+  inputHeight = 120,
+  composerWidth = 358,
+}: ScreenProps): ReactNode {
   return (
     <Providers>
-      <View style={SCREEN_STYLE}>
-        <View style={composerStyle(composerWidth)}>
-          <AutocompletePopover
-            visible={visible}
-            options={OPTIONS}
-            selectedIndex={OPTIONS.length - 1}
-            onSelect={ignoreSelection}
-          >
-            <View testID="composer-input" style={inputStyle(inputHeight)} />
-          </AutocompletePopover>
+      <RetainedPanel active={panelActive}>
+        <View style={SCREEN_STYLE}>
+          <View style={composerStyle(composerWidth)}>
+            <AutocompletePopover
+              visible={visible}
+              options={OPTIONS}
+              selectedIndex={OPTIONS.length - 1}
+              onSelect={ignoreSelection}
+            >
+              <View testID="composer-input" style={inputStyle(inputHeight)} />
+            </AutocompletePopover>
+          </View>
+          <FloatingPanelPortalHost />
         </View>
-        <FloatingPanelPortalHost />
-      </View>
+      </RetainedPanel>
     </Providers>
   );
 }
@@ -234,5 +243,20 @@ it("follows the composer down when its text clears before the popover closes", a
 it("matches the composer's width in the frame the composer resizes", async () => {
   await openSettled();
   await changeAndPaint(<Screen visible composerWidth={240} />);
+  expect(placementAgainstComposer()).toEqual({ gap: OFFSET_FROM_ANCHOR, x: 0, width: 0 });
+});
+
+/**
+ * A retained workspace stays mounted while another route shows. A popover left open there tracked a
+ * composer it could not measure, and on native stopped following the composer after the user came
+ * back.
+ */
+it("closes while its retained panel is hidden and reopens in place when it shows again", async () => {
+  await openSettled();
+  render(<Screen visible panelActive={false} />);
+  expect(rectOf("composer-autocomplete-popover")).toBeNull();
+  render(<Screen visible />);
+  await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 200));
   expect(placementAgainstComposer()).toEqual({ gap: OFFSET_FROM_ANCHOR, x: 0, width: 0 });
 });
