@@ -78,6 +78,7 @@ import {
 import { useCommandCenterContributions } from "./provider";
 import { filterAndRankWorkspaces } from "./workspace-search";
 import {
+  agentSearchFields,
   buildContributionSections,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
@@ -88,7 +89,6 @@ import {
   type CommandCenterListRow,
   type CommandCenterResult,
   type CommandCenterResultSection,
-  type CommandCenterSearchFields,
   type CommandCenterWorkspaceResult,
 } from "./results";
 import { createCommandCenterInteraction, type CommandCenterInteraction } from "./interaction";
@@ -111,11 +111,6 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
 }));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
-
-/** `cwd` is not rendered, so a path match must never outrank a match on text the user can see. */
-function agentSearchFields(result: CommandCenterAgentResult): CommandCenterSearchFields {
-  return { visible: [result.title, result.subtitle], hidden: [result.agent.cwd] };
-}
 
 function createWorkspaceResultAction(serverId: string, workspaceId: string) {
   return () => {
@@ -725,7 +720,7 @@ function ResultContent({
         <View style={styles.breadcrumb}>
           {presentation.path.map((part, index) => (
             <View
-              key={presentation.path.slice(0, index + 1).join("\u0000")}
+              key={presentation.path.slice(0, index + 1).join("^@")}
               style={styles.breadcrumbPart}
             >
               {index > 0 ? <ThemedChevronRight size={13} strokeWidth={2} /> : null}
