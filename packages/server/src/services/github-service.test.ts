@@ -4801,6 +4801,105 @@ describe("ForgeService", () => {
     expect(runner.calls[1]?.envOverlay).toMatchObject({ GH_HOST: "github.acme.internal" });
   });
 
+  it("selects the original Enterprise repository for PR lookup when Git rewrites remotes", async () => {
+    const runner = createRunner([currentPullRequestJson()]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
+
+    expect(runner.calls[0]).toMatchObject({
+      args: [
+        "pr",
+        "view",
+        "feature/fork",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+        "--repo",
+        "github.acme.internal/acme/repo",
+      ],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
+  it("merges an Enterprise fork PR in its base repository", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "fork/repo",
+    });
+
+    await service.mergePullRequest({
+      cwd: "/repo",
+      prNumber: 42,
+      mergeMethod: "squash",
+      status: createCurrentPullRequestStatus({
+        url: "https://github.acme.internal/upstream/repo/pull/42",
+        forgeSpecific: githubStatusFacts(),
+      }),
+    });
+    expect(runner.calls[0]?.args).toEqual([
+      "pr",
+      "merge",
+      "42",
+      "--squash",
+      "--repo",
+      "github.acme.internal/upstream/repo",
+    ]);
+  });
+
+  it.skipIf(isPlatform("win32"))(
+    "authenticates and creates a PR on the configured Enterprise host when Git rewrites origin",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://github.acme.internal/acme/repo.git",
+        authStatusSucceeds: true,
+      });
+      try {
+        execFileSync("git", [
+          "-C",
+          fixture.cwd,
+          "config",
+          "url.https://git.acme.internal/mirrors/.insteadOf",
+          "https://github.acme.internal/",
+        ]);
+        expect(
+          execFileSync("git", ["-C", fixture.cwd, "remote", "get-url", "origin"], {
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("https://git.acme.internal/mirrors/acme/repo.git");
+        const service = createGitHubService();
+
+        await expect(service.isAuthenticated({ cwd: fixture.cwd })).resolves.toBe(true);
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+        expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
+          expect.arrayContaining([
+            "auth status --hostname github.acme.internal|",
+            "auth status --hostname github.acme.internal|github.acme.internal",
+            "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
+          ]),
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   it.skipIf(isPlatform("win32"))(
     "routes default gh calls to GitHub Enterprise only after host auth succeeds",
     async () => {
@@ -4824,7 +4923,6 @@ describe("ForgeService", () => {
         expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
           expect.arrayContaining([
             "auth status --hostname github.acme.internal|",
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
@@ -4869,7 +4967,6 @@ describe("ForgeService", () => {
         ).toHaveLength(2);
         expect(log).toEqual(
           expect.arrayContaining([
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );

@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   isGitHubHost,
   parseGitHubRemoteIdentity,
-  parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -1331,20 +1330,24 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     if (!ghPath) {
       throw new GitHubCliMissingError();
     }
-    // Route every gh invocation to the workspace's host. `gh api`/`graphql`
-    // otherwise default to github.com regardless of the resolved repository,
-    // which silently queries the wrong server on GitHub Enterprise. GH_HOST is
-    // safe even for auto-routing subcommands because it matches the repo's host.
+    // Git may rewrite the transport URL to a proxy host. Preserve the original
+    // Enterprise host and repository when invoking gh instead of asking gh to
+    // infer them from the rewritten URL.
     const host = await resolveRepoHostCached(runOptions.cwd);
+    const slug =
+      host && ["pr", "issue", "repo"].includes(args[0] ?? "")
+        ? await resolveRepoSlugCached(runOptions.cwd)
+        : null;
+    const effectiveArgs = selectGitHubCommandRepository(args, host, slug);
     const effectiveOptions: GitHubCommandRunnerOptions = host
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     try {
-      const result = await deps.runner(args, effectiveOptions);
+      const result = await deps.runner(effectiveArgs, effectiveOptions);
       return result.stdout.trim();
     } catch (error) {
       throw githubCliRunner.normalizeError(error, {
-        args,
+        args: effectiveArgs,
         cwd: runOptions.cwd,
       });
     }
@@ -1362,6 +1365,28 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       cwd: runOptions.cwd,
       emptyFallback,
     });
+  }
+
+  async function runPullRequestMerge(
+    args: string[],
+    input: { cwd: string; prNumber: number; status?: PullRequestCommandStatus | null },
+  ): Promise<void> {
+    const host = await resolveRepoHostCached(input.cwd);
+    let effectiveArgs = args;
+    if (host) {
+      const url = input.status?.url;
+      const repo = url ? parseGitHubPullRequestRepo(url) : null;
+      if (
+        !url ||
+        !repo ||
+        new URL(url).hostname !== host ||
+        !url.endsWith(`/pull/${input.prNumber}`)
+      ) {
+        throw new Error("Cannot identify the GitHub repository for this pull request");
+      }
+      effectiveArgs = [...args, "--repo", `${host}/${repo.owner}/${repo.name}`];
+    }
+    await run(effectiveArgs, { cwd: input.cwd, envOverlay: { GH_PROMPT_DISABLED: "1" } });
   }
 
   function getPollTargetKey(target: {
@@ -2181,6 +2206,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headRef: input.headRef,
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
+            explicitRepo: (await resolveRepoHostCached(input.cwd)) !== null,
             run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
@@ -2526,28 +2552,25 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
     async mergePullRequest(input) {
       assertDirectPullRequestMergeReady(input);
-      await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
-      });
+      await runPullRequestMerge(
+        ["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`],
+        input,
+      );
       return { success: true };
     },
 
     async enablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeEnableReady(input);
-      await run(["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
-      });
+      await runPullRequestMerge(
+        ["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`],
+        input,
+      );
       return { success: true };
     },
 
     async disablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeDisableReady(input);
-      await run(["pr", "merge", String(input.prNumber), "--disable-auto"], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
-      });
+      await runPullRequestMerge(["pr", "merge", String(input.prNumber), "--disable-auto"], input);
       return { success: true };
     },
 
@@ -2691,6 +2714,29 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   };
 
   return api;
+}
+
+function selectGitHubCommandRepository(
+  args: string[],
+  host: string | null,
+  slug: string | null,
+): string[] {
+  if (args[0] === "auth" && args[1] === "status" && !args.includes("--hostname")) {
+    return [...args, "--hostname", host ?? "github.com"];
+  }
+  if (!host || !slug) return args;
+  if (args[0] === "repo" && args[1] === "view" && args[2]?.startsWith("-")) {
+    return [args[0], args[1], `${host}/${slug}`, ...args.slice(2)];
+  }
+  if (
+    (args[0] === "pr" || args[0] === "issue") &&
+    args[1] !== "merge" &&
+    !args.includes("--repo") &&
+    !args.includes("-R")
+  ) {
+    return [...args, "--repo", `${host}/${slug}`];
+  }
+  return args;
 }
 
 function getGithubStatusFacts(
@@ -2984,14 +3030,25 @@ function isGitHubRateLimitError(error: unknown): boolean {
   );
 }
 
+function enterprisePullRequestViewArgs(options: {
+  explicitRepo?: boolean;
+  headRef: string;
+}): string[] | undefined {
+  return options.explicitRepo ? ["pr", "view", options.headRef] : undefined;
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
   headSha?: string;
   headRepositoryOwner?: string;
+  explicitRepo?: boolean;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
-  const viewCandidate = await tryCurrentPullRequestView(options);
+  const viewCandidate = await tryCurrentPullRequestView({
+    ...options,
+    args: enterprisePullRequestViewArgs(options),
+  });
   const viewMatch = viewCandidate
     ? pickPullRequestCandidate({
         candidates: [viewCandidate],
@@ -3249,7 +3306,8 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
   } catch {
     return null;
   }
-  return parseGitHubRemoteUrl(stdout.trim())?.repo ?? null;
+  const location = parseGitRemoteLocation(stdout.trim());
+  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
 }
 
 async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> {
