@@ -170,6 +170,20 @@ export function scoreSearchFields(
   return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
 }
 
+/**
+ * Every query token appears in some field as a run of adjacent characters, so none was found
+ * only by scattering it across a word ("login" in "long-input"). A row that matches only that
+ * way matched loosely.
+ */
+export function matchesSearchFieldsContiguously(
+  query: string,
+  fields: CommandCenterSearchFields,
+): boolean {
+  return (
+    scoreTextFields(query, [...fields.visible, ...fields.hidden], { subsequence: false }) !== null
+  );
+}
+
 /** Join non-empty subtitle parts with " · ", dropping null/undefined/empty. */
 export function joinSubtitleParts(parts: readonly (string | null | undefined)[]): string {
   return parts.filter((part): part is string => Boolean(part)).join(" · ");

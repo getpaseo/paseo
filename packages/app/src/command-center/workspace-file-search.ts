@@ -48,8 +48,6 @@ function describeFileEntries(
 }
 
 export function useWorkspaceFileSearch(input: { enabled: boolean; query: string }): {
-  /** False outside a workspace, where there are no files to search. */
-  hasWorkspace: boolean;
   entries: readonly WorkspaceFileSearchEntry[];
   loading: boolean;
   error: string | null;
@@ -147,7 +145,6 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
   );
 
   return {
-    hasWorkspace: workspaceId !== null,
     entries: requestKey && state.sourceKey === sourceKey ? state.entries : [],
     loading: Boolean(requestKey) && (state.requestKey !== requestKey || state.loading),
     error: state.requestKey === requestKey ? state.error : null,

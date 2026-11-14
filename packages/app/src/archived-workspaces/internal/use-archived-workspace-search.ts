@@ -22,6 +22,8 @@ export interface ArchivedWorkspaceSearch {
    * results stand in for the next one; those rows must still match the query on their own.
    */
   matchedByHost: boolean;
+  /** Still searching for the current query, debounce included. */
+  pending: boolean;
 }
 
 function useActiveWorkspaceIds(enabled: boolean): ActiveWorkspaceIdsByServer {
@@ -76,8 +78,6 @@ export function useArchivedWorkspaceSearch(
         : NO_ARCHIVED_WORKSPACES,
     [activeIds, enabled, history.agents],
   );
-  return {
-    workspaces,
-    matchedByHost: search === trimmed && !history.isLoading && !history.isPreviousResults,
-  };
+  const matchedByHost = search === trimmed && !history.isLoading && !history.isPreviousResults;
+  return { workspaces, matchedByHost, pending: enabled && !matchedByHost };
 }

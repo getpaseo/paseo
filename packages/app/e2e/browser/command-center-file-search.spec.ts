@@ -2,9 +2,8 @@ import { expect, test } from "../support/fixtures";
 import { openSettings } from "../support/helpers/app";
 import {
   closeCommandCenter,
-  expectCommandCenterEmptyState,
   expectCommandCenterTab,
-  expectEveryCommandCenterTab,
+  expectCommandCenterTabs,
   openCommandCenter,
   selectCommandCenterTab,
 } from "../support/helpers/command-center";
@@ -170,15 +169,25 @@ test("command center tabs rotate with Tab and never move the header", async ({ p
       await expectCommandCenterTab(panel, "All");
     });
 
-    await test.step("Files outside a workspace says to open one", async () => {
+    await test.step("in a workspace every tab is offered", async () => {
+      await expectCommandCenterTabs(panel, ["All", "Workspaces", "Files", "Actions"]);
+    });
+
+    await test.step("outside a workspace there is no Files tab, and Tab skips it", async () => {
+      const outside = { workspaceOpen: false };
       await closeCommandCenter(page);
       await openSettings(page);
       await page.keyboard.press("Meta+K");
-      await expectCommandCenterTab(panel, "All");
-      await expectEveryCommandCenterTab(panel);
-      await selectCommandCenterTab(panel, "Files");
-      await input.fill("index");
-      await expectCommandCenterEmptyState(panel, "Open a workspace to search files");
+      await expectCommandCenterTab(panel, "All", outside);
+      await expectCommandCenterTabs(panel, ["All", "Workspaces", "Actions"]);
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Workspaces", outside);
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "Actions", outside);
+      await page.keyboard.press("Tab");
+      await expectCommandCenterTab(panel, "All", outside);
+      await page.keyboard.press("Shift+Tab");
+      await expectCommandCenterTab(panel, "Actions", outside);
     });
   } finally {
     await seeded.cleanup();

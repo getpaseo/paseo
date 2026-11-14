@@ -35,6 +35,11 @@ export interface CommandCenterSectionsInput {
    * query must match on their own.
    */
   archivedMatchedByHost: boolean;
+  /**
+   * The sidebar's Show background preference. Without a query, Workspaces lists background
+   * workspaces only when the sidebar does; a query finds them either way.
+   */
+  showBackground: boolean;
   /** The open workspace's result ID. Recent workspaces leaves it out: the user is already there. */
   currentWorkspaceId: string | null;
   contributions: readonly CommandCenterContribution[];
@@ -58,7 +63,11 @@ function recentWorkspacesSection(input: CommandCenterSectionsInput): CommandCent
 
 /** Active matches first; archived ones are appended, so active rows never move when they land. */
 function workspacesSection(input: CommandCenterSectionsInput): CommandCenterResultSection {
-  const active = input.rankWorkspaces(input.workspaces, input.query);
+  const listed =
+    input.query.trim() || input.showBackground
+      ? input.workspaces
+      : input.workspaces.filter((workspace) => !workspace.background);
+  const active = input.rankWorkspaces(listed, input.query);
   const archived = input.query.trim()
     ? input.rankWorkspaces(input.archivedWorkspaces, input.query, {
         keepUnmatched: input.archivedMatchedByHost,

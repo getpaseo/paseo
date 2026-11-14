@@ -76,14 +76,19 @@ const contributions = [
   action("Group by status", "actions", "query"),
 ];
 
-function listed(tab: CommandCenterTab, query: string, archivedMatchedByHost = true) {
+function listed(
+  tab: CommandCenterTab,
+  query: string,
+  options: { archivedMatchedByHost?: boolean; showBackground?: boolean } = {},
+) {
   const sections = buildCommandCenterSections({
     tab,
     query,
     rankWorkspaces: createWorkspaceRanker(),
     workspaces,
     archivedWorkspaces: query ? archived : [],
-    archivedMatchedByHost,
+    archivedMatchedByHost: options.archivedMatchedByHost ?? true,
+    showBackground: options.showBackground ?? false,
     currentWorkspaceId: "workspace:server:current",
     contributions,
     files: [file],
@@ -108,10 +113,15 @@ describe("command center tabs", () => {
     ]);
   });
 
-  it("Recent workspaces leaves out background workspaces, which a query still finds", () => {
+  it("lists background workspaces unqueried only as the sidebar does; a query finds them", () => {
     expect(listed("all", "")).not.toContain("workspace:server:nightly");
+    expect(listed("all", "", { showBackground: true })).not.toContain("workspace:server:nightly");
+    expect(listed("workspaces", "")).not.toContain("workspace:server:nightly");
+    expect(listed("workspaces", "", { showBackground: true })).toContain(
+      "workspace:server:nightly",
+    );
     expect(listed("all", "nightly")).toContain("workspace:server:nightly");
-    expect(listed("workspaces", "")).toContain("workspace:server:nightly");
+    expect(listed("workspaces", "nightly")).toContain("workspace:server:nightly");
   });
 
   it("All ranks every kind of result for a query, archived workspaces after active ones", () => {
@@ -124,12 +134,11 @@ describe("command center tabs", () => {
     expect(rows).not.toContain("# Recent workspaces");
   });
 
-  it("Workspaces lists every workspace, current and background included, most recent first", () => {
+  it("Workspaces lists every workspace, current included, most recent first", () => {
     expect(listed("workspaces", "")).toEqual([
       "# Workspaces",
       "workspace:server:current",
       "workspace:server:payments",
-      "workspace:server:nightly",
       "workspace:server:onboarding",
       "workspace:server:docs",
       "workspace:server:search",
@@ -146,11 +155,11 @@ describe("command center tabs", () => {
 
   it("keeps archived rows the host did not match for this query only if they match it", () => {
     // The previous query's archived results stand in while the next search loads.
-    expect(listed("workspaces", "receipts", false)).toEqual([
+    expect(listed("workspaces", "receipts", { archivedMatchedByHost: false })).toEqual([
       "# Workspaces",
       "workspace:server:onboarding",
     ]);
-    expect(listed("workspaces", "billing", false)).toEqual([
+    expect(listed("workspaces", "billing", { archivedMatchedByHost: false })).toEqual([
       "# Workspaces",
       "workspace:server:billing",
     ]);

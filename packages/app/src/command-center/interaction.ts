@@ -15,12 +15,15 @@ interface ResultsInput {
   tab: CommandCenterTab;
   query: string;
   projection: CommandCenterListProjection;
+  /** A source of this query's and tab's results is still loading. */
   loading: boolean;
 }
 
 /**
- * Until the user moves the selection it is the first result, wherever results land. Once they
- * move it, their pick persists. Permission to move the viewport lasts for one user command.
+ * While a query's or tab's results are still loading, the selection follows the first result,
+ * so Enter right after opening runs what ends up on top rather than whatever rendered first.
+ * Once they have all loaded, or the user moves the selection, it stays on its row by ID through
+ * any later reordering. Permission to move the viewport lasts for one user command.
  */
 export function createCommandCenterInteraction(scrollToOffset: (offset: number) => void) {
   let snapshot: Snapshot = { query: "", activeId: null };
@@ -30,7 +33,7 @@ export function createCommandCenterInteraction(scrollToOffset: (offset: number) 
   let projection: CommandCenterListProjection | null = null;
   let loading = false;
   let revealPending = false;
-  let userPicked = false;
+  let followingFirst = true;
   let offset = 0;
   let visibleLength = 0;
 
@@ -85,7 +88,7 @@ export function createCommandCenterInteraction(scrollToOffset: (offset: number) 
       }
       if (resetSelection) {
         revealPending = true;
-        userPicked = false;
+        followingFirst = true;
         publish({ ...snapshot, activeId: null });
       }
       // A tab is a different list: it starts at its top, section label included.
@@ -100,17 +103,18 @@ export function createCommandCenterInteraction(scrollToOffset: (offset: number) 
       if (tab !== "files" || !loading) {
         publish({
           ...snapshot,
-          activeId: userPicked
-            ? preserveActiveResultId(snapshot.activeId, projection.selectableResults)
-            : (projection.selectableResults[0]?.id ?? null),
+          activeId: followingFirst
+            ? (projection.selectableResults[0]?.id ?? null)
+            : preserveActiveResultId(snapshot.activeId, projection.selectableResults),
         });
+        if (!loading) followingFirst = false;
       }
       reveal();
     },
     setQuery(query: string) {
       projection = null;
       revealPending = true;
-      userPicked = false;
+      followingFirst = true;
       publish({ query, activeId: null });
     },
     move(direction: "next" | "previous"): boolean {
@@ -121,7 +125,7 @@ export function createCommandCenterInteraction(scrollToOffset: (offset: number) 
         projection.selectableResults.length === 0
       )
         return false;
-      userPicked = true;
+      followingFirst = false;
       publish({
         ...snapshot,
         activeId: moveActiveResultId(snapshot.activeId, projection.selectableResults, direction),

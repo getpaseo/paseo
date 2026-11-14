@@ -1,6 +1,7 @@
 import {
   compareBuiltInScores,
   compareByRecency,
+  matchesSearchFieldsContiguously,
   scoreSearchFields,
   type CommandCenterScore,
   type CommandCenterWorkspaceAgent,
@@ -66,25 +67,29 @@ function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace):
   return compareByRecency(left.workspace, right.workspace);
 }
 
-interface WorkspaceMatch {
+interface AgentMatch {
+  agent: CommandCenterWorkspaceAgent;
   score: CommandCenterScore;
-  /** The agent the match went through, or null for the workspace's own text. */
-  agent: CommandCenterWorkspaceAgent | null;
 }
 
 /**
- * The workspace's best match: its own text, or one of its agents scored together with that
- * text. An agent wins only by matching better, so a query the workspace answers on its own
- * names no agent. Agents arrive most recent first, so a tie between agents keeps the newer one.
+ * The agent to name for a workspace whose own text matched loosely or not at all. Each agent
+ * is scored together with the workspace's text, so a query split across the two finds it. Over
+ * a loose own match, only an agent that matches contiguously is named. Agents arrive most
+ * recent first, so a tie keeps the newer one.
  */
-function bestMatch(workspace: CommandCenterWorkspaceResult, query: string): WorkspaceMatch | null {
-  const own = scoreSearchFields(query, ownSearchFields(workspace));
-  let best: WorkspaceMatch | null = own ? { score: own, agent: null } : null;
+function agentMatch(
+  workspace: CommandCenterWorkspaceResult,
+  query: string,
+  ownMatchedLoosely: boolean,
+): AgentMatch | null {
+  let best: AgentMatch | null = null;
   for (const agent of workspace.agents) {
-    const score = scoreSearchFields(query, agentSearchFields(workspace, agent));
-    if (score && (!best || compareBuiltInScores(score, best.score) < 0)) {
-      best = { score, agent };
-    }
+    const fields = agentSearchFields(workspace, agent);
+    const score = scoreSearchFields(query, fields);
+    if (!score) continue;
+    if (ownMatchedLoosely && !matchesSearchFieldsContiguously(query, fields)) continue;
+    if (!best || compareBuiltInScores(score, best.score) < 0) best = { agent, score };
   }
   return best;
 }
@@ -96,9 +101,10 @@ export type WorkspaceRanker = (
 ) => CommandCenterWorkspaceResult[];
 
 /**
- * Rank workspaces for a query, best match first. A workspace matches on its own title, project
- * and branch, or on those together with the title of one of its agents; a match through an
- * agent comes back naming that agent, and opens it.
+ * Rank workspaces for a query, best match first. A workspace matches on its own title, project,
+ * branch and change request, or on those together with the title of one of its agents. It is
+ * matched through an agent only when its own text does not match or matches only loosely; such
+ * a match comes back naming that agent, and opens it.
  *
  * An empty query lists every workspace, most recent first. `keepUnmatched` keeps rows nothing
  * here matches, ranked last: archived rows come from the host's own search, which is
@@ -138,15 +144,24 @@ export function createWorkspaceRanker(): WorkspaceRanker {
     for (const workspace of workspaces) {
       const changeRequestHit =
         changeRequestNumber !== null && workspace.changeRequestNumber === changeRequestNumber;
-      const match = bestMatch(workspace, query);
-      if (match || changeRequestHit) {
+      const ownFields = ownSearchFields(workspace);
+      const own = scoreSearchFields(query, ownFields);
+      // The workspace answers the query itself: no agent line, and Enter opens the workspace.
+      const ownMatch =
+        changeRequestHit || (own !== null && matchesSearchFieldsContiguously(query, ownFields));
+      const throughAgent = ownMatch ? null : agentMatch(workspace, query, own !== null);
+      if (throughAgent) {
         matches.push({
           workspace,
-          via: match?.agent ? AGENT_MATCH : OWN_MATCH,
-          score: match?.score ?? null,
-          agent: match?.agent ?? null,
+          via: AGENT_MATCH,
+          score: throughAgent.score,
+          agent: throughAgent.agent,
           changeRequestHit,
         });
+        continue;
+      }
+      if (own || changeRequestHit) {
+        matches.push({ workspace, via: OWN_MATCH, score: own, agent: null, changeRequestHit });
         continue;
       }
       if (options.keepUnmatched) {

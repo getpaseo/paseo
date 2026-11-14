@@ -53,16 +53,43 @@ describe("Command Center interaction", () => {
     expect(offsets).toEqual([]);
   });
 
-  it("selects the first result as results load above it, until the user picks one", () => {
+  it("follows the first result while results load, so Enter does not run what rendered first", () => {
+    const { model, publish } = setup();
+    model.setQuery("");
+    // Recent workspaces lead All and arrive after the actions below them.
+    publish(["new-workspace", "settings"], true);
+    expect(model.getSnapshot().activeId).toBe("new-workspace");
+    publish(["recent", "new-workspace", "settings"]);
+    expect(model.getSnapshot().activeId).toBe("recent");
+  });
+
+  it("keeps the selected row when settled results reorder", () => {
     const { model, publish } = setup();
     expect(model.getSnapshot().activeId).toBe("a");
-    // Recent workspaces lead All and can arrive after the actions below them.
-    publish(["z", "a", "b"]);
-    expect(model.getSnapshot().activeId).toBe("z");
+    // Another workspace's agent changed status, so it moves to the top of Recent workspaces.
+    publish(["b", "a", "c", "d"]);
+    expect(model.getSnapshot().activeId).toBe("a");
+  });
+
+  it("keeps the selected row when results land above it after the query settled", () => {
+    const { model, publish } = setup();
+    model.setQuery("invoice");
+    // Files arrive while archived workspaces are still being searched.
+    publish(["file-1", "file-2"], true);
+    expect(model.getSnapshot().activeId).toBe("file-1");
+    publish(["archived", "file-1", "file-2"]);
+    expect(model.getSnapshot().activeId).toBe("archived");
+    publish(["archived-2", "archived", "file-1", "file-2"]);
+    expect(model.getSnapshot().activeId).toBe("archived");
+  });
+
+  it("keeps the user's pick while results are still loading", () => {
+    const { model, publish } = setup();
+    model.setQuery("q");
+    publish(["a", "b"], true);
     model.move("next");
-    expect(model.getSnapshot().activeId).toBe("a");
-    publish(["y", "z", "a", "b"]);
-    expect(model.getSnapshot().activeId).toBe("a");
+    publish(["z", "a", "b"], true);
+    expect(model.getSnapshot().activeId).toBe("b");
   });
 
   it("reveals only clipped keyboard selections and wraps around", () => {

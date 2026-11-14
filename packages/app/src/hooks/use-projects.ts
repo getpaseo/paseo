@@ -25,6 +25,7 @@ export interface ProjectHostReplica {
   serverName: string;
   workspaces: WorkspaceDescriptor[];
   projects: ProjectDescriptor[];
+  hasHydratedWorkspaces: boolean;
 }
 
 export interface ProjectHostRuntimeState {
@@ -88,6 +89,7 @@ function selectProjectHostReplicas(
         serverName: host.label,
         workspaces: Array.from(session?.workspaces.values() ?? []),
         projects: Array.from(session?.projects.values() ?? []),
+        hasHydratedWorkspaces: session?.hasHydratedWorkspaces ?? false,
       };
     });
 }
@@ -125,7 +127,14 @@ export function deriveProjectsFromReplica(input: {
   return {
     ...buildProjects({ hosts }),
     hostErrors,
-    isLoading: input.runtimeStates.some((state) => state.isLoading),
+    // The agent directory reports ready before the workspace snapshot lands, so an online host
+    // still loads until its workspaces have arrived.
+    isLoading:
+      input.runtimeStates.some((state) => state.isLoading) ||
+      input.replicas.some(
+        (replica) =>
+          !replica.hasHydratedWorkspaces && runtimeByServerId.get(replica.serverId)?.isOnline,
+      ),
     isFetching: input.runtimeStates.some((state) => state.isFetching),
   };
 }

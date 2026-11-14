@@ -187,6 +187,46 @@ describe("workspace ranking", () => {
     expect(opened).toEqual(["agent-login"]);
   });
 
+  it("keeps a change-request hit on the workspace even when an agent's title names the number", () => {
+    const opened: string[] = [];
+    const row = workspace({
+      id: "payments",
+      title: "Payments refactor",
+      changeRequestNumber: 42,
+      agents: [agent("agent-review", "Address PR 42 review comments")],
+      opened,
+    });
+    const rank = createWorkspaceRanker();
+    for (const query of ["42", "pr 42", "#42"]) {
+      const [ranked] = rank([row], query);
+      expect(ranked?.matchedAgent).toBeNull();
+      ranked?.run();
+    }
+    expect(opened).toEqual(["workspace", "workspace", "workspace"]);
+  });
+
+  it("names no agent while the workspace's own text matches every keystroke contiguously", () => {
+    const row = workspace({
+      id: "fix-login-bug",
+      title: "fix-login-bug",
+      subtitle: "paseo · fix/login-bug",
+      agents: [agent("agent-login", "Login page fix")],
+    });
+    const rank = createWorkspaceRanker();
+    for (const query of ["l", "lo", "log", "logi", "login"]) {
+      expect(rank([row], query)[0]?.matchedAgent).toBeNull();
+    }
+  });
+
+  it("names no agent whose one-word title matches better than the workspace's whole word", () => {
+    const row = workspace({
+      id: "review-queue",
+      title: "Review queue",
+      agents: [agent("agent-review", "Review")],
+    });
+    expect(createWorkspaceRanker()([row], "review")[0]?.matchedAgent).toBeNull();
+  });
+
   it("ranks a better match through an agent above a looser match on a workspace's own text", () => {
     const loose = workspace({
       id: "loose-own",

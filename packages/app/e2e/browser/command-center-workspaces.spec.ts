@@ -217,7 +217,8 @@ test.describe("Command center workspaces", () => {
       });
 
       await test.step("an agent title finds the archived workspace on All", async () => {
-        await selectCommandCenterTab(panel, "All");
+        // Opened from the app shell, outside any workspace.
+        await selectCommandCenterTab(panel, "All", { workspaceOpen: false });
         await input.fill("invoice totals");
         await expect(archivedRow.getByTestId("command-center-workspace-agent")).toHaveText(
           "Audit invoice totals",

@@ -3,10 +3,16 @@ import { expect, type Locator, type Page } from "@playwright/test";
 export type CommandCenterTabName = "All" | "Workspaces" | "Files" | "Actions";
 
 const TAB_PLACEHOLDERS: Record<CommandCenterTabName, string> = {
-  All: "Search commands, files, workspaces, and agents...",
+  All: "Search workspaces, files, and actions...",
   Workspaces: "Search workspaces...",
   Files: "Search files...",
   Actions: "Search actions...",
+};
+
+/** Outside a workspace there are no files to search, so All does not offer them. */
+const TAB_PLACEHOLDERS_WITHOUT_WORKSPACE: Record<CommandCenterTabName, string> = {
+  ...TAB_PLACEHOLDERS,
+  All: "Search workspaces and actions...",
 };
 
 // Opens the command center / global search palette from the sidebar and returns its panel.
@@ -29,36 +35,36 @@ function commandCenterTab(panel: Locator, name: CommandCenterTabName): Locator {
 export async function selectCommandCenterTab(
   panel: Locator,
   name: CommandCenterTabName,
+  options: { workspaceOpen?: boolean } = {},
 ): Promise<void> {
   await commandCenterTab(panel, name).click();
-  await expectCommandCenterTab(panel, name);
+  await expectCommandCenterTab(panel, name, options);
 }
 
-/** The tab is selected and the search field asks for what that tab lists. */
+/**
+ * The tab is selected and the search field asks for what that tab lists. Pass
+ * `{ workspaceOpen: false }` when the command center was opened outside a workspace.
+ */
 export async function expectCommandCenterTab(
   panel: Locator,
   name: CommandCenterTabName,
+  options: { workspaceOpen?: boolean } = {},
 ): Promise<void> {
+  const placeholders =
+    options.workspaceOpen === false ? TAB_PLACEHOLDERS_WITHOUT_WORKSPACE : TAB_PLACEHOLDERS;
   await expect(commandCenterTab(panel, name)).toHaveAttribute("aria-selected", "true");
   await expect(panel.getByTestId("command-center-input")).toHaveAttribute(
     "placeholder",
-    TAB_PLACEHOLDERS[name],
+    placeholders[name],
   );
 }
 
-/** The list is empty and says why. */
-export async function expectCommandCenterEmptyState(
+/** Exactly these tabs are offered, in this order. */
+export async function expectCommandCenterTabs(
   panel: Locator,
-  message: string,
+  names: readonly CommandCenterTabName[],
 ): Promise<void> {
-  await expect(panel.getByTestId("command-center-empty")).toHaveText(message);
-}
-
-/** Every tab is offered, wherever the command center was opened. */
-export async function expectEveryCommandCenterTab(panel: Locator): Promise<void> {
-  for (const name of Object.keys(TAB_PLACEHOLDERS) as CommandCenterTabName[]) {
-    await expect(commandCenterTab(panel, name)).toBeVisible();
-  }
+  await expect(panel.getByTestId("command-center-tabs").getByRole("button")).toHaveText([...names]);
 }
 
 export function commandCenterSection(panel: Locator, title: string): Locator {

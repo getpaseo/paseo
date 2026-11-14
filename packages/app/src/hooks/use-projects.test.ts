@@ -35,12 +35,14 @@ describe("deriveProjectsFromReplica", () => {
         serverName: "Local",
         workspaces: [],
         projects: [project("prj_zeta", "acme/zeta", "/repo/zeta")],
+        hasHydratedWorkspaces: true,
       },
       {
         serverId: "laptop",
         serverName: "Laptop",
         workspaces: [],
         projects: [project("prj_alpha", "acme/alpha", "/repo/alpha")],
+        hasHydratedWorkspaces: false,
       },
     ];
 
@@ -69,6 +71,7 @@ describe("deriveProjectsFromReplica", () => {
           serverName: "Local",
           workspaces: [],
           projects: [project("prj_app", "acme/app", "/repo/app")],
+          hasHydratedWorkspaces: true,
         },
       ],
       runtimeStates: [
@@ -86,5 +89,27 @@ describe("deriveProjectsFromReplica", () => {
     expect(result.hostErrors).toEqual([
       { serverId: "local", serverName: "Local", message: "unavailable" },
     ]);
+  });
+
+  it("stays loading until an online host's workspaces have arrived", () => {
+    const replica = (hasHydratedWorkspaces: boolean): ProjectHostReplica => ({
+      serverId: "local",
+      serverName: "Local",
+      workspaces: [],
+      projects: [],
+      hasHydratedWorkspaces,
+    });
+    const online = [runtimeState({ serverId: "local" })];
+    const offline = [runtimeState({ serverId: "local", isOnline: false })];
+
+    expect(
+      deriveProjectsFromReplica({ replicas: [replica(false)], runtimeStates: online }).isLoading,
+    ).toBe(true);
+    expect(
+      deriveProjectsFromReplica({ replicas: [replica(true)], runtimeStates: online }).isLoading,
+    ).toBe(false);
+    expect(
+      deriveProjectsFromReplica({ replicas: [replica(false)], runtimeStates: offline }).isLoading,
+    ).toBe(false);
   });
 });

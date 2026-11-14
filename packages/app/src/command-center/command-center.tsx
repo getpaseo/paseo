@@ -60,6 +60,7 @@ import { useProjectIcons } from "@/projects/icons";
 import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   navigateToWorkspace,
   useActiveWorkspaceSelection,
@@ -91,7 +92,12 @@ import {
   type CommandCenterWorkspaceResult,
 } from "./results";
 import { buildCommandCenterSections } from "./sections";
-import { COMMAND_CENTER_TABS, rotateCommandCenterTab, type CommandCenterTab } from "./tabs";
+import {
+  availableCommandCenterTabs,
+  resolveCommandCenterTab,
+  rotateCommandCenterTab,
+  type CommandCenterTab,
+} from "./tabs";
 import { createCommandCenterInteraction, type CommandCenterInteraction } from "./interaction";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
 
@@ -166,6 +172,8 @@ function titledAgents(
 interface WorkspaceRows {
   active: CommandCenterWorkspaceResult[];
   archived: CommandCenterWorkspaceResult[];
+  /** The workspace list has not loaded yet, so rows are still arriving. */
+  loading: boolean;
 }
 
 /**
@@ -178,8 +186,8 @@ function useWorkspaceRows(
   archivedWorkspaces: readonly ArchivedWorkspace[],
 ): WorkspaceRows {
   const previousRows = useRef(new Map<string, CommandCenterWorkspaceResult>());
-  const { agents } = useAggregatedAgents({ demand: open });
-  const { projects } = useProjects({ enabled: open });
+  const { agents, isInitialLoad: agentsLoading } = useAggregatedAgents({ demand: open });
+  const { projects, isLoading: projectsLoading } = useProjects({ enabled: open });
   const hosts = useHosts();
   const showHost = hosts.length > 1;
   const iconTargets = useMemo(
@@ -302,11 +310,19 @@ function useWorkspaceRows(
     });
   }, [active, archivedWorkspaces, hosts, iconDataByProjectViewKey, projects, showHost]);
 
-  return { active, archived };
+  return {
+    active,
+    archived,
+    // Opening a workspace route loads that workspace before the rest of the directory, so rows
+    // are no sign that the list is complete.
+    loading: agentsLoading || projectsLoading,
+  };
 }
 
 interface CommandCenterState {
   open: boolean;
+  /** The tabs on offer, in the order Tab walks them. */
+  tabs: readonly CommandCenterTab[];
   tab: CommandCenterTab;
   selectTab(tab: CommandCenterTab): void;
   query: string;
@@ -317,8 +333,6 @@ interface CommandCenterState {
   inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
-  /** The Files tab is open outside a workspace, so it has nothing to search. */
-  filesNeedWorkspace: boolean;
   close(): void;
   select(result: CommandCenterResult): void;
   key(event: { key: string; shiftKey?: boolean }): boolean;
@@ -331,30 +345,37 @@ function useCommandCenterState(
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
-  const tab = useKeyboardShortcutsStore((state) => state.commandCenterTab);
+  const requestedTab = useKeyboardShortcutsStore((state) => state.commandCenterTab);
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const setTab = useKeyboardShortcutsStore((state) => state.setCommandCenterTab);
   const snapshot = useCommandCenterContributions();
   const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
   const { query, activeId } = useSyncExternalStore(interaction.subscribe, interaction.getSnapshot);
+  const activeWorkspace = useActiveWorkspaceSelection();
+  const hasWorkspace = activeWorkspace !== null;
+  const tabs = useMemo(() => availableCommandCenterTabs({ hasWorkspace }), [hasWorkspace]);
+  const tab = resolveCommandCenterTab(requestedTab, tabs);
+  const showBackground = useSidebarViewStore((state) => state.showBackground);
+  const listsWorkspaces = tab === "all" || tab === "workspaces";
   const archivedSearch = useArchivedWorkspaceSearch(query, {
-    enabled: open && (tab === "all" || tab === "workspaces"),
+    enabled: open && listsWorkspaces,
   });
   const workspaceRows = useWorkspaceRows(open, archivedSearch.workspaces);
   const [rankWorkspaces] = useState(createWorkspaceRanker);
-  const activeWorkspace = useActiveWorkspaceSelection();
   const currentWorkspaceId = activeWorkspace
     ? `workspace:${activeWorkspace.serverId}:${activeWorkspace.workspaceId}`
     : null;
   const {
-    hasWorkspace: canSearchFiles,
     entries: fileSearchEntries,
     loading: fileSearchLoading,
     error: fileSearchError,
     openFile,
   } = useWorkspaceFileSearch({
-    enabled: open && (tab === "files" || (tab === "all" && Boolean(query.trim()))),
+    enabled:
+      open &&
+      tabs.includes("files") &&
+      (tab === "files" || (tab === "all" && Boolean(query.trim()))),
     query,
   });
   const files = useMemo(
@@ -379,6 +400,7 @@ function useCommandCenterState(
             workspaces: workspaceRows.active,
             archivedWorkspaces: workspaceRows.archived,
             archivedMatchedByHost: archivedSearch.matchedByHost,
+            showBackground,
             currentWorkspaceId,
             contributions: snapshot.contributions,
             files,
@@ -396,6 +418,7 @@ function useCommandCenterState(
       open,
       query,
       rankWorkspaces,
+      showBackground,
       snapshot.contributions,
       t,
       tab,
@@ -406,9 +429,11 @@ function useCommandCenterState(
     () => projectCommandCenterRows(sections, listMetrics),
     [listMetrics, sections],
   );
+  const loading =
+    fileSearchLoading || (listsWorkspaces && (archivedSearch.pending || workspaceRows.loading));
   useLayoutEffect(() => {
-    interaction.update({ open, tab, query, projection, loading: fileSearchLoading });
-  }, [interaction, open, tab, query, projection, fileSearchLoading]);
+    interaction.update({ open, tab, query, projection, loading });
+  }, [interaction, open, tab, query, projection, loading]);
 
   const close = useCallback(() => setOpen(false), [setOpen]);
   const select = useCallback(
@@ -436,7 +461,7 @@ function useCommandCenterState(
         return true;
       }
       if (pressed === "Tab") {
-        setTab(rotateCommandCenterTab(tab, event.shiftKey ? "previous" : "next"));
+        setTab(rotateCommandCenterTab(tab, event.shiftKey ? "previous" : "next", tabs));
         return true;
       }
       if (pressed === "Backspace" && !query.trim() && tab !== "all") {
@@ -452,7 +477,18 @@ function useCommandCenterState(
       if (pressed !== "ArrowDown" && pressed !== "ArrowUp") return false;
       return interaction.move(pressed === "ArrowDown" ? "next" : "previous");
     },
-    [close, open, projection.selectableResults, query, activeId, tab, select, setTab, interaction],
+    [
+      close,
+      open,
+      projection.selectableResults,
+      query,
+      activeId,
+      tab,
+      tabs,
+      select,
+      setTab,
+      interaction,
+    ],
   );
 
   useEffect(() => {
@@ -476,6 +512,7 @@ function useCommandCenterState(
 
   return {
     open,
+    tabs,
     tab,
     selectTab,
     query,
@@ -486,7 +523,6 @@ function useCommandCenterState(
     inputRef,
     fileSearchLoading,
     fileSearchError,
-    filesNeedWorkspace: tab === "files" && !canSearchFiles,
     close,
     select,
     key,
@@ -838,6 +874,14 @@ const TAB_PLACEHOLDER_KEYS = {
   actions: "shell.commandCenter.actionPlaceholder",
 } as const satisfies Record<CommandCenterTab, string>;
 
+/** The search field names what the tab searches; All names only the kinds on offer. */
+function placeholderKey(tab: CommandCenterTab, tabs: readonly CommandCenterTab[]) {
+  if (tab === "all" && !tabs.includes("files")) {
+    return "shell.commandCenter.placeholderWithoutFiles";
+  }
+  return TAB_PLACEHOLDER_KEYS[tab];
+}
+
 export function CommandCenter() {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -907,15 +951,9 @@ export function CommandCenter() {
   const empty = useMemo(
     () =>
       state.fileSearchError || state.fileSearchLoading ? null : (
-        <Text style={styles.emptyText} testID="command-center-empty">
-          {t(
-            state.filesNeedWorkspace
-              ? "shell.commandCenter.filesNeedWorkspace"
-              : "shell.commandCenter.noMatches",
-          )}
-        </Text>
+        <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
       ),
-    [state.fileSearchError, state.fileSearchLoading, state.filesNeedWorkspace, t],
+    [state.fileSearchError, state.fileSearchLoading, t],
   );
   const fileSearchError = useMemo(
     () =>
@@ -973,12 +1011,12 @@ export function CommandCenter() {
 
   const tabOptions = useMemo<SegmentedControlOption<CommandCenterTab>[]>(
     () =>
-      COMMAND_CENTER_TABS.map((tab) => ({
+      state.tabs.map((tab) => ({
         value: tab,
         label: t(`shell.commandCenter.tabs.${tab}`),
         testID: `command-center-tab-${tab}`,
       })),
-    [t],
+    [state.tabs, t],
   );
   const tabs = (
     <SegmentedControl
@@ -989,7 +1027,7 @@ export function CommandCenter() {
       testID="command-center-tabs"
     />
   );
-  const placeholder = t(TAB_PLACEHOLDER_KEYS[state.tab]);
+  const placeholder = t(placeholderKey(state.tab, state.tabs));
 
   if (showBottomSheet) {
     return (
