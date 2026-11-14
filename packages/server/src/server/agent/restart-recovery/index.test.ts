@@ -195,3 +195,29 @@ for (const seeder of ["setup", "shell", "setup-bom"] as const) {
     },
   );
 }
+
+test("seeding skips an existing home without reading invalid source config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "seed-skip-"));
+  try {
+    const source = join(root, "source");
+    const targetRoot = join(root, "target");
+    const target = join(targetRoot, ".dev/paseo-home");
+    await mkdir(source, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await writeFile(join(source, "config.json"), "invalid JSON");
+    await writeFile(join(target, "keep.json"), "{}");
+    const repo = fileURLToPath(new URL("../../../../../../", import.meta.url));
+    execFileSync(process.execPath, [join(repo, "scripts/seed-worktree-dev-state.mjs")], {
+      env: {
+        ...process.env,
+        PASEO_SOURCE_CHECKOUT_PATH: join(root, "checkout"),
+        PASEO_WORKTREE_PATH: targetRoot,
+        PASEO_DEV_SEED_HOME: source,
+        PASEO_DEV_RESET_HOME: "0",
+      },
+    });
+    expect(await readdir(target)).toEqual(["keep.json"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

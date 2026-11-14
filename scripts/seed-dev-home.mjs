@@ -22,6 +22,11 @@ export function seedPaseoHome(source, target) {
     return;
   }
 
+  if (process.env.PASEO_DEV_RESET_HOME !== "1" && hasEntries(target)) {
+    console.log(`  Seed:    skipped (${target} already has data)`);
+    return;
+  }
+
   const configPath = join(source, "config.json");
   const config = existsSync(configPath)
     ? JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""))
@@ -29,9 +34,6 @@ export function seedPaseoHome(source, target) {
 
   if (process.env.PASEO_DEV_RESET_HOME === "1") {
     rmSync(target, { recursive: true, force: true });
-  } else if (hasEntries(target)) {
-    console.log(`  Seed:    skipped (${target} already has data)`);
-    return;
   }
 
   mkdirSync(target, { recursive: true });
