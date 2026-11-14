@@ -1,10 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
 import { withUnistyles } from "react-native-unistyles";
-import {
-  useAssistantFileLinkActions,
-  useAssistantFileLinkEnvironment,
-} from "@/assistant-file-links";
+import { useAssistantFileLinkActions } from "@/assistant-file-links";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { matchCommandLink, useAgentCommandHints, type CommandHints } from "@/agent-commands";
 import { useForgeShorthand } from "@/git/forge-shorthand";
@@ -18,7 +15,9 @@ import { WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
 import { splitStreamingMarkdown } from "./streaming";
-import { useMarkdownSource, type MarkdownImageContext } from "./images";
+import { useMarkdownImageContext, useMarkdownSource, type MarkdownImageContext } from "./images";
+import { splitHtmlImageBlocks } from "./html-image-blocks";
+import { MarkdownHtmlImages } from "./html-images";
 
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
 
@@ -78,7 +77,33 @@ const CommandMarkdownPart = memo(function CommandMarkdownPart(props: MarkdownRen
   return <MarkdownPart {...props} commandHints={commandHints} />;
 });
 
-const MarkdownPart = memo(function MarkdownPart({
+type MarkdownPartProps = MarkdownRendererProps & { commandHints?: CommandHints | null };
+
+const MarkdownPart = memo(function MarkdownPart(props: MarkdownPartProps) {
+  const blocks = useMemo(() => splitHtmlImageBlocks(props.text), [props.text]);
+  if (blocks.length === 1 && blocks[0]!.kind === "markdown") return <MarkdownText {...props} />;
+  return (
+    <MarkdownBlockStack>
+      {blocks.map((block) =>
+        block.kind === "markdown" ? (
+          <MarkdownText key={block.id} {...props} text={block.source} />
+        ) : (
+          <MarkdownHtmlImages
+            key={block.id}
+            rows={block.rows}
+            client={props.client}
+            workspaceRoot={props.workspaceRoot}
+            serverId={props.serverId}
+            filePath={props.filePath}
+            onLinkPress={props.onLinkPress}
+          />
+        ),
+      )}
+    </MarkdownBlockStack>
+  );
+});
+
+function MarkdownText({
   text,
   compact = false,
   muted = false,
@@ -88,25 +113,14 @@ const MarkdownPart = memo(function MarkdownPart({
   agentCommands: _agentCommands,
   commandHints = null,
   ...imageContext
-}: MarkdownRendererProps & { commandHints?: CommandHints | null }) {
-  const environment = useAssistantFileLinkEnvironment();
+}: MarkdownPartProps) {
   const actions = useAssistantFileLinkActions();
   const forgeShorthand = useForgeShorthand();
-  const client =
-    imageContext.client ??
-    (environment.client?.readFile
-      ? { readFile: environment.client.readFile.bind(environment.client) }
-      : undefined);
-  const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(
-    text,
-    {
-      workspaceRoot: environment.workspaceRoot,
-      serverId: environment.serverId,
-      ...imageContext,
-      client,
-    },
-    { commandNames: commandHints?.names, forgeReferencePattern: forgeShorthand?.pattern },
-  );
+  const context = useMarkdownImageContext(imageContext);
+  const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(text, context, {
+    commandNames: commandHints?.names,
+    forgeReferencePattern: forgeShorthand?.pattern,
+  });
   const [image, setImage] = useState<ImageLightboxSource | null>(null);
   const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
     const command = commandHints && matchCommandLink(url, sourceType, commandHints.names);
@@ -162,4 +176,4 @@ const MarkdownPart = memo(function MarkdownPart({
       {image ? <AttachmentLightbox source={image} onClose={closeImage} /> : null}
     </MermaidStreamingContext.Provider>
   );
-});
+}
