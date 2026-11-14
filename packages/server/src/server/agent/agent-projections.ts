@@ -16,6 +16,7 @@ import type {
   AgentSessionConfig,
   AgentRuntimeInfo,
   AgentUsage,
+  AgentRequestTiming,
   ImportableProviderSession,
 } from "./agent-sdk-types.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
@@ -176,6 +177,11 @@ export function toAgentPayload(
   const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
     payload.lastUsage = usage;
+  }
+
+  const timing = sanitizeRequestTiming(agent.lastRequestTiming);
+  if (timing !== undefined) {
+    payload.lastRequestTiming = timing;
   }
 
   if (agent.lastError !== undefined) {
@@ -609,6 +615,51 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
     }
   }
   return Object.keys(result).length ? result : undefined;
+}
+
+// Flat validation of the optional wire shape; a helper per field would hide
+// the accepted fields and add no clarity.
+// eslint-disable-next-line complexity
+function sanitizeRequestTiming(value: unknown): AgentRequestTiming | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const scope = row.scope === "request" || row.scope === "turn" ? row.scope : undefined;
+  const duration = row.durationMs;
+  if (
+    scope === undefined ||
+    typeof duration !== "number" ||
+    !Number.isFinite(duration) ||
+    duration < 0
+  ) {
+    return undefined;
+  }
+  const timing: AgentRequestTiming = {
+    scope,
+    durationMs: duration,
+    reasoningStreamed: row.reasoningStreamed === true,
+  };
+  if (typeof row.requestId === "string") timing.requestId = row.requestId;
+  if (typeof row.turnId === "string") timing.turnId = row.turnId;
+  if (typeof row.model === "string") timing.model = row.model;
+  if (typeof row.stopReason === "string") timing.stopReason = row.stopReason;
+  for (const field of [
+    "timeToFirstTokenMs",
+    "generationMs",
+    "outputTokens",
+    "reasoningTokens",
+  ] as const) {
+    const fieldValue = row[field];
+    if (typeof fieldValue === "number" && Number.isFinite(fieldValue) && fieldValue >= 0) {
+      timing[field] = fieldValue;
+    }
+  }
+  if (
+    (timing.timeToFirstTokenMs !== undefined && timing.timeToFirstTokenMs > timing.durationMs) ||
+    (timing.generationMs !== undefined && timing.generationMs > timing.durationMs)
+  ) {
+    return undefined;
+  }
+  return timing;
 }
 
 function sanitizeRuntimeInfo(
