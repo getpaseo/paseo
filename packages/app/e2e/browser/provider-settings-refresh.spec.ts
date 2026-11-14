@@ -95,30 +95,32 @@ async function hasFocusWithin(locator: Locator): Promise<boolean> {
 }
 
 async function expectProviderSettingsVisible(page: Page) {
-  await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("button", { name: "Add model" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Diagnostic", exact: true })).toBeVisible();
+  const sheet = page.getByTestId("provider-settings-sheet");
+  await expect(sheet).toBeVisible({ timeout: 10_000 });
+  await expect(sheet.getByRole("button", { name: "Add model" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Diagnostic report" })).toBeVisible();
 }
 
 async function exerciseProviderSettingsStack(page: Page) {
   await expectProviderSettingsVisible(page);
+  const sheet = page.getByTestId("provider-settings-sheet");
 
-  await page.getByRole("button", { name: "Add model" }).click();
+  await sheet.getByRole("button", { name: "Add model" }).click();
   await expect(page.getByTestId("add-custom-model-sheet")).toBeVisible({ timeout: 10_000 });
   await closeSheetByHeaderButton(page, "add-custom-model-sheet");
   await expect(page.getByPlaceholder("e.g. openai/gpt-5")).not.toBeVisible({ timeout: 10_000 });
   await expectProviderSettingsVisible(page);
 
-  await page.getByRole("button", { name: "Diagnostic", exact: true }).click();
+  await sheet.getByRole("button", { name: "Diagnostic report" }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Refresh diagnostic/ }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
   await closeSheetByHeaderButton(page, "provider-diagnostic-sheet");
   await expectProviderSettingsVisible(page);
 
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await sheet.getByRole("button", { name: "Refresh", exact: true }).click();
   await expectProviderSettingsVisible(page);
-  await expect(page.getByText("Updated just now", { exact: true })).toBeVisible({
+  await expect(sheet.getByText("Checked just now", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
 }

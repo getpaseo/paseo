@@ -36,7 +36,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
-import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
@@ -352,16 +351,17 @@ function StatusIndicator({ status, compact }: { status: ProviderStatus; compact:
 
 export interface ProvidersSectionProps {
   serverId: string;
+  /** Opens a provider's detail wherever the host shows it: a Settings page or a sheet. */
+  onOpenProvider: (providerId: string) => void;
 }
 
-export function ProvidersSection({ serverId }: ProvidersSectionProps) {
+export function ProvidersSection({ serverId, onOpenProvider }: ProvidersSectionProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
   const removingProviderIdRef = useRef<string | null>(null);
@@ -381,13 +381,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           )),
       ),
     [config],
-  );
-
-  const handleOpenProviderSettings = useCallback(
-    (providerId: string) => {
-      openProviderSettings({ serverId, provider: providerId });
-    },
-    [openProviderSettings, serverId],
   );
 
   const handleToggleEnabled = useCallback(
@@ -492,7 +485,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                     isConfigOwnedProvider(def.id)
                   }
                   isFirst={index === 0}
-                  onPress={handleOpenProviderSettings}
+                  onPress={onOpenProvider}
                   onToggleEnabled={handleToggleEnabled}
                   onRemove={handleRemoveProvider}
                 />

@@ -30,6 +30,7 @@ export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
 export { SettingsDetailRow } from "./detail-row";
+export { SettingsBackLink, SettingsDetailHeader } from "./detail-header";
 export { SettingsInfoTip } from "./headings/settings-info-tip";
 export { MenuSettingsRows } from "./row-density";
 
