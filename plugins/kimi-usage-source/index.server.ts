@@ -1,5 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inputSchema } from "./shared/input.js";
+import { startKimiCredentialRefresh } from "./server/refresher.js";
 import { fetchUsage, discover } from "./server/usage.js";
 
 export default function contribute(server: PluginServerContext) {
@@ -11,5 +12,5 @@ export default function contribute(server: PluginServerContext) {
     discover: (scope) => (scope.kind === "global" ? discover() : Promise.resolve([])),
     fetch: fetchUsage,
   });
-  return () => {};
+  return startKimiCredentialRefresh();
 }
