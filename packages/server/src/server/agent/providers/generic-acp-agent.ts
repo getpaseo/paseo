@@ -7,6 +7,7 @@ import {
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
+  type ACPDelegationExtension,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
 import {
@@ -27,6 +28,7 @@ interface GenericACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  delegationExtension?: ACPDelegationExtension;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
@@ -54,6 +56,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       waitForInitialCommands: options.waitForInitialCommands ?? true,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
       clientCapabilityMeta: options.clientCapabilityMeta,
+      delegationExtension: options.delegationExtension,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,

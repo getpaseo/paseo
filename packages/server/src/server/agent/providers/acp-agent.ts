@@ -108,6 +108,7 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import type { ProviderSubagentStatus } from "../provider-subagents/store.js";
 import {
   raceProviderRefreshAbort,
   runProviderRefreshActivity,
@@ -188,6 +189,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
+}
+
+/**
+ * The signature of a published delegation tree.
+ *
+ * It covers every field the track shows, so a tree that changes what the user
+ * reads is published again. A row that only changed its timestamp reads the
+ * same, so it is not.
+ *
+ * The fields are encoded one by one, so a value that contains a separator
+ * cannot be read as two fields: two different trees never share a signature.
+ */
+function delegationTreeSignature(rows: ACPDelegationRow[]): string {
+  return JSON.stringify(
+    rows.map((row) => [
+      row.id,
+      row.status,
+      row.title ?? "",
+      row.description ?? "",
+      row.parentSubagentId ?? "",
+    ]),
+  );
 }
 
 function isACPInvalidParams(error: unknown): boolean {
@@ -314,6 +337,26 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
 
+/**
+ * Merges the metadata of a handshake.
+ *
+ * A capability that one layer asks for must not drop what another layer asks
+ * for: the vendor extension of a provider and the metadata of a user
+ * configuration both belong in the same handshake.
+ */
+function mergeCapabilityMeta(
+  base?: ACPClientCapabilityMeta | null,
+  extra?: ACPClientCapabilityMeta,
+): ACPClientCapabilityMeta {
+  if (!base) {
+    return extra ?? {};
+  }
+  if (!extra) {
+    return { ...base };
+  }
+  return { ...base, ...extra };
+}
+
 export function buildACPClientCapabilities(
   meta?: ACPClientCapabilityMeta,
   override?: ACPClientCapabilities,
@@ -326,7 +369,8 @@ export function buildACPClientCapabilities(
       ...override?.fs,
     },
   };
-  return meta && Object.keys(meta).length > 0 ? { ...capabilities, _meta: meta } : capabilities;
+  const mergedMeta = mergeCapabilityMeta(override?._meta, meta);
+  return Object.keys(mergedMeta).length > 0 ? { ...capabilities, _meta: mergedMeta } : capabilities;
 }
 
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
@@ -342,6 +386,10 @@ const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
+// The ACP SDK does not reject a request the provider never answers, so the
+// read of a delegation tree is bounded: a provider that advertises the
+// extension and stays silent must not hold the session startup hostage.
+const DELEGATION_TREE_TIMEOUT_MS = 2_000;
 
 /**
  * An ACP agent publishes its slash-command inventory incrementally. Wait this
@@ -457,6 +505,71 @@ export type ACPExtensionCommandsParser = (
 ) => AgentSlashCommand[] | null;
 
 /**
+ * One row of a provider's delegation tree: a child execution the session
+ * delegated to, as the subagent track shows it.
+ */
+export interface ACPDelegationRow {
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: ProviderSubagentStatus;
+  parentSubagentId: string | null;
+  timestamp?: string;
+  /**
+   * How long the row waits before it is published, in milliseconds.
+   *
+   * A provider that reports a child as finished before it started needs the
+   * row to wait: the provider takes the child back a moment later. The wait
+   * is bounded, so a child that really finished is shown. The deadline is
+   * absolute: a provider that publishes the same child again does not push
+   * the row further away.
+   */
+  deferMs?: number;
+}
+
+/**
+ * What the session knows about the tree when a provider publishes one.
+ */
+export interface ACPDelegationContext {
+  /** The members the session already shows. */
+  knownMemberIds: ReadonlySet<string>;
+}
+
+/**
+ * Lets a provider that runs its own child sessions publish that tree, without
+ * the generic ACP session/client carrying any vendor knowledge.
+ *
+ * The provider owns the shape of its tree: the extension reads it and turns it
+ * into rows. The session keeps the generic part - when to read the tree, how a
+ * tree replaces the previous one, and how the rows reach the track.
+ */
+export interface ACPDelegationExtension {
+  /** The metadata key where the provider advertises the extension methods it supports. */
+  readonly advertisementKey: string;
+  /** The extension method that reads the provider's delegation tree. */
+  readonly readMethod: string;
+  /** The extension notification that publishes an updated tree. */
+  readonly updateMethod: string;
+  /** Reads the provider's delegation tree once. */
+  readTree(options: {
+    sessionId: string;
+    connection: Pick<ClientSideConnection, "extMethod">;
+  }): Promise<unknown>;
+  /** Turns the answer of the read method into the rows it holds. */
+  parseReadResult(result: unknown): ACPDelegationRow[] | null;
+  /**
+   * Turns a published update into the rows it holds.
+   *
+   * The context says which members the session already shows, so an
+   * extension can tell a member it has not seen before from one it knows.
+   */
+  parseUpdate(
+    params: Record<string, unknown>,
+    context: ACPDelegationContext,
+  ): ACPDelegationRow[] | null;
+}
+
+/**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
  * (e.g. switch through each model to read back per-model options) without re-implementing
@@ -510,6 +623,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  delegationExtension?: ACPDelegationExtension;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -542,6 +656,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  delegationExtension?: ACPDelegationExtension;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
   configuredModelIds?: readonly string[];
@@ -986,6 +1101,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly delegationExtension?: ACPDelegationExtension;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
@@ -1017,6 +1133,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.delegationExtension = options.delegationExtension;
     this.now = options.now ?? Date.now;
   }
 
@@ -1056,6 +1173,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        delegationExtension: this.delegationExtension,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -1116,6 +1234,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      delegationExtension: this.delegationExtension,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1775,6 +1894,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
+  // The metadata the provider sent in its initialize answer. A vendor
+  // extension advertises the methods it supports there.
+  private agentMeta: Record<string, unknown> | null = null;
+  // The last delegation tree the session published, so a repeated tree does
+  // not redraw the same rows.
+  private delegationSignature: string | null = null;
+  // Counts the trees the session published. A read that answers for an older
+  // tree than the one published meanwhile is dropped.
+  private delegationGeneration = 0;
+  // The rows the session published, so a tree that no longer holds a member
+  // removes its row.
+  private readonly publishedDelegationIds = new Set<string>();
+  // The rows that wait before they are published, so a provider that reports
+  // a child as finished before it started does not show it as finished. Every
+  // waiting row keeps the deadline of its first report, so a provider that
+  // keeps publishing its tree cannot push the row further away.
+  private readonly pendingDelegationRows = new Map<
+    string,
+    { row: ACPDelegationRow; deadline: number; timer: ReturnType<typeof setTimeout> }
+  >();
+  // The delegation tree is read while the session initializes, before the
+  // agent manager subscribes to the session. The rows wait here until a
+  // subscriber arrives.
+  private readonly pendingDelegationEvents: AgentStreamEvent[] = [];
+  private delegationBacklogDelivered = false;
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
@@ -1806,6 +1950,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly delegationExtension?: ACPDelegationExtension;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1854,6 +1999,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.delegationExtension = options.delegationExtension;
   }
 
   get id(): string | null {
@@ -1876,6 +2022,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.agentMeta = spawned.initialize._meta ?? null;
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1890,6 +2037,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         await this.sessionUpdate(update);
       }
       await this.applyConfiguredOverrides();
+      await this.refreshDelegationTree();
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1913,6 +2061,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.agentMeta = spawned.initialize._meta ?? null;
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1944,6 +2093,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
 
       await this.applyConfiguredOverrides();
+      await this.refreshDelegationTree();
 
       if (this.resumePurpose === "history") {
         await this.releaseHistoryRuntime();
@@ -2094,9 +2244,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: this.sessionId,
       });
     }
+    this.deliverDelegationBacklog(callback);
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  /**
+   * Hands the delegation rows published before the first subscriber to that
+   * subscriber, in the order the provider published them. Later rows are
+   * delivered live, so a row is never reported twice.
+   */
+  private deliverDelegationBacklog(callback: (event: AgentStreamEvent) => void): void {
+    if (this.delegationBacklogDelivered) {
+      return;
+    }
+    this.delegationBacklogDelivered = true;
+    for (const event of this.pendingDelegationEvents.splice(0)) {
+      callback(event);
+    }
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -2713,6 +2879,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
 
     this.cancelPendingPermissions();
+    this.clearPendingDelegationRows();
 
     if (this.connection && this.sessionId) {
       try {
@@ -2853,6 +3020,208 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  /**
+   * Reports whether the provider advertised the delegation extension.
+   *
+   * The advertisement lives in the metadata of the initialize answer, so a
+   * provider that never offered a delegation tree is never asked for one.
+   */
+  private supportsDelegationExtension(): boolean {
+    const extension = this.delegationExtension;
+    if (!extension) {
+      return false;
+    }
+    const advertised = this.agentMeta?.[extension.advertisementKey];
+    if (!isRecord(advertised)) {
+      return false;
+    }
+    const methods = advertised.methods;
+    return Array.isArray(methods) && methods.includes(extension.readMethod);
+  }
+
+  /**
+   * Reads the provider's delegation tree once, so a session that already had
+   * sub-agents shows them before the next update arrives.
+   *
+   * The tree is published as the provider reported it: a child it reports as
+   * finished is finished, and a session that starts or resumes shows it at
+   * once. A live update can bring such a row back to running, because the
+   * snapshot and the live state of a provider can disagree briefly. The row
+   * follows what the provider reports, so no timing is guessed.
+   */
+  private async refreshDelegationTree(): Promise<void> {
+    const extension = this.delegationExtension;
+    const connection = this.connection;
+    if (!extension || !connection || !this.sessionId) {
+      return;
+    }
+    if (!this.supportsDelegationExtension()) {
+      return;
+    }
+    const generation = this.delegationGeneration;
+    try {
+      const result = await withTimeout(
+        extension.readTree({ sessionId: this.sessionId, connection }),
+        DELEGATION_TREE_TIMEOUT_MS,
+        `ACP delegation tree timed out after ${DELEGATION_TREE_TIMEOUT_MS}ms`,
+      );
+      if (generation !== this.delegationGeneration) {
+        // The provider published a newer tree while this read was in flight.
+        // The answer belongs to the older tree, so it is dropped: applying it
+        // would remove the rows of the newer one.
+        return;
+      }
+      this.applyDelegationRows(extension.parseReadResult(result));
+    } catch (error) {
+      // A provider without a delegation tree, or one that is not attached to
+      // this process, answers with an error. That is not a failure of the
+      // session: the tree is an extra, not a requirement.
+      this.logger.debug({ err: error }, "ACP provider did not report a delegation tree");
+    }
+  }
+
+  /**
+   * Publishes a delegation tree as sub-agent rows.
+   *
+   * A provider that runs its own sub-agents keeps them out of the session
+   * list: their sessions cannot be opened, and they never appear as agents of
+   * their own. Without this the background work of a session is invisible -
+   * the user sees the parent turn and nothing about what it delegated.
+   *
+   * The provider sends the whole tree, so the rows replace the previous state:
+   * a member the tree no longer holds is gone from the track. A member the
+   * tree still holds without a row of its own keeps the row it had.
+   */
+  private applyDelegationRows(rows: ACPDelegationRow[] | null): void {
+    if (!rows) {
+      return;
+    }
+    const signature = delegationTreeSignature(rows);
+    if (signature === this.delegationSignature) {
+      // The provider repeats a tree it already sent. Republishing it would
+      // only redraw the same rows.
+      return;
+    }
+    this.delegationSignature = signature;
+    const rowIds = new Set(rows.map((row) => row.id));
+    const keptMemberIds = new Set<string>();
+    for (const id of this.publishedDelegationIds) {
+      if (!rowIds.has(id)) {
+        // The tree no longer shows the member: it is gone, or the provider
+        // reports a state the track cannot show. The row goes either way,
+        // because a row that keeps its last known state would claim a state
+        // the provider has taken back.
+        this.pushEvent({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: { type: "remove", id },
+        });
+        continue;
+      }
+      keptMemberIds.add(id);
+    }
+    this.publishedDelegationIds.clear();
+    for (const id of keptMemberIds) {
+      this.publishedDelegationIds.add(id);
+    }
+    // A row that waits is not shown yet. A row that waits for a member the
+    // tree no longer holds is dropped with the tree.
+    const droppedMemberIds: string[] = [];
+    for (const id of this.pendingDelegationRows.keys()) {
+      if (!rowIds.has(id)) {
+        droppedMemberIds.push(id);
+      }
+    }
+    for (const id of droppedMemberIds) {
+      this.cancelPendingDelegationRow(id);
+    }
+    for (const row of rows) {
+      const pending = this.pendingDelegationRows.get(row.id);
+      if (row.deferMs !== undefined) {
+        if (pending && pending.row.status === row.status) {
+          // The provider reports the same child in the same state again. The
+          // deadline of the first report stands: a provider that publishes
+          // its tree again must not push the row further away, or a row that
+          // waits would never show.
+          pending.row = row;
+          continue;
+        }
+        // Another state for that child takes the place of the row that waits.
+        // The deadline of the child stays where it is, so the wait never grows.
+        const deadline = pending?.deadline ?? Date.now() + row.deferMs;
+        this.cancelPendingDelegationRow(row.id);
+        this.holdDelegationRow(row, deadline);
+        continue;
+      }
+      // A row that does not wait supersedes the row that waits: the provider
+      // reports another state for that child.
+      this.cancelPendingDelegationRow(row.id);
+      this.publishDelegationRow(row);
+    }
+  }
+
+  /**
+   * Publishes one row of a delegation tree.
+   */
+  private publishDelegationRow(row: ACPDelegationRow): void {
+    this.publishedDelegationIds.add(row.id);
+    this.pushEvent({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        status: row.status,
+        parentSubagentId: row.parentSubagentId,
+        ...(row.timestamp ? { timestamp: row.timestamp } : {}),
+      },
+    });
+  }
+
+  /**
+   * Holds a row back until the provider has had time to correct it.
+   *
+   * The wait ends at an absolute deadline, so the row shows even when the
+   * provider keeps publishing its tree. A newer row for the same member
+   * replaces it.
+   */
+  private holdDelegationRow(row: ACPDelegationRow, deadline: number): void {
+    const remainingMs = Math.max(0, deadline - Date.now());
+    const timer = setTimeout(() => {
+      const pending = this.pendingDelegationRows.get(row.id);
+      if (!pending) {
+        return;
+      }
+      this.pendingDelegationRows.delete(row.id);
+      this.publishDelegationRow(pending.row);
+    }, remainingMs);
+    this.pendingDelegationRows.set(row.id, { row, deadline, timer });
+  }
+
+  /**
+   * Drops a row that waited, because a newer row took its place.
+   */
+  private cancelPendingDelegationRow(id: string): void {
+    const pending = this.pendingDelegationRows.get(id);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingDelegationRows.delete(id);
+  }
+
+  /**
+   * Drops every row that waited. A closed session shows nothing more.
+   */
+  private clearPendingDelegationRows(): void {
+    for (const pending of this.pendingDelegationRows.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingDelegationRows.clear();
+  }
+
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
     this.logger.trace(
       {
@@ -2864,6 +3233,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.extension_notification",
     );
+
+    const extension = this.delegationExtension;
+    if (extension && method === extension.updateMethod) {
+      // The provider publishes the whole tree whenever it changes. This is
+      // the only way to see the work a session delegated.
+      const sessionId = typeof params.sessionId === "string" ? params.sessionId : null;
+      // A provider may publish the tree of another session to the same client.
+      // Only the tree of this session belongs to it.
+      if (sessionId === null || sessionId === this.sessionId) {
+        const rows = extension.parseUpdate(params, {
+          knownMemberIds: new Set(this.publishedDelegationIds),
+        });
+        if (rows) {
+          // A published tree is newer than a read that is still in flight, so
+          // the read is dropped when it answers. A tree that cannot be read
+          // publishes nothing, so it cancels nothing.
+          this.delegationGeneration += 1;
+          this.applyDelegationRows(rows);
+        }
+      }
+    }
 
     const parsedCommands = this.extensionCommandsParser?.(method, params);
     if (parsedCommands) {
@@ -3553,6 +3943,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.event_emit",
     );
+    if (
+      event.type === "provider_subagent" &&
+      this.subscribers.size === 0 &&
+      !this.delegationBacklogDelivered
+    ) {
+      // The delegation tree is read while the session initializes, before the
+      // agent manager subscribes. The row waits for the first subscriber.
+      this.pendingDelegationEvents.push(event);
+      return;
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

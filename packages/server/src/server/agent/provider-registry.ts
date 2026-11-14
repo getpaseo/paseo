@@ -40,6 +40,10 @@ import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
+import {
+  isMiniMaxCodeProvider,
+  MiniMaxCodeACPAgentClient,
+} from "./providers/minimax-code-acp-agent.js";
 import { OpenCodeRuntimeClient } from "./providers/opencode/runtime-client.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -867,6 +871,12 @@ function addDerivedProviders(
           }
           if (providerId === "traecli") {
             return new TraeACPAgentClient(acpOptions);
+          }
+          // MiniMax Code is recognized by its provider id or by the command it
+          // runs, so a user may register the same binary under a name of their
+          // own.
+          if (isMiniMaxCodeProvider(providerId, command)) {
+            return new MiniMaxCodeACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
         },

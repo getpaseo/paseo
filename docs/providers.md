@@ -118,6 +118,18 @@ preferences and selection history. Cursor versions without that extension must b
 still probes model selections in its own shim. The initial session supplies modes and the current
 model; it does not override the model list returned by a resolver.
 
+A provider that runs its own child sessions can publish that tree. The generic ACP client carries the
+plumbing: when to read the tree, how a tree replaces the previous one, how the rows reach the track. A
+vendor supplies the tree through the `delegationExtension` option of the ACP client, and the tree the
+provider reports becomes rows in the parent's subagents track. A vendor that reports a child as finished
+before it started can hold that row back with `deferMs`: the row waits for a bounded deadline, so it
+shows even when the provider keeps publishing its tree, and a newer state for the same child replaces it.
+The tree a session reads at startup is published as the provider reported it, so a child it reports as
+finished is shown as finished at once. A live update can bring such a row back to running for a moment:
+the snapshot and the live state of a provider can disagree briefly, and the row follows what the provider
+reports.
+Those rows are read-only, like every provider subagent row.
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
