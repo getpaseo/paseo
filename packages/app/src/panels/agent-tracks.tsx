@@ -63,6 +63,7 @@ export const AgentTracks = memo(function AgentTracks({
   );
   const isCompact = useIsCompactFormFactor();
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const taskPillEnabled = useSettings((settings) => settings.taskPillEnabled);
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
@@ -123,7 +124,7 @@ export const AgentTracks = memo(function AgentTracks({
     <ComposerTrackBar>
       <BackgroundWorkTrack model={backgroundModel} count={backgroundWorkCount} />
       {parentAgentId ? <ParentAgentPill serverId={serverId} parentAgentId={parentAgentId} /> : null}
-      <AgentTaskList tasks={tasks} />
+      <AgentTaskList tasks={taskPillEnabled ? tasks : undefined} />
       <SubagentsTrack
         serverId={serverId}
         rows={subagentRows}

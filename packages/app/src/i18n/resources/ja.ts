@@ -2508,6 +2508,10 @@ export const ja: TranslationResources = {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
       },
+      taskPill: {
+        label: "タスク進捗ピル",
+        description: "コンポーザーの上にエージェントのタスク進捗を示すピルを表示する",
+      },
       chatDisplay: {
         label: "チャットの表示",
         description: "チャットに表示するエージェントの作業量",

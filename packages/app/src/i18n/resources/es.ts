@@ -2541,6 +2541,11 @@ export const es: TranslationResources = {
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
       },
+      taskPill: {
+        label: "Píldora de progreso de tareas",
+        description:
+          "Muestra la píldora nativa con el progreso de tareas del agente sobre el composer",
+      },
       chatDisplay: {
         label: "Visualización del chat",
         description: "Cuánto del trabajo del agente muestra el chat",

@@ -2612,6 +2612,10 @@ export const en = {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
       },
+      taskPill: {
+        label: "Task progress pill",
+        description: "Show the native pill with the agent's task progress above the composer",
+      },
       chatDisplay: {
         label: "Chat display",
         description: "How much of an agent's work the chat shows",

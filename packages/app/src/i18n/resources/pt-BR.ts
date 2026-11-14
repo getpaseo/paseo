@@ -2523,6 +2523,11 @@ export const ptBR: TranslationResources = {
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
       },
+      taskPill: {
+        label: "Pílula de progresso das tarefas",
+        description:
+          "Mostra a pílula nativa com o progresso das tarefas do agente acima do compositor",
+      },
       chatDisplay: {
         label: "Exibição do chat",
         description: "Quanto do trabalho do agente o chat mostra",
