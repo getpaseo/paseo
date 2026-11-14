@@ -582,7 +582,9 @@ class SteeringTestSession extends TestAgentSession {
   interruptCount = 0;
   startCount = 0;
   steerCount = 0;
-  steerResult: "accepted" | "unavailable" | Error = "accepted";
+  steerResult: "accepted" | "busy" | "unavailable" | Error = "accepted";
+  /** Runs inside a busy answer, before it returns. */
+  onBusySteer: (() => void) | undefined;
   startPrompts: AgentPromptInput[] = [];
 
   override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
@@ -611,6 +613,10 @@ class SteeringTestSession extends TestAgentSession {
     }
     if (this.steerResult instanceof Error) throw this.steerResult;
     if (this.steerResult === "unavailable") return { status: "unavailable" };
+    if (this.steerResult === "busy") {
+      this.onBusySteer?.();
+      return { status: "busy" };
+    }
     this.pushEvent({
       type: "timeline",
       provider: this.provider,
@@ -1046,6 +1052,148 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
     expect(manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "replacement-client" }),
     );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+async function startBusySteer(session: SteeringTestSession) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-busy-steer-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const run = manager.streamAgent(agent.id, "/compact");
+  void (async () => {
+    for await (const _event of run) {
+    }
+  })();
+  await manager.waitForAgentRunStart(agent.id);
+  session.steerResult = "busy";
+  let waits = 0;
+  const dispatched = startAgentRun(manager, agent.id, "during compaction", logger, {
+    replaceRunning: true,
+    activeTurnBehavior: "steer",
+    runOptions: { clientMessageId: "during-compaction" },
+    onSteerWait: () => {
+      waits += 1;
+    },
+  });
+  await vi.waitFor(() => expect(session.steerCount).toBeGreaterThanOrEqual(1));
+  return { manager, agentId: agent.id, workdir, dispatched, waits: () => waits };
+}
+
+test("a busy steer waits instead of interrupting, then joins the turn once it can", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir, dispatched, waits } = await startBusySteer(session);
+  try {
+    expect(waits()).toBe(1);
+    // Still compacting: another event wakes the wait, the provider is still busy.
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "compaction", status: "loading" },
+    });
+    await vi.waitFor(() => expect(session.steerCount).toBe(2));
+    // The compaction ends inside the same turn.
+    session.steerResult = "accepted";
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "compaction", status: "completed" },
+    });
+
+    await expect(dispatched).resolves.toEqual({ disposition: "steered" });
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+    expect(waits()).toBe(1);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a busy steer starts its own turn when the busy turn ends first", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir, dispatched } = await startBusySteer(session);
+  try {
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+
+    await expect(dispatched).resolves.toEqual({ disposition: "turn_started" });
+    expect(session.interruptCount).toBe(0);
+    await vi.waitFor(() => expect(session.startCount).toBe(2));
+    expect(session.startPrompts.at(-1)).toBe("during compaction");
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a busy steer whose turn ends during the busy answer still starts its own turn", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  // The turn ends while the provider answers busy, so the end is drained inside the admission.
+  session.onBusySteer = () => {
+    session.onBusySteer = undefined;
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+  };
+  const { manager, agentId, workdir, dispatched } = await startBusySteer(session);
+  try {
+    await expect(dispatched).resolves.toEqual({ disposition: "turn_started" });
+    expect(session.interruptCount).toBe(0);
+    await vi.waitFor(() => expect(session.startCount).toBe(2));
+    expect(session.startPrompts.at(-1)).toBe("during compaction");
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prompts that waited out the same busy turn do not replace each other", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir, dispatched } = await startBusySteer(session);
+  try {
+    const second = startAgentRun(manager, agentId, "also during compaction", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      runOptions: { clientMessageId: "also-during-compaction" },
+    });
+    await vi.waitFor(() => expect(session.steerCount).toBe(2));
+    session.steerResult = "accepted";
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+
+    const results = await Promise.all([dispatched, second]);
+    expect(results.map((result) => result.disposition).sort()).toEqual(["steered", "turn_started"]);
+    expect(session.interruptCount).toBe(0);
+    await vi.waitFor(() => expect(session.startCount).toBe(2));
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("completion waits include a prompt still waiting for a busy turn", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir, dispatched } = await startBusySteer(session);
+  try {
+    let released = false;
+    const wait = manager.waitForWaitingPrompts(agentId, new AbortController().signal).then(() => {
+      released = true;
+      return undefined;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(released).toBe(false);
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await expect(dispatched).resolves.toEqual({ disposition: "turn_started" });
+    await wait;
+    // By the time the wait is released, the prompt's own turn is registered.
+    expect(manager.hasInFlightRun(agentId)).toBe(true);
   } finally {
     await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });

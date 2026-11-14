@@ -210,8 +210,12 @@ export interface AgentSteerOptions extends AgentRunOptions {
 
 // providerMessageId names the steered message in the provider's own history, when the provider
 // mints one. Rewinding to the message needs it.
+//
+// "busy" means the turn cannot take input right now but must not be replaced either: Claude
+// cancels a running compaction when its turn is interrupted. The manager waits and asks again.
 export type SteerResult =
   | { status: "accepted"; providerMessageId?: string }
+  | { status: "busy" }
   | { status: "unavailable" };
 
 export interface SteerActiveTurnOptions extends AgentSteerOptions {

@@ -2630,8 +2630,12 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
-    if (this.compacting || activeTurnId !== options.expectedTurnId) {
+    if (activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
+    }
+    // Interrupting a compacting turn cancels the compaction, so the message waits for it.
+    if (this.compacting) {
+      return { status: "busy" };
     }
 
     // Capture both ends of the live SDK stream before creating or delivering the message. There

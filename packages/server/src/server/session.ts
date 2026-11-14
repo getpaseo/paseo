@@ -8950,6 +8950,12 @@ export class Session {
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
+          // A steer waiting out a compaction may take minutes; answer now rather than let the
+          // request time out, as for agent messages.
+          onSteerWait: () => {
+            deliveryStatus = "queued";
+            queued();
+          },
           logger: this.sessionLogger,
         });
         if (result.disposition === "turn_started") {
@@ -9043,6 +9049,10 @@ export class Session {
 
     try {
       await this.agentMessages.waitForDispatch(
+        agentId,
+        AbortSignal.any([abortController.signal, sourceSignal]),
+      );
+      await this.agentManager.waitForWaitingPrompts(
         agentId,
         AbortSignal.any([abortController.signal, sourceSignal]),
       );

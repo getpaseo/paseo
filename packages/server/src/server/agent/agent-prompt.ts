@@ -19,6 +19,7 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "trackWaitingPrompt"
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
 };
@@ -31,6 +32,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** Called once if a steer has to wait for the running turn (a compaction) before it can land. */
+  onSteerWait?: () => void;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -54,7 +57,9 @@ async function steerOrReplaceActiveRun(
   const steerOptions = options.clearPendingPermissions
     ? { ...options.runOptions, clearPendingPermissions: true }
     : options.runOptions;
-  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions, {
+    onWait: options.onSteerWait,
+  });
   if (result.status === "steered") {
     return { disposition: "steered" };
   }
@@ -135,8 +140,47 @@ async function startAgentRunInner(
   logger: Logger,
   options?: StartAgentRunOptions,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
+  // A prompt that waits for a busy turn (a compaction) holds completion waits until it has
+  // joined a turn or started its own.
+  let waitDone: (() => void) | undefined;
+  const waitAwareOptions: StartAgentRunOptions = {
+    ...options,
+    onSteerWait: () => {
+      if (!waitDone) {
+        agentManager.trackWaitingPrompt(
+          agentId,
+          new Promise<void>((done) => {
+            waitDone = done;
+          }),
+        );
+      }
+      options?.onSteerWait?.();
+    },
+  };
+  try {
+    return await dispatchAgentRun(agentManager, agentId, prompt, logger, waitAwareOptions, () =>
+      Boolean(waitDone),
+    );
+  } finally {
+    waitDone?.();
+  }
+}
+
+async function dispatchAgentRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options: StartAgentRunOptions,
+  waited: () => boolean,
+): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
-  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  let steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  // Prompts that waited out the same turn all find it ended at once. The first to get here
+  // starts a turn; the rest join it, since replacing it would cancel the first prompt.
+  if (!steered && waited() && agentManager.hasInFlightRun(agentId)) {
+    steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  }
   if (steered?.disposition === "steered") {
     options?.onDispatch?.("steered");
     return steered;
@@ -230,6 +274,8 @@ export interface SendPromptToAgentParams {
   unarchive?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
+  /** See {@link StartAgentRunOptions.onSteerWait}. */
+  onSteerWait?: () => void;
   logger: Logger;
 }
 
@@ -362,6 +408,7 @@ export async function sendPreparedPromptToAgent(
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
+    onSteerWait: params.onSteerWait,
     runOptions: params.runOptions,
   });
 }
