@@ -68,6 +68,7 @@ per-agent examples and provider-specific keys.
 - [OpenCode with an existing v2 server](#opencode-with-an-existing-v2-server)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
+- [Wally](#wally)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
@@ -255,6 +256,49 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 - The coding plan is for personal use only in interactive coding tools
 - Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Official docs: [alibabacloud.com/help/en/model-studio/claude-code-coding-plan](https://www.alibabacloud.com/help/en/model-studio/claude-code-coding-plan)
+
+---
+
+## Wally
+
+[Wally](https://www.runwally.com) by RunAnywhere serves open-weight models through an OpenAI-compatible Chat Completions API at `https://inference.runanywhere.ai/v1`. OpenCode includes Wally as the `wally` provider (from models.dev) and reads the key from `WALLY_API_KEY`, so no base URL is needed.
+
+### Setup
+
+1. Create an API key in the [RunAnywhere console](https://console.runanywhere.ai)
+2. Set the key on the `opencode` provider in config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": { "WALLY_API_KEY": "<your-wally-api-key>" }
+      }
+    }
+  }
+}
+```
+
+3. Pick a `wally/` model in the OpenCode model list
+
+### Available models
+
+| Model                       | Context | Image input |
+| --------------------------- | ------- | ----------- |
+| `wally/deepseek-v4.1-flash` | 1M      | Yes         |
+| `wally/glm-5.3-flash`       | 1M      | No          |
+| `wally/kimi-k3`             | 1M      | Yes         |
+
+Run `opencode models wally` for every Wally model OpenCode knows. Prices: [runwally.com/pricing](https://www.runwally.com/pricing).
+
+### Notes
+
+- Put the key on `opencode`, not on a profile that extends it. With OpenCode 1.x, those profiles share one OpenCode server, which starts with the `opencode` provider's `env`, so a profile's `env` does not reach OpenCode. A profile's `models` list also replaces the discovered entries and drops their thinking options.
+- Restart the daemon after adding or changing the key (`paseo daemon restart`). With OpenCode 1.x, `paseo reload` replaces the provider client, but `OpenCodeServerManager.getInstance` returns the existing manager with the settings it was created with, so a new `env` does not reach OpenCode until the daemon restarts.
+- When Paseo reuses an existing OpenCode v2 server, it rejects provider `env`. Leave `WALLY_API_KEY` out of Paseo's `env` and set it in that server's environment. See [OpenCode with an existing v2 server](#opencode-with-an-existing-v2-server).
+- Wally serves Chat Completions only. It does not work as `OPENAI_BASE_URL` for a profile that extends `codex` (Codex needs the Responses API) or as `ANTHROPIC_BASE_URL` for `claude`.
+- Official docs: [docs.runanywhere.ai/wally-cloud/api](https://docs.runanywhere.ai/wally-cloud/api)
 
 ---
 
