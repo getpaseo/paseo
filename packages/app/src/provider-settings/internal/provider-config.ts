@@ -23,7 +23,8 @@ export interface ProviderConfigActions {
   canRemove: (entry: ProviderEntry) => boolean;
   /**
    * The provider being removed, as it was when the user confirmed. It stays set once the removal
-   * succeeds, because whatever shows the provider closes next and keeps showing it until then.
+   * succeeds, because whatever shows the provider closes next and keeps showing it until then, and
+   * ends when the host lists the provider again, as when the user adds it back.
    */
   removing: ProviderEntry | null;
   /** Asks first; resolves true once the provider is gone from config. */
@@ -39,10 +40,10 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
   const { t } = useTranslation();
   const toast = useToast();
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const { refresh } = useProvidersSnapshot(serverId);
+  const { entries, refresh } = useProvidersSnapshot(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<ProviderEntry | null>(null);
+  const [removal, setRemoval] = useState<{ entry: ProviderEntry; done: boolean } | null>(null);
   const removingRef = useRef<string | null>(null);
   const [addingProviderId, setAddingProviderId] = useState<string | null>(null);
   const addingRef = useRef<string | null>(null);
@@ -91,11 +92,12 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
           destructive: true,
         });
         if (!confirmed) return false;
-        setRemoving(entry);
+        setRemoval({ entry, done: false });
         await patchConfig({ removeProviders: [entry.provider] });
+        setRemoval({ entry, done: true });
         return true;
       } catch (error) {
-        setRemoving(null);
+        setRemoval(null);
         Alert.alert(
           t("settings.providers.remove.errorTitle"),
           error instanceof Error ? error.message : String(error),
@@ -107,6 +109,11 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
     },
     [patchConfig, t],
   );
+
+  // A sheet outlives each opening, so a finished removal ends here rather than with the sheet.
+  if (removal?.done && entries?.some((entry) => entry.provider === removal.entry.provider)) {
+    setRemoval(null);
+  }
 
   const add = useCallback(
     async (entry: AcpProviderCatalogItem) => {
@@ -136,7 +143,7 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
     togglingProviderId,
     setEnabled,
     canRemove,
-    removing,
+    removing: removal?.entry ?? null,
     remove,
     addingProviderId,
     add,
