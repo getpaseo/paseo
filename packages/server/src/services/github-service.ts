@@ -3065,16 +3065,30 @@ async function tryCurrentPullRequestBranchView(options: {
   cwd: string;
   explicitRepo?: boolean;
   headRef: string;
+  headRepositoryOwner?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<ResolvedPullRequestCandidate | null> {
-  // gh interprets a numeric positional argument as a PR number, not a branch.
+  // gh interprets a numeric positional argument as a PR number, not a branch,
+  // so list the branch's PRs and keep what `gh pr view <branch>` would return:
+  // a PR whose head branch lives in the repository it targets.
   if (options.explicitRepo && /^\d+$/u.test(options.headRef)) {
-    return null;
+    // A known head owner is matched by the branch listing that follows.
+    if (options.headRepositoryOwner) return null;
+    const candidates = await listCurrentPullRequestCandidates(options);
+    return pickPullRequestCandidate({
+      candidates: candidates.filter(isSameRepositoryPullRequestCandidate),
+      headRef: options.headRef,
+    });
   }
   return tryCurrentPullRequestView({
     ...options,
     args: options.explicitRepo ? ["pr", "view", options.headRef] : undefined,
   });
+}
+
+function isSameRepositoryPullRequestCandidate(candidate: ResolvedPullRequestCandidate): boolean {
+  const owner = candidate.headRepositoryOwner?.toLowerCase();
+  return owner !== undefined && owner === candidate.status.repoOwner?.toLowerCase();
 }
 
 async function resolveCurrentPullRequestView(options: {

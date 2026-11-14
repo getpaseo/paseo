@@ -4995,76 +4995,79 @@ describe("ForgeService", () => {
     }
   });
 
-  it("finds a checked-out same-repository upstream PR on an Enterprise fork clone", async () => {
-    vi.useRealTimers();
-    const cwd = mkdtempSync(join(tmpdir(), "github-enterprise-upstream-same-repo-"));
-    try {
-      execFileSync("git", ["init", "-q", cwd]);
-      execFileSync("git", [
-        "-C",
-        cwd,
-        "remote",
-        "add",
-        "origin",
-        "https://github.acme.internal/me/repo.git",
-      ]);
-      execFileSync("git", [
-        "-C",
-        cwd,
-        "remote",
-        "add",
-        "upstream",
-        "https://github.acme.internal/acme/repo.git",
-      ]);
-      const pullRequest = JSON.parse(
-        currentPullRequestJson({
-          url: "https://github.acme.internal/acme/repo/pull/42",
-          headRefName: "feature",
-          headRepositoryOwner: { login: "acme" },
-        }),
-      );
-      const runner: GitHubCommandRunner = async (args) => {
-        if (args[0] === "api") {
-          if (args[1] === "graphql") {
-            return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+  it.each(["feature", "123"])(
+    "finds a checked-out same-repository upstream PR for branch %s on an Enterprise fork clone",
+    async (branch) => {
+      vi.useRealTimers();
+      const cwd = mkdtempSync(join(tmpdir(), "github-enterprise-upstream-same-repo-"));
+      try {
+        execFileSync("git", ["init", "-q", cwd]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "origin",
+          "https://github.acme.internal/me/repo.git",
+        ]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "upstream",
+          "https://github.acme.internal/acme/repo.git",
+        ]);
+        const pullRequest = JSON.parse(
+          currentPullRequestJson({
+            url: "https://github.acme.internal/acme/repo/pull/42",
+            headRefName: branch,
+            headRepositoryOwner: { login: "acme" },
+          }),
+        );
+        const runner: GitHubCommandRunner = async (args) => {
+          if (args[0] === "api") {
+            if (args[1] === "graphql") {
+              return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+            }
+            return { stdout: "[]", stderr: "" };
           }
-          return { stdout: "[]", stderr: "" };
-        }
-        if (args[0] === "repo") {
-          const fork = args[2] === "github.acme.internal/me/repo";
-          return {
-            stdout: JSON.stringify({
-              owner: { login: fork ? "me" : "acme" },
-              name: "repo",
-              parent: fork ? { owner: { login: "acme" }, name: "repo" } : null,
-            }),
-            stderr: "",
-          };
-        }
-        const inUpstream = args[args.indexOf("--repo") + 1] === "github.acme.internal/acme/repo";
-        if (args[1] === "view") {
-          if (inUpstream) return { stdout: JSON.stringify(pullRequest), stderr: "" };
-          throw Object.assign(new Error("gh failed"), {
-            stderr: 'no pull requests found for branch "feature"',
-          });
-        }
-        return { stdout: JSON.stringify(inUpstream ? [pullRequest] : []), stderr: "" };
-      };
-      const service = createGitHubService({
-        ttlMs: 0,
-        runner,
-        resolveGhPath: async () => "/usr/bin/gh",
-        resolveRepoHost: async () => "github.acme.internal",
-      });
+          if (args[0] === "repo") {
+            const fork = args[2] === "me/repo" || args[2] === "github.acme.internal/me/repo";
+            return {
+              stdout: JSON.stringify({
+                owner: { login: fork ? "me" : "acme" },
+                name: "repo",
+                parent: fork ? { owner: { login: "acme" }, name: "repo" } : null,
+              }),
+              stderr: "",
+            };
+          }
+          const inUpstream = args[args.indexOf("--repo") + 1] === "github.acme.internal/acme/repo";
+          if (args[1] === "view") {
+            if (inUpstream) return { stdout: JSON.stringify(pullRequest), stderr: "" };
+            throw Object.assign(new Error("gh failed"), {
+              stderr: `no pull requests found for branch "${branch}"`,
+            });
+          }
+          return { stdout: JSON.stringify(inUpstream ? [pullRequest] : []), stderr: "" };
+        };
+        const service = createGitHubService({
+          ttlMs: 0,
+          runner,
+          resolveGhPath: async () => "/usr/bin/gh",
+          resolveRepoHost: async () => "github.acme.internal",
+        });
 
-      await expect(
-        service.getCurrentPullRequestStatus({ cwd, headRef: "feature" }),
-      ).resolves.toMatchObject({ number: 42, repoOwner: "acme" });
-      service.dispose?.();
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          service.getCurrentPullRequestStatus({ cwd, headRef: branch }),
+        ).resolves.toMatchObject({ number: 42, repoOwner: "acme" });
+        service.dispose?.();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(["feature", "123"])(
     "finds the user's own fork PR for branch %s on an Enterprise fork clone",
@@ -5458,6 +5461,7 @@ describe("ForgeService", () => {
 
   it("finds an Enterprise fork PR for a numeric branch in its parent repository", async () => {
     const runner = createRunner([
+      "[]",
       JSON.stringify({
         owner: { login: "forkOwner" },
         name: "repo",
@@ -5482,11 +5486,11 @@ describe("ForgeService", () => {
     await expect(
       service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "123" }),
     ).resolves.toMatchObject({ number: 42, headRefName: "123", repoOwner: "parentOwner" });
-    expect(runner.calls[1]?.args).toEqual([
+    expect(runner.calls[2]?.args).toEqual([
       "api",
       "repos/parentOwner/repo/pulls?state=all&per_page=100&head=forkOwner%3A123",
     ]);
-    expect(runner.calls[2]).toMatchObject({
+    expect(runner.calls[3]).toMatchObject({
       args: ["pr", "view", "42", "--repo", "parentOwner/repo", "--json", CURRENT_PR_STATUS_FIELDS],
       envOverlay: { GH_HOST: "github.acme.internal" },
     });
