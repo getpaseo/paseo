@@ -10,6 +10,41 @@ if [ "${ELECTRON_RUN_AS_NODE:-}" = 1 ]; then
   exec "$executable" "$@"
 fi
 
+# Ozone must be selected before Electron initializes the windowing system.
+set -f
+backend_requested=false
+for arg in "$@"; do
+  case "$arg" in
+    --ozone-platform|--ozone-platform=*|--ozone-platform-hint|--ozone-platform-hint=*) backend_requested=true ;;
+  esac
+done
+backend_value_pending=false
+backend_flags=
+for flag in ${PASEO_ELECTRON_FLAGS:-}; do
+  if [ "$backend_value_pending" = true ]; then
+    backend_flags="$backend_flags $flag"
+    backend_value_pending=false
+    continue
+  fi
+  case "$flag" in
+    --ozone-platform|--ozone-platform-hint)
+      backend_flags="$backend_flags $flag"
+      backend_requested=true
+      backend_value_pending=true
+      ;;
+    --ozone-platform=*|--ozone-platform-hint=*)
+      backend_flags="$backend_flags $flag"
+      backend_requested=true
+      ;;
+  esac
+done
+if [ -n "$backend_flags" ]; then
+  set -- $backend_flags "$@"
+fi
+if [ -n "${DISPLAY:-}" ] && [ "$backend_requested" = false ]; then
+  set -- --ozone-platform=x11 "$@"
+fi
+
 for arg in "$@"; do
   if [ "$arg" = '--no-sandbox' ]; then
     export PASEO_DESKTOP_SANDBOX_REASON='requested by --no-sandbox'
@@ -19,7 +54,6 @@ for arg in "$@"; do
 done
 
 # Match main's whitespace-separated debugging flags without evaluating shell code.
-set -f
 for flag in ${PASEO_ELECTRON_FLAGS:-}; do
   if [ "$flag" = '--no-sandbox' ]; then
     export PASEO_DESKTOP_SANDBOX_REASON='requested by PASEO_ELECTRON_FLAGS'

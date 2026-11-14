@@ -119,6 +119,9 @@ The Desktop Packages workflow runs the Linux x64 smoke under Xvfb on main pushes
 Never repair `chrome-sandbox` in the smoke harness. The old unpacked smoke set its mode to 4755 and concealed a broken package installer. Run installer tests as root and launch tests as an ordinary user: a root-run namespace probe does not reproduce Ubuntu's AppArmor policy for desktop users. Preserve both restricted and unrestricted cases; either one alone permits another sandbox regression.
 
 Smoke jobs upload renderer screenshots and desktop/daemon diagnostics, including successful Linux sandbox evidence.
+On a Linux workstation, set `PASEO_DESKTOP_SMOKE_USE_EXISTING_DISPLAY=1` to exercise the real desktop
+session instead of Xvfb. Use an isolated profile as the harness normally does; an Xvfb-only pass does
+not cover native Wayland/XWayland startup.
 
 To exercise the smoke locally on Linux:
 

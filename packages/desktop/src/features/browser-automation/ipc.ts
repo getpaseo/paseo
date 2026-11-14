@@ -1,4 +1,7 @@
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
+import { z } from "zod";
+import type { CdpCommandSender } from "./cdp-session-queue.js";
+import { registerNativeBrowserBridgeIpc } from "./native-bridge.js";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
@@ -105,8 +108,6 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void;
-  endFrameSubscription(): void;
   invalidate(): void;
   getBackgroundThrottling(): boolean;
   setBackgroundThrottling(allowed: boolean): void;
@@ -114,11 +115,24 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   insertText(text: string): Promise<void>;
 }
 
-export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
+interface BrowserAutomationAdapters {
+  decodeImage(buffer: Buffer): TabImage;
+}
+
+export function adaptWebContents(
+  contents: BrowserAutomationWebContents,
+  {
+    decodeImage = (buffer) => nativeImage.createFromBuffer(buffer),
+  }: Partial<BrowserAutomationAdapters> = {},
+): TabContents {
   const contentsId = contents.id;
   observeConsoleMessages(contents, contentsId);
   const cdpQueue = getCdpQueue(contentsId);
   const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
+  const sendCommand: CdpCommandSender = (command, params) => {
+    if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+    return contents.debugger.sendCommand(command, params ?? {});
+  };
   return {
     id: contentsId,
     getURL: () => contents.getURL(),
@@ -132,7 +146,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    captureFrame: (signal) => captureViewportFrame(contents, signal),
+    captureFrame: (signal) => captureViewportFrame({ contents, signal, sendCommand, decodeImage }),
     invalidate: () => contents.invalidate(),
     withFrameProduction: async (capture) => {
       const previous = contents.getBackgroundThrottling();
@@ -147,26 +161,37 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
-    sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
-      cdpQueue.run(async () => {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach("1.3");
-        }
-        return contents.debugger.sendCommand(command, params ?? {});
-      }),
+    sendDebugCommand: (command, params) => cdpQueue.run(() => sendCommand(command, params)),
   };
 }
 
-function captureViewportFrame(
-  contents: BrowserAutomationWebContents,
-  signal: AbortSignal,
-): Promise<TabImage> {
+const ViewportMetricsSchema = z.object({
+  cssVisualViewport: z.object({
+    pageX: z.number().finite(),
+    pageY: z.number().finite(),
+    clientWidth: z.number().positive(),
+    clientHeight: z.number().positive(),
+  }),
+});
+const ViewportScreenshotSchema = z.object({ data: z.string().min(1) });
+
+interface ViewportCaptureOptions extends BrowserAutomationAdapters {
+  contents: BrowserAutomationWebContents;
+  signal: AbortSignal;
+  sendCommand: CdpCommandSender;
+}
+
+function captureViewportFrame({
+  contents,
+  signal,
+  sendCommand,
+  decodeImage,
+}: ViewportCaptureOptions): Promise<TabImage> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const stop = () => {
       signal.removeEventListener("abort", abort);
       contents.removeListener("destroyed", destroyed);
-      if (!contents.isDestroyed()) contents.endFrameSubscription();
     };
     const abort = () => {
       stop();
@@ -178,17 +203,37 @@ function captureViewportFrame(
     };
     signal.addEventListener("abort", abort, { once: true });
     contents.once("destroyed", destroyed);
-    try {
-      // A resized resident guest can paint while capturePage's surface-copy
-      // request remains pending. Subscribe to its rendered frames instead.
-      contents.beginFrameSubscription(false, (image) => {
+    const capture = async () => {
+      const { cssVisualViewport: viewport } = ViewportMetricsSchema.parse(
+        await sendCommand("Page.getLayoutMetrics"),
+      );
+      signal.throwIfAborted();
+      const screenshot = ViewportScreenshotSchema.parse(
+        await sendCommand("Page.captureScreenshot", {
+          format: "png",
+          captureBeyondViewport: true,
+          clip: {
+            x: viewport.pageX,
+            y: viewport.pageY,
+            width: viewport.clientWidth,
+            height: viewport.clientHeight,
+            scale: 1,
+          },
+        }),
+      );
+      signal.throwIfAborted();
+      return decodeImage(Buffer.from(screenshot.data, "base64"));
+    };
+    void capture().then(
+      (image) => {
         stop();
-        resolve(image);
-      });
-    } catch (error) {
-      stop();
-      reject(error);
-    }
+        return resolve(image);
+      },
+      (error) => {
+        stop();
+        return reject(error);
+      },
+    );
   });
 }
 
@@ -450,6 +495,11 @@ function createRegistry(hostWebContentsId: number): BrowserRegistry {
 
 export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistry }): void {
   const ipc = options?.ipc ?? ipcMain;
+  registerNativeBrowserBridgeIpc(ipc, {
+    getGuest: getPaseoBrowserWebContentsForHostWindow,
+    getWorkspaceId: getPaseoBrowserWorkspaceId,
+    images: nativeImage,
+  });
 
   ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
     const hostContents = (event as { sender?: HostWebContents }).sender;

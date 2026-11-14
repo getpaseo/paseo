@@ -76,3 +76,22 @@ Tools return structured errors rather than failing silently. The ones agents see
 | `browser_stale_ref` | The ref no longer matches the page — take a new snapshot.                       |
 | `browser_timeout`   | The element never became actionable, or the wait condition never held.          |
 | `browser_denied`    | The action isn't allowed — e.g. a non-`http(s)` URL, or no history to navigate. |
+
+## Native Desktop DevTools API
+
+Paseo Desktop exposes `paseoDesktop.browser.nativeBridgeVersion` (`1`) with
+`sendNativeCommand`, `readNativeEvents` and `captureNativeFrame`. Browser plugins detect
+this API on the connected Desktop; users do not install a separate bridge or patch the app.
+Older Desktop builds need an update containing this API for full native CDP access.
+
+Requests include `browserId` and `workspaceId`. Desktop resolves the registered guest for
+the calling host window and workspace before sending any command. DOM, CSS, Runtime,
+Network, Accessibility, Debugger and profiling domains operate on that guest. Browser
+shutdown and target lifecycle commands are excluded; use the normal browser tab APIs.
+Cookie operations and permission/download settings use the guest's browser context.
+
+Enable a CDP domain before reading its events. The event buffer is bounded by count and
+bytes and reports a dropped-event counter; consumers should drain it promptly. Dialog
+responses, paused-frame/object inspection and debugger resume/step commands can run while
+a previous command waits for JavaScript to continue. Quiet pages use bounded still captures
+when the screencast has no fresh paint. Finish intercepted requests and resume execution after debugging.
