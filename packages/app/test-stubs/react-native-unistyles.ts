@@ -4,7 +4,10 @@ import { lightTheme } from "../src/styles/theme";
 
 const testTheme = {
   colorScheme: "light",
+  // The light theme's colours, so a `withUnistyles` mapping finds every key it reads, with the
+  // values below pinned so a test can name the colour it expects.
   colors: {
+    ...lightTheme.colors,
     syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
