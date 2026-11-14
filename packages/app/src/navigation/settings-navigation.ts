@@ -18,7 +18,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import {
   beginSettingsSidebarVisit,
   getSettingsSidebarReturn,
-} from "@/navigation/settings-presentation";
+} from "@/navigation/settings-presentation/session";
 
 export function openSettingsFromSidebar(input: {
   workspace: ActiveWorkspaceSelection | null;

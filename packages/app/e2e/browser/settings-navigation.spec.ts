@@ -386,6 +386,7 @@ test.describe("Settings — compact master-detail", () => {
     withWorkspace,
   }, testInfo) => {
     const workspace = await withWorkspace({ prefix: "settings-sidebar-continuity-" });
+    for (let i = 0; i < 12; i++) await withWorkspace({ prefix: "settings-sidebar-scroll-" });
     await openWorkspace(page, workspace);
     await openCompactSidebar(page);
     await expectCompactSidebarOpen(page);
@@ -397,6 +398,7 @@ test.describe("Settings — compact master-detail", () => {
       testInfo.outputPath("sidebar-opening-frames.json"),
       JSON.stringify(openingFrames, null, 2),
     );
+    expect(openingFrames.some((frame) => frame.settingsVisible)).toBe(true);
     expect(openingFrames.every((frame) => frame.sidebarVisible || frame.settingsVisible)).toBe(
       true,
     );
@@ -432,11 +434,11 @@ test.describe("Settings — compact master-detail", () => {
       body: JSON.stringify(backFrames, null, 2),
       contentType: "application/json",
     });
-    expect(
-      backFrames
-        .filter((frame) => !frame.pathname.startsWith("/settings"))
-        .every((frame) => frame.sidebarVisible),
-    ).toBe(true);
+    const backWorkspaceFrames = backFrames.filter(
+      (frame) => !frame.pathname.startsWith("/settings"),
+    );
+    expect(backWorkspaceFrames.length).toBeGreaterThan(0);
+    expect(backWorkspaceFrames.every((frame) => frame.sidebarVisible)).toBe(true);
     await expectCompactSidebarOpen(page);
     await closeCompactSidebar(page);
   });

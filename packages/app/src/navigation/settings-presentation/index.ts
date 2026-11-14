@@ -12,9 +12,7 @@ import {
   useIsLastWorkspaceSelectionHydrated,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { createSettingsPresentation } from "./model";
-
-const selection = createSettingsPresentation();
+import { settingsPresentation as selection } from "./session";
 
 // Mount once above the sibling Settings routes so replacements and Back share
 // one visit, and leaving Settings gives the next workspace entry a fresh default.
@@ -40,8 +38,6 @@ export function useSettingsHostSelection(): string | null {
   return useStore(selection.store, (state) => state.selectedServerId);
 }
 
-export const beginSettingsSidebarVisit = selection.beginSidebarVisit;
-export const getSettingsSidebarReturn = () => selection.store.getState().sidebarReturn;
 export function useSettingsSidebarPresentation(input: {
   presentation: LeftSidebarPresentation;
   visible: boolean;
