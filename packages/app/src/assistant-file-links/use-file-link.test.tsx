@@ -322,11 +322,15 @@ describe("useFileLink", () => {
     act(() => {
       result.current.setWorkspaceRoot("/Users/test/other");
     });
-    deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
-
-    await waitFor(() => {
-      expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
+    // Let the stale result land: React Query delivers it on a timer, which would otherwise fire
+    // after the test, when jsdom is gone, and the assertion below would run before it arrived.
+    await act(async () => {
+      deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
+      await deferred.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+
+    expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
     expect(openedFiles).toEqual([]);
   });
 });
