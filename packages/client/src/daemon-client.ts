@@ -293,10 +293,12 @@ function chooseConnectionAuth(
   if (localCredential) helloAuth = { kind: "localCredential", token: localCredential };
   else if (password) helloAuth = { kind: "password", password };
   const headers: Record<string, string> = {};
-  const compatibleBearer = localCredential ? null : compatibleBearerPassword(password);
+  const compatibleBearer =
+    localCredential || config.e2ee?.enabled ? null : compatibleBearerPassword(password);
   // COMPAT(headerAuth): added in v0.9.1, remove after 2027-03-24.
   if (compatibleBearer) headers.Authorization = `Bearer ${compatibleBearer}`;
-  else if (!localCredential && config.authHeader) headers.Authorization = config.authHeader;
+  else if (!localCredential && !config.e2ee?.enabled && config.authHeader)
+    headers.Authorization = config.authHeader;
   return {
     helloAuth,
     headers,

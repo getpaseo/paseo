@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, type NetworkInterfaceInfo } from "node:os";
 import path from "node:path";
 import { expect, test, onTestFinished } from "vitest";
 import { MutableDaemonConfigSchema } from "@getpaseo/protocol/messages";
@@ -10,8 +10,41 @@ import {
   type RuntimeCleanupCandidate,
 } from "./agent/idle-runtime-cleanup/index.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
+import { reachableDirectEndpoints } from "./direct-endpoints.js";
 
 import { fanOutReconciledWorkspaceUpdates, connectIdleRuntimeCleanupConfig } from "./bootstrap.js";
+
+test("reports only private addresses accepted by the bound listener", () => {
+  const address = (value: string): NetworkInterfaceInfo => ({
+    address: value,
+    netmask: "255.255.255.0",
+    family: "IPv4",
+    mac: "00:00:00:00:00:00",
+    internal: value.startsWith("127."),
+    cidr: `${value}/24`,
+  });
+  const interfaces = {
+    ethernet: [address("192.168.1.30"), address("203.0.113.10")],
+    vpn: [address("100.100.1.5")],
+    loopback: [address("127.0.0.1")],
+  };
+  const endpointsFor = (boundHost: string) =>
+    reachableDirectEndpoints({
+      boundAddress: { address: boundHost, family: "IPv4", port: 6767 },
+      interfaces,
+    });
+  expect(endpointsFor("0.0.0.0")).toEqual(["100.100.1.5:6767", "192.168.1.30:6767"]);
+  expect(endpointsFor("100.100.1.5")).toEqual(["100.100.1.5:6767"]);
+  expect(endpointsFor("127.0.0.1")).toEqual([]);
+  expect(
+    reachableDirectEndpoints({
+      boundAddress: { address: "0.0.0.0", family: "IPv4", port: 6767 },
+      interfaces: { vpn: [] },
+    }),
+  ).toEqual([]);
+  // A configured hostname can resolve to this bound address; the reported route uses the IP.
+  expect(endpointsFor("192.168.1.30")).toEqual(["192.168.1.30:6767"]);
+});
 
 test("reconciliation emits workspace updates when observer sync fails", async () => {
   const emittedWorkspaceIds: string[][] = [];
