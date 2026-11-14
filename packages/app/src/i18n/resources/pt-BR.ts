@@ -1229,6 +1229,7 @@ export const ptBR: TranslationResources = {
       done: "Concluído",
     },
     display: {
+      nestProjects: "Aninhar projetos por diretório",
       showBackground: "Mostrar espaços em segundo plano",
       trigger: "Preferências de exibição",
       heading: "Exibição",

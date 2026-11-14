@@ -3,11 +3,15 @@ import path from "node:path";
 import { test as base } from "../support/fixtures";
 import {
   beginWorkspaceFromProject,
+  captureProjectSidebar,
   createWorkspaceWithoutAgent,
   expectProjectContainsWorkspaces,
+  expectProjectHidden,
+  expectProjectNestedUnder,
   expectProjectSettingsName,
   expectProjectWorkspaceCountForHost,
   expectSeparateProjects,
+  enableProjectNesting,
   openGroupedProjectSettings,
   openGroupedProjectWorkspace,
   expectWorkspaceHost,
@@ -16,6 +20,7 @@ import {
   openProjectDirectoryWithHosts,
   renameProject,
   selectWorkspaceHost,
+  toggleProjectCollapsed,
 } from "../support/helpers/project-grouping";
 import {
   type IsolatedHostDaemon,
@@ -365,6 +370,41 @@ test.describe("Sidebar project grouping", () => {
       { projectName: "Repository root project", workspaceName: "Repository root workspace" },
       { projectName: "App package project", workspaceName: "App package workspace" },
     ]);
+  });
+
+  test("nests a subdirectory project and folds it with its parent", async ({
+    page,
+    rootAndSubdirectoryProjects,
+  }, testInfo) => {
+    await openScenario(page, rootAndSubdirectoryProjects);
+    await expectSeparateProjects(page, [
+      { projectName: "Repository root project", workspaceName: "Repository root workspace" },
+      { projectName: "App package project", workspaceName: "App package workspace" },
+    ]);
+    await captureProjectSidebar(page, testInfo.outputPath("flat-projects.png"));
+
+    await enableProjectNesting(page);
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
+    await captureProjectSidebar(page, testInfo.outputPath("nested-projects.png"));
+
+    await toggleProjectCollapsed(page, "Repository root project");
+    await expectProjectHidden(page, "App package project");
+    await toggleProjectCollapsed(page, "Repository root project");
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
+    await page.reload();
+    await expectProjectNestedUnder({
+      page,
+      parentName: "Repository root project",
+      childName: "App package project",
+    });
   });
 
   test("groups the same repository subdirectory across hosts", async ({

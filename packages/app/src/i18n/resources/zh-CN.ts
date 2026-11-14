@@ -1195,6 +1195,7 @@ export const zhCN: TranslationResources = {
       done: "已完成",
     },
     display: {
+      nestProjects: "按目录嵌套项目",
       showBackground: "显示后台工作区",
       trigger: "显示偏好",
       heading: "显示",

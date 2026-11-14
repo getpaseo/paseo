@@ -220,6 +220,7 @@ interface SidebarWorkspaceListProps {
   /** What `useProjectIcons` is asked for, straight from the projection. See `SidebarProjection`. */
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectDepthByViewKey: ReadonlyMap<string, number>;
   projects: SidebarProjectEntry[];
   hasProjectsBeforeFilter: boolean;
   /** Whether a project filter is actually being applied — the resolved list, not the stored one. */
@@ -257,7 +258,7 @@ interface ProjectHeaderRowProps {
   onWorktreeCreated?: (workspaceId: string) => void;
   shortcutNumber?: number | null;
   showShortcutBadge?: boolean;
-  drag: () => void;
+  drag?: () => void;
   isDragging: boolean;
   isArchiving?: boolean;
   menuController: ReturnType<typeof useContextMenu> | null;
@@ -1586,7 +1587,7 @@ function ProjectBlock({
   dragGestureHostActive?: boolean;
   manualSort: boolean;
   onWorktreeCreated?: (workspaceId: string) => void;
-  drag: () => void;
+  drag?: () => void;
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   creatingWorkspaceIds: ReadonlySet<string>;
@@ -1945,6 +1946,7 @@ export function SidebarWorkspaceList({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectDepthByViewKey,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -2040,6 +2042,7 @@ export function SidebarWorkspaceList({
       <ProjectModeList
         projects={projects}
         pinnedGroups={pinnedGroups}
+        projectDepthByViewKey={projectDepthByViewKey}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
@@ -2136,6 +2139,7 @@ function SidebarGroupedModeList({
 function ProjectModeList({
   projects,
   pinnedGroups,
+  projectDepthByViewKey,
   workspaceEntriesByKey,
   projectIconByProjectViewKey,
   collapsedProjectKeys,
@@ -2182,6 +2186,7 @@ function ProjectModeList({
     new Map(),
   );
   const showShortcutBadges = useShowShortcutBadges();
+  const nestProjects = useSidebarViewStore((state) => state.nestProjects);
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
@@ -2347,12 +2352,12 @@ function ProjectModeList({
     (
       item: SidebarProjectEntry,
       dragState: {
-        drag: () => void;
+        drag?: () => void;
         isDragging: boolean;
         dragHandleProps?: DraggableRenderItemInfo<SidebarProjectEntry>["dragHandleProps"];
       },
     ) => {
-      return (
+      const block = (
         <MemoProjectBlock
           key={item.viewKey}
           project={item}
@@ -2382,9 +2387,19 @@ function ProjectModeList({
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
       );
+      const depth = projectDepthByViewKey.get(item.viewKey) ?? 0;
+      if (depth > 0) {
+        return (
+          <View key={item.viewKey} style={styles.projectIndent(depth)}>
+            {block}
+          </View>
+        );
+      }
+      return block;
     },
     [
       collapsedProjectKeys,
+      projectDepthByViewKey,
       activeWorkspaceSelection,
       handleWorktreeCreated,
       manualSort,
@@ -2475,10 +2490,19 @@ function ProjectModeList({
     [renderPinnedChatRow],
   );
 
-  const projectBody =
-    projects.length === 0 ? (
+  let projectBody: ReactNode;
+  if (projects.length === 0) {
+    projectBody = (
       <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
-    ) : (
+    );
+  } else if (nestProjects) {
+    projectBody = (
+      <View testID="sidebar-project-list" style={styles.projectListContainer}>
+        {unpinnedProjects.map((item) => renderProjectBlock(item, { isDragging: false }))}
+      </View>
+    );
+  } else {
+    projectBody = (
       <DraggableList
         testID="sidebar-project-list"
         data={unpinnedProjects}
@@ -2494,6 +2518,7 @@ function ProjectModeList({
         containerStyle={styles.projectListContainer}
       />
     );
+  }
 
   const content = (
     <>
@@ -2593,6 +2618,7 @@ const styles = StyleSheet.create((theme) => ({
   projectListContainer: {
     width: "100%",
   },
+  projectIndent: (depth: number) => ({ paddingLeft: depth * 12 }),
   pinnedSection: {
     marginBottom: theme.spacing[1],
   },

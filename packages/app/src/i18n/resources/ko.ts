@@ -1210,6 +1210,7 @@ export const ko: TranslationResources = {
       done: "완료",
     },
     display: {
+      nestProjects: "디렉터리별로 프로젝트 중첩",
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
