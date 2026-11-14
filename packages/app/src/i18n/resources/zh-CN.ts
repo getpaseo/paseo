@@ -2334,6 +2334,28 @@ export const zhCN: TranslationResources = {
       modelHint: "只使用此模型。如果失败，Paseo 不会尝试其他模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+      instructionsTitle: "自定义指令",
+      instructionsInfo:
+        "定制用于生成工作区标题、分支名称、提交消息和拉取请求草稿的提示词规则。项目级 paseo.json 中的配置会优先于此处的全局设置",
+      prompts: {
+        default: "默认",
+        resetToDefault: "恢复默认",
+        save: "保存",
+        title: "工作区标题",
+        titleHint: "在侧边栏和窗口标题中显示的标签",
+        titlePlaceholder:
+          "例如：用简体中文生成简短的任务型标题（不超过 30 个字）：操作 + 对象 + 关键标识符",
+        branchName: "分支名称",
+        branchNameHint: "新建 worktree 时使用的 Git 分支名",
+        branchNamePlaceholder:
+          "例如：简短的任务 slug，保留操作、目标及明确标识符（如 feat/xxx, fix/xxx）",
+        commitMessage: "提交消息",
+        commitMessageHint: "提交更改时建议的 commit 信息",
+        commitMessagePlaceholder: "例如：遵循 Conventional Commits 规范，如 feat: xxx",
+        pullRequest: "拉取请求",
+        pullRequestHint: "新建 PR 时草稿的标题与正文",
+        pullRequestPlaceholder: "例如：清晰的标题，并在正文中说明变更内容及原因，附带测试说明",
+      },
     },
     voice: {
       offline: "连接到此主机以配置语音。",

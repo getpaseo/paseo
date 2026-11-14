@@ -33,7 +33,7 @@ interface SupportedMutableConfigPatch {
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
-  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  metadataGeneration?: MutableDaemonConfigPatch["metadataGeneration"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
@@ -348,8 +348,8 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
-    ...(patch.metadataGeneration?.providers !== undefined
-      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
+    ...(patch.metadataGeneration !== undefined
+      ? { metadataGeneration: patch.metadataGeneration }
       : {}),
     ...(patch.autoArchiveAfterMerge !== undefined
       ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
@@ -786,6 +786,45 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   } as PersistedConfig;
 }
 
+function mergeMetadataGenerationPatch(
+  current: unknown,
+  patch: MutableDaemonConfigPatch["metadataGeneration"],
+  removeProviders: readonly string[],
+): Record<string, unknown> | undefined {
+  if (patch === undefined && removeProviders.length === 0) {
+    return current as Record<string, unknown> | undefined;
+  }
+
+  const next: Record<string, unknown> = { ...((current ?? {}) as Record<string, unknown>) };
+
+  if (patch?.providers !== undefined) {
+    next.providers = patch.providers;
+  } else if (removeProviders.length > 0 && Array.isArray(next.providers)) {
+    const removed = new Set(removeProviders);
+    next.providers = next.providers.filter(
+      (entry: { provider?: unknown }) =>
+        typeof entry.provider !== "string" || !removed.has(entry.provider),
+    );
+  }
+
+  if (patch) {
+    const promptKeys = ["title", "branchName", "commitMessage", "pullRequest"] as const;
+    for (const key of promptKeys) {
+      if (key in patch) {
+        const entry = patch[key];
+        const instructions = entry?.instructions?.trim();
+        if (instructions) {
+          next[key] = { instructions };
+        } else {
+          delete next[key];
+        }
+      }
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function mergeMutableAgentPatch(
   persistedAgents: PersistedConfig["agents"],
   patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
@@ -814,16 +853,13 @@ function mergeMutableAgentPatch(
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];
 
-  if (patch.metadataGeneration?.providers !== undefined) {
-    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
-  } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
-    const removed = new Set(removeProviders);
-    next["metadataGeneration"] = {
-      providers: persistedAgents.metadataGeneration.providers.filter(
-        (entry) => !removed.has(entry.provider),
-      ),
-    };
-  }
+  const nextMetadata = mergeMetadataGenerationPatch(
+    persistedAgents?.metadataGeneration,
+    patch.metadataGeneration,
+    removeProviders,
+  );
+  if (nextMetadata) next["metadataGeneration"] = nextMetadata;
+  else delete next["metadataGeneration"];
 
   if (patch.skills?.selection !== undefined) {
     next["skills"] = { selection: patch.skills.selection };

@@ -67,6 +67,23 @@ Each entry accepts:
 
 The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
 
+## Custom instructions
+
+You can customize the instructions for each kind of metadata globally in **Settings → Host → Metadata**, or configure them directly in `agents.metadataGeneration` in `~/.paseo/config.json`. Instructions in a repository's `paseo.json` take precedence over these host defaults.
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "title": { "instructions": "Keep titles to a few words, no leading verb." },
+      "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
+      "commitMessage": { "instructions": "Follow Conventional Commits." },
+      "pullRequest": { "instructions": "Include a Testing section in the body." }
+    }
+  }
+}
+```
+
 ## Per-project instructions
 
 You can steer the wording of each kind of metadata per repository with a `paseo.json` file at your repo root. Paseo reads it from the committed version of the base branch, the same way it reads worktree config.

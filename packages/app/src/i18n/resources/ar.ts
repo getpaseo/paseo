@@ -2394,6 +2394,27 @@ export const ar: TranslationResources = {
       modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
+      instructionsTitle: "تعليمات مخصصة",
+      instructionsInfo:
+        "تعليمات مخصصة يتم تضمينها في مطالبات الذكاء الاصطناعي التي يستخدمها Paseo لإنشاء بيانات التعريف. التعليمات في paseo.json للمشروع لها الأولوية",
+      prompts: {
+        default: "افتراضي",
+        resetToDefault: "إعادة التعيين إلى الافتراضي",
+        save: "حفظ",
+        title: "عناوين مساحة العمل",
+        titleHint: "تظهر في الشريط الجانبي ورؤوس النوافذ",
+        titlePlaceholder:
+          "تسمية مهمة قابلة للتنفيذ: العملية المطلوبة + الهدف المحدد، بحد أقصى 80 حرفًا",
+        branchName: "أسماء الفروع",
+        branchNameHint: "اسم فرع Git لمساحات العمل المعزولة الجديدة",
+        branchNamePlaceholder: "اسم قصير يحافظ على العملية والهدف والمعرف الصريح",
+        commitMessage: "رسائل الالتزام",
+        commitMessageHint: "رسالة مقترحة عند تثبيت التغييرات",
+        commitMessagePlaceholder: "موجز وبصيغة الأمر وبدون نقطة في النهاية",
+        pullRequest: "طلبات السحب",
+        pullRequestHint: "مسودة العنوان والنص عند فتح طلب سحب",
+        pullRequestPlaceholder: "عنوان واضح ونص يشرح ما تغير وسبب التغيير",
+      },
     },
     voice: {
       offline: "اتصل بهذا المضيف لضبط الصوت.",

@@ -2485,6 +2485,28 @@ export const en = {
       modelHint: "Only this model is used. If it fails, Paseo does not try another model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      instructionsTitle: "Custom instructions",
+      instructionsInfo:
+        "Custom instructions injected into the AI prompts Paseo uses to generate metadata. Instructions in a project's paseo.json take precedence over these host defaults",
+      prompts: {
+        default: "Default",
+        resetToDefault: "Reset to default",
+        save: "Save",
+        title: "Workspace titles",
+        titleHint: "Shown in the sidebar and window headers",
+        titlePlaceholder:
+          "An actionable task label: requested operation + concrete target, max 80 characters (e.g. Refactor PR #2638 specs)",
+        branchName: "Branch names",
+        branchNameHint: "Git ref slug for new worktrees",
+        branchNamePlaceholder:
+          "A short task-shaped slug preserving the operation, target, and explicit identifier",
+        commitMessage: "Commit messages",
+        commitMessageHint: "Suggested message when committing changes",
+        commitMessagePlaceholder: "Concise, imperative mood, no trailing period",
+        pullRequest: "Pull requests",
+        pullRequestHint: "Draft title and body when opening a PR",
+        pullRequestPlaceholder: "Clear, descriptive title; body explaining what changed and why",
+      },
     },
     voice: {
       offline: "Connect to this host to configure voice.",
