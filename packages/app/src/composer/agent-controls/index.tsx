@@ -16,7 +16,7 @@ import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
   buildProviderSelectorProviders,
-  buildSelectableProviderSelectorProviders,
+  buildSelectorProvider,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
@@ -1049,7 +1049,7 @@ export const AgentControls = memo(function AgentControls({
   );
   const agentModelSelectorProviders = useMemo(() => {
     if (snapshotSelectedEntry) {
-      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
+      return [buildSelectorProvider(snapshotSelectedEntry)];
     }
     return buildProviderSelectorProviders({
       providerDefinitions: agentProviderDefinitions,

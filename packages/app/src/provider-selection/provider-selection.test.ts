@@ -7,6 +7,7 @@ import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
+  buildSelectorProvider,
   filterAndRankModelRows,
   matchesModelSearch,
   resolveEffectiveComposerModeId,
@@ -155,11 +156,6 @@ describe("combined model selector data", () => {
           error: "boom",
           models: [],
         }),
-        snapshotEntry({
-          provider: "unavailable-provider",
-          status: "unavailable",
-          models: [],
-        }),
       ]),
     ).toEqual([
       {
@@ -172,12 +168,28 @@ describe("combined model selector data", () => {
         label: "error-provider",
         modelSelection: { kind: "error", message: "boom" },
       },
-      {
-        id: "unavailable-provider",
-        label: "unavailable-provider",
-        modelSelection: { kind: "error", message: "Unavailable" },
-      },
     ]);
+  });
+
+  it("leaves out enabled providers that are not installed", () => {
+    expect(
+      buildSelectableProviderSelectorProviders([
+        snapshotEntry({ provider: "codex", label: "Codex" }),
+        snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+      ]).map((provider) => provider.id),
+    ).toEqual(["codex"]);
+  });
+
+  it("keeps an agent's own provider in its selector when that provider is not installed", () => {
+    expect(
+      buildSelectorProvider(
+        snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+      ),
+    ).toEqual({
+      id: "gemini",
+      label: "gemini",
+      modelSelection: { kind: "error", message: "Unavailable" },
+    });
   });
 
   it("builds selector providers from an already-curated provider list", () => {
@@ -416,15 +428,18 @@ describe("combined model selector data", () => {
           label: "DeepSeek TUI",
           models: [],
         }),
-        snapshotEntry({
-          provider: "unavailable-provider",
-          status: "unavailable",
-          models: [],
-        }),
       ]);
 
       expect(getAllModelLabels(providers)).toContain("默认");
-      expect(providers[1]?.modelSelection).toEqual({
+      expect(
+        buildSelectorProvider(
+          snapshotEntry({
+            provider: "unavailable-provider",
+            status: "unavailable",
+            models: [],
+          }),
+        ).modelSelection,
+      ).toEqual({
         kind: "error",
         message: "不可用",
       });
