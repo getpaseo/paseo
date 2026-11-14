@@ -107,8 +107,9 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
-import { PluginSettingsContent } from "@/plugins/settings";
+import { PluginSettingsContent, resolvePluginSettingsTitle } from "@/plugins/settings";
 import { usePluginDisplayName } from "@/plugins/plugin-list";
+import { useInstalledPlugin } from "@/plugins/registry";
 import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
@@ -973,6 +974,8 @@ function SettingsSidebar({
   );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  // A plugin screen carries its own Back, so the sidebar's workspace exit would compete with it.
+  const showBackToWorkspace = view.kind !== "plugin";
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
@@ -1075,12 +1078,14 @@ function SettingsSidebar({
           <View style={sidebarStyles.sidebarDragArea}>
             <TitlebarDragRegion />
             <WindowChromeSafeArea placement="below" />
-            <SidebarHeaderRow
-              icon={ArrowLeft}
-              label={t("settings.backToWorkspace")}
-              onPress={onBackToWorkspace}
-              testID="settings-back-to-workspace"
-            />
+            {showBackToWorkspace ? (
+              <SidebarHeaderRow
+                icon={ArrowLeft}
+                label={t("settings.backToWorkspace")}
+                onPress={onBackToWorkspace}
+                testID="settings-back-to-workspace"
+              />
+            ) : null}
           </View>
           <ScrollView
             style={sidebarStyles.scrollBody}
@@ -1261,10 +1266,17 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     returnFromSettings({ kind: "root" });
   }, []);
 
-  // The header names the plugin; its tabs name the open settings screen.
-  const pluginDisplayName = usePluginDisplayName(view.kind === "plugin" ? view : null);
+  // A single-screen plugin names that screen; otherwise the header names the plugin and its
+  // tabs name the open settings screen.
+  const pluginIdentity = view.kind === "plugin" ? view : null;
+  const installedPlugin = useInstalledPlugin(
+    pluginIdentity?.serverId ?? "",
+    pluginIdentity?.pluginId ?? "",
+  );
+  const pluginDisplayName = usePluginDisplayName(pluginIdentity);
   const detailTitle = ((): string | undefined => {
-    if (view.kind === "plugin") return pluginDisplayName;
+    if (view.kind === "plugin")
+      return resolvePluginSettingsTitle(installedPlugin, view.screenId, pluginDisplayName);
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
       return item ? t(item.labelKey) : undefined;
@@ -1371,7 +1383,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   if (isCompactLayout) {
     return (
       <View style={styles.container}>
-        <PageLayout title={detailTitle} onBack={handleBackFromDetail}>
+        <PageLayout
+          title={detailTitle}
+          titleTestID="settings-detail-header-title"
+          onBack={handleBackFromDetail}
+        >
           {content}
         </PageLayout>
       </View>

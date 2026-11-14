@@ -43,7 +43,12 @@ export function PageLayout({
   return (
     <View style={styles.container}>
       {isCompact ? (
-        <BackHeader title={title} onBack={onBack} rightContent={actions} />
+        <BackHeader
+          title={title}
+          onBack={onBack}
+          rightContent={actions}
+          titleTestID={titleTestID}
+        />
       ) : (
         <MenuHeader borderless />
       )}

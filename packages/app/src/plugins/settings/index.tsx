@@ -76,6 +76,20 @@ function SettingsTabIcon({
 }
 
 /**
+ * A single-screen plugin names that screen in the settings header; with several screens the
+ * header names the plugin and the tabs name the screens.
+ */
+export function resolvePluginSettingsTitle(
+  plugin: InstalledPlugin | null,
+  screenId: string,
+  fallbackTitle: string | undefined,
+): string | undefined {
+  const onlyScreen = plugin?.settingsScreens.length === 1 ? plugin.settingsScreens[0] : null;
+  if (!plugin || !onlyScreen || onlyScreen.id !== screenId) return fallbackTitle;
+  return plugin.i18n.resolve(onlyScreen.title, plugin.locale);
+}
+
+/**
  * One tab per registered settings screen. A plugin with a single screen shows no tabs.
  * Render inside the installation's provider: tab icons may be plugin components.
  */
