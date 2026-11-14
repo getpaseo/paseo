@@ -201,6 +201,61 @@ test("classifies a removed file as deleted", async () => {
   await subscription.unsubscribe();
 });
 
+// inotify names a watched directory's own deletion after the directory, which
+// reads like a child of the same name.
+test.skipIf(process.platform !== "linux")(
+  "reports a removed directory tree at its own paths only",
+  async () => {
+    const root = await createRoot();
+    const removed = join(root, "removed");
+    const nested = join(removed, "nested");
+    await mkdir(nested, { recursive: true });
+    const observer = createObserver();
+    const events: FileChange[] = [];
+    const subscription = await observer.subscribe(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    await rm(removed, { recursive: true });
+    await expect
+      .poll(() => events.map((event) => event.path))
+      .toEqual(expect.arrayContaining([removed, nested]));
+    await expect
+      .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
+      .toMatchObject({
+        pendingEventCount: 0,
+        pendingReconciliationWorkCount: 0,
+        reconciliationInFlightCount: 0,
+      });
+    expect(new Set(events.map((event) => `${event.type} ${event.path}`))).toEqual(
+      new Set([`delete ${removed}`, `delete ${nested}`]),
+    );
+    await subscription.unsubscribe();
+  },
+);
+
+test.skipIf(process.platform !== "linux")(
+  "reports a file named like its directory when it is created and removed",
+  async () => {
+    const root = await createRoot();
+    const directory = join(root, "same");
+    const target = join(directory, "same");
+    await mkdir(directory);
+    const events: FileChange[] = [];
+    const subscription = await subscribeToFileChanges(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    await writeFile(target, "created");
+    await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("create");
+    await rm(target);
+    await expect.poll(() => events.findLast((event) => event.path === target)?.type).toBe("delete");
+    await subscription.unsubscribe();
+  },
+);
+
 test("observes files moved into the tree with their directory", async () => {
   const root = await createRoot();
   const outside = await createRoot();
