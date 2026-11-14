@@ -662,7 +662,12 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
 
-function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
+function isTurnTerminalEvent(
+  event: AgentStreamEvent,
+): event is Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+> {
   return (
     event.type === "turn_completed" ||
     event.type === "turn_failed" ||
@@ -880,6 +885,9 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private shuttingDown = false;
+  private readonly runningAgentsAtShutdown = new Set<string>();
+  private readonly completedAgentsAtShutdown = new Set<string>();
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -976,8 +984,52 @@ export class AgentManager {
     this.mcpBaseUrl = url;
   }
 
+  beginShutdownTracking(): void {
+    this.shuttingDown = true;
+    for (const agent of this.agents.values()) {
+      this.captureRunningAgentAtShutdown(agent);
+    }
+  }
+
   prepareForShutdown(): void {
+    this.shuttingDown = true;
     this.acceptingAgentRegistrations = false;
+    for (const agent of this.agents.values()) {
+      this.captureRunningAgentAtShutdown(agent);
+    }
+  }
+
+  getRunningAgentsAtShutdown(): Set<string> {
+    return new Set(this.runningAgentsAtShutdown);
+  }
+
+  hasRunningAgentAtShutdown(agentId: string): boolean {
+    return this.runningAgentsAtShutdown.has(agentId);
+  }
+
+  getCompletedAgentsAtShutdown(): Set<string> {
+    return new Set(this.completedAgentsAtShutdown);
+  }
+
+  private isAgentRunning(agent: LiveManagedAgent | ActiveManagedAgent): boolean {
+    return (
+      agent.lifecycle === "running" ||
+      Boolean(agent.activeForegroundTurnId) ||
+      this.runs.hasRun(agent.id)
+    );
+  }
+
+  private captureRunningAgentAtShutdown(
+    agent: LiveManagedAgent | ActiveManagedAgent | string,
+    options?: { force?: boolean },
+  ): void {
+    if (!this.shuttingDown) return;
+    const targetAgent = typeof agent === "string" ? this.agents.get(agent) : agent;
+    const targetId = typeof agent === "string" ? agent : agent.id;
+    if (options?.force || (targetAgent && this.isAgentRunning(targetAgent))) {
+      this.completedAgentsAtShutdown.delete(targetId);
+      this.runningAgentsAtShutdown.add(targetId);
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -3152,7 +3204,7 @@ export class AgentManager {
           provider: agent.provider,
           error: errorMsg,
         });
-        this.finalizeForegroundTurn(agent);
+        this.finalizeForegroundTurn({ agent, terminalEventType: "turn_failed" });
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
         this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -3271,6 +3323,9 @@ export class AgentManager {
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.attention = { requiresAttention: false };
       agent.lifecycle = "running";
+      if (this.shuttingDown) {
+        this.captureRunningAgentAtShutdown(agent);
+      }
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
       // prompt so clients can retire optimistic activity without painting an idle frame.
@@ -3346,7 +3401,12 @@ export class AgentManager {
     return streamForwarder;
   }
 
-  private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
+  private finalizeForegroundTurn(params: {
+    agent: ActiveManagedAgent;
+    turnId?: string;
+    terminalEventType?: "turn_completed" | "turn_failed" | "turn_canceled";
+  }): void {
+    const { agent, turnId, terminalEventType } = params;
     const mutableAgent = agent;
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
@@ -3364,6 +3424,18 @@ export class AgentManager {
       nextLifecycle = "idle";
     }
     mutableAgent.lifecycle = nextLifecycle;
+    if (this.shuttingDown) {
+      if (terminalEventType === "turn_completed" && !shouldHoldBusyForReplacement) {
+        this.runningAgentsAtShutdown.delete(mutableAgent.id);
+        this.completedAgentsAtShutdown.add(mutableAgent.id);
+      } else if (
+        terminalEventType === "turn_canceled" ||
+        terminalEventType === "turn_failed" ||
+        shouldHoldBusyForReplacement
+      ) {
+        this.captureRunningAgentAtShutdown(mutableAgent, { force: true });
+      }
+    }
     const persistenceHandle =
       mutableAgent.session.describePersistence() ??
       (mutableAgent.runtimeInfo?.sessionId
@@ -3826,6 +3898,7 @@ export class AgentManager {
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
+    this.captureRunningAgentAtShutdown(agent);
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
@@ -4562,6 +4635,7 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    this.captureRunningAgentAtShutdown(agent);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -5101,7 +5175,11 @@ export class AgentManager {
       if (isTurnTerminalEvent(event)) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
-          this.finalizeForegroundTurn(agent, eventTurnId);
+          this.finalizeForegroundTurn({
+            agent,
+            turnId: eventTurnId,
+            terminalEventType: event.type,
+          });
         }
       }
 
@@ -5370,6 +5448,10 @@ export class AgentManager {
       agent.lifecycle !== "idle" &&
       !agent.pendingReplacement
     ) {
+      if (this.shuttingDown) {
+        this.runningAgentsAtShutdown.delete(agent.id);
+        this.completedAgentsAtShutdown.add(agent.id);
+      }
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
     }
@@ -5385,6 +5467,9 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+    if (!options?.fromHistory && terminalDisposition !== "stale") {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.logger.warn(
       {
         agentId: agent.id,
@@ -5430,6 +5515,9 @@ export class AgentManager {
       | undefined;
   }): void {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+    if (!options?.fromHistory && terminalDisposition !== "stale") {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.logger.trace(
       {
         agentId: agent.id,
@@ -5488,6 +5576,9 @@ export class AgentManager {
     agent.lastError = undefined;
     agent.attention = { requiresAttention: false };
     agent.lifecycle = "running";
+    if (this.shuttingDown) {
+      this.captureRunningAgentAtShutdown(agent);
+    }
     this.emitState(agent);
   }
 

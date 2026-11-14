@@ -1993,14 +1993,22 @@ export async function createPaseoDaemon(
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    await scheduleService.stop().catch(() => undefined);
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
+    // Start shutdown tracking before draining messages so any in-flight
+    // turns or message-triggered cancellations are remembered, while
+    // keeping registrations open so message delivery can resume persisted agents.
+    agentManager.beginShutdownTracking();
+    agentStorage.prepareForShutdown((agentId) => agentManager.hasRunningAgentAtShutdown(agentId));
     wsServer?.prepareForShutdown();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
-    await restartRecovery.captureRunningAgents();
+    await restartRecovery.captureRunningAgents(
+      agentManager.getRunningAgentsAtShutdown(),
+      agentManager.getCompletedAgentsAtShutdown(),
+    );
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
@@ -2009,6 +2017,11 @@ export async function createPaseoDaemon(
     }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
+    await agentStorage.flush().catch(() => undefined);
+    await restartRecovery.captureRunningAgents(
+      agentManager.getRunningAgentsAtShutdown(),
+      agentManager.getCompletedAgentsAtShutdown(),
+    );
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();
@@ -2026,7 +2039,6 @@ export async function createPaseoDaemon(
       logger.error({ err: error }, "Terminal shutdown failed");
     }
     await speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

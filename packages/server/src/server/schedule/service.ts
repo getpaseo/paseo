@@ -287,6 +287,7 @@ export class ScheduleService {
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private stopping = false;
 
   constructor(options: ScheduleServiceOptions) {
     this.logger = options.logger.child({ module: "schedule-service" });
@@ -302,6 +303,7 @@ export class ScheduleService {
   }
 
   async start(): Promise<void> {
+    this.stopping = false;
     await this.recoverInterruptedRuns();
     await this.sweepOrphanedSchedules();
     if (this.tickTimer) {
@@ -317,6 +319,7 @@ export class ScheduleService {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -557,6 +560,9 @@ export class ScheduleService {
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
+    if (this.stopping) {
+      throw new ScheduleStateConflictError(`Schedule service is shutting down`);
+    }
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {
       throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
@@ -569,9 +575,13 @@ export class ScheduleService {
   }
 
   async tick(): Promise<void> {
+    this.stopping = false;
     const now = this.now();
     const schedules = await this.store.list();
     for (const schedule of schedules) {
+      if (this.stopping) {
+        break;
+      }
       if (schedule.status !== "active" || !schedule.nextRunAt) {
         continue;
       }
@@ -584,6 +594,9 @@ export class ScheduleService {
       }
       if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
         continue;
+      }
+      if (this.stopping) {
+        break;
       }
       await this.runSchedule(schedule, now);
     }
@@ -780,6 +793,7 @@ export class ScheduleService {
     let claimed: { schedule: StoredSchedule; runId: string } | null = null;
     const updatedSchedule = await this.store.update(scheduleId, (schedule) => {
       if (
+        this.stopping ||
         schedule.status !== "active" ||
         !schedule.nextRunAt ||
         shouldCompleteSchedule(schedule, now) ||

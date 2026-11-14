@@ -44,12 +44,21 @@ export function createRestartRecovery(deps: Dependencies) {
         }
       }
     },
-    async captureRunningAgents() {
+    async captureRunningAgents(
+      runningAgentIds?: Iterable<string>,
+      completedAgentIds?: Iterable<string>,
+    ) {
       await deps.storage.flush();
+      const runningIds = runningAgentIds ? new Set(runningAgentIds) : null;
+      const completedIds = completedAgentIds ? new Set(completedAgentIds) : null;
       // Shutdown recovery captures running state once before the daemon exits.
       for (const record of await deps.storage.listAll()) {
-        if (record.lastStatus === "running" && (await eligible(record)))
+        const isRunning = record.lastStatus === "running" || (runningIds?.has(record.id) ?? false);
+        if (isRunning && (await eligible(record))) {
           await deps.storage.upsert({ ...record, resumeOnStartup: deps.settings().enabled });
+        } else if (completedIds?.has(record.id) && record.resumeOnStartup) {
+          await deps.storage.upsert({ ...record, resumeOnStartup: false });
+        }
       }
     },
     /** Resume every candidate in the background; a slow provider holds back only its agent. */
