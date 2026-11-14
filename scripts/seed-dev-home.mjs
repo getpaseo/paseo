@@ -22,6 +22,11 @@ export function seedPaseoHome(source, target) {
     return;
   }
 
+  const configPath = join(source, "config.json");
+  const config = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""))
+    : { version: 1 };
+
   if (process.env.PASEO_DEV_RESET_HOME === "1") {
     rmSync(target, { recursive: true, force: true });
   } else if (hasEntries(target)) {
@@ -34,10 +39,6 @@ export function seedPaseoHome(source, target) {
   copyJsonTree(join(source, "agents"), join(target, "agents"));
   copyJsonTree(join(source, "projects"), join(target, "projects"));
 
-  const configPath = join(source, "config.json");
-  const config = existsSync(configPath)
-    ? JSON.parse(readFileSync(configPath, "utf8"))
-    : { version: 1 };
   // A snapshot does not own the source daemon's pending work. Recovery normalizes
   // copied running records on startup without sending a prompt when disabled.
   config.agents = { ...config.agents, resumeOnStartup: false };
