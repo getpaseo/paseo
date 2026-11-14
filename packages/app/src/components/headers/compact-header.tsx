@@ -18,7 +18,12 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-import { useTopBand } from "@/window-layout";
+import {
+  resolveHeaderBesideStatusBar,
+  useTopBand,
+  useVerticalBarDisabled,
+  useWindowLayout,
+} from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
@@ -37,6 +42,8 @@ interface CompactHeaderProps {
   loading?: boolean;
   /** Icon actions inherit the island chrome through the shared button primitives. */
   actions?: ReactNode;
+  /** Fills the control row when the header splits beside the status pill, e.g. a tab strip. */
+  strip?: ReactNode;
 }
 
 /**
@@ -55,38 +62,77 @@ export function CompactHeader({
   subtitle,
   loading = false,
   actions,
+  strip,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
-  const inTopBand = useTopBand() !== null;
+  const topBand = useTopBand();
+  const inTopBand = topBand !== null;
+  const layout = useWindowLayout();
+  const verticalBarDisabled = useVerticalBarDisabled();
+  // With the vertical bar off the status bar returns to the top inset, which already clears it.
+  // A top band already starts at the top bar, so it takes no extra padding either.
+  const topPadding = verticalBarDisabled || inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE;
+  const beside = resolveHeaderBesideStatusBar({
+    layout,
+    topBand,
+    rowHeight: HEADER_INNER_HEIGHT_MOBILE,
+  });
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + (inTopBand ? 0 : HEADER_TOP_PADDING_MOBILE),
+        paddingTop: beside ? beside.top : insets.top + topPadding,
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [inTopBand, insets.top, insets.left, insets.right],
+    [beside, insets.top, insets.left, insets.right, topPadding],
   );
+  // Beside the status pill the top row holds the title alone; the buttons take the next line.
+  const titleRowStyle = useMemo(
+    () => [
+      styles.row,
+      beside && { marginRight: Math.max(0, beside.right - insets.right - ROOT_PADDING) },
+    ],
+    [beside, insets.right],
+  );
+
+  const leading = (
+    <View style={styles.island}>
+      {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
+    </View>
+  );
+  const titleGroup = (
+    <View style={styles.titleGroup}>
+      <CompactHeaderTitle
+        loading={loading}
+        title={title}
+        titleTestID={titleTestID}
+        subtitle={subtitle}
+      />
+    </View>
+  );
+  const trailing = actions ? <View style={styles.island}>{actions}</View> : null;
 
   return (
     <IconButtonChromeProvider value="header-island">
       <View style={rootStyle}>
-        <View style={inTopBand ? styles.topBandRow : styles.row}>
-          <View style={styles.island}>
-            {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
+        {beside ? (
+          <>
+            <View style={titleRowStyle}>{titleGroup}</View>
+            <View style={styles.row}>
+              {leading}
+              {strip ?? <View style={styles.spacer} />}
+              {trailing}
+            </View>
+          </>
+        ) : (
+          <View style={inTopBand ? styles.topBandRow : styles.row}>
+            {leading}
+            {titleGroup}
+            {trailing}
           </View>
-          <View style={styles.titleGroup}>
-            <CompactHeaderTitle
-              loading={loading}
-              title={title}
-              titleTestID={titleTestID}
-              subtitle={subtitle}
-            />
-          </View>
-          {actions ? <View style={styles.island}>{actions}</View> : null}
-        </View>
+        )}
       </View>
     </IconButtonChromeProvider>
   );
@@ -145,10 +191,14 @@ function BackButton({ onBack }: { onBack?: () => void }) {
   );
 }
 
+/** The root's horizontal padding, `theme.spacing[3]`. */
+const ROOT_PADDING = 12;
+
 const styles = StyleSheet.create((theme) => ({
   root: {
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: ROOT_PADDING,
   },
+  spacer: { flex: 1 },
   row: {
     height: HEADER_INNER_HEIGHT_MOBILE,
     flexDirection: "row",

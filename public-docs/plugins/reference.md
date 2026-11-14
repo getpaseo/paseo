@@ -2317,6 +2317,82 @@ For pills that follow the agent directory, use an explicit [owned list subscript
 The [local plugin example](https://github.com/getpaseo/paseo/blob/main/plugin-examples/local-plugin/client/main.tsx)
 replaces registrations on each snapshot and aborts the observation during entry cleanup, including pending bootstrap.
 
+## Composer toolbar buttons
+
+`client.addComposerToolbarButton({ id, button })` takes the same [button descriptor](#button-descriptor)
+and returns the same registration. The button appears in every agent composer on the plugin's
+host, in the toolbar beside the context meter, as an icon only. Its icon and popover props carry
+the composer's `workspaceId` and `agentId`. Menus and popovers open above it.
+
+## Vertical bar buttons
+
+`client.addVerticalBarButton({ id, button })` takes the same [button descriptor](#button-descriptor)
+and returns the same registration. On a folded iPhone the button appears in the system
+[vertical bar](#vertical-bar), below Paseo's workspace actions, as an icon only. It shows only while
+those actions are in the bar, so it disappears when the bar is off or absent. Its icon and popover
+props carry the `workspaceId` on screen.
+
+## Timeline buttons
+
+`client.addTimelineButton({ id, button })` adds an icon-only floating control beside the active
+agent transcript's scroll-to-bottom button. The button receives the active agent context for icon
+and popover content. Timeline controls stay on screen while the transcript is open.
+
+Use the host-owned timeline behavior when the button navigates the transcript:
+
+```tsx
+client.addTimelineButton({
+  id: "last-user-message",
+  button: {
+    title: "Scroll to last user message",
+    icon: "ChevronUp",
+    behavior: { kind: "timeline", target: "last-user-message" },
+  },
+});
+```
+
+`target: "last-user-message"` scrolls to the newest user message currently available in the
+agent's timeline. It is only valid for timeline buttons.
+
+## Vertical bar
+
+On a folded iPhone, iOS 27.1 places a vertical bar along one edge of the screen. It holds the status
+bar and Paseo's workspace actions. `@getpaseo/plugin/client` exports:
+
+| Export                             | Use it for                                                         |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `useVerticalBar()`                 | The bar's `{ edge, behavior }` inside a component, live            |
+| `getVerticalBar()`                 | The same value outside components                                  |
+| `subscribeVerticalBar(listener)`   | A callback on every change; returns the remover                    |
+| `setVerticalBarBehavior(behavior)` | `"disabled"` turns the bar off; `"automatic"` gives it back to iOS |
+
+`edge` is `"none"` on every other device, window size, and platform, and setting the behavior there
+does nothing. With the bar off, the status bar moves back to the top, the bar's side inset is
+removed so content takes the full width, and workspace actions return to the header. The choice
+is saved on the device and stays in effect across launches. Do not restore `"automatic"` from
+plugin cleanup. The host disposes the plugin when it reconnects, and that reset clears the saved
+choice.
+
+```ts
+const button = client.addComposerToolbarButton({
+  id: "expand",
+  button: {
+    title: "Expand into the side rail",
+    icon: "Maximize2",
+    visible: getVerticalBar().edge !== "none",
+    behavior: { kind: "action", onPress: () => setVerticalBarBehavior("disabled") },
+  },
+});
+const stop = subscribeVerticalBar(() =>
+  button.update({ visible: getVerticalBar().edge !== "none" }),
+);
+```
+
+While the bar is off, `edge` keeps its preferred value. Use `behavior` to check whether the bar
+is disabled. Put Restore somewhere that stays on screen, such as a composer toolbar button shown
+while `behavior` is `"disabled"`.
+Apps that predate these exports import them as `undefined`; check before calling.
+
 ## Button descriptor
 
 These contracts are exported from `@getpaseo/plugin/client`.

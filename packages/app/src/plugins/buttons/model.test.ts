@@ -4,7 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { PluginButton } from "@getpaseo/plugin/client";
 import type { InstalledPlugin } from "../types";
-import { PluginButtonStore, buttonMatches } from "./model";
+import { PluginButtonStore, buttonMatches, globalButtonMatches } from "./model";
 
 function installation(): InstalledPlugin {
   return {
@@ -54,6 +54,54 @@ function button(onPress = () => {}): PluginButton {
 }
 
 describe("plugin buttons", () => {
+  it("shows a composer toolbar button in every composer on its host and nowhere else", () => {
+    const buttons = store();
+    const plugin = installation();
+    const toolbar = buttons.addComposerToolbarButton(plugin, { id: "expand", button: button() });
+    const [entry] = buttons.getSnapshot();
+
+    expect(globalButtonMatches(entry, "composer-toolbar", "host-a")).toBe(true);
+    expect(globalButtonMatches(entry, "composer-toolbar", "host-b")).toBe(false);
+    expect(buttonMatches(entry, "host-a", "workspace", "agent")).toBe(false);
+    expect(buttonMatches(entry, "host-a", "workspace", null)).toBe(false);
+    expect(globalButtonMatches(entry, "vertical-bar", "host-a")).toBe(false);
+    expect(() =>
+      buttons.addComposerToolbarButton(plugin, { id: "expand", button: button() }),
+    ).toThrow("Duplicate plugin button: expand");
+
+    toolbar.update({ visible: false });
+    expect(globalButtonMatches(buttons.getSnapshot()[0], "composer-toolbar", "host-a")).toBe(false);
+    toolbar.remove();
+    expect(buttons.getSnapshot()).toEqual([]);
+  });
+
+  it("registers timeline buttons separately and reserves timeline behavior for them", () => {
+    const buttons = store();
+    const plugin = installation();
+    buttons.addTimelineButton(plugin, {
+      id: "last-user-message",
+      button: {
+        title: "Last user message",
+        icon: "Scan",
+        behavior: { kind: "timeline", target: "last-user-message" },
+      },
+    });
+
+    const [entry] = buttons.getSnapshot();
+    expect(globalButtonMatches(entry, "timeline", "host-a")).toBe(true);
+    expect(globalButtonMatches(entry, "composer-toolbar", "host-a")).toBe(false);
+    expect(() =>
+      buttons.addComposerToolbarButton(plugin, {
+        id: "invalid-timeline",
+        button: {
+          title: "Invalid timeline",
+          icon: "Scan",
+          behavior: { kind: "timeline", target: "last-user-message" },
+        },
+      }),
+    ).toThrow("Plugin timeline behavior needs a timeline button");
+  });
+
   it("updates visibility in place, closes hidden content, and scopes each placement", () => {
     const buttons = store();
     const plugin = installation();
@@ -84,10 +132,23 @@ describe("plugin buttons", () => {
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.key)).toEqual([first.key, first.key + 1]);
     expect(buttons.getSnapshot()[0].button.label).toBe("3 reviews");
+    expect(buttons.getSnapshot()[0].behaviorRevision).toBe(0);
     header.remove();
     header.remove();
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.placement)).toEqual(["composer"]);
+  });
+
+  it("keeps a vertical bar button separate from a toolbar button with the same id", () => {
+    const buttons = store();
+    const plugin = installation();
+    buttons.addComposerToolbarButton(plugin, { id: "expand", button: button() });
+    buttons.addVerticalBarButton(plugin, { id: "expand", button: button() });
+    const [toolbar, bar] = buttons.getSnapshot();
+
+    expect(globalButtonMatches(bar, "vertical-bar", "host-a")).toBe(true);
+    expect(globalButtonMatches(bar, "composer-toolbar", "host-a")).toBe(false);
+    expect(globalButtonMatches(toolbar, "vertical-bar", "host-a")).toBe(false);
   });
 
   it("rejects duplicates within a target and validates updates atomically", () => {
@@ -183,6 +244,30 @@ describe("plugin buttons", () => {
     await buttons.run(key, ["nested", "run"]);
     expect(calls).toBe(2);
   });
+
+  it("keeps an open menu across a label update and closes it when behavior is replaced", () => {
+    const buttons = store();
+    const registration = buttons.addHeaderButton(installation(), {
+      id: "review",
+      workspaceId: "workspace",
+      button: button(),
+    });
+    const key = buttons.getSnapshot()[0].key;
+    buttons.setOpen(key, true);
+    const before = buttons.getSnapshot()[0];
+    registration.update({ label: "3 reviews" });
+    const labeled = buttons.getSnapshot()[0];
+    expect(labeled.button.behavior).not.toBe(before.button.behavior);
+    expect(labeled.button.label).toBe("3 reviews");
+    expect(labeled.open).toBe(true);
+    expect(labeled.behaviorRevision).toBe(before.behaviorRevision);
+    registration.update({
+      behavior: { kind: "action", onPress() {} },
+    });
+    const replaced = buttons.getSnapshot()[0];
+    expect(replaced.open).toBe(false);
+    expect(replaced.behaviorRevision).toBe(before.behaviorRevision + 1);
+  });
 });
 
 it("updates translated tooltips and nested menu labels without closing open content", () => {
@@ -231,16 +316,22 @@ it("updates translated tooltips and nested menu labels without closing open cont
   for (const listener of listeners) listener();
   const translated = buttons.getSnapshot()[0];
   expect(translated.key).toBe(original.key);
+  expect(translated.button.behavior).not.toBe(original.button.behavior);
   expect(translated.open).toBe(true);
+  expect(translated.behaviorRevision).toBe(original.behaviorRevision);
   expect(translated.button.title).toBe("笔记");
   expect(translated.button.behavior).toMatchObject({
     kind: "menu",
     items: [{ title: "打开笔记" }],
   });
   registration.update({ disabled: false });
+  expect(buttons.getSnapshot()[0].open).toBe(true);
+  expect(buttons.getSnapshot()[0].behaviorRevision).toBe(original.behaviorRevision);
   locale = "en";
   for (const listener of listeners) listener();
   expect(buttons.getSnapshot()[0].button.title).toBe("Notes");
+  expect(buttons.getSnapshot()[0].open).toBe(true);
+  expect(buttons.getSnapshot()[0].behaviorRevision).toBe(original.behaviorRevision);
   registration.remove();
   plugin.i18n.dispose();
   expect(listeners.size).toBe(0);

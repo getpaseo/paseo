@@ -53,6 +53,11 @@ function validateBehavior(
       if (typeof behavior.onPress !== "function")
         throw new Error("Plugin button action needs onPress");
       return { ...behavior };
+    case "timeline":
+      if (behavior.target !== "last-user-message") {
+        throw new Error("Invalid plugin timeline target");
+      }
+      return { ...behavior };
     case "popover":
       if (!isComponent(behavior.Content)) throw new Error("Plugin button popover needs Content");
       return { ...behavior };

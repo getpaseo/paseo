@@ -1,5 +1,5 @@
-import { useId } from "react";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { useCallback, useId, useState } from "react";
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -13,16 +13,18 @@ const backdropColorMappings: Record<EdgeFadeBackdrop, (theme: Theme) => { color:
 };
 
 interface EdgeFadeSvgProps {
+  width: number;
+  height: number;
   gradientId: string;
   color: string;
   edge: "top" | "bottom";
   solidFraction: number;
 }
 
-function EdgeFadeSvg({ gradientId, color, edge, solidFraction }: EdgeFadeSvgProps) {
+function EdgeFadeSvg({ width, height, gradientId, color, edge, solidFraction }: EdgeFadeSvgProps) {
   const fromTop = edge === "top";
   return (
-    <Svg width="100%" height="100%" preserveAspectRatio="none">
+    <Svg width={width} height={height} preserveAspectRatio="none">
       <Defs>
         <SvgLinearGradient
           id={gradientId}
@@ -60,14 +62,27 @@ interface EdgeFadeProps {
 export function EdgeFade({ edge, solidFraction, backdrop, style }: EdgeFadeProps) {
   // React-generated ids contain characters that are invalid inside SVG fragment references.
   const gradientId = `edge-fade-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  // Sized in points from layout: with percent sizes the fade stopped covering the header on iOS
+  // after the window reflowed (a folded iPhone's vertical bar turning off).
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setSize((current) =>
+      current && current.width === width && current.height === height ? current : { width, height },
+    );
+  }, []);
   return (
-    <View style={style} pointerEvents="none">
-      <ThemedEdgeFadeSvg
-        gradientId={gradientId}
-        edge={edge}
-        solidFraction={solidFraction}
-        uniProps={backdropColorMappings[backdrop]}
-      />
+    <View style={style} pointerEvents="none" onLayout={handleLayout}>
+      {size ? (
+        <ThemedEdgeFadeSvg
+          width={size.width}
+          height={size.height}
+          gradientId={gradientId}
+          edge={edge}
+          solidFraction={solidFraction}
+          uniProps={backdropColorMappings[backdrop]}
+        />
+      ) : null}
     </View>
   );
 }

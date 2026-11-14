@@ -9,6 +9,8 @@ export interface WindowLayout {
   bounds: WindowLayoutRect;
   verticalBarEdge: "none" | "leading" | "trailing";
   verticalBar: WindowLayoutRect | null;
+  /** "disabled" while the app has turned the vertical bar off; absent on older builds. */
+  verticalBarBehavior?: "automatic" | "disabled";
   /**
    * Points from the window's bottom edge to where a bottom bar rests, or null where
    * the system has no bottom bar guide. Zero is a measured value.
@@ -16,7 +18,10 @@ export interface WindowLayout {
   bottomClearance?: number | null;
   /** Where a top bar rests, or null until the system resolves its top bar guide. */
   topBar?: WindowLayoutRect | null;
-  /** Active system occlusions (status region, camera, Live Activities), margins included. */
+  /**
+   * Regions system elements draw over (status region, camera, Live Activities), in window
+   * coordinates with margins included. Absent on older builds.
+   */
   occlusions?: WindowLayoutRect[];
   divisions: WindowLayoutRect[];
 }
@@ -64,6 +69,44 @@ export function resolveSafeAreaInsets<Insets extends { top: number; bottom: numb
   return top === systemInsets.top && bottom === systemInsets.bottom
     ? systemInsets
     : { ...systemInsets, top, bottom };
+}
+
+/** Gap between a header beside the status bar and the status bar's leading edge. */
+const STATUS_BAR_GAP = 8;
+/** Below this much of the window's height, an occlusion counts as part of the top row. */
+const TOP_ROW_LIMIT = 120;
+
+/**
+ * With a folded iPhone's vertical bar off, the status bar draws as a pill at the top right and
+ * the header moves beside it. The top band says where; where iOS gives no top band, the
+ * occlusion UIKit reports for the pill does.
+ */
+export function resolveHeaderBesideStatusBar(input: {
+  layout: WindowLayout | null;
+  topBand: TopBand | null;
+  rowHeight: number;
+}): { top: number; right: number } | null {
+  const { layout, topBand, rowHeight } = input;
+  if (!layout || layout.verticalBarBehavior !== "disabled") return null;
+  if (topBand?.trailingObstruction) {
+    return { top: topBand.top, right: topBand.trailingObstruction.width + STATUS_BAR_GAP };
+  }
+  const width = layout.bounds.width;
+  const pills = (layout.occlusions ?? []).filter(
+    (frame) =>
+      frame.width > 0 &&
+      frame.width < width * 0.6 &&
+      frame.x >= width / 2 &&
+      frame.y < TOP_ROW_LIMIT,
+  );
+  if (pills.length === 0) return null;
+  const x = Math.min(...pills.map((frame) => frame.x));
+  const y = Math.min(...pills.map((frame) => frame.y));
+  const maxY = Math.max(...pills.map((frame) => frame.y + frame.height));
+  return {
+    top: Math.max(0, y + (maxY - y - rowHeight) / 2),
+    right: Math.max(0, width - x) + STATUS_BAR_GAP,
+  };
 }
 
 export interface DesktopDivisionLayout {

@@ -82,6 +82,12 @@ import { renderStreamRow, type RenderStreamItem } from "./stream-row";
 import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import {
+  previousUserMessageId,
+  registerAgentTimelineNavigator,
+} from "@/agent-stream/timeline-navigation";
+import { TIMELINE_CONTROL_ICON_SIZE, timelineControlStyles } from "@/agent-stream/timeline-control";
+import { PluginTimelineButtons } from "@/plugins";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
@@ -302,17 +308,26 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
 const shouldDisableEntryExitAnimations = Platform.OS === "android";
 const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(200);
 const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(200);
+const timelineControlPressableStyle = ({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) => [
+  timelineControlStyles.button,
+  (hovered || pressed) && timelineControlStyles.active,
+];
 
 function ScrollToBottomButton({
   nearBottom,
   isTimelineDetached,
   bottomOffset,
   onPress,
+  pluginControls,
 }: {
   nearBottom: NearBottom;
   isTimelineDetached: boolean;
   bottomOffset: number;
   onPress: () => void;
+  pluginControls?: ReactNode;
 }) {
   const { t } = useTranslation();
   const isNearBottom = useIsNearBottom(nearBottom);
@@ -320,20 +335,28 @@ function ScrollToBottomButton({
     () => [stylesheet.scrollToBottomContainer, { bottom: bottomOffset }],
     [bottomOffset],
   );
-  if (isNearBottom && !isTimelineDetached) return null;
+  const showBottomButton = !isNearBottom || isTimelineDetached;
   return (
     <View style={containerStyle} pointerEvents="box-none">
-      <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-        <Pressable
-          style={stylesheet.scrollToBottomButton}
-          onPress={onPress}
-          accessibilityRole="button"
-          accessibilityLabel={t("agentStream.scrollToBottom")}
-          testID="scroll-to-bottom-button"
-        >
-          <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-        </Pressable>
-      </Animated.View>
+      <View style={timelineControlStyles.row}>
+        {pluginControls}
+        {showBottomButton ? (
+          <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
+            <Pressable
+              style={timelineControlPressableStyle}
+              onPress={onPress}
+              accessibilityRole="button"
+              accessibilityLabel={t("agentStream.scrollToBottom")}
+              testID="scroll-to-bottom-button"
+            >
+              <ChevronDown
+                size={TIMELINE_CONTROL_ICON_SIZE}
+                color={timelineControlStyles.icon.color}
+              />
+            </Pressable>
+          </Animated.View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -643,7 +666,22 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [],
     );
 
+    const userMessageIds = useMemo(
+      () =>
+        [...presentation.tail, ...presentation.head]
+          .filter((item) => item.kind === "user_message")
+          .map((item) => item.id),
+      [presentation.head, presentation.tail],
+    );
+    const userMessageIdsKey = userMessageIds.join("\u0000");
+    const lastUserMessageCursorRef = useRef<string | null>(null);
+    const resetLastUserMessageCursor = useCallback(() => {
+      lastUserMessageCursorRef.current = null;
+    }, []);
+    useEffect(resetLastUserMessageCursor, [agentId, resetLastUserMessageCursor, userMessageIdsKey]);
+
     const scrollToBottom = useCallback(() => {
+      resetLastUserMessageCursor();
       if (!isTimelineDetached) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
@@ -656,7 +694,38 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    }, [
+      agentId,
+      handleTimelineHistoryLoadError,
+      isTimelineDetached,
+      resetLastUserMessageCursor,
+      resolvedServerId,
+    ]);
+    const scrollToLastUserMessage = useCallback(() => {
+      const nextMessageId = previousUserMessageId(userMessageIds, lastUserMessageCursorRef.current);
+      if (!nextMessageId || nextMessageId === lastUserMessageCursorRef.current) return;
+      lastUserMessageCursorRef.current = nextMessageId;
+      viewportRef.current?.scrollToMessage?.(nextMessageId);
+    }, [userMessageIds]);
+    useEffect(
+      () =>
+        registerAgentTimelineNavigator(resolvedServerId, agentId, (target) => {
+          if (target === "last-user-message") scrollToLastUserMessage();
+        }),
+      [agentId, resolvedServerId, scrollToLastUserMessage],
+    );
+    const pluginTimelineControls = useMemo(
+      () =>
+        context.workspaceId ? (
+          <PluginTimelineButtons
+            serverId={resolvedServerId}
+            workspaceId={context.workspaceId}
+            agentId={agentId}
+            compact={isMobile}
+          />
+        ) : null,
+      [agentId, context.workspaceId, isMobile, resolvedServerId],
+    );
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -1191,6 +1260,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     isInitialHistoryLoading,
                     revealInitialHistory,
                     onNearBottomChange: nearBottom.set,
+                    onUserScroll: resetLastUserMessageCursor,
                     onReadingPositionChange: handleReadingPositionChange,
                     onNearHistoryStart: loadOlder,
                     isLoadingOlderHistory: isLoadingOlder,
@@ -1215,6 +1285,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isTimelineDetached={isTimelineDetached}
               bottomOffset={scrollToBottomOffset}
               onPress={scrollToBottom}
+              pluginControls={pluginTimelineControls}
             />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
@@ -1769,18 +1840,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     alignItems: "center",
-  },
-  scrollToBottomButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.colors.surface2,
-    alignItems: "center",
-    justifyContent: "center",
-    ...theme.shadow.sm,
-  },
-  scrollToBottomIcon: {
-    color: theme.colors.foreground,
   },
 }));
 
