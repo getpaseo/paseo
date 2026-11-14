@@ -153,8 +153,8 @@
               "server/package-version.ts": ["existsSync", "readFileSync"],
               // Startup config and exported synchronous configuration API; runtime DaemonConfigStore uses the async load/save capabilities.
               "server/persisted-config.ts": ["existsSync", "readFileSync"],
-              // Startup pid identity: read and memoize the Linux boot id for the daemon lock.
-              "server/pid-lock.ts": ["readFileSync"],
+              // Startup pid identity: read and memoize the Linux/FreeBSD boot id for the daemon lock.
+              "server/pid-lock.ts": ["execFileSync", "readFileSync"],
               // Startup builtin loader construction: select the bundled plugin root before loading plugins.
               "server/plugins/builtin/index.ts": ["existsSync"],
               // Build child process: plugin graph traversal and esbuild preparation run in the isolated compiler process.
