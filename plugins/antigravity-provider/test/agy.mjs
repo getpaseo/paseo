@@ -123,11 +123,47 @@ function handleRunningToolError() {
   replayUntilResult("sigint-mid-tool", "Tool execution failed abruptly");
 }
 
+function stepFrame(index, type, state, extra = {}) {
+  return {
+    event: "step_update",
+    step_update: {
+      conversation_id: conversationId,
+      step_index: index,
+      state,
+      step_type: type,
+      ...extra,
+    },
+  };
+}
+
+function answerFrame(index) {
+  return stepFrame(index, "agent_response", "DONE", { text_delta: "ANSWERED\n" });
+}
+
+// A tool that started before the final answer and never finished.
+function handleAnsweredWithRunningToolError() {
+  const tool = fixture("sigint-mid-tool").find((frame) => frame.step_update?.step_type === "tool");
+  emit(stepFrame(0, "user_input", "DONE"));
+  emit({ ...tool, step_update: { ...tool.step_update, step_index: 1 } });
+  emit(answerFrame(2));
+  emit(errorResult(QUOTA_ERROR));
+}
+
+// The turn's own API failure is saved as a step after the answer.
+function handleErrorStepAfterAnswerError() {
+  emit(stepFrame(0, "user_input", "DONE"));
+  emit(answerFrame(1));
+  emit(stepFrame(2, "error_message", "DONE"));
+  emit(errorResult(QUOTA_ERROR));
+}
+
 const TURN_HANDLERS = [
   ["PERSISTENT_STALE_ERROR", handlePersistentStaleError],
   ["STALE_ERROR", handleStaleError],
   ["UNANSWERED_ERROR", handleUnansweredError],
+  ["ANSWERED_RUNNING_TOOL_ERROR", handleAnsweredWithRunningToolError],
   ["RUNNING_TOOL_ERROR", handleRunningToolError],
+  ["ERROR_STEP_AFTER_ANSWER", handleErrorStepAfterAnswerError],
 ];
 
 function dispatchSpecialTurn(text) {

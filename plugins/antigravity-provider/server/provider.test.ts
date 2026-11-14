@@ -667,6 +667,25 @@ it("fails turns when an error result arrives while a tool is still running", asy
   ).toBe(false);
 });
 
+it.each([
+  ["ANSWERED_RUNNING_TOOL_ERROR", "an answer is written while an earlier tool is still running"],
+  ["ERROR_STEP_AFTER_ANSWER", "an error step follows the answer"],
+])("fails turns that look answered but are not settled: %s (%s)", async (needle) => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt(needle));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: { message: expect.stringMatching(/quota reached/i) },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
 describe("discovery", () => {
   it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
     const h = await harness();
