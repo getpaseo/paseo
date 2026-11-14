@@ -121,6 +121,7 @@ function workspace(
     agents: [],
     matchedAgent: null,
     archived: false,
+    background: false,
     run: () => undefined,
     openAgent: () => undefined,
   };

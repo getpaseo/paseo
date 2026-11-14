@@ -97,6 +97,7 @@ export const ja: TranslationResources = {
       actionPlaceholder: "アクションを検索...",
       searchingFiles: "ファイルを検索中...",
       noMatches: "一致なし",
+      filesNeedWorkspace: "ファイルを検索するにはワークスペースを開いてください",
       actions: "アクション",
       files: "ファイル",
       workspaces: "ワークスペース",

@@ -46,6 +46,21 @@ export async function expectCommandCenterTab(
   );
 }
 
+/** The list is empty and says why. */
+export async function expectCommandCenterEmptyState(
+  panel: Locator,
+  message: string,
+): Promise<void> {
+  await expect(panel.getByTestId("command-center-empty")).toHaveText(message);
+}
+
+/** Every tab is offered, wherever the command center was opened. */
+export async function expectEveryCommandCenterTab(panel: Locator): Promise<void> {
+  for (const name of Object.keys(TAB_PLACEHOLDERS) as CommandCenterTabName[]) {
+    await expect(commandCenterTab(panel, name)).toBeVisible();
+  }
+}
+
 export function commandCenterSection(panel: Locator, title: string): Locator {
   return panel.getByTestId("command-center-results").getByText(title, { exact: true });
 }

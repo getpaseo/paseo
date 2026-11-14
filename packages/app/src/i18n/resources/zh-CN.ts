@@ -96,6 +96,7 @@ export const zhCN: TranslationResources = {
       actionPlaceholder: "搜索操作...",
       searchingFiles: "正在搜索文件...",
       noMatches: "没有匹配项",
+      filesNeedWorkspace: "打开工作区以搜索文件",
       actions: "操作",
       files: "文件",
       workspaces: "工作区",

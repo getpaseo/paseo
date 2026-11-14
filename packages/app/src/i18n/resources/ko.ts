@@ -96,6 +96,7 @@ export const ko: TranslationResources = {
       actionPlaceholder: "작업 검색...",
       searchingFiles: "파일 검색 중...",
       noMatches: "일치 항목 없음",
+      filesNeedWorkspace: "파일을 검색하려면 워크스페이스를 여세요",
       actions: "작업",
       files: "파일",
       workspaces: "워크스페이스",

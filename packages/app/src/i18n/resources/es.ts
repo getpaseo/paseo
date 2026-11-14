@@ -97,6 +97,7 @@ export const es: TranslationResources = {
       actionPlaceholder: "Buscar acciones...",
       searchingFiles: "Buscando archivos...",
       noMatches: "No hay coincidencias",
+      filesNeedWorkspace: "Abre un espacio de trabajo para buscar archivos",
       actions: "Comportamiento",
       files: "Archivos",
       workspaces: "Espacios de trabajo",

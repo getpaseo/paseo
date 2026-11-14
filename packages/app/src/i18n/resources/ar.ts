@@ -96,6 +96,7 @@ export const ar: TranslationResources = {
       actionPlaceholder: "البحث في الإجراءات...",
       searchingFiles: "جارٍ البحث في الملفات...",
       noMatches: "لا توجد مباريات",
+      filesNeedWorkspace: "افتح مساحة عمل للبحث في الملفات",
       actions: "الإجراءات",
       files: "الملفات",
       workspaces: "مساحات العمل",

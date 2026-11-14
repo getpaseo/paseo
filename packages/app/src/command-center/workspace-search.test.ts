@@ -24,6 +24,7 @@ function workspace(input: {
     agents: input.agents ?? [],
     matchedAgent: null,
     archived: false,
+    background: false,
     run: () => input.opened?.push("workspace"),
     openAgent: (agentId) => input.opened?.push(agentId),
   };
@@ -136,7 +137,7 @@ describe("workspace ranking", () => {
     expect(ranked.matchedAgent).toBeNull();
   });
 
-  it("ranks a workspace's own match above a match through an agent", () => {
+  it("ranks a workspace's own match above an equally good match through an agent", () => {
     const viaAgent = workspace({
       id: "via-agent",
       title: "Onboarding flow",
@@ -159,6 +160,47 @@ describe("workspace ranking", () => {
     });
     const [ranked] = createWorkspaceRanker()([row], "receipts");
     expect(ranked.matchedAgent?.id).toBe("exact");
+  });
+
+  it("matches a query split between the workspace's text and an agent's title", () => {
+    const login = agent("agent-login", "Fix login retries");
+    const row = workspace({ id: "payments", title: "payments", agents: [login] });
+    const [ranked] = createWorkspaceRanker()([row], "payments login");
+    expect(ranked?.id).toBe("payments");
+    expect(ranked?.matchedAgent).toEqual(login);
+  });
+
+  it("names the agent when it matches better than a loose match on the workspace's text", () => {
+    const opened: string[] = [];
+    const login = agent("agent-login", "Fix login retries");
+    const row = workspace({
+      id: "long-input",
+      title: "Long input",
+      // "login" is a subsequence of "long-input", the weakest kind of match.
+      subtitle: "Local · paseo · feature/long-input",
+      agents: [login],
+      opened,
+    });
+    const [ranked] = createWorkspaceRanker()([row], "login");
+    expect(ranked?.matchedAgent).toEqual(login);
+    ranked?.run();
+    expect(opened).toEqual(["agent-login"]);
+  });
+
+  it("ranks a better match through an agent above a looser match on a workspace's own text", () => {
+    const loose = workspace({
+      id: "loose-own",
+      title: "Long input",
+      subtitle: "Local · paseo · feature/long-input",
+      activityAt: new Date("2026-10-17T00:00:00Z"),
+    });
+    const viaAgent = workspace({
+      id: "via-agent",
+      title: "Auth",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+      agents: [agent("a", "login page")],
+    });
+    expect(ids([loose, viaAgent], "login")).toEqual(["via-agent", "loose-own"]);
   });
 
   it("opens the matched agent's tab, and the workspace otherwise", () => {

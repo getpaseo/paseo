@@ -92,6 +92,7 @@ export const en = {
       actionPlaceholder: "Search actions...",
       searchingFiles: "Searching files...",
       noMatches: "No matches",
+      filesNeedWorkspace: "Open a workspace to search files",
       actions: "Actions",
       files: "Files",
       workspaces: "Workspaces",

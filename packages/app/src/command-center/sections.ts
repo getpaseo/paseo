@@ -10,7 +10,10 @@ import {
 import type { CommandCenterTab } from "./tabs";
 import type { WorkspaceRanker } from "./workspace-search";
 
-/** How many workspaces All leads with before anything is typed. */
+/**
+ * How many workspaces All leads with before anything is typed. Background workspaces are left
+ * out, as the sidebar leaves them out by default.
+ */
 const RECENT_WORKSPACE_LIMIT = 3;
 
 export interface CommandCenterSectionTitles {
@@ -42,7 +45,7 @@ export interface CommandCenterSectionsInput {
 function recentWorkspacesSection(input: CommandCenterSectionsInput): CommandCenterResultSection {
   const recent = input
     .rankWorkspaces(input.workspaces, "")
-    .filter((workspace) => workspace.id !== input.currentWorkspaceId)
+    .filter((workspace) => workspace.id !== input.currentWorkspaceId && !workspace.background)
     .slice(0, RECENT_WORKSPACE_LIMIT);
   return {
     id: "recent-workspaces",

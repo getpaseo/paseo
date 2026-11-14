@@ -1,6 +1,10 @@
 import { expect, test } from "../support/fixtures";
+import { openSettings } from "../support/helpers/app";
 import {
+  closeCommandCenter,
+  expectCommandCenterEmptyState,
   expectCommandCenterTab,
+  expectEveryCommandCenterTab,
   openCommandCenter,
   selectCommandCenterTab,
 } from "../support/helpers/command-center";
@@ -164,6 +168,17 @@ test("command center tabs rotate with Tab and never move the header", async ({ p
       await expect(panel).not.toBeVisible();
       await page.keyboard.press("Meta+K");
       await expectCommandCenterTab(panel, "All");
+    });
+
+    await test.step("Files outside a workspace says to open one", async () => {
+      await closeCommandCenter(page);
+      await openSettings(page);
+      await page.keyboard.press("Meta+K");
+      await expectCommandCenterTab(panel, "All");
+      await expectEveryCommandCenterTab(panel);
+      await selectCommandCenterTab(panel, "Files");
+      await input.fill("index");
+      await expectCommandCenterEmptyState(panel, "Open a workspace to search files");
     });
   } finally {
     await seeded.cleanup();

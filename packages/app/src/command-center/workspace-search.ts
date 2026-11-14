@@ -1,7 +1,6 @@
 import {
   compareBuiltInScores,
   compareByRecency,
-  compareCommandCenterScores,
   scoreSearchFields,
   type CommandCenterScore,
   type CommandCenterWorkspaceAgent,
@@ -25,7 +24,7 @@ function parseChangeRequestQuery(query: string): number | null {
   return Number.isSafeInteger(number) ? number : null;
 }
 
-/** A match on the workspace's own text, ahead of a match through one of its agents. */
+/** A match on the workspace's own text, ahead of an equally good match through one of its agents. */
 const OWN_MATCH = 0;
 const AGENT_MATCH = 1;
 /** The host matched it (typo-tolerant, server-side) but nothing here does. Archived rows only. */
@@ -43,28 +42,48 @@ function ownSearchFields(workspace: CommandCenterWorkspaceResult) {
   return { visible: [workspace.title, workspace.subtitle], hidden: [] };
 }
 
+/** An agent is found through its own title and its workspace's text together. */
+function agentSearchFields(
+  workspace: CommandCenterWorkspaceResult,
+  agent: CommandCenterWorkspaceAgent,
+) {
+  return { visible: [workspace.title, workspace.subtitle, agent.title], hidden: [] };
+}
+
+/** Change-request hits first, host-only matches last, then match quality, own text, recency. */
 function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace): number {
   if (left.changeRequestHit !== right.changeRequestHit) {
     return left.changeRequestHit ? -1 : 1;
   }
-  if (left.via !== right.via) return left.via - right.via;
+  if ((left.via === HOST_MATCH) !== (right.via === HOST_MATCH)) {
+    return left.via === HOST_MATCH ? 1 : -1;
+  }
   if (left.score && right.score) {
     const scoreDelta = compareBuiltInScores(left.score, right.score);
     if (scoreDelta !== 0) return scoreDelta;
   }
+  if (left.via !== right.via) return left.via - right.via;
   return compareByRecency(left.workspace, right.workspace);
 }
 
-/** The agent whose title matches the query best. Agents arrive most recent first, so a tie keeps the newer one. */
-function bestAgentMatch(
-  workspace: CommandCenterWorkspaceResult,
-  query: string,
-): { agent: CommandCenterWorkspaceAgent; score: CommandCenterScore } | null {
-  let best: { agent: CommandCenterWorkspaceAgent; score: CommandCenterScore } | null = null;
+interface WorkspaceMatch {
+  score: CommandCenterScore;
+  /** The agent the match went through, or null for the workspace's own text. */
+  agent: CommandCenterWorkspaceAgent | null;
+}
+
+/**
+ * The workspace's best match: its own text, or one of its agents scored together with that
+ * text. An agent wins only by matching better, so a query the workspace answers on its own
+ * names no agent. Agents arrive most recent first, so a tie between agents keeps the newer one.
+ */
+function bestMatch(workspace: CommandCenterWorkspaceResult, query: string): WorkspaceMatch | null {
+  const own = scoreSearchFields(query, ownSearchFields(workspace));
+  let best: WorkspaceMatch | null = own ? { score: own, agent: null } : null;
   for (const agent of workspace.agents) {
-    const score = scoreSearchFields(query, { visible: [agent.title], hidden: [] });
-    if (score && (!best || compareCommandCenterScores(score, best.score) < 0)) {
-      best = { agent, score };
+    const score = scoreSearchFields(query, agentSearchFields(workspace, agent));
+    if (score && (!best || compareBuiltInScores(score, best.score) < 0)) {
+      best = { score, agent };
     }
   }
   return best;
@@ -77,9 +96,9 @@ export type WorkspaceRanker = (
 ) => CommandCenterWorkspaceResult[];
 
 /**
- * Rank workspaces for a query. A workspace matches on its own title, project and branch, or on
- * the title of any of its agents; a match through an agent comes back naming that agent, and
- * opens it.
+ * Rank workspaces for a query, best match first. A workspace matches on its own title, project
+ * and branch, or on those together with the title of one of its agents; a match through an
+ * agent comes back naming that agent, and opens it.
  *
  * An empty query lists every workspace, most recent first. `keepUnmatched` keeps rows nothing
  * here matches, ranked last: archived rows come from the host's own search, which is
@@ -119,18 +138,13 @@ export function createWorkspaceRanker(): WorkspaceRanker {
     for (const workspace of workspaces) {
       const changeRequestHit =
         changeRequestNumber !== null && workspace.changeRequestNumber === changeRequestNumber;
-      const own = scoreSearchFields(query, ownSearchFields(workspace));
-      if (own || changeRequestHit) {
-        matches.push({ workspace, via: OWN_MATCH, score: own, agent: null, changeRequestHit });
-        continue;
-      }
-      const agentMatch = bestAgentMatch(workspace, query);
-      if (agentMatch) {
+      const match = bestMatch(workspace, query);
+      if (match || changeRequestHit) {
         matches.push({
           workspace,
-          via: AGENT_MATCH,
-          score: agentMatch.score,
-          agent: agentMatch.agent,
+          via: match?.agent ? AGENT_MATCH : OWN_MATCH,
+          score: match?.score ?? null,
+          agent: match?.agent ?? null,
           changeRequestHit,
         });
         continue;

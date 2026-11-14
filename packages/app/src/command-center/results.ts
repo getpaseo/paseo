@@ -72,9 +72,11 @@ export interface CommandCenterWorkspaceResult {
   activityAt: Date | null;
   /** The workspace's agents, most recent first. Part of what the workspace matches on. */
   agents: readonly CommandCenterWorkspaceAgent[];
-  /** The agent the query matched when the workspace's own text did not. Drawn as a third line. */
+  /** The agent the query matched better than the workspace's own text. Drawn as a third line. */
   matchedAgent: CommandCenterWorkspaceAgent | null;
   archived: boolean;
+  /** Started by automation rather than the user. Found by a query, never listed as recent. */
+  background: boolean;
   /** Opens the workspace and lets its default tab selection apply. */
   run(): void;
   /** Opens the workspace on this agent's tab. */

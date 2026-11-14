@@ -97,6 +97,7 @@ export const ru: TranslationResources = {
       actionPlaceholder: "Поиск действий...",
       searchingFiles: "Поиск файлов...",
       noMatches: "Нет совпадений",
+      filesNeedWorkspace: "Откройте рабочее пространство, чтобы искать файлы",
       actions: "Действия",
       files: "Файлы",
       workspaces: "Рабочие пространства",

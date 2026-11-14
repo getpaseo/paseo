@@ -247,6 +247,7 @@ function useWorkspaceRows(
               agents: agentsByWorkspace.get(key) ?? NO_WORKSPACE_AGENTS,
               matchedAgent: null,
               archived: false,
+              background: workspace.background,
               run: createWorkspaceResultAction(host.serverId, workspace.id),
               openAgent: createAgentResultAction(host.serverId),
             }),
@@ -293,6 +294,7 @@ function useWorkspaceRows(
           agents: titledAgents(workspace.agents),
           matchedAgent: null,
           archived: true,
+          background: false,
           run: () => openAgent(latestAgentId),
           openAgent,
         },
@@ -315,6 +317,8 @@ interface CommandCenterState {
   inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
+  /** The Files tab is open outside a workspace, so it has nothing to search. */
+  filesNeedWorkspace: boolean;
   close(): void;
   select(result: CommandCenterResult): void;
   key(event: { key: string; shiftKey?: boolean }): boolean;
@@ -344,6 +348,7 @@ function useCommandCenterState(
     ? `workspace:${activeWorkspace.serverId}:${activeWorkspace.workspaceId}`
     : null;
   const {
+    hasWorkspace: canSearchFiles,
     entries: fileSearchEntries,
     loading: fileSearchLoading,
     error: fileSearchError,
@@ -481,6 +486,7 @@ function useCommandCenterState(
     inputRef,
     fileSearchLoading,
     fileSearchError,
+    filesNeedWorkspace: tab === "files" && !canSearchFiles,
     close,
     select,
     key,
@@ -901,9 +907,15 @@ export function CommandCenter() {
   const empty = useMemo(
     () =>
       state.fileSearchError || state.fileSearchLoading ? null : (
-        <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
+        <Text style={styles.emptyText} testID="command-center-empty">
+          {t(
+            state.filesNeedWorkspace
+              ? "shell.commandCenter.filesNeedWorkspace"
+              : "shell.commandCenter.noMatches",
+          )}
+        </Text>
       ),
-    [state.fileSearchError, state.fileSearchLoading, t],
+    [state.fileSearchError, state.fileSearchLoading, state.filesNeedWorkspace, t],
   );
   const fileSearchError = useMemo(
     () =>

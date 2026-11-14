@@ -9,7 +9,13 @@ import { createWorkspaceRanker } from "./workspace-search";
 
 function workspace(
   id: string,
-  options: { daysAgo?: number; title?: string; archived?: boolean; agentTitle?: string } = {},
+  options: {
+    daysAgo?: number;
+    title?: string;
+    archived?: boolean;
+    background?: boolean;
+    agentTitle?: string;
+  } = {},
 ): CommandCenterWorkspaceResult {
   return {
     kind: "workspace",
@@ -26,6 +32,7 @@ function workspace(
       : [],
     matchedAgent: null,
     archived: options.archived ?? false,
+    background: options.background ?? false,
     run: () => undefined,
     openAgent: () => undefined,
   };
@@ -56,6 +63,8 @@ const file: CommandCenterFileResult = {
 const workspaces = [
   workspace("current", { daysAgo: 0 }),
   workspace("payments", { daysAgo: 1, title: "Payments refactor" }),
+  // Started by automation; more recent than the workspaces below it.
+  workspace("nightly", { daysAgo: 1.5, title: "Nightly triage", background: true }),
   workspace("onboarding", { daysAgo: 2, title: "Onboarding flow", agentTitle: "Add receipts" }),
   workspace("docs", { daysAgo: 3, title: "Docs site" }),
   workspace("search", { daysAgo: 4, title: "Search ranking" }),
@@ -99,6 +108,12 @@ describe("command center tabs", () => {
     ]);
   });
 
+  it("Recent workspaces leaves out background workspaces, which a query still finds", () => {
+    expect(listed("all", "")).not.toContain("workspace:server:nightly");
+    expect(listed("all", "nightly")).toContain("workspace:server:nightly");
+    expect(listed("workspaces", "")).toContain("workspace:server:nightly");
+  });
+
   it("All ranks every kind of result for a query, archived workspaces after active ones", () => {
     expect(listed("all", "i")).toEqual(
       expect.arrayContaining(["Settings", "file:src/index.ts", "workspace:server:billing"]),
@@ -109,11 +124,12 @@ describe("command center tabs", () => {
     expect(rows).not.toContain("# Recent workspaces");
   });
 
-  it("Workspaces lists every workspace, current included, most recent first", () => {
+  it("Workspaces lists every workspace, current and background included, most recent first", () => {
     expect(listed("workspaces", "")).toEqual([
       "# Workspaces",
       "workspace:server:current",
       "workspace:server:payments",
+      "workspace:server:nightly",
       "workspace:server:onboarding",
       "workspace:server:docs",
       "workspace:server:search",
