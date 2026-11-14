@@ -1,18 +1,25 @@
 import { expect, test } from "../support/fixtures";
-import { expectComposerVisible } from "../support/helpers/composer";
+import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
 import {
   composerControl,
   expectGlyphMatchesLabel,
   expectIconOnlyGlyph,
   readComposerControlTone,
+  readComposerPlaceholderTone,
+  readComposerTextTone,
 } from "../support/helpers/composer-toolbar-tone";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const THINKING = "agent-thinking-selector";
 const MODE = "mode-control";
 const ATTACH = "message-input-attach-button";
+const COMBINED_MODEL = "combined-model-selector";
 
-async function openSeededComposer(page: import("@playwright/test").Page, repoPrefix: string) {
+async function openSeededComposer(
+  page: import("@playwright/test").Page,
+  repoPrefix: string,
+  readyTestId = MODE,
+) {
   const agent = await seedMockAgentWorkspace({
     repoPrefix,
     title: "Toolbar tone",
@@ -20,7 +27,7 @@ async function openSeededComposer(page: import("@playwright/test").Page, repoPre
   });
   await openAgentRoute(page, agent);
   await expectComposerVisible(page);
-  await expect(composerControl(page, MODE)).toBeVisible({ timeout: 30_000 });
+  await expect(composerControl(page, readyTestId)).toBeVisible({ timeout: 30_000 });
   return agent;
 }
 
@@ -70,6 +77,30 @@ test.describe("Composer toolbar glyph tone", () => {
         expect(thinking.glyph, "an icon-only glyph is brighter than a labelled glyph").not.toBe(
           mode.label,
         );
+      } finally {
+        await agent.cleanup();
+      }
+    });
+  });
+
+  test.describe("on a folded compact non-touch window", () => {
+    test.use({ hasTouch: false, viewport: { width: 480, height: 844 } });
+
+    test("the empty composer placeholder is quieter than its labels", async ({ page }) => {
+      const agent = await openSeededComposer(page, "composer-tone-placeholder-", COMBINED_MODEL);
+      try {
+        const placeholder = await readComposerPlaceholderTone(composerLocator(page));
+        const extraMuted = await readComposerTextTone(
+          composerControl(page, "combined-model-selector-thinking-label"),
+        );
+        const muted = await readComposerTextTone(
+          composerControl(page, "combined-model-selector-model-label"),
+        );
+
+        expect(placeholder, "the composer paints a placeholder").not.toBeNull();
+        expect(extraMuted, "the folded thinking label paints the extra-muted tone").not.toBeNull();
+        expect(placeholder, "the placeholder uses the extra-muted tone").toBe(extraMuted);
+        expect(placeholder, "the placeholder is quieter than a labelled glyph").not.toBe(muted);
       } finally {
         await agent.cleanup();
       }

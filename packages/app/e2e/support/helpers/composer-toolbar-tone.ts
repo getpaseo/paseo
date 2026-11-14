@@ -43,3 +43,13 @@ export function expectIconOnlyGlyph(tone: ComposerControlTone, name: string): vo
   expect(tone.label, `${name} is icon-only`).toBeNull();
   expect(tone.glyph, `${name} paints a glyph`).not.toBeNull();
 }
+
+/** The color the browser paints in a text input's placeholder. */
+export async function readComposerPlaceholderTone(input: Locator): Promise<string | null> {
+  return input.evaluate((element) => getComputedStyle(element, "::placeholder").color);
+}
+
+/** The color the browser paints for a text node. */
+export async function readComposerTextTone(text: Locator): Promise<string | null> {
+  return text.evaluate((element) => getComputedStyle(element).color);
+}

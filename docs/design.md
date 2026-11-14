@@ -40,9 +40,9 @@ Weight has three tiers, applied by role:
 
 The rule, condensed: text that _names_ a surface or a group is `medium`. Text that lives _inside_ a surface or a group is `normal`. Top-of-screen titles are `<ScreenTitle>`, which is lighter still.
 
-Foreground is for the thing being acted on: row titles, section headings, the selected sidebar item. `foregroundMuted` is for context: hints, descriptions, secondary metadata, idle sidebar items, placeholders, status text.
+Foreground is for the thing being acted on: row titles, section headings, the selected sidebar item. `foregroundMuted` is for context: hints, descriptions, secondary metadata, idle sidebar items, placeholders, status text. The composer's empty placeholder is quieter; it uses `foregroundExtraMuted`.
 
-`foregroundExtraMuted` is reserved for passive chrome that must sit behind muted text, such as an always-visible window control. Use the solid token instead of lowering SVG opacity; per-path opacity makes overlapping icon strokes render unevenly. Interactive hover and pressed states return to `foreground`.
+`foregroundExtraMuted` is reserved for passive chrome that must sit behind muted text, such as an always-visible window control, and for the composer's empty placeholder. Use the solid token instead of lowering SVG opacity; per-path opacity makes overlapping icon strokes render unevenly. Interactive hover and pressed states return to `foreground`.
 
 A theme states places and identity; `packages/app/src/styles/derive-colors.ts` derives their relationships. Sidebar hover and selected fills step from the sidebar toward the foreground. For plugin themes, passive text on those states derives against the actual state surface; page tertiary text is a separate relationship. Explicit plugin semantic overrides take precedence over derived defaults. Built-in themes retain their chosen passive text. `packages/app/src/styles/theme-contrast.test.ts` checks the built-in and representative plugin palettes against contrast floors.
 
@@ -269,7 +269,7 @@ New status pills use `<StatusBadge>`. Identity, shortcut, and interactive link b
 - A "Settings" CTA on a detail page. Detail pages are settings; settings is reached from the sidebar, the host entry, or a row's kebab menu.
 - The word "checkout" in UI strings or identifiers. The term is "workspace".
 - New color tokens or hardcoded hex outside the palette. The identity color table is the documented exception (§13), not a license.
-- Placeholder text dimmed beyond `foregroundMuted`. No extra opacity, no italics, no ghost-text.
+- Placeholder text dimmed beyond `foregroundMuted`, except the composer's empty placeholder, which uses `foregroundExtraMuted`. No extra opacity, no italics, no ghost-text.
 - `onPointerEnter` and `onPointerLeave`. They do not fire on native iOS. Hover uses Pressable's `onHoverIn`/`onHoverOut` gated with `isHovered || isCompact || isNative`.
 - Raw DOM APIs without an `isWeb` guard.
 - Spacing values outside the scale. `padding: 20` and `gap: 10` are wrong.
