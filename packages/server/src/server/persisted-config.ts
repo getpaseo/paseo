@@ -20,6 +20,7 @@ import { AgentProfileSchema, AgentSkillSelectionSchema } from "@getpaseo/protoco
 import { PluginIdSchema, PluginSourceSchema } from "@getpaseo/protocol/plugin-config";
 import { TerminalProfileSchema } from "@getpaseo/protocol/terminal-profile";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
+import { PaseoMetadataGenerationInstructionsSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
 export const LogFormatSchema = z.enum(["pretty", "json"]);
@@ -180,6 +181,8 @@ const StructuredGenerationProviderConfigSchema = z
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+    // Host-wide wording defaults. A project's paseo.json still wins per metadata type.
+    ...PaseoMetadataGenerationInstructionsSchema.shape,
   })
   .strict();
 

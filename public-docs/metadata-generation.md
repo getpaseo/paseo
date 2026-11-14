@@ -67,6 +67,27 @@ Each entry accepts:
 
 The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
 
+## Host-wide instructions
+
+Conventions that are personal rather than project requirements belong in the daemon config, not in every repository. Set the same keys under `agents.metadataGeneration` in `~/.paseo/config.json`:
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "title": { "instructions": "Use a short task-shaped title." },
+      "branchName": { "instructions": "Use the format <type>/<short-description>." },
+      "commitMessage": { "instructions": "Follow Conventional Commits." },
+      "pullRequest": { "instructions": "Include Summary and Testing sections." }
+    }
+  }
+}
+```
+
+Paseo resolves each metadata type on its own: project `paseo.json` first, host config second, built-in default last. Overriding a title in one place leaves branch names, commit messages and pull request text inherited from wherever they are set. Directory-only workspaces have no repository, so they see the host instructions and the defaults.
+
+Restart the daemon after editing the file directly. Choosing a model in Settings keeps these instructions.
+
 ## Per-project instructions
 
 You can steer the wording of each kind of metadata per repository with a `paseo.json` file at your repo root. Paseo reads it from the committed version of the base branch, the same way it reads worktree config.
@@ -82,4 +103,4 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
 }
 ```
 
-Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.
+Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. A project instruction also replaces a [host-wide instruction](#host-wide-instructions) for that type. The functional requirements (what to produce and the output format) always apply and cannot be overridden.

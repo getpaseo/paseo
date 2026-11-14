@@ -59,13 +59,18 @@ export const PaseoMetadataGenerationEntrySchema = z
   .passthrough()
   .catch({});
 
-export const PaseoMetadataGenerationSchema = z
-  .object({
-    title: PaseoMetadataGenerationEntrySchema.optional(),
-    branchName: PaseoMetadataGenerationEntrySchema.optional(),
-    commitMessage: PaseoMetadataGenerationEntrySchema.optional(),
-    pullRequest: PaseoMetadataGenerationEntrySchema.optional(),
-  })
+// The wording overrides themselves, without any of the file-format leniency.
+// Project paseo.json and the host-wide agents.metadataGeneration override in
+// ~/.paseo/config.json share this shape and resolve the same way: project
+// instructions first, host instructions second, built-in default last.
+export const PaseoMetadataGenerationInstructionsSchema = z.object({
+  title: PaseoMetadataGenerationEntrySchema.optional(),
+  branchName: PaseoMetadataGenerationEntrySchema.optional(),
+  commitMessage: PaseoMetadataGenerationEntrySchema.optional(),
+  pullRequest: PaseoMetadataGenerationEntrySchema.optional(),
+});
+
+export const PaseoMetadataGenerationSchema = PaseoMetadataGenerationInstructionsSchema
   // COMPAT(projectMetadataAgentTitle): `agentTitle` project metadata prompts were removed
   // in v0.1.96; keep legacy paseo.json parseable until 2026-12-16.
   .passthrough()
@@ -113,6 +118,9 @@ export const ProjectConfigRpcErrorSchema = z.discriminatedUnion("code", [
 
 export type PaseoScriptEntryRaw = z.infer<typeof PaseoScriptEntryRawSchema>;
 export type PaseoMetadataGenerationEntry = z.infer<typeof PaseoMetadataGenerationEntrySchema>;
+export type PaseoMetadataGenerationInstructions = z.infer<
+  typeof PaseoMetadataGenerationInstructionsSchema
+>;
 export type PaseoMetadataGeneration = z.infer<typeof PaseoMetadataGenerationSchema>;
 export type PaseoServicePortAllocation = z.infer<typeof PaseoServicePortAllocationSchema>;
 export type PaseoConfigRaw = z.infer<typeof PaseoConfigRawSchema>;
