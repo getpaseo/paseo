@@ -73,6 +73,18 @@ class SelectableTextTouchTest {
     assertEquals("Offset after the update", OFFSET, timeline.settledScrollY())
   }
 
+  // The timeline changes height while tapped text holds focus, as when the composer above the
+  // keyboard loses its queued message.
+  @Test fun aTimelineResizeAfterATapKeepsTheOffset() {
+    val timeline = openTimeline(edge = Edge.TOP)
+    timeline.tap(visibleY = EDGE_Y + 100)
+    assertTrue("The tap focuses the text", timeline.textHasFocus())
+
+    timeline.resize(height = VIEWPORT + 200)
+
+    assertEquals("Offset after the resize", OFFSET, timeline.settledScrollY())
+  }
+
   @Test fun longPressSelectsAWordAndKeepsTheOffset() {
     val timeline = openTimeline(edge = Edge.TOP)
 
@@ -111,6 +123,12 @@ class SelectableTextTouchTest {
       touch(downTime, MotionEvent.ACTION_DOWN, visibleY)
       SystemClock.sleep(ViewConfiguration.getLongPressTimeout() * 2L)
       touch(downTime, MotionEvent.ACTION_UP, visibleY)
+    }
+
+    fun resize(height: Int) {
+      instrumentation.runOnMainSync {
+        scroll.layoutParams = scroll.layoutParams.apply { this.height = height }
+      }
     }
 
     // Replaces the text and lays it out again at its top, the way a streaming reply mounts.

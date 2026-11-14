@@ -213,9 +213,10 @@ long-pressing to select, in a message partly off screen moved the timeline by up
 `PaseoScrollView` skips that scroll when the focused view is selectable, non-editable text in touch
 mode. The text keeps focus, and a streaming reply's new text collapses its selection to the start,
 which asks to reveal the reply's first line; that request is skipped too while nothing is selected.
-Inputs, focus moved by a keyboard, and a selection the user drags still scroll into view. The
-inverted timeline guarded this with a rule tied to the inversion, which went with it; keep this one
-while chat text is selectable.
+A change in the timeline's height, such as the composer below it growing, also reveals the focused
+view, and is skipped the same way. Inputs, focus moved by a keyboard, and a selection the user drags
+still scroll into view. The inverted timeline guarded this with a rule tied to the inversion, which
+went with it; keep this one while chat text is selectable.
 
 Remove the content clamp and removed-anchor overrides once the installed React Native includes
 their fixes.

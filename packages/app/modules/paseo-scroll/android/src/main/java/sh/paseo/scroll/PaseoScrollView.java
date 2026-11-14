@@ -14,7 +14,7 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with four corrections. Java, because the content-position
+ * React Native's vertical scroll view with five corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
@@ -29,6 +29,7 @@ final class PaseoScrollView extends ReactScrollView {
   private @Nullable MaintainVisibleScrollPositionHelper.Config visibleContentPosition = null;
   private boolean isClampPending = false;
   private boolean isUserDragging = false;
+  private boolean isFocusRevealSkipped = false;
 
   PaseoScrollView(Context context) {
     super(context);
@@ -77,6 +78,24 @@ final class PaseoScrollView extends ReactScrollView {
     View focused = findFocus();
     if (isTouchedReadOnlyText(focused) && !((TextView) focused).hasSelection()) return false;
     return super.requestChildRectangleOnScreen(child, rectangle, immediate);
+  }
+
+  // When the scroll view changes height, Android scrolls the focused view into view again. Touched
+  // chat text keeps focus, so the composer growing or shrinking below the timeline realigned it.
+  @Override
+  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+    isFocusRevealSkipped = isTouchedReadOnlyText(findFocus());
+    try {
+      super.onSizeChanged(w, h, oldw, oldh);
+    } finally {
+      isFocusRevealSkipped = false;
+    }
+  }
+
+  @Override
+  protected int computeScrollDeltaToGetChildRectOnScreen(Rect rect) {
+    if (isFocusRevealSkipped) return 0;
+    return super.computeScrollDeltaToGetChildRectOnScreen(rect);
   }
 
   private static boolean isTouchedReadOnlyText(@Nullable View view) {
