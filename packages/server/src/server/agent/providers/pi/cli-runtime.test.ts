@@ -419,11 +419,12 @@ describe("PiCliRuntime", () => {
 
   test("sends the clear_queue RPC frame", async () => {
     const child = createPiChild();
-    replyToCommands(child, () => ({}));
+    const removed = { steering: ["rewritten message"], followUp: [] };
+    replyToCommands(child, () => removed);
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     const clearQueueCommand = capturePendingCommand(child, "clear_queue");
-    await session.clearQueue();
+    await expect(session.clearQueue()).resolves.toEqual(removed);
 
     expect(await clearQueueCommand).toMatchObject({ type: "clear_queue" });
   });

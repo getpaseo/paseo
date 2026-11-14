@@ -193,7 +193,8 @@ export class JsonlRpcProcess {
    * Send a command whose goal an exited process has already met — stopping a turn,
    * clearing a queue. Resolves once the child has exited instead of rejecting,
    * because nothing is queued and nothing is running, which is what the caller
-   * asked for. Use `request` when the caller needs an answer from a live process.
+   * asked for. Returns the native reply when available, or undefined after exit.
+   * Use `request` when the caller requires an answer from a live process.
    *
    * Keyed on an observed exit rather than on `disposed`: `close()` disposes the
    * transport before termination completes, and a child that outlives SIGKILL can
@@ -202,12 +203,12 @@ export class JsonlRpcProcess {
   async requestStopWork(
     command: { type: string; [key: string]: unknown },
     timeoutMs?: number | null,
-  ): Promise<void> {
+  ): Promise<unknown> {
     if (this.exited) {
       return;
     }
     try {
-      await this.request(command, timeoutMs);
+      return await this.request(command, timeoutMs);
     } catch (error) {
       // A dying child breaks its stdin pipe a fraction before it emits `exit`, which
       // fails this request and starts a termination. Wait for that termination to reach
