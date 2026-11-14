@@ -53,6 +53,7 @@ async function launchBackgroundBrowser() {
     const { app, BrowserWindow, nativeImage } = require("electron");
     const { adaptWebContents } = require(${JSON.stringify(path.join(automationPath, "ipc.js"))});
     const { executeAutomationCommand } = require(${JSON.stringify(path.join(automationPath, "service.js"))});
+    const { registerNativeBrowserBridgeIpc } = require(${JSON.stringify(path.join(automationPath, "native-bridge.js"))});
     app.setPath("userData", ${JSON.stringify(path.join(root, "background-profile"))});
     app.whenReady().then(async () => {
       const win = global.backgroundWindow = new BrowserWindow({ show: false, webPreferences: { webviewTag: true } });
@@ -99,6 +100,27 @@ async function launchBackgroundBrowser() {
           throttled: guest.getBackgroundThrottling(),
         };
       };
+      const handlers = new Map();
+      registerNativeBrowserBridgeIpc({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+        getGuest: (id, host) => id === "background" && host === win.webContents.id ? guest : null,
+        getWorkspaceId: () => "workspace",
+        images: nativeImage,
+      });
+      const native = (channel, input = {}) => handlers.get("paseo:browser:native-" + channel)(
+        { sender: win.webContents }, { browserId: "background", workspaceId: "workspace", ...input },
+      );
+      global.captureHighDpi = async () => {
+        await native("command", { method: "Emulation.setDeviceMetricsOverride", params: {
+          width: 1600, height: 1200, deviceScaleFactor: 2, mobile: false,
+        }});
+        await native("command", { method: "Runtime.evaluate", params: { expression: "scrollTo(0,0)" } });
+        await native("frame");
+        await new Promise(resolve => setTimeout(resolve, 1600));
+        const frame = await native("frame");
+        const image = nativeImage.createFromBuffer(Buffer.from(frame.data.split(",")[1], "base64"));
+        await native("command", { method: "Emulation.clearDeviceMetricsOverride" });
+        return { reported: { width: frame.width, height: frame.height }, encoded: image.getSize() };
+      };
       global.backgroundReady = true;
     });
   `,
@@ -142,6 +164,13 @@ try {
   desktop = await launchBackgroundBrowser();
   await expectBackgroundBrowserWorks(desktop);
   console.log("Never-shown browser runs animation callbacks and captures fresh pixels repeatedly");
+  expect(await desktop.evaluate(() => global.captureHighDpi())).toEqual({
+    reported: { width: 1280, height: 960 },
+    encoded: { width: 1280, height: 960 },
+  });
+  console.log(
+    "Native quiet-page capture bounds high-DPI JPEG pixels and reports encoded dimensions",
+  );
 } finally {
   await desktop?.close();
   await rm(root, { recursive: true, force: true });

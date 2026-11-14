@@ -1,6 +1,26 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { registerNativeBrowserBridgeIpc, type NativeBrowserContents } from "./native-bridge.js";
+import {
+  registerNativeBrowserBridgeIpc,
+  type NativeBrowserContents,
+  type NativeBrowserImage,
+} from "./native-bridge.js";
+
+class Image implements NativeBrowserImage {
+  constructor(private dimensions: { width: number; height: number }) {}
+  getSize() {
+    return this.dimensions;
+  }
+  toBitmap() {
+    return Buffer.alloc(this.dimensions.width * this.dimensions.height * 4);
+  }
+  toJPEG() {
+    return Buffer.from(JSON.stringify(this.dimensions));
+  }
+  resize(dimensions: { width: number; height: number }) {
+    return new Image(dimensions);
+  }
+}
 
 class GuestDebugger extends EventEmitter {
   private attached = false;
@@ -42,7 +62,7 @@ class Guest extends EventEmitter implements NativeBrowserContents {
   }
 }
 const identity = { browserId: "browser", workspaceId: "workspace" };
-function fixture() {
+function fixture(imageSize = { width: 1280, height: 960 }) {
   const host = new Guest(1);
   const guest = new Guest(2);
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
@@ -59,10 +79,10 @@ function fixture() {
         browserId === identity.browserId ? identity.workspaceId : null,
       images: {
         createFromBuffer() {
-          throw new Error("Unexpected screencast decoding");
+          return new Image(imageSize);
         },
-        createFromBitmap() {
-          throw new Error("Unexpected screencast encoding");
+        createFromBitmap(_buffer, dimensions) {
+          return new Image(dimensions);
         },
       },
     },
@@ -156,6 +176,54 @@ describe("native browser IPC", () => {
     );
     await expect(call("command", { method: "invalid" })).rejects.toThrow();
     expect(guest.debugger.sendCommand).not.toHaveBeenCalled();
+  });
+
+  test("bounds high-DPI screenshots and reports the final encoded pixel dimensions", async () => {
+    const { guest, call } = fixture({ width: 3200, height: 2400 });
+    const send = guest.debugger.sendCommand.getMockImplementation()!;
+    guest.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === "Page.getLayoutMetrics")
+        return { cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 800, clientHeight: 600 } };
+      if (method === "Page.captureScreenshot")
+        return { data: Buffer.alloc(900_000, 1).toString("base64") };
+      return send(method, params);
+    });
+    const dimensions = { width: 1280, height: 960 };
+    await expect(call("frame")).resolves.toEqual({
+      ...dimensions,
+      data: `data:image/jpeg;base64,${Buffer.from(JSON.stringify(dimensions)).toString("base64")}`,
+      capturedAt: 10000,
+    });
+  });
+
+  test("finishes a still capture before changing viewport while allowing unblockers through", async () => {
+    const { guest, call } = fixture();
+    const screenshot = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const send = guest.debugger.sendCommand.getMockImplementation()!;
+    guest.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === "Page.captureScreenshot") {
+        started.resolve();
+        return screenshot.promise;
+      }
+      return send(method, params);
+    });
+    const capturing = call("frame");
+    await started.promise;
+    const params = { width: 800, height: 600, deviceScaleFactor: 2, mobile: true };
+    const emulating = call("command", { method: "Emulation.setDeviceMetricsOverride", params });
+    await call("command", { method: "Page.handleJavaScriptDialog", params: { accept: false } });
+    expect(guest.debugger.sendCommand).not.toHaveBeenCalledWith(
+      "Emulation.setDeviceMetricsOverride",
+      params,
+    );
+    screenshot.resolve({ data: Buffer.from("fresh jpeg").toString("base64") });
+    await capturing;
+    await emulating;
+    expect(guest.debugger.sendCommand).toHaveBeenLastCalledWith(
+      "Emulation.setDeviceMetricsOverride",
+      params,
+    );
   });
 
   test("restricts browser-wide commands and maps cookies and permissions to the registered guest", async () => {

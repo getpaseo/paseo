@@ -3,7 +3,7 @@ import {
   NativeBrowserCommandRequestSchema,
   NativeBrowserEventsRequestSchema,
 } from "@getpaseo/protocol/browser-native";
-import type { WebContents, nativeImage } from "electron";
+import type { WebContents, NativeImage } from "electron";
 import type { NativeBrowserEvent, NativeBrowserFrame } from "@getpaseo/protocol/browser-native";
 
 export interface NativeBrowserContents extends Pick<
@@ -13,10 +13,17 @@ export interface NativeBrowserContents extends Pick<
   debugger: Pick<WebContents["debugger"], "on" | "attach" | "isAttached" | "sendCommand">;
 }
 
+export interface NativeBrowserImage extends Pick<NativeImage, "getSize" | "toBitmap" | "toJPEG"> {
+  resize(options: { width: number; height: number }): NativeBrowserImage;
+}
+
 export interface NativeBrowserBridgeDependencies {
   getGuest(browserId: string, hostId: number): NativeBrowserContents | null;
   getWorkspaceId(browserId: string): string | null;
-  images: Pick<typeof nativeImage, "createFromBuffer" | "createFromBitmap">;
+  images: {
+    createFromBuffer(buffer: Buffer): NativeBrowserImage;
+    createFromBitmap(buffer: Buffer, size: { width: number; height: number }): NativeBrowserImage;
+  };
 }
 
 interface Capture {
@@ -244,7 +251,11 @@ function consumeNativeFrame(
   }
 }
 
-async function captureStillFrame(contents: NativeBrowserContents, capture: Capture): Promise<void> {
+async function captureStillFrame(
+  contents: NativeBrowserContents,
+  capture: Capture,
+  captureImages: NativeBrowserBridgeDependencies["images"],
+): Promise<void> {
   const generation = capture.generation;
   const capturedAt = Date.now();
   const metrics = await contents.debugger.sendCommand("Page.getLayoutMetrics");
@@ -268,13 +279,26 @@ async function captureStillFrame(contents: NativeBrowserContents, capture: Captu
   if (
     typeof result.data !== "string" ||
     !/^[A-Za-z0-9+/=]+$/.test(result.data) ||
-    result.data.length > 1_099_900
+    result.data.length > 8_000_000
   )
-    throw new Error("Native screenshot exceeds the image size limit or is invalid");
+    throw new Error("Native screenshot is invalid or exceeds the decode size limit");
+  let image = captureImages.createFromBuffer(Buffer.from(result.data, "base64"));
+  const dimensions = image.getSize();
+  if (dimensions.width <= 0 || dimensions.height <= 0)
+    throw new Error("Native screenshot has no pixels");
+  const imageScale = Math.min(1, 1280 / dimensions.width, 960 / dimensions.height);
+  let data = result.data;
+  if (imageScale < 1) {
+    image = image.resize({
+      width: Math.max(1, Math.floor(dimensions.width * imageScale)),
+      height: Math.max(1, Math.floor(dimensions.height * imageScale)),
+    });
+    data = image.toJPEG(65).toString("base64");
+  }
+  if (data.length > 1_099_900) throw new Error("Native screenshot exceeds the image size limit");
   capture.frame = {
-    data: `data:image/jpeg;base64,${result.data}`,
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
+    data: `data:image/jpeg;base64,${data}`,
+    ...image.getSize(),
     capturedAt,
   };
 }
@@ -348,9 +372,12 @@ export function registerNativeBrowserBridgeIpc(
       // screenshot rather than relabeling an old paint with a new timestamp.
       if (!capture.stillTask && Date.now() - capture.lastStillAttemptAt >= 1000) {
         capture.lastStillAttemptAt = Date.now();
-        capture.stillTask = captureStillFrame(contents, capture).finally(() => {
-          capture.stillTask = null;
-        });
+        capture.stillTask = capture.tail
+          .then(() => captureStillFrame(contents, capture, dependencies.images))
+          .finally(() => {
+            capture.stillTask = null;
+          });
+        capture.tail = capture.stillTask.catch(() => undefined);
       }
       if (capture.stillTask) await capture.stillTask;
     }
