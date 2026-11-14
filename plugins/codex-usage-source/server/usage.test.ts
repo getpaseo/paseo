@@ -328,9 +328,10 @@ test("reports every named additional limit with its own duration identity", asyn
 
 test("a weekly pin means weekly after the provider moves it between slots", async () => {
   const { resolvePinnedUsage } = await import("../../../packages/app/src/usage/pinned.js");
+  const { DEFAULT_USAGE_PREFERENCES } =
+    await import("../../../packages/app/src/usage/preferences.js");
   const preferences = {
-    displayAs: "used" as const,
-    serverId: null,
+    ...DEFAULT_USAGE_PREFERENCES,
     pins: [{ sourceId: "codex", windowId: "weekly" }],
   };
   for (const primaryWeekly of [false, true]) {

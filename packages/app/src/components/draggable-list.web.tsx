@@ -1,4 +1,13 @@
-import { memo, useCallback, useMemo, useRef, type ReactElement } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  type ReactElement,
+  type Ref,
+} from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -17,10 +26,52 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
+import type {
+  DraggableListDragHandleProps,
+  DraggableListHandleProps,
+  DraggableListProps,
+  DraggableRenderItemInfo,
+} from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
 
-export type { DraggableListProps, DraggableRenderItemInfo };
+export type { DraggableListHandleProps, DraggableListProps, DraggableRenderItemInfo };
+
+/** The row's dnd-kit activator, for its handle. Absent unless the list uses drag handles. */
+const RowHandleContext = createContext<DraggableListDragHandleProps | undefined>(undefined);
+
+// React Native's style types have no `cursor: "grab"`; react-native-web passes it through.
+const GRAB_CURSOR = { cursor: "grab" } as object;
+
+export function DraggableListHandle({
+  accessibilityLabel,
+  testID,
+  style,
+  children,
+}: DraggableListHandleProps) {
+  const handle = useContext(RowHandleContext);
+  // The handle is a labelled button; dnd-kit's own role, focus stop and "sortable" description
+  // would replace that.
+  const {
+    role: _role,
+    tabIndex: _tabIndex,
+    "aria-roledescription": _roleDescription,
+    ...attributes
+  } = handle?.attributes ?? {};
+  const handleStyle = useMemo(() => [GRAB_CURSOR, style], [style]);
+  return (
+    <View
+      {...attributes}
+      {...handle?.listeners}
+      ref={handle?.setActivatorNodeRef as unknown as Ref<View>}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={handleStyle}
+      testID={testID}
+    >
+      {children}
+    </View>
+  );
+}
 
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({
   ...transform,
@@ -177,7 +228,9 @@ function SortableItemInner<T>({
 
   return (
     <div {...wrapperProps} style={style}>
-      {renderItem(info)}
+      <RowHandleContext.Provider value={dragHandleProps}>
+        {renderItem(info)}
+      </RowHandleContext.Provider>
     </div>
   );
 }

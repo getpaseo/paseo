@@ -1,4 +1,4 @@
-import { forwardRef, type Ref } from "react";
+import { createContext, forwardRef, useContext, useMemo, useState, type Ref } from "react";
 import {
   ScrollView as NativeScrollView,
   FlatList as NativeFlatList,
@@ -12,7 +12,11 @@ import {
   type NativeViewGestureHandlerProps,
 } from "react-native-gesture-handler";
 import { isNative } from "@/constants/platform";
-import { useIsInsideBottomSheet } from "./bottom-sheet-scope";
+import {
+  useAttachSheetContentDrag,
+  useIsInsideBottomSheet,
+  type AttachSheetContentDrag,
+} from "./bottom-sheet-scope";
 
 // Both libraries forward to the RN FlatList instance. Their published ref types
 // disagree about getScrollResponder (Gorhom) and include the component function
@@ -34,9 +38,43 @@ export const ScrollView = forwardRef<NativeScrollView, ScrollViewProps>(
         <NativeScrollView {...props} ref={ref} />
       );
     }
+    return <SheetScrollView {...props} ref={ref} />;
+  },
+);
+
+/**
+ * What a child that drags inside a sheet needs to keep the touch: it registers its drag gesture
+ * through `attach` so the sheet's pan waits for it, and `setActive(true)` stops the sheet's
+ * scroll until the drag ends. Outside a sheet scroll there is no `attach` and `setActive` does
+ * nothing.
+ */
+export interface ContentDrag {
+  attach: AttachSheetContentDrag | undefined;
+  setActive: (active: boolean) => void;
+}
+
+const ContentDragContext = createContext<ContentDrag | null>(null);
+
+const NO_CONTENT_DRAG: ContentDrag = { attach: undefined, setActive: () => {} };
+
+export function useContentDrag(): ContentDrag {
+  return useContext(ContentDragContext) ?? NO_CONTENT_DRAG;
+}
+
+const SheetScrollView = forwardRef<NativeScrollView, ScrollViewProps>(
+  function SheetScrollView(props, ref) {
+    const attach = useAttachSheetContentDrag();
+    const [dragging, setDragging] = useState(false);
+    const contentDrag = useMemo(() => ({ attach, setActive: setDragging }), [attach]);
     return (
-      <BottomSheetScrollView {...props} ref={ref}>
-        {props.children}
+      <BottomSheetScrollView
+        {...props}
+        scrollEnabled={!dragging && props.scrollEnabled !== false}
+        ref={ref}
+      >
+        <ContentDragContext.Provider value={contentDrag}>
+          {props.children}
+        </ContentDragContext.Provider>
       </BottomSheetScrollView>
     );
   },

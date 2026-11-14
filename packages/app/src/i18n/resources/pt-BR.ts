@@ -2251,6 +2251,8 @@ export const ptBR: TranslationResources = {
     loginExpired: "O login expirou {{relativeTime}}. {{remedy}}",
     title: "Uso do plano",
     refresh: "Atualizar",
+    reorderCard: "Reordenar {{source}}",
+    showCard: "Mostrar {{source}}",
     refreshAll: "Atualizar tudo",
     refreshing: "Atualizando...",
     loading: "Carregando uso...",

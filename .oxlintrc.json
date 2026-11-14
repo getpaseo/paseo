@@ -530,7 +530,7 @@
       }
     },
     // Press feedback is owned by the primitives in components/ui. Raw pressable burn-down:
-    // 94 files. They may only leave this list.
+    // 85 files. They may only leave this list.
     {
       "files": [
         "packages/app/src/components/ui/**/*.{ts,tsx}",
@@ -539,12 +539,9 @@
         "packages/app/src/agent-skills/selection-sheet.tsx",
         "packages/app/src/agent-stream/chat-outline/rail.web.tsx",
         "packages/app/src/agent-stream/view.tsx",
-        "packages/app/src/changelog/internal/changelog-sheet.tsx",
         "packages/app/src/command-center/command-center.tsx",
-        "packages/app/src/components/adaptive-modal-sheet.tsx",
         "packages/app/src/components/add-project-flow.tsx",
         "packages/app/src/components/agent-list.tsx",
-        "packages/app/src/components/app-diagnostic-sheet.tsx",
         "packages/app/src/components/attachment-lightbox.tsx",
         "packages/app/src/components/attachment-pill.tsx",
         "packages/app/src/components/combined-model-selector.tsx",
@@ -583,7 +580,6 @@
         "packages/app/src/components/terminal-emulator-native-grid.native.tsx",
         "packages/app/src/components/terminal-pane.tsx",
         "packages/app/src/components/toast-host.tsx",
-        "packages/app/src/components/tool-call-sheet.tsx",
         "packages/app/src/components/welcome-screen.tsx",
         "packages/app/src/components/workspace-hover-card.tsx",
         "packages/app/src/components/zoomable-viewport/toolbar.tsx",
@@ -619,7 +615,6 @@
         "packages/app/src/screens/workspace/scripts/workspace-scripts-button.tsx",
         "packages/app/src/screens/workspace/workspace-desktop-tabs-row.tsx",
         "packages/app/src/screens/workspace/workspace-tab-presentation.tsx",
-        "packages/app/src/tool-calls/detail-level/overview/sheet.tsx",
         "packages/app/src/usage/sidebar-item.tsx",
         "packages/app/src/usage/window-bar.tsx",
         "packages/app/src/workspace-labels/manager-modal.tsx",

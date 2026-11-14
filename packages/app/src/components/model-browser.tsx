@@ -35,7 +35,7 @@ import {
   type AgentProfilePickerRow as AgentProfilePickerRowModel,
   type AgentProfileSeed,
 } from "@/agent-profiles";
-import type { SheetHeader } from "@/components/adaptive-modal-sheet";
+import { SheetHeaderIconButton, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -74,14 +74,13 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedSearch = withUnistyles(Search);
-const ThemedSettings = withUnistyles(Settings);
 
 function ProviderSettingsAction({
-  accessibilityLabel,
+  label,
   provider,
   serverId,
 }: {
-  accessibilityLabel: string;
+  label: string;
   provider: string;
   serverId: string | null;
 }) {
@@ -92,17 +91,13 @@ function ProviderSettingsAction({
   }, [overlayParentLayer, provider, serverId]);
 
   return (
-    <Pressable
+    <SheetHeaderIconButton
+      icon={Settings}
+      label={label}
       onPress={handlePress}
       disabled={!serverId}
-      hitSlop={8}
-      style={iconButtonStyle}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
       testID={`selector-header-settings-${provider}`}
-    >
-      <HeaderSettingsIcon disabled={!serverId} />
-    </Pressable>
+    />
   );
 }
 
@@ -186,10 +181,6 @@ const foregroundMutedMapping = (theme: Theme) => ({
 
 const foregroundExtraMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundExtraMuted,
-});
-
-const headerSettingsMapping = (disabled: boolean) => (theme: Theme) => ({
-  color: disabled ? theme.colors.border : theme.colors.foregroundMuted,
 });
 
 interface ModelBrowserInput {
@@ -276,11 +267,6 @@ export function ModelProviderGlyph({
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
   return <Icon size={size} strokeWidth={strokeWidth} color={color} />;
-}
-
-function HeaderSettingsIcon({ disabled }: { disabled: boolean }) {
-  const uniProps = useMemo(() => headerSettingsMapping(disabled), [disabled]);
-  return <ThemedSettings size={ICON_SIZE.sm} uniProps={uniProps} />;
 }
 
 function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
@@ -395,15 +381,11 @@ export function useModelBrowser({
       ),
       back: singleProviderView ? undefined : { onPress: showAll },
       actions: (
-        <View style={styles.headerActionRow}>
-          <ProviderSettingsAction
-            serverId={serverId}
-            provider={view.providerId}
-            accessibilityLabel={t("modelSelector.openProviderSettings", {
-              provider: view.providerLabel,
-            })}
-          />
-        </View>
+        <ProviderSettingsAction
+          serverId={serverId}
+          provider={view.providerId}
+          label={t("modelSelector.openProviderSettings", { provider: view.providerLabel })}
+        />
       ),
       search: {
         onChange: handleSearchQueryChange,
@@ -1586,11 +1568,6 @@ export function ModelBrowser({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  headerActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
   profilesContainer: {
     backgroundColor: theme.colors.surface1,
     borderBottomWidth: 1,

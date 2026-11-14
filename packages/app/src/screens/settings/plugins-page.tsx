@@ -6,8 +6,12 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
-import { MoreHorizontal, Trash2 } from "lucide-react-native";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { MoreHorizontal, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { SettingsCard, SettingsRow } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -218,11 +222,16 @@ function PluginLogsSheet({
     () => ({
       title: t("settings.plugins.logs.title", { name: pluginDisplayName(plugin) }),
       actions: (
-        <Button variant="outline" onPress={refresh} disabled={logs.isFetching}>
-          {logs.isFetching
-            ? t("settings.plugins.logs.refreshing")
-            : t("settings.plugins.logs.refresh")}
-        </Button>
+        <SheetHeaderIconButton
+          icon={RotateCw}
+          label={
+            logs.isFetching
+              ? t("settings.plugins.logs.refreshing")
+              : t("settings.plugins.logs.refresh")
+          }
+          onPress={refresh}
+          busy={logs.isFetching}
+        />
       ),
     }),
     [logs.isFetching, plugin, refresh, t],

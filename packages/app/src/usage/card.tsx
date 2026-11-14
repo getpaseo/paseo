@@ -1,4 +1,4 @@
-import { RotateCw } from "lucide-react-native";
+import { GripVertical, RotateCw } from "lucide-react-native";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
@@ -8,15 +8,18 @@ import {
   iconButtonChromeGlyphSize,
   smallIconButtonChromeFrameSize,
 } from "@/components/ui/icon-button-chrome";
+import { DraggableListHandle } from "@/components/draggable-list";
+import { ControlSizeProvider } from "@/components/ui/control-size";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import type { TFunction } from "i18next";
 import { UsageBalanceBar } from "./balance-bar";
 import type { UsageDisplay } from "./display";
-import { formatAgo, formatProviderUsageLabel } from "./format";
+import { formatAgo, formatProviderUsageLabel, formatUsageAccountName } from "./format";
 import { resolveUsageReport, type UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
@@ -32,6 +35,15 @@ function statusText(report: UsageReport, t: TFunction): string | null {
 }
 
 const ThemedRotateCw = withUnistyles(RotateCw);
+const ThemedGripVertical = withUnistyles(GripVertical);
+
+/** A card in the user's arrangement: dragged by its handle, turned off from its switch. */
+export interface UsageCardArrangement {
+  on: boolean;
+  onSetOn: (on: boolean) => void;
+  /** The handle is always there; it shows while the card is hovered or where there is no hover. */
+  handleVisible: boolean;
+}
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 export function UsageCard({
@@ -41,6 +53,7 @@ export function UsageCard({
   display,
   pinnable,
   refreshable,
+  arrangement,
   compact = false,
 }: {
   serverId: string;
@@ -51,6 +64,8 @@ export function UsageCard({
   pinnable: boolean;
   /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
   refreshable: boolean;
+  /** Present where the user arranges cards. An off card collapses to its header. */
+  arrangement?: UsageCardArrangement;
   compact?: boolean;
 }) {
   const { t } = useTranslation();
@@ -60,9 +75,9 @@ export function UsageCard({
   const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
   const status = statusText(usage, t);
-  const footer = entry.account.label ?? null;
-  const { windows, balances, details, planLabel, successfulAt, retained, messages } =
-    resolveUsageReport(entry, t);
+  const collapsed = arrangement?.on === false;
+  const report = resolveUsageReport(entry, t);
+  const { planLabel, successfulAt, retained } = report;
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -79,20 +94,34 @@ export function UsageCard({
 
   return (
     <View style={containerStyle} testID={`usage-report-${entry.id}`}>
-      <View style={styles.header}>
+      <View style={arrangement ? styles.headerWithHandle : styles.header}>
+        {arrangement ? (
+          <UsageCardDragHandle
+            name={formatUsageAccountName(entry)}
+            visible={arrangement.handleVisible}
+          />
+        ) : null}
         <UsageSourceIcon svg={entry.icon ?? null} size={14} />
         <Text style={styles.name} numberOfLines={1}>
           {entry.sourceLabel}
         </Text>
-        {planLabel ? <StatusBadge label={planLabel} variant="muted" size="xs" /> : null}
+        {collapsed && entry.account.label ? (
+          // The body that names the account is gone, and two off cards of one source must differ.
+          <Text style={styles.collapsedAccount} numberOfLines={1}>
+            {entry.account.label}
+          </Text>
+        ) : null}
+        {planLabel && !collapsed ? (
+          <StatusBadge label={planLabel} variant="muted" size="xs" />
+        ) : null}
         <View style={styles.headerSpacer} />
-        {status ? (
+        {status && !collapsed ? (
           <View style={styles.statusRow}>
             <View style={dotStyle} />
             <Text style={styles.statusLabel}>{status}</Text>
           </View>
         ) : null}
-        {refreshable ? (
+        {refreshable && !collapsed ? (
           <UsageRefreshButton
             sourceLabel={entry.sourceLabel}
             successfulAt={successfulAt}
@@ -102,8 +131,55 @@ export function UsageCard({
             compact={isCompact}
           />
         ) : null}
+        {arrangement ? (
+          <ControlSizeProvider size="sm">
+            <Switch
+              value={arrangement.on}
+              onValueChange={arrangement.onSetOn}
+              accessibilityLabel={t("providerUsage.showCard", {
+                source: formatUsageAccountName(entry),
+              })}
+              style={styles.cardSwitch}
+              testID={`usage-card-switch-${entry.id}`}
+            />
+          </ControlSizeProvider>
+        ) : null}
       </View>
 
+      {collapsed ? null : (
+        <UsageCardBody
+          entry={entry}
+          display={display}
+          pinnable={pinnable}
+          report={report}
+          showsFreshnessInline={showsFreshnessInline}
+          refreshState={refreshState}
+        />
+      )}
+    </View>
+  );
+}
+
+function UsageCardBody({
+  entry,
+  display,
+  pinnable,
+  report,
+  showsFreshnessInline,
+  refreshState,
+}: {
+  entry: UsageReportEntry;
+  display: UsageDisplay;
+  pinnable: boolean;
+  report: ReturnType<typeof resolveUsageReport>;
+  showsFreshnessInline: boolean;
+  refreshState: UsageRefresh;
+}) {
+  const { t } = useTranslation();
+  const { windows, balances, details, retained, successfulAt, messages } = report;
+  const footer = entry.account.label ?? null;
+  return (
+    <>
       {messages.length > 0 ? (
         <Text style={styles.error} testID="usage-login-error">
           {messages.join("\n")}
@@ -164,7 +240,24 @@ export function UsageCard({
           {t("providerUsage.refreshFailed")}
         </Text>
       ) : null}
-    </View>
+    </>
+  );
+}
+
+/**
+ * Drags the card. It hangs in the card's left padding, so the logo, name and body share one rail
+ * and revealing it on hover moves nothing.
+ */
+function UsageCardDragHandle({ name, visible }: { name: string; visible: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <DraggableListHandle
+      accessibilityLabel={t("providerUsage.reorderCard", { source: name })}
+      style={visible ? styles.dragHandle : styles.dragHandleHidden}
+      testID="usage-card-drag-handle"
+    >
+      <ThemedGripVertical size={DRAG_GRIP_SIZE} uniProps={extraMutedIconColorMapping} />
+    </DraggableListHandle>
   );
 }
 
@@ -279,6 +372,21 @@ function UsageFreshness({
   );
 }
 
+const DRAG_GRIP_SIZE = 14;
+
+// The handle fills the card's left padding beside the header.
+function dragHandleSlot(spacing: { 4: number }) {
+  return {
+    position: "absolute",
+    left: 0,
+    width: spacing[4],
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  } as const;
+}
+
 // The Refresh glyph lands on the card's right rail and the header keeps its text height;
 // the button's larger hitbox overhangs both instead of pushing them.
 function iconHitboxOverhang(compact: boolean) {
@@ -305,10 +413,27 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // The row reaches into the card's left padding and above and below its text, so the handle
+  // there is inside it: Android delivers no touches to a child where it overflows its parent.
+  headerWithHandle: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginLeft: -theme.spacing[4],
+    paddingLeft: theme.spacing[4],
+    marginVertical: -theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
   name: {
     flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  collapsedAccount: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   headerSpacer: {
     flex: 1,
@@ -378,6 +503,12 @@ const styles = StyleSheet.create((theme) => ({
   tooltipText: {
     color: theme.colors.popoverForeground,
     fontSize: theme.fontSize.sm,
+  },
+  dragHandle: dragHandleSlot(theme.spacing),
+  dragHandleHidden: { ...dragHandleSlot(theme.spacing), opacity: 0 },
+  // The switch's reserved control height overhangs the header like the Refresh button's hitbox.
+  cardSwitch: {
+    marginVertical: -theme.spacing[2],
   },
   refreshButton: iconHitboxOverhang(false),
   refreshButtonCompact: iconHitboxOverhang(true),
