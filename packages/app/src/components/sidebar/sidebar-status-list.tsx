@@ -1,3 +1,4 @@
+import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import {
   memo,
   useCallback,
@@ -11,7 +12,6 @@ import { useTranslation } from "react-i18next";
 import {
   View,
   Text,
-  Pressable,
   ScrollView,
   type GestureResponderEvent,
   type PressableStateCallbackType,
