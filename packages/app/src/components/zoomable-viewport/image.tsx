@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { ViewportFitOptions, ViewportSize } from "./geometry";
+import { measureImage } from "./image-size";
 import { ZoomableViewport } from "./index";
 import type { ZoomableViewportAction } from "./types";
 
@@ -43,15 +44,14 @@ export function ZoomableImage({
   useEffect(() => {
     if (contentSize) return;
     let active = true;
-    Image.getSize(
-      uri,
-      (width, height) => {
-        if (active && width > 0 && height > 0) setLoaded({ uri, size: { width, height } });
-      },
-      () => {
+    void (async () => {
+      try {
+        const size = await measureImage(uri);
+        if (active) setLoaded({ uri, size });
+      } catch {
         if (active) onError?.();
-      },
-    );
+      }
+    })();
     return () => {
       active = false;
     };

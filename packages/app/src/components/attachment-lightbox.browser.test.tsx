@@ -134,6 +134,13 @@ describe("AttachmentLightbox opening in the browser", () => {
     await expectOpeningPaintsOnlyTheFittedImage(source);
   });
 
+  it("shows an image the browser reports no natural size for", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"></svg>';
+    const uri = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+
+    await expectOpeningPaintsOnlyTheFittedImage({ type: "uri", uri });
+  });
+
   it("paints the fitted timeline image as its first image frame", async () => {
     const uri = URL.createObjectURL(await createPng(2400, 1600));
 
