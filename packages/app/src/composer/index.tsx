@@ -134,7 +134,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
-import { ComposerRecall } from "@/composer/recall";
+import { ComposerRecall, shouldEditNewestQueuedMessage } from "@/composer/recall";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { usePaneHost } from "@/panels/pane-context";
@@ -2056,10 +2056,11 @@ function ComposerContentImpl({
         queue: queueWriter,
       });
       if (!result) return;
+      recall.forget();
       replaceUserInput(result.text);
       setSelectedAttachments(result.attachments);
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [agentId, queueWriter, recall, replaceUserInput, setSelectedAttachments],
   );
 
   const handleSendQueuedNow = useCallback(
@@ -2109,10 +2110,25 @@ function ComposerContentImpl({
     ],
   );
 
-  // An open autocomplete owns the arrows; otherwise they may recall sent messages.
+  // An open autocomplete owns the arrows; otherwise Up may edit the newest queued
+  // message, and the arrows may recall sent messages.
   const handleCommandKeyPress = useCallback(
     (event: ComposerKeyPressEvent) => {
       if (autocompleteRef.current?.onKeyPress(event)) return true;
+      const queued = queueWriter.read(agentId);
+      const newestQueued = queued.at(-1);
+      if (
+        newestQueued &&
+        shouldEditNewestQueuedMessage(event, {
+          queuedCount: queued.length,
+          // Files still uploading are part of the draft too.
+          hasAttachments: selectedAttachments.length > 0 || pendingFiles.length > 0,
+        })
+      ) {
+        event.preventDefault();
+        handleEditQueuedMessage(newestQueued.id);
+        return true;
+      }
       const recalledText = recall.handleKeyPress(event, () =>
         selectAgentSentMessages(useSessionStore.getState().sessions[serverId], agentId),
       );
@@ -2121,7 +2137,16 @@ function ComposerContentImpl({
       replaceUserInput(recalledText);
       return true;
     },
-    [agentId, recall, replaceUserInput, serverId],
+    [
+      agentId,
+      handleEditQueuedMessage,
+      queueWriter,
+      recall,
+      pendingFiles.length,
+      replaceUserInput,
+      selectedAttachments.length,
+      serverId,
+    ],
   );
 
   const cancelButtonStyle = useCallback(
