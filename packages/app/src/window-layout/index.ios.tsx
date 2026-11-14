@@ -2,13 +2,19 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { StyleSheet, View, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import { requireNativeViewManager } from "expo-modules-core";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
-import { TopBandContext, WindowLayoutContext, useWindowLayout } from "./context";
+import {
+  TopBandContext,
+  WindowInsetsContext,
+  WindowLayoutContext,
+  useWindowLayout,
+} from "./context";
 import { resolveSafeAreaInsets, resolveTopBand, type WindowLayout } from "./model";
 
 export { useWindowLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
 export { useTopBand } from "./context";
+export { WindowSafeArea } from "./window-safe-area";
 export {
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,
@@ -56,7 +62,9 @@ function WindowSafeAreaInsets({ children }: { children: ReactNode }) {
   );
   return (
     <TopBandContext.Provider value={topBand}>
-      <SafeAreaInsetsContext.Provider value={insets}>{children}</SafeAreaInsetsContext.Provider>
+      <WindowInsetsContext.Provider value={insets}>
+        <SafeAreaInsetsContext.Provider value={insets}>{children}</SafeAreaInsetsContext.Provider>
+      </WindowInsetsContext.Provider>
     </TopBandContext.Provider>
   );
 }

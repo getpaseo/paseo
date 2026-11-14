@@ -2,62 +2,72 @@ import { useEffect, useRef, useState } from "react";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { releaseAttachmentPreviewUrl, resolveAttachmentPreviewUrl } from "@/attachments/service";
 
+export type AttachmentPreviewUrl =
+  | { status: "loading" }
+  | { status: "ready"; url: string }
+  | { status: "failed" };
+
+const LOADING: AttachmentPreviewUrl = { status: "loading" };
+const FAILED: AttachmentPreviewUrl = { status: "failed" };
+
+function attachmentKey(attachment: AttachmentMetadata | null | undefined): string | null {
+  if (!attachment) return null;
+  return [attachment.id, attachment.storageType, attachment.storageKey, attachment.mimeType].join(
+    "\u0000",
+  );
+}
+
+/**
+ * Resolves a displayable URL for a stored attachment. Stays `loading` until the URL for the
+ * current attachment resolves, so a caller never shows a failure, or the previous attachment's
+ * URL, while the next one is still resolving. A missing attachment stays `loading`.
+ */
 export function useAttachmentPreviewUrl(
   attachment: AttachmentMetadata | null | undefined,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  const activeAttachmentRef = useRef<AttachmentMetadata | null>(null);
+): AttachmentPreviewUrl {
+  const [resolved, setResolved] = useState<{
+    key: string;
+    preview: AttachmentPreviewUrl;
+  } | null>(null);
   const attachmentRef = useRef(attachment);
   attachmentRef.current = attachment;
-
-  const id = attachment?.id;
-  const storageType = attachment?.storageType;
-  const storageKey = attachment?.storageKey;
-  const mimeType = attachment?.mimeType;
+  const key = attachmentKey(attachment);
 
   useEffect(() => {
-    let disposed = false;
-    let currentUrl: string | null = null;
     const current = attachmentRef.current;
-
-    activeAttachmentRef.current = current ?? null;
-    if (!current) {
-      setUrl(null);
+    if (!current || key === null) {
       return;
     }
+    let disposed = false;
+    let currentUrl: string | null = null;
 
     void (async () => {
       try {
-        const resolved = await resolveAttachmentPreviewUrl(current);
+        const url = await resolveAttachmentPreviewUrl(current);
         if (disposed) {
-          await releaseAttachmentPreviewUrl({ attachment: current, url: resolved });
+          await releaseAttachmentPreviewUrl({ attachment: current, url });
           return;
         }
-        currentUrl = resolved;
-        setUrl(resolved);
+        currentUrl = url;
+        setResolved({ key, preview: { status: "ready", url } });
       } catch (error) {
         console.error("[attachments] Failed to resolve preview URL", {
           attachmentId: current.id,
           error,
         });
         if (!disposed) {
-          setUrl(null);
+          setResolved({ key, preview: FAILED });
         }
       }
     })();
 
     return () => {
       disposed = true;
-      const activeAttachment = activeAttachmentRef.current;
-      if (!currentUrl || !activeAttachment) {
-        return;
+      if (currentUrl) {
+        void releaseAttachmentPreviewUrl({ attachment: current, url: currentUrl });
       }
-      void releaseAttachmentPreviewUrl({
-        attachment: activeAttachment,
-        url: currentUrl,
-      });
     };
-  }, [id, storageType, storageKey, mimeType]);
+  }, [key]);
 
-  return url;
+  return resolved !== null && resolved.key === key ? resolved.preview : LOADING;
 }

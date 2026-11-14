@@ -65,6 +65,10 @@ Two escape hatches in the codebase:
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
+  Use `@/components/ui/modal`, not React Native's `Modal`. On Android, React Native lays out a
+  modal's first frames at the screen size minus the status and navigation bars, then grows it to
+  the full edge-to-edge window, so a full-screen backdrop stops short of the bottom and snaps
+  down. The wrapper sizes the content to the window from the first frame.
 - **`<Portal>` from `@gorhom/portal`** (hover-card, autocomplete-popover) —
   hoists the React subtree to a fixed mount point whose bounds cover the
   screen. Same window, same IME, hit-test works because the new parent is
@@ -422,9 +426,11 @@ gets that 0 and draws over the navigation bar.
 
 - A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
   `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
-- An RN `Modal` passes the call site's context straight through, so put a `SafeAreaProvider`
-  inside it and read the inset below that. The modal is its own window, and the provider measures
-  it. See `attachment-lightbox.tsx`.
+- An RN `Modal` passes the call site's context straight through, so wrap its content in
+  `WindowSafeArea` from `@/window-layout` and read the inset below that. It provides the insets of
+  the whole window, published by `WindowLayoutProvider`. Do not put a `SafeAreaProvider` inside the
+  modal: on Android it measures the dialog window, whose bottom inset reads 24, then 0, then 24
+  again over the first frames, and everything padded by it jumps. See `attachment-lightbox.tsx`.
 
 ## Recipe for a new anchored panel
 

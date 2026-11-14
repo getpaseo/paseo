@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { ViewportFitOptions, ViewportSize } from "./geometry";
@@ -34,18 +34,19 @@ export function ZoomableImage({
   testID = "zoomable-image",
   wheelActivation = "always",
 }: ZoomableImageProps) {
-  const [loadedSize, setLoadedSize] = useState<ViewportSize | null>(null);
-  const resolvedSize = contentSize ?? loadedSize;
+  const [loaded, setLoaded] = useState<{ uri: string; size: ViewportSize } | null>(null);
+  const resolvedSize = contentSize ?? (loaded?.uri === uri ? loaded.size : null);
   const source = useMemo(() => ({ uri }), [uri]);
+  const [paintedUri, setPaintedUri] = useState<string | null>(null);
+  const handleLoad = useCallback(() => setPaintedUri(uri), [uri]);
 
   useEffect(() => {
     if (contentSize) return;
     let active = true;
-    setLoadedSize(null);
     Image.getSize(
       uri,
       (width, height) => {
-        if (active && width > 0 && height > 0) setLoadedSize({ width, height });
+        if (active && width > 0 && height > 0) setLoaded({ uri, size: { width, height } });
       },
       () => {
         if (active) onError?.();
@@ -56,20 +57,11 @@ export function ZoomableImage({
     };
   }, [contentSize, onError, uri]);
 
+  // Paint nothing until the image can be fitted: an unfitted image fills the whole area for the
+  // frames before the size arrives, then jumps to its fitted box. Then keep the viewport, toolbar
+  // included, hidden until the image itself has loaded, so they appear together.
   if (!resolvedSize) {
-    return (
-      <View style={[styles.root, style]} testID={testID}>
-        <Image
-          accessibilityLabel={accessibilityLabel}
-          accessibilityRole="image"
-          onError={onError}
-          resizeMode="contain"
-          source={source}
-          style={styles.image}
-          testID={`${testID}-image`}
-        />
-      </View>
-    );
+    return <View style={[styles.root, style]} testID={testID} />;
   }
 
   return (
@@ -81,12 +73,15 @@ export function ZoomableImage({
       maxScale={maxScale}
       minScale={minScale}
       onPressOutsideContent={onPressOutsideContent}
-      style={style}
+      style={[style, paintedUri !== uri && styles.loading]}
       testID={testID}
       wheelActivation={wheelActivation}
     >
       <Image
+        // Android fades a freshly decoded image in over 300ms; it appears with its toolbar instead.
+        fadeDuration={0}
         onError={onError}
+        onLoad={handleLoad}
         resizeMode="contain"
         source={source}
         style={styles.image}
@@ -99,4 +94,5 @@ export function ZoomableImage({
 const styles = StyleSheet.create(() => ({
   root: { flex: 1, minHeight: 0 },
   image: { width: "100%", height: "100%" },
+  loading: { opacity: 0 },
 }));
