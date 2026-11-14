@@ -1101,7 +1101,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     // Keep status mode's Pinned/Workspaces boundary identical to project mode.
     paddingTop: 2,
-    paddingBottom: theme.spacing[4],
+    // Match project grouping: permanent room to scroll the final row above sidebar toasts.
+    paddingBottom: theme.spacing[24],
   },
   pinnedSection: {
     marginBottom: theme.spacing[1],
