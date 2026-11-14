@@ -1,4 +1,4 @@
-import { win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import { describe, expect, test } from "vitest";
 import { createObserverPaths } from "./paths.js";
 
@@ -38,5 +38,31 @@ describe("collapse", () => {
     const descendant = `c:${sep}repo${sep}packages${sep}app${sep}src`;
 
     expect(paths.collapse([parent, sibling, descendant]).sort()).toEqual([parent, sibling].sort());
+  });
+});
+
+describe("ignored root matching", () => {
+  test.each(["linux", "win32"] as const)(
+    "matches ancestors and sibling boundaries on %s",
+    (platform) => {
+      const paths = createObserverPaths(platform);
+      const root = platform === "win32" ? "C:\\repo" : "/repo";
+      const api = platform === "win32" ? win32 : posix;
+      const ignored = api.join(root, "output");
+      const matches = paths.createIgnoreMatcher([ignored]);
+      expect(matches(ignored)).toBe(true);
+      expect(matches(api.join(ignored, "nested", "file.txt"))).toBe(true);
+      expect(matches(api.join(root, "output-sibling", "file.txt"))).toBe(false);
+      expect(matches(root)).toBe(false);
+      expect(matches(api.join(root, "src", "file.txt"))).toBe(false);
+      if (platform === "win32") {
+        expect(matches(api.join(ignored, "nested", "file.txt").toUpperCase())).toBe(true);
+      }
+    },
+  );
+
+  test("an empty ignore set accepts every path", () => {
+    const matches = createObserverPaths("linux").createIgnoreMatcher([]);
+    expect(matches("/repo/file.txt")).toBe(false);
   });
 });
