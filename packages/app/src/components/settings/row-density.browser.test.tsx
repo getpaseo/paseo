@@ -2,7 +2,12 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { Button } from "@/components/ui/button";
-import { SettingsCard, SettingsCollapsibleRow, SettingsRow } from "@/components/settings";
+import {
+  SettingsCard,
+  SettingsCollapsibleRow,
+  SettingsDetailRow,
+  SettingsRow,
+} from "@/components/settings";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -13,6 +18,8 @@ afterEach(() => {
   root = null;
   container = null;
 });
+
+function openNothing() {}
 
 function mountRows() {
   container = document.createElement("div");
@@ -26,7 +33,7 @@ function mountRows() {
             Download
           </Button>
         </SettingsRow>
-        <SettingsRow label="Card row without a button" testID="card-row-without-button" />
+        <SettingsDetailRow label="Opens a page" onPress={openNothing} testID="detail-row" />
         <SettingsCollapsibleRow label="Group" defaultExpanded testID="group">
           <SettingsRow label="Nested with a button" testID="nested-with-button">
             <Button variant="outline" testID="nested-button">
@@ -67,10 +74,10 @@ describe("settings row density", () => {
     expect(heightOf("group-toggle")).toBeGreaterThan(heightOf("nested-without-button"));
   });
 
-  it("lines up card rows with and without a control", () => {
+  it("keeps a row that opens something as tall as a row holding a control", () => {
     mountRows();
 
-    expect(heightOf("card-row-without-button")).toBe(heightOf("card-row"));
+    expect(heightOf("detail-row")).toBe(heightOf("card-row"));
     expect(heightOf("group-toggle")).toBe(heightOf("card-row"));
   });
 
