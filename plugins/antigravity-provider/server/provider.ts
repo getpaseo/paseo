@@ -95,6 +95,7 @@ function createConnection(
           id: input.sessionId,
           config: input.config,
           persistence: input.persistence,
+          history: input.history,
           catalog,
           launch,
           emit,

@@ -4,6 +4,8 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import type { Step } from "./wire.js";
 
+export type ToolJsonValue = Extract<ProviderToolCallDetail, { type: "unknown" }>["input"];
+
 export function toolItem(
   step: Step,
   id: string,
@@ -23,6 +25,87 @@ export function toolItem(
   return { ...base, status, error: null };
 }
 
+function readString(value: ToolJsonValue | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readNonEmptyString(value: ToolJsonValue | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resolveFilePath(parameters: Readonly<Record<string, ToolJsonValue>>): string | undefined {
+  return (
+    readNonEmptyString(parameters.AbsolutePath) ??
+    readNonEmptyString(parameters.TargetFile) ??
+    readNonEmptyString(parameters.Path)
+  );
+}
+
+const READ_TOOLS = new Set(["view_file", "read_file"]);
+const WRITE_TOOLS = new Set(["write_to_file", "write_file"]);
+const EDIT_TOOLS = new Set(["replace_file_content", "multi_replace_file_content", "edit_file"]);
+
+interface MapFileToolDetailOptions {
+  name: string;
+  filePath: string;
+  parameters: Readonly<Record<string, ToolJsonValue>>;
+  output?: string;
+}
+
+export interface MapToolDetailOptions {
+  name: string;
+  parameters: Readonly<Record<string, ToolJsonValue>>;
+  output?: string;
+  error?: ToolJsonValue;
+}
+
+function mapFileToolDetail(options: MapFileToolDetailOptions): ProviderToolCallDetail | undefined {
+  const { name, filePath, parameters, output } = options;
+  if (READ_TOOLS.has(name)) {
+    const detail: ProviderToolCallDetail = { type: "read", filePath };
+    if (output !== undefined) detail.content = output;
+    return detail;
+  }
+  if (WRITE_TOOLS.has(name)) {
+    const detail: ProviderToolCallDetail = { type: "write", filePath };
+    const content = readString(parameters.Content) ?? readString(parameters.CodeContent);
+    if (content !== undefined) detail.content = content;
+    return detail;
+  }
+  if (EDIT_TOOLS.has(name)) {
+    const detail: ProviderToolCallDetail = { type: "edit", filePath };
+    const oldString = readString(parameters.Target) ?? readString(parameters.TargetContent);
+    const newString =
+      readString(parameters.Replacement) ?? readString(parameters.ReplacementContent);
+    if (oldString !== undefined) detail.oldString = oldString;
+    if (newString !== undefined) detail.newString = newString;
+    return detail;
+  }
+  return undefined;
+}
+
+export function mapToolDetail(options: MapToolDetailOptions): ProviderToolCallDetail {
+  const { name, parameters, output, error } = options;
+  if (name === "run_command") {
+    const command = readNonEmptyString(parameters.CommandLine);
+    if (command !== undefined) {
+      const detail: ProviderToolCallDetail = { type: "shell", command };
+      if (output !== undefined) detail.output = output;
+      return detail;
+    }
+  }
+  const filePath = resolveFilePath(parameters);
+  if (filePath !== undefined) {
+    const detail = mapFileToolDetail({ name, filePath, parameters, output });
+    if (detail) return detail;
+  }
+  return {
+    type: "unknown",
+    input: { ...parameters },
+    output: error !== undefined ? error : (output ?? null),
+  };
+}
+
 function toolDetail(step: Step): ProviderToolCallDetail {
   if (step.subagent_info) {
     const child = step.subagent_info.subagents[0];
@@ -37,19 +120,11 @@ function toolDetail(step: Step): ProviderToolCallDetail {
   }
   const info = step.tool_info;
   if (!info) return { type: "plain_text", label: step.tool_name, text: "" };
-  const path = info.parameters.AbsolutePath || info.parameters.TargetFile;
-  if (info.name === "run_command" && typeof info.parameters.CommandLine === "string") {
-    return { type: "shell", command: info.parameters.CommandLine, output: info.output };
-  }
-  if (info.name === "view_file" && typeof path === "string")
-    return { type: "read", filePath: path, content: info.output };
-  if (info.name === "write_to_file" && typeof path === "string")
-    return { type: "write", filePath: path };
-  if (
-    (info.name === "replace_file_content" || info.name === "multi_replace_file_content") &&
-    typeof path === "string"
-  )
-    return { type: "edit", filePath: path };
   // Native frames summarize writes; they do not carry the file contents or diff.
-  return { type: "unknown", input: info.parameters, output: info.error || info.output };
+  return mapToolDetail({
+    name: info.name,
+    parameters: info.parameters,
+    output: info.output,
+    error: info.error ?? undefined,
+  });
 }

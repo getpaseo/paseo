@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -523,6 +527,99 @@ it("resumes after connection close without replay or another system prefix", asy
       .filter((entry) => entry.input)
       .map((entry) => entry.input.message.content),
   ).toEqual(["RESUME"]);
+});
+
+it("replays persisted history when history is replay and skips when history is skip", async () => {
+  const appDataDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-app-data-"));
+  temporary.push(appDataDir);
+
+  const first = await harness({ ANTIGRAVITY_APP_DATA_DIR: appDataDir });
+  await first.open();
+  await first.completed(await first.prompt("HELLO"));
+  const persistence = first.persistence();
+  if (
+    !persistence.data ||
+    typeof persistence.data !== "object" ||
+    Array.isArray(persistence.data) ||
+    typeof persistence.data.conversationId !== "string"
+  ) {
+    throw new Error("Missing conversationId in persistence");
+  }
+  const conversationId = persistence.data.conversationId;
+  await first.connection.close();
+
+  const logsDir = path.join(appDataDir, "brain", conversationId, ".system_generated", "logs");
+  await mkdir(logsDir, { recursive: true });
+  await writeFile(
+    path.join(logsDir, "transcript_full.jsonl"),
+    [
+      JSON.stringify({
+        step_index: 0,
+        type: "USER_INPUT",
+        created_at: "2026-11-12T10:00:00Z",
+        content: "<USER_REQUEST>\nSYSTEM PREFIX\n\nHELLO\n</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 1,
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-11-12T10:00:01Z",
+        thinking: "Thinking before answer",
+        content: "PHASE0_HELLO",
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const replayed = await harness({ ANTIGRAVITY_APP_DATA_DIR: appDataDir });
+  await replayed.open(persistence, "s", "replay");
+  const openedIndex = replayed.events.findIndex((event) => event.type === "session.opened");
+  const readyIndex = replayed.events.findIndex((event) => event.type === "session.ready");
+  expect(openedIndex).toBeGreaterThanOrEqual(0);
+  expect(readyIndex).toBeGreaterThan(openedIndex);
+  expect(replayed.events.filter((event) => event.type === "timeline.item")).toEqual([
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      item: { type: "user_message", id: "history:0:user", text: "HELLO" },
+      timestamp: "2026-11-12T10:00:00Z",
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      item: { type: "reasoning", id: "history:1:reasoning", text: "Thinking before answer" },
+      timestamp: "2026-11-12T10:00:01Z",
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      item: { type: "assistant_message", id: "history:1:assistant", text: "PHASE0_HELLO" },
+      timestamp: "2026-11-12T10:00:01Z",
+    },
+  ]);
+  for (const event of replayed.events.filter((entry) => entry.type === "timeline.item")) {
+    const idx = replayed.events.indexOf(event);
+    expect(idx).toBeGreaterThan(openedIndex);
+    expect(idx).toBeLessThan(readyIndex);
+  }
+  await replayed.connection.close();
+
+  const skipped = await harness({ ANTIGRAVITY_APP_DATA_DIR: appDataDir });
+  await skipped.open(persistence, "s", "skip");
+  expect(skipped.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+  await skipped.connection.close();
+
+  const exited = await harness({
+    ANTIGRAVITY_APP_DATA_DIR: appDataDir,
+    AGY_TEST_STARTUP: "exit",
+  });
+  await exited.open(persistence, "s", "replay");
+  expect(exited.events.filter((event) => event.type === "session.opened")).toEqual([]);
+  expect(exited.events.filter((event) => event.type === "session.ready")).toEqual([]);
+  expect(exited.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+  expect(exited.events.find((event) => event.type === "request.failed")).toMatchObject({
+    type: "request.failed",
+    error: { message: expect.stringMatching(/exited/) },
+  });
 });
 
 it.each(["auth", "exit", "stderr"])(
