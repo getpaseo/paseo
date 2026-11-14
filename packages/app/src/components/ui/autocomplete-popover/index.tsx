@@ -1,19 +1,13 @@
+import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from "react";
-import { View, useWindowDimensions, type StyleProp, type ViewStyle } from "react-native";
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { Portal } from "@gorhom/portal";
-import Animated, {
-  useAnimatedReaction,
-  useAnimatedStyle,
-  type DerivedValue,
-} from "react-native-reanimated";
+import { useAnimatedReaction, useAnimatedRef } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -26,17 +20,8 @@ import {
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
 import { KeyboardTranslateView, useKeyboardAnchor, useKeyboardShift } from "@/keyboard/shift";
-import { SPACING } from "@/styles/theme";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
-
-const OFFSET_FROM_ANCHOR = SPACING[3];
-
-interface RelativeAnchorRect {
-  x: number;
-  y: number;
-  width: number;
-  hostHeight: number;
-}
+import { PopoverFrame } from "./internal/frame";
+import type { AnchorAtRest } from "./internal/placement";
 
 interface AutocompletePopoverProps {
   visible: boolean;
@@ -59,8 +44,16 @@ export function AutocompletePopover({
 }: AutocompletePopoverProps): ReactElement | null {
   "use no memo";
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
-  const anchorRef = useRef<View>(null);
-  const [relativeAnchorRect, setRelativeAnchorRect] = useState<RelativeAnchorRect | null>(null);
+  const anchorRef = useAnimatedRef<View>();
+  // The animated ref returns its native handle, which React 19 would call as a ref cleanup.
+  // The anchor stays a plain View: its style is the caller's Unistyles style.
+  const setAnchorElement = useCallback(
+    (element: View | null) => {
+      anchorRef(element);
+    },
+    [anchorRef],
+  );
+  const [anchorAtRest, setAnchorAtRest] = useState<AnchorAtRest | null>(null);
   const windowDimensions = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const portalHostName = useFloatingPanelPortalHostName();
@@ -82,10 +75,11 @@ export function AutocompletePopover({
       if (generation !== measurementGeneration.current || !anchorRect || !hostRect) {
         return undefined;
       }
-      setRelativeAnchorRect({
+      setAnchorAtRest({
         x: anchorRect.x - hostRect.x,
         y: anchorRect.y - hostRect.y,
         width: anchorRect.width,
+        height: anchorRect.height,
         hostHeight: hostRect.height,
       });
       return undefined;
@@ -95,7 +89,7 @@ export function AutocompletePopover({
   useEffect(() => {
     measurementGeneration.current += 1;
     if (!canMeasure) {
-      setRelativeAnchorRect(null);
+      setAnchorAtRest(null);
       return;
     }
 
@@ -118,27 +112,22 @@ export function AutocompletePopover({
     [isMoving, remeasure],
   );
 
-  // Lay out at the anchor's resting position; the KeyboardTranslateView below lifts
-  // it with the anchor. Height changes only at keyboard boundaries.
-  const baseStyle = useMemo(() => {
-    if (!relativeAnchorRect) return null;
-    return inlineUnistylesStyle({
-      position: "absolute" as const,
-      left: relativeAnchorRect.x,
-      width: relativeAnchorRect.width,
-      bottom: relativeAnchorRect.hostHeight - relativeAnchorRect.y + OFFSET_FROM_ANCHOR,
-    });
-  }, [relativeAnchorRect]);
-
-  // The translate view is the popover's own frame, so it lifts only the popover.
+  // The layer covers the host and rides the anchor's keyboard translation; the frame inside it
+  // places the popover. A layer that spans the host keeps the popover inside its parent's bounds,
+  // which Android hit-testing requires.
   return (
-    <View ref={anchorRef} onLayout={remeasure} style={anchorStyle} collapsable={false}>
+    <View ref={setAnchorElement} onLayout={remeasure} style={anchorStyle} collapsable={false}>
       {children}
-      {canMeasure && relativeAnchorRect && baseStyle ? (
+      {canMeasure && anchorAtRest ? (
         <Portal hostName={portalHostName}>
-          <KeyboardTranslateView {...anchor.translation} style={baseStyle}>
+          <KeyboardTranslateView
+            {...anchor.translation}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="box-none"
+          >
             <PopoverFrame
-              anchorY={relativeAnchorRect.y}
+              anchorRef={anchorRef}
+              anchorAtRest={anchorAtRest}
               reservedLift={anchor.reservedLift}
               topInset={safeAreaInsets.top}
             >
@@ -153,39 +142,5 @@ export function AutocompletePopover({
         </Portal>
       ) : null}
     </View>
-  );
-}
-
-interface PopoverFrameProps {
-  anchorY: number;
-  reservedLift: DerivedValue<number>;
-  topInset: number;
-  children: ReactNode;
-}
-
-/**
- * Bounds the popover's height to the space above the anchor. It mounts only with a measured
- * anchor: Reanimated computes the first style when the hook first runs and sends later values
- * after the mounting commit, which native paints. A bound computed before the measurement painted
- * the popover at its minimum height, hanging over the composer, for a frame on every open.
- */
-function PopoverFrame({
-  anchorY,
-  reservedLift,
-  topInset,
-  children,
-}: PopoverFrameProps): ReactElement {
-  "use no memo";
-  // React Compiler memoizes effect captures by reading SharedValue.value during render.
-  const heightStyle = useAnimatedStyle(
-    () => ({
-      maxHeight: Math.max(0, anchorY - reservedLift.value - topInset - OFFSET_FROM_ANCHOR * 2),
-    }),
-    [anchorY, reservedLift, topInset],
-  );
-  return (
-    <Animated.View testID="composer-autocomplete-popover" style={heightStyle}>
-      {children}
-    </Animated.View>
   );
 }
