@@ -58,6 +58,13 @@ export interface AddProjectFlowState {
 export interface OpenAddProjectFlowInput {
   hosts: AddProjectHost[];
   preferredHostId?: string;
+  /** Land on "Search for directory", above the method list, once the host is known. */
+  startsOnDirectorySearch?: boolean;
+}
+
+export interface ChooseAddProjectHostInput {
+  hostId: string;
+  startsOnDirectorySearch?: boolean;
 }
 
 type SearchPageKind = Extract<AddProjectPage, { query: string }>["kind"];
@@ -70,16 +77,47 @@ function methodPage(hostId: string): AddProjectPage {
   return { kind: "method", hostId, activeIndex: 0, error: null, isSubmitting: false };
 }
 
-export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFlowState {
+function directorySearchPage(hostId: string): AddProjectPage {
+  return { ...searchPage("directory-search"), hostId, isSubmitting: false };
+}
+
+/**
+ * The pages a host lands on. The method list always stays underneath, so Back from an
+ * opening directory search returns to it. Directory search is only offered to hosts that can
+ * add projects, so other hosts keep the method page and its upgrade message.
+ */
+function hostEntryPages(input: {
+  host: AddProjectHost | undefined;
+  hostId: string;
+  startsOnDirectorySearch: boolean | undefined;
+}): AddProjectPage[] {
+  const { host, hostId, startsOnDirectorySearch } = input;
+  const opensDirectorySearch = startsOnDirectorySearch === true && host?.canAddProject === true;
+  return opensDirectorySearch
+    ? [methodPage(hostId), directorySearchPage(hostId)]
+    : [methodPage(hostId)];
+}
+
+function initialAddProjectHost(input: OpenAddProjectFlowInput): AddProjectHost | null {
   const preferredHost = input.preferredHostId
     ? input.hosts.find((host) => host.serverId === input.preferredHostId)
     : null;
   const onlyHost = input.hosts.length === 1 ? input.hosts[0] : null;
-  const initialHost = preferredHost ?? onlyHost;
+  return preferredHost ?? onlyHost ?? null;
+}
+
+export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFlowState {
+  const initialHost = initialAddProjectHost(input);
 
   return {
     hosts: input.hosts,
-    pages: initialHost ? [methodPage(initialHost.serverId)] : [searchPage("host")],
+    pages: initialHost
+      ? hostEntryPages({
+          host: initialHost,
+          hostId: initialHost.serverId,
+          startsOnDirectorySearch: input.startsOnDirectorySearch,
+        })
+      : [searchPage("host")],
     newDirectoryNameDrafts: {},
     githubLocationDrafts: {},
   };
@@ -87,22 +125,23 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
 
 export function applyAvailableAddProjectHosts(
   state: AddProjectFlowState,
-  hosts: AddProjectHost[],
-  preferredHostId?: string,
+  input: OpenAddProjectFlowInput,
 ): AddProjectFlowState {
   const current = currentAddProjectPage(state);
   if (state.pages.length !== 1 || current.kind !== "host") {
-    return { ...state, hosts };
+    return { ...state, hosts: input.hosts };
   }
-  const preferredHost = preferredHostId
-    ? hosts.find((host) => host.serverId === preferredHostId)
-    : null;
-  const onlyHost = hosts.length === 1 ? hosts[0] : null;
-  const initialHost = preferredHost ?? onlyHost;
+  const initialHost = initialAddProjectHost(input);
   return {
     ...state,
-    hosts,
-    pages: initialHost ? [methodPage(initialHost.serverId)] : state.pages,
+    hosts: input.hosts,
+    pages: initialHost
+      ? hostEntryPages({
+          host: initialHost,
+          hostId: initialHost.serverId,
+          startsOnDirectorySearch: input.startsOnDirectorySearch,
+        })
+      : state.pages,
   };
 }
 
@@ -141,20 +180,22 @@ export function backAddProjectPage(state: AddProjectFlowState): AddProjectFlowSt
 
 export function chooseAddProjectHost(
   state: AddProjectFlowState,
-  hostId: string,
+  input: ChooseAddProjectHostInput,
 ): AddProjectFlowState {
-  return pushAddProjectPage(state, methodPage(hostId));
+  const host = state.hosts.find((candidate) => candidate.serverId === input.hostId);
+  const entryPages = hostEntryPages({
+    host,
+    hostId: input.hostId,
+    startsOnDirectorySearch: input.startsOnDirectorySearch,
+  });
+  return { ...state, pages: [...state.pages, ...entryPages] };
 }
 
 export function openDirectorySearchPage(
   state: AddProjectFlowState,
   hostId: string,
 ): AddProjectFlowState {
-  return pushAddProjectPage(state, {
-    ...searchPage("directory-search"),
-    hostId,
-    isSubmitting: false,
-  });
+  return pushAddProjectPage(state, directorySearchPage(hostId));
 }
 
 export function openGithubSearchPage(

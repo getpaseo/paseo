@@ -2517,6 +2517,14 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
+      addProject: {
+        title: "Ajouter un projet",
+        startOnDirectorySearch: {
+          label: "Ouvrir sur la recherche de dossier",
+          description:
+            "Ajouter un projet commence par la recherche de dossier. Retour revient aux autres options.",
+        },
+      },
       sendShortcut: {
         label: "Raccourci d’envoi",
         options: {

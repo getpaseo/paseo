@@ -2476,6 +2476,14 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      addProject: {
+        title: "프로젝트 추가",
+        startOnDirectorySearch: {
+          label: "디렉터리 검색으로 열기",
+          description:
+            "프로젝트 추가를 디렉터리 검색에서 시작합니다. 뒤로 가면 다른 방법을 선택할 수 있습니다.",
+        },
+      },
       sendShortcut: {
         label: "전송 단축키",
         options: {
