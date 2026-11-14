@@ -116,6 +116,11 @@ export function DraggableList<T>({
         autoScrollEnabled={scrollViewRef !== null}
         // Clamped to the single column's width, so a dragged row moves only vertically.
         overDrag="vertical"
+        // Rows animate only while a drag reorders them. Otherwise a project expanding or
+        // collapsing would slide the rows below over its rows, and added rows would fade in.
+        itemsLayoutTransitionMode="reorder"
+        itemEntering={null}
+        itemExiting={null}
         // Rows style themselves from `isActive`; the other rows stay as they are.
         activeItemScale={1}
         activeItemShadowOpacity={0}
