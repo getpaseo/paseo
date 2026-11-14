@@ -1,3 +1,4 @@
+import React from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Server } from "lucide-react-native";

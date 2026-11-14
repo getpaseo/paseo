@@ -1,4 +1,15 @@
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+export { NetworkTunnelError, NetworkTunnelRpcError } from "./network-tunnel.js";
+export type {
+  NetworkTunnel,
+  NetworkTunnelLimits,
+  NetworkTunnelClosedReason,
+  NetworkTunnelStream,
+  NetworkTunnelStreamHandlers,
+  NetworkTunnelTarget,
+  NetworkTunnelErrorCode,
+  NetworkTunnelRpcErrorInit,
+} from "./network-tunnel.js";
 export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";

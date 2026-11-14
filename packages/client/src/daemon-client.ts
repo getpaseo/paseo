@@ -170,7 +170,9 @@ import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
   decodeTerminalStreamFrame,
+  decodeTunnelFrame,
   FileTransferOpcode,
+  isReservedTunnelOpcode,
   TerminalStreamOpcode,
   type FileTransferFrame,
   assertPluginWireValue,
@@ -179,6 +181,13 @@ import {
   isPluginFrameOpcode,
   PluginFrameOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
+import {
+  CLIENT_NETWORK_TUNNEL_LIMITS,
+  NetworkTunnelRpcError,
+  NetworkTunnelRegistry,
+  withinClientNetworkTunnelLimits,
+  type NetworkTunnel,
+} from "./network-tunnel.js";
 import {
   createRelayE2eeTransportFactory,
   createRelayUpgradeTransportFactory,
@@ -359,6 +368,15 @@ export type {
 } from "./daemon-client-transport.js";
 
 export type { TerminalStreamEvent };
+export type {
+  NetworkTunnel,
+  NetworkTunnelClosedReason,
+  NetworkTunnelLimits,
+  NetworkTunnelStream,
+  NetworkTunnelStreamHandlers,
+  NetworkTunnelTarget,
+} from "./network-tunnel.js";
+export { NetworkTunnelError, NetworkTunnelRpcError } from "./network-tunnel.js";
 
 export type ConnectionState =
   | { status: "idle" }
@@ -1471,6 +1489,24 @@ export class DaemonClient {
     failed: (error) => this.logger.error({ err: error }, "Diff observer failed"),
   });
   private readonly terminalStreams = new TerminalStreamRouter();
+  private readonly networkTunnels = new NetworkTunnelRegistry({
+    send: (frame) => this.sendBinaryFrame(frame),
+    close: (subscriptionId) => this.closeNetworkTunnelSubscription(subscriptionId),
+    createStreamId: () => crypto.randomUUID(),
+    closeProtocolViolation: (subscriptionId) => {
+      this.closeNetworkTunnelInBackground(subscriptionId, "Failed to close invalid network tunnel");
+    },
+    closeSendFailure: (subscriptionId, error) => {
+      this.logger.warn({ err: error, subscriptionId }, "Network tunnel frame was not sent");
+      this.closeNetworkTunnelInBackground(
+        subscriptionId,
+        "Failed to close network tunnel after a send failure",
+      );
+    },
+    handlerError: (error, handler) => {
+      this.logger.error({ err: error, handler }, "Network tunnel handler failed");
+    },
+  });
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
@@ -7232,6 +7268,74 @@ export class DaemonClient {
     return this.terminalStreams.onEvent(handler);
   }
 
+  async openNetworkTunnel(): Promise<NetworkTunnel> {
+    // COMPAT(networkTunnel): added in v0.12.0, remove after 2027-10-08.
+    if (this.lastServerInfoMessage?.features?.networkTunnel !== true) {
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "unsupported_feature",
+        message: "Update the host to use network tunneling.",
+      });
+    }
+    const openingTransport = this.transport;
+    let payload: CorrelatedResponsePayload<"network.tunnel.open.response">;
+    let tunnel: NetworkTunnel | undefined;
+    try {
+      payload = await this.sendCorrelatedSessionRequest({
+        message: { type: "network.tunnel.open.request", limits: CLIENT_NETWORK_TUNNEL_LIMITS },
+        responseType: "network.tunnel.open.response",
+        selectPayload: (response) => {
+          if (response.ok) {
+            const limits = {
+              initialWindowBytes: response.initialWindowBytes,
+              maxDataBytes: response.maxDataBytes,
+              maxStreams: response.maxStreams,
+              connectTimeoutMs: response.connectTimeoutMs,
+            };
+            if (withinClientNetworkTunnelLimits(limits)) {
+              // A closure can arrive in the same transport turn as this reply.
+              tunnel = this.networkTunnels.open(response.subscriptionId, limits);
+            }
+          }
+          return response;
+        },
+      });
+    } catch (error) {
+      if (error instanceof DaemonRpcError) {
+        throw new NetworkTunnelRpcError({
+          operation: "open",
+          code: error.code ?? "rpc_error",
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+    if (this.transport !== openingTransport || this.connectionState.status !== "connected") {
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "disconnected",
+        message: "The host connection changed before the network tunnel opened.",
+      });
+    }
+    if (!payload.ok) {
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: payload.error.code,
+        message: payload.error.message,
+      });
+    }
+    if (!tunnel) {
+      // Refuse at open rather than tear the tunnel down in the middle of a download.
+      await this.closeNetworkTunnelSubscription(payload.subscriptionId);
+      throw new NetworkTunnelRpcError({
+        operation: "open",
+        code: "protocol_error",
+        message: "The host answered with tunnel limits above the ones this client asked for.",
+      });
+    }
+    return tunnel;
+  }
+
   async waitForTerminalStreamEvent(
     predicate: (event: TerminalStreamEvent) => boolean,
     timeout = 5000,
@@ -7259,6 +7363,45 @@ export class DaemonClient {
 
   private createRequestId(requestId?: string): string {
     return requestId ?? crypto.randomUUID();
+  }
+
+  private closeNetworkTunnelInBackground(subscriptionId: string, failureMessage: string): void {
+    void this.closeNetworkTunnelSubscription(subscriptionId).catch((error) => {
+      this.logger.warn({ err: error, subscriptionId }, failureMessage);
+    });
+  }
+
+  private async closeNetworkTunnelSubscription(subscriptionId: string): Promise<void> {
+    let payload: CorrelatedResponsePayload<"network.tunnel.close.response">;
+    try {
+      payload = await this.sendCorrelatedSessionRequest({
+        message: { type: "network.tunnel.close.request", subscriptionId },
+        responseType: "network.tunnel.close.response",
+      });
+    } catch (error) {
+      if (error instanceof DaemonRpcError) {
+        throw new NetworkTunnelRpcError({
+          operation: "close",
+          code: error.code ?? "rpc_error",
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+    if (!payload.ok) {
+      throw new NetworkTunnelRpcError({
+        operation: "close",
+        code: payload.error.code,
+        message: payload.error.message,
+      });
+    }
+    if (payload.subscriptionId !== subscriptionId) {
+      throw new NetworkTunnelRpcError({
+        operation: "close",
+        code: "invalid_response",
+        message: "Network tunnel close response did not match the subscription",
+      });
+    }
   }
 
   private readonly legacyOptions = new LegacyProviderOptions();
@@ -7335,6 +7478,7 @@ export class DaemonClient {
     this.chunkedTransport?.close();
     this.chunkedTransport = null;
     this.owned.disconnected();
+    this.networkTunnels.disconnected();
     this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
     this.stopLivenessHeartbeat();
@@ -7549,6 +7693,28 @@ export class DaemonClient {
       return true;
     }
 
+    if (isReservedTunnelOpcode(rawBytes[0])) {
+      // A malformed frame or unknown subscription drops the transport and reconnects: ownership
+      // cannot be trusted, so the bad frame cannot be isolated (late frames for recently closed
+      // streams are ignored).
+      const tunnelFrame = decodeTunnelFrame(rawBytes);
+      if (!tunnelFrame) {
+        this.handleNetworkTunnelProtocolError("Malformed network tunnel frame");
+        return true;
+      }
+      this.traceInstant("paseo.ws.message.inbound", {
+        envelopeType: "binary",
+        messageType: "network_tunnel",
+        opcode: String(tunnelFrame.opcode),
+      });
+      this.consecutiveLivenessFailures = 0;
+      if (this.networkTunnels.receive(tunnelFrame) === "unknown_subscription") {
+        this.handleNetworkTunnelProtocolError("Unknown network tunnel subscription");
+      }
+      this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
+      return true;
+    }
+
     const frame = decodeTerminalStreamFrame(rawBytes);
     if (!frame) {
       return false;
@@ -7576,6 +7742,16 @@ export class DaemonClient {
       perfNow() - binaryStartMs,
     );
     return true;
+  }
+
+  private handleNetworkTunnelProtocolError(reason: string): void {
+    this.networkTunnels.disconnected();
+    this.disposeTransport(1002, reason);
+    this.scheduleReconnect({
+      reason,
+      event: "NETWORK_TUNNEL_PROTOCOL_ERROR",
+      reasonCode: "protocol_error",
+    });
   }
 
   private handleFileTransferFrame(frame: FileTransferFrame): void {
@@ -7733,6 +7909,7 @@ export class DaemonClient {
     }
 
     this.owned.disconnected();
+    this.networkTunnels.disconnected();
     this.diffStreams.disconnected();
     this.providerSnapshotUpdates.clear();
 
@@ -7897,6 +8074,8 @@ export class DaemonClient {
       this.config.providerSnapshots !== "wire",
     );
 
+    this.closeNetworkTunnelIfDaemonClosed(consumerMessage);
+
     if (consumerMessage.type === "status") {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
@@ -7960,6 +8139,11 @@ export class DaemonClient {
     }
     this.resolveWaiters(consumerMessage);
     this.owned.receive(consumerMessage);
+  }
+
+  private closeNetworkTunnelIfDaemonClosed(msg: SessionOutboundMessage): void {
+    if (msg.type !== "network.tunnel.closed") return;
+    this.networkTunnels.daemonClosed(msg.payload.subscriptionId, msg.payload.reason);
   }
 
   private resolveWaiters(msg: SessionOutboundMessage): void {
