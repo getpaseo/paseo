@@ -5,6 +5,7 @@ import {
   collectStandaloneTerminalIds,
   reconcilePendingScriptTerminals,
   removeTerminalFromPayload,
+  resolveWorkspaceTerminalsPushRoute,
   upsertCreatedTerminalPayload,
   type ListTerminalsPayload,
 } from "@/screens/workspace/terminals/state";
@@ -19,6 +20,37 @@ function createdTerminal(id: string): NonNullable<CreateTerminalResponse["payloa
 }
 
 describe("workspace terminal state", () => {
+  describe("resolveWorkspaceTerminalsPushRoute", () => {
+    it("returns a route with the workspace directory when one is known", () => {
+      const route = resolveWorkspaceTerminalsPushRoute({
+        enabled: true,
+        serverId: "srv-1",
+        workspaceDirectory: "/repo",
+        workspaceId: "wks-1",
+      });
+
+      expect(route).toEqual({
+        serverData: {
+          domain: "workspaceTerminals",
+          enabled: true,
+          serverId: "srv-1",
+          cwd: "/repo",
+          workspaceId: "wks-1",
+        },
+      });
+    });
+
+    it("returns undefined when the workspace directory is not known yet", () => {
+      expect(
+        resolveWorkspaceTerminalsPushRoute({
+          enabled: true,
+          serverId: "srv-1",
+          workspaceDirectory: null,
+        }),
+      ).toBeUndefined();
+    });
+  });
+
   it("keeps pending script terminals until they appear or a fresher list arrives", () => {
     const pending = new Map([
       ["older-than-list", 10],
