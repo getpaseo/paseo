@@ -191,6 +191,11 @@ interface StopAgentBackgroundWorkOptions {
   stopToken: string;
 }
 
+interface CloseAgentRuntimeOptions {
+  canClose?: () => boolean;
+  keepErrorStatus?: boolean;
+}
+
 async function resolveResumePurpose(
   record: StoredAgentRecord | null,
   requested: AgentResumePurpose | undefined,
@@ -269,7 +274,7 @@ export type {
 } from "./agent-timeline-store-types.js";
 
 export type AgentManagerEvent =
-  | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "agent_state"; agent: ManagedAgent; lastStatus?: StoredAgentRecord["lastStatus"] }
   | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | { type: "background_work"; agentId: string; items: AgentBackgroundWorkItem[] }
@@ -327,6 +332,12 @@ export type AgentAttentionCallback = (params: {
 }) => void;
 
 export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
+
+export interface ArchiveCascadeOptions {
+  // Active stored records the caller already read, so the parent/child cascade does not scan
+  // them again. Candidates are re-read from storage before they are archived or detached.
+  activeRecords?: readonly StoredAgentRecord[];
+}
 
 export interface ProviderAvailability {
   provider: AgentProvider;
@@ -2094,7 +2105,12 @@ export class AgentManager {
           this.collectingRuntimes.add(agent.id);
           try {
             return await this.runLifecycleMutation(agent.id, () =>
-              this.closeAgentRuntime(agent.id, () => isEligible() && revalidate()),
+              this.closeAgentRuntime(agent.id, {
+                canClose: () => isEligible() && revalidate(),
+                // The idle clock releases the process, not the outcome. A reaped failure
+                // keeps reporting as a failure until the agent is resumed.
+                keepErrorStatus: true,
+              }),
             );
           } finally {
             this.collectingRuntimes.delete(agent.id);
@@ -2107,7 +2123,7 @@ export class AgentManager {
 
   private runtimeHasNoPendingWork(agent: LiveManagedAgent): boolean {
     return (
-      agent.lifecycle === "idle" &&
+      (agent.lifecycle === "idle" || agent.lifecycle === "error") &&
       !agent.internal &&
       agent.activeForegroundTurnId === null &&
       !this.runs.hasRun(agent.id) &&
@@ -2142,7 +2158,10 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string, canClose?: () => boolean): Promise<boolean> {
+  private async closeAgentRuntime(
+    agentId: string,
+    options?: CloseAgentRuntimeOptions,
+  ): Promise<boolean> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -2157,7 +2176,7 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
-    if (canClose && !canClose()) return false;
+    if (options?.canClose && !options.canClose()) return false;
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
@@ -2166,15 +2185,19 @@ export class AgentManager {
     // close() drops the session's subscribers before the provider could report an empty list.
     this.clearBackgroundWork(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+    const lastStatus =
+      options?.keepErrorStatus && agent.lifecycle === "error" ? agent.lifecycle : undefined;
 
     let persistError: unknown;
     try {
-      await this.persistSnapshot(closedAgent);
+      await this.persistSnapshot(closedAgent, { lastStatus });
     } catch (error) {
       persistError = error;
     }
     this.detachPluginTools(agentId);
-    this.emitClosedAgent(closedAgent, { persist: false });
+    // A reaped failure keeps reporting as a failure to subscribed clients too, not only in the
+    // stored record: the close is a release of the process, not a change of outcome.
+    this.emitClosedAgent(closedAgent, { persist: false, lastStatus });
     this.logger.trace(
       {
         agentId,
@@ -2204,13 +2227,25 @@ export class AgentManager {
     }
   }
 
-  async archiveAgent(agentId: string, archivedAt?: string): Promise<{ archivedAt: string }> {
-    return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId, archivedAt));
+  async archiveAgent(
+    agentId: string,
+    archivedAt?: string,
+    options?: ArchiveCascadeOptions,
+  ): Promise<{ archivedAt: string }> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.archiveAgentUnlocked(agentId, archivedAt, options),
+    );
+  }
+
+  /** Active stored records, for a caller that archives many agents in one request. */
+  async listActiveAgentRecords(): Promise<StoredAgentRecord[]> {
+    return this.registry ? await this.registry.listActive() : [];
   }
 
   private async archiveAgentUnlocked(
     agentId: string,
     requestedArchivedAt?: string,
+    cascade?: ArchiveCascadeOptions,
   ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (agent.internal) {
@@ -2227,7 +2262,7 @@ export class AgentManager {
       await this.closeAgentRuntime(agentId);
       await this.deleteAgentState(agentId);
       this.retireInternalAgent({ record, lastMessage });
-      await this.cascadeArchiveChildren(record);
+      await this.cascadeArchiveChildren(record, cascade);
       return { archivedAt };
     }
     if (!this.registry) {
@@ -2249,7 +2284,7 @@ export class AgentManager {
     await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(archivedRecord);
+    await this.cascadeArchiveChildren(archivedRecord, cascade);
 
     return { archivedAt };
   }
@@ -2260,13 +2295,17 @@ export class AgentManager {
   // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(
     parent: Pick<ArchivedStoredAgentRecord, "id" | "workspaceId" | "archivedAt">,
+    cascade?: ArchiveCascadeOptions,
   ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
       return;
     }
     const parentAgentId = parent.id;
-    const records = await registry.listActive();
+    // A caller that archives many agents at once supplies one snapshot. Without one the scan
+    // happens here, after the parent is archived, so a child that opened its tab in between is
+    // still detached instead of archived.
+    const records = cascade?.activeRecords ?? (await registry.listActive());
     for (const record of records) {
       if (record.archivedAt) {
         continue;
@@ -2293,9 +2332,9 @@ export class AgentManager {
             this.dispatchStoredAgentState(detached.record);
           }
         } else if (this.agents.has(currentChild.id)) {
-          await this.archiveAgentUnlocked(currentChild.id, parent.archivedAt);
+          await this.archiveAgentUnlocked(currentChild.id, parent.archivedAt, cascade);
         } else {
-          await this.archiveSnapshotUnlocked(currentChild.id, parent.archivedAt);
+          await this.archiveSnapshotUnlocked(currentChild.id, parent.archivedAt, cascade);
         }
       });
     }
@@ -2311,7 +2350,7 @@ export class AgentManager {
         if (!current || getParentAgentIdFromLabels(current.labels) !== parentAgentId) {
           return;
         }
-        await this.archiveAgentUnlocked(current.id, parent.archivedAt);
+        await this.archiveAgentUnlocked(current.id, parent.archivedAt, cascade);
       });
     }
   }
@@ -2829,21 +2868,26 @@ export class AgentManager {
     this.dispatchStoredAgentState(nextRecord);
   }
 
-  async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+  async archiveSnapshot(
+    agentId: string,
+    archivedAt: string,
+    options?: ArchiveCascadeOptions,
+  ): Promise<StoredAgentRecord> {
     return this.runLifecycleMutation(agentId, () =>
-      this.archiveSnapshotUnlocked(agentId, archivedAt),
+      this.archiveSnapshotUnlocked(agentId, archivedAt, options),
     );
   }
 
   private async archiveSnapshotUnlocked(
     agentId: string,
     archivedAt: string,
+    cascade?: ArchiveCascadeOptions,
   ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     // A stored-only archive can have waited behind a persisted resume. Reuse the
     // live archive transition so its newly acquired runtime is closed as well.
     if (this.agents.has(agentId)) {
-      await this.archiveAgentUnlocked(agentId, archivedAt);
+      await this.archiveAgentUnlocked(agentId, archivedAt, cascade);
       const archivedRecord = await registry.get(agentId);
       if (!archivedRecord) throw new Error(`Agent not found: ${agentId}`);
       return archivedRecord;
@@ -2862,7 +2906,7 @@ export class AgentManager {
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(nextRecord);
+    await this.cascadeArchiveChildren(nextRecord, cascade);
 
     return nextRecord;
   }
@@ -4607,7 +4651,10 @@ export class AgentManager {
     this.clearBackgroundWork(agentId);
   }
 
-  private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
+  private emitClosedAgent(
+    agent: ManagedAgentClosed,
+    options?: { persist?: boolean; lastStatus?: StoredAgentRecord["lastStatus"] },
+  ): void {
     this.emitState(agent, options);
     if (!agent.internal) {
       this.pluginLifecycle?.emit("agent.close.after", {
@@ -4777,7 +4824,11 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      lastStatus?: StoredAgentRecord["lastStatus"];
+    },
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -5715,7 +5766,10 @@ export class AgentManager {
     return row;
   }
 
-  private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {
+  private emitState(
+    agent: ManagedAgent,
+    options?: { persist?: boolean; lastStatus?: StoredAgentRecord["lastStatus"] },
+  ): void {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
     if (options?.persist !== false) {
@@ -5741,6 +5795,7 @@ export class AgentManager {
     this.dispatch({
       type: "agent_state",
       agent: { ...agent },
+      lastStatus: options?.lastStatus,
     });
   }
 

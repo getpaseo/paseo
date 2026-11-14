@@ -9928,6 +9928,41 @@ test("archiveAgent cascade archives in-memory children with the full archive con
   expect(storedUnrelated?.archivedAt).toBeUndefined();
 });
 
+test("archiveAgent cascades from a caller-supplied active-record snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-snapshot-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const children = [];
+  for (const title of ["Child one", "Child two"]) {
+    children.push(
+      await manager.createAgent({ provider: "codex", cwd: workdir, title }, undefined, {
+        labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+        workspaceId: undefined,
+      }),
+    );
+  }
+  const activeRecords = await manager.listActiveAgentRecords();
+  const listActive = vi.spyOn(storage, "listActive");
+
+  await manager.archiveAgent(parent.id, undefined, { activeRecords });
+
+  // The parent and every cascaded child come from the one snapshot, with no further scans.
+  expect(listActive).not.toHaveBeenCalled();
+  for (const child of children) {
+    expect((await storage.get(child.id))?.archivedAt).toBeDefined();
+  }
+});
+
 test("archiveAgent detaches an open same-workspace child instead of cascading", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-open-child-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -11268,6 +11303,84 @@ test("idle runtime cleanup honors a provider veto and resumes the saved conversa
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
+});
+
+test("idle runtime cleanup reaps a settled error runtime on the same clock", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-error-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ErrorClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new ErrorClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const collect = runtimeCleanup(manager);
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id).catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  const closedUpdates: Array<{ lifecycle: string; lastStatus?: string }> = [];
+  const unsubscribeClosedUpdates = manager.subscribe(
+    (event) => {
+      if (
+        event.type === "agent_state" &&
+        event.agent.id === agent.id &&
+        event.agent.lifecycle === "closed"
+      ) {
+        closedUpdates.push({ lifecycle: event.agent.lifecycle, lastStatus: event.lastStatus });
+      }
+    },
+    { replayState: false },
+  );
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Provider turn failed.",
+  });
+  await failed;
+  await manager.flush();
+
+  const now = new Date(Date.now() + 61 * 60_000);
+  expect((await collect({ now })).collected).toEqual([
+    { agentId: agent.id, provider: "codex", sessionId: agent.persistence?.sessionId },
+  ]);
+  expect(manager.getAgent(agent.id)).toBeNull();
+
+  // The published close carries the preserved status, so a subscribed client does not see the
+  // agent flip from failed to closed when the idle clock collects it.
+  expect(closedUpdates).toEqual([{ lifecycle: "closed", lastStatus: "error" }]);
+  unsubscribeClosedUpdates();
+
+  // The reap releases the process, not the outcome: the stored record still reports the failure
+  // and its attention, so the list does not turn a failed agent into a closed one.
+  const reaped = await storage.get(agent.id);
+  expect(reaped).toMatchObject({
+    lastStatus: "error",
+    lastError: "Provider turn failed.",
+    requiresAttention: true,
+    attentionReason: "error",
+  });
+
+  const resumed = await ensureAgentLoaded(agent.id, {
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  expect(resumed.id).toBe(agent.id);
+  await manager.runAgent(agent.id, "Continue after the failure");
+  expect(manager.getAgent(agent.id)?.lifecycle).not.toBe("closed");
 });
 
 test("idle agents remain resident until an explicit lifecycle action closes them", async () => {

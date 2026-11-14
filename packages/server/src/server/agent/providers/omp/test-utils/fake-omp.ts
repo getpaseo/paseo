@@ -298,6 +298,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.onAbort?.();
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
   async getState(): Promise<OmpSessionState> {
     this.getStateRequestCount += 1;
     for (const waiter of this.stateRequestWaiters.splice(0)) {

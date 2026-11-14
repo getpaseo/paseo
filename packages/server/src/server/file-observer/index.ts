@@ -5,6 +5,8 @@ import { createNativeRecursiveBackend } from "./internal/native-recursive.js";
 import { createManagedObservation, type ManagedObservation } from "./internal/observation.js";
 import { createObserverPaths } from "./internal/paths.js";
 
+export { FileObservationLimitError } from "./internal/limit-error.js";
+
 export type FileChangeType = "create" | "update" | "delete";
 
 export interface FileChange {

@@ -69,6 +69,7 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
   type SubscribeToFileChanges,
+  FileObservationLimitError,
   createFileObserver,
 } from "./file-observer/index.js";
 import {
@@ -81,6 +82,9 @@ import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import { createWatcherLivenessCanary } from "./watcher-liveness-canary.js";
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
+// Read-only snapshots create a target with no listener to release it. Keep the cache long enough
+// for a burst of related reads, then let the next read pay for a fresh snapshot.
+export const WORKSPACE_GIT_TARGET_IDLE_TTL_MS = 5 * 60_000;
 export const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 const FETCH_METADATA_ECHO_TTL_MS = 5_000;
 export const WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS = 60_000;
@@ -218,6 +222,11 @@ export interface WorkspaceGitService {
 
   /** Publishes computed snapshot changes independently of workspace UI subscriptions. */
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
+  /**
+   * True while a workspace listener holds this directory open. A target with no listener keeps
+   * only the snapshot of its last read, which may be arbitrarily old.
+   */
+  hasWorkspaceListener(cwd: string): boolean;
   getCheckout(
     cwd: string,
     options?: WorkspaceGitCheckoutReadOptions,
@@ -445,7 +454,7 @@ class WorkspaceGitServiceDisposedError extends Error {
   }
 }
 
-class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
+export class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
   constructor(watchPath: string) {
     super(
       `Watcher subscription for ${watchPath} timed out after ${WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS}ms`,
@@ -460,6 +469,7 @@ interface WorkspaceGitTarget {
   listeners: Set<WorkspaceGitListener>;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
   debounceTimer: NodeJS.Timeout | null;
+  releaseTimer: NodeJS.Timeout | null;
   pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   observationReensureTimer: NodeJS.Timeout | null;
   forgePrStatusPollSubscription: { unsubscribe: () => void } | null;
@@ -556,6 +566,8 @@ interface WorkingTreeWatchTarget {
   ignoreRefreshDeadlineMs: number | null;
   aliases: Set<string>;
   workspaceKeys: Set<string>;
+  // The tree is past what recursive observation can hold; re-subscribing would only repeat the scan.
+  recursiveLimitExceeded: boolean;
   fallbackPolling: boolean;
   fallbackPollTimer: NodeJS.Timeout | null;
   fallbackPollQuietTickCount: number;
@@ -723,6 +735,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.assertNotDisposed();
     const cwd = resolve(params.cwd);
     const target = this.ensureWorkspaceTarget(cwd);
+    if (target.releaseTimer) {
+      clearTimeout(target.releaseTimer);
+      target.releaseTimer = null;
+    }
     target.listeners.add(listener);
     if (target.folderMissing) {
       void this.resumeWorkspaceIfFolderRestored(target);
@@ -750,6 +766,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.snapshotUpdatedListeners.delete(listener);
       },
     };
+  }
+
+  hasWorkspaceListener(cwd: string): boolean {
+    return (this.workspaceTargets.get(resolve(cwd))?.listeners.size ?? 0) > 0;
   }
 
   getMetrics(): WorkspaceGitServiceMetrics {
@@ -816,6 +836,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const request = this.normalizeRefreshRequest(options, "getSnapshot");
     const target = this.ensureWorkspaceTarget(cwd);
     if (!request.force && target.latestSnapshot) {
+      this.scheduleWorkspaceTargetRelease(target);
       return target.latestSnapshot;
     }
     if (target.folderMissing) {
@@ -1310,6 +1331,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       listeners: new Set(),
       workingTreeWatchTarget: null,
       debounceTimer: null,
+      releaseTimer: null,
       pendingDebounceRequest: null,
       observationReensureTimer: null,
       forgePrStatusPollSubscription: null,
@@ -1516,6 +1538,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       ignoreRefreshDeadlineMs: null,
       aliases: new Set([cwd]),
       workspaceKeys: new Set(),
+      recursiveLimitExceeded: false,
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
@@ -1661,6 +1684,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             }
             watcherErrored = true;
             this.watcherErrorCallbackCount += 1;
+            this.noteRecursiveLimit(target, error);
             this.logger.warn(
               { err: error, cwd: target.cwd },
               "Working tree watcher error; using degraded polling",
@@ -1726,6 +1750,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (this.disposed || target.closed) {
         return false;
       }
+      this.noteRecursiveLimit(target, error);
       this.logger.warn(
         { err: error, cwd: target.cwd },
         "Failed to start working tree watcher; using degraded polling",
@@ -1959,8 +1984,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  private noteRecursiveLimit(target: WorkingTreeWatchTarget, error: unknown): void {
+    if (!(error instanceof FileObservationLimitError) || target.recursiveLimitExceeded) return;
+    target.recursiveLimitExceeded = true;
+    this.logger.warn({ cwd: target.cwd }, "Working tree is too large to watch; staying on polling");
+  }
+
   private scheduleWorkingTreeWatchRecovery(target: WorkingTreeWatchTarget): void {
-    if (target.closed || target.subscription || target.recovery.timer) {
+    if (
+      target.closed ||
+      target.subscription ||
+      target.recovery.timer ||
+      target.recursiveLimitExceeded
+    ) {
       return;
     }
     const delayMs = this.advanceWatchRecoveryLadder(target.recovery);
@@ -2312,6 +2348,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.appliedIgnoreList = next;
     } catch (error) {
       target.subscription = null;
+      this.noteRecursiveLimit(target, error);
       if (!target.closed && !target.fallbackPolling) {
         this.startWorkingTreeWatchFallback(target, "watcher_update_failed");
         this.scheduleWorkingTreeWatchRecovery(target);
@@ -3368,6 +3405,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (state.status === "in-flight" && state.promise === promise) {
         target.refreshState = { status: "idle" };
       }
+      this.scheduleWorkspaceTargetRelease(target);
     });
     this.pendingRefreshes.add(promise);
     target.refreshState = {
@@ -4079,6 +4117,46 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.removeWorkspaceTarget(target);
   }
 
+  private scheduleWorkspaceTargetRelease(target: WorkspaceGitTarget): void {
+    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+      return;
+    }
+    if (target.listeners.size > 0 || target.refreshState.status !== "idle") {
+      return;
+    }
+    if (target.releaseTimer) {
+      clearTimeout(target.releaseTimer);
+    }
+    const timer = setTimeout(() => {
+      target.releaseTimer = null;
+      if (!this.isIdleUnobservedWorkspaceTarget(target)) {
+        // A suspended target keeps arming its missing-folder probe, which counts as busy. Check
+        // again after another TTL instead of dropping the timer, so the target still releases
+        // once the probe clears.
+        this.scheduleWorkspaceTargetRelease(target);
+        return;
+      }
+      this.removeWorkspaceTarget(target);
+    }, WORKSPACE_GIT_TARGET_IDLE_TTL_MS);
+    timer.unref();
+    target.releaseTimer = timer;
+  }
+
+  private isIdleUnobservedWorkspaceTarget(target: WorkspaceGitTarget): boolean {
+    return (
+      !target.closed &&
+      this.workspaceTargets.get(target.cwd) === target &&
+      target.listeners.size === 0 &&
+      target.refreshState.status === "idle" &&
+      target.debounceTimer === null &&
+      target.pendingDebounceRequest === null &&
+      target.observationReensureTimer === null &&
+      target.observationSetupPromise === null &&
+      target.folderRestorePromise === null &&
+      target.forgePrStatusPollSubscription === null
+    );
+  }
+
   private removeWorkspaceTarget(target: WorkspaceGitTarget): void {
     this.detachWorkspaceFromRepoTarget(target);
     this.closeWorkspaceTarget(target);
@@ -4155,6 +4233,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
       target.debounceTimer = null;
+    }
+    if (target.releaseTimer) {
+      clearTimeout(target.releaseTimer);
+      target.releaseTimer = null;
     }
     target.pendingDebounceRequest = null;
     if (target.observationReensureTimer) {

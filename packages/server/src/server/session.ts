@@ -25,6 +25,7 @@ import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/me
 import type { MessageReceipts } from "./message-receipts/index.js";
 import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
+import pLimit from "p-limit";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
@@ -53,6 +54,7 @@ import {
 } from "./messages.js";
 import type {
   TerminalManager,
+  TerminalsChangedEvent,
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
@@ -97,7 +99,7 @@ import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-stor
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, hasOpenAgentTab } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
@@ -263,8 +265,13 @@ import {
   summarizeFetchWorkspacesEntries,
   workspaceIdsOnCheckout,
   WorkspaceDirectory,
+  type WorkspaceObservationTarget,
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
+import {
+  isLiveWorkspace,
+  WORKSPACE_LIVENESS_WINDOW_MS,
+} from "./session/workspace-git-observer/workspace-liveness.js";
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
   createPaseoWorktree,
@@ -363,6 +370,13 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
+
+/** Simultaneous one-shot git reads for workspaces no watcher covers. */
+const WORKSPACE_GIT_WARM_UP_CONCURRENCY = 2;
+/** How long a failed one-shot read keeps that directory out of the warm-up. */
+export const WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS = 5 * 60_000;
+/** Directories remembered as failing, so a stuck repository cannot grow the map without bound. */
+const WORKSPACE_GIT_WARM_UP_FAILURE_LIMIT = 100;
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -591,6 +605,7 @@ export interface SessionOptions {
   getDaemonTcpHost?: () => string | null;
   serviceProxyPublicBaseUrl?: string | null;
   resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
+  forgetWorkspaceScriptHealth?: (workspaceId: string) => void;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
@@ -714,6 +729,29 @@ function workspaceLabelErrorCode(error: unknown): string {
   return "workspace_label_failed";
 }
 
+function sameWorkspaceIdSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const workspaceId of left) {
+    if (!right.has(workspaceId)) return false;
+  }
+  return true;
+}
+
+/** Newest of the activity timestamps, all of them ISO strings from the same format. */
+function latestTimestamp(candidates: Array<string | null>): string | null {
+  let latest: string | null = null;
+  for (const candidate of candidates) {
+    if (candidate && (latest === null || candidate > latest)) latest = candidate;
+  }
+  return latest;
+}
+
+/** Workspaces with a loaded agent runtime, and workspaces with an open agent tab label. */
+interface AgentWorkspaceLiveness {
+  loadedWorkspaceIds: ReadonlySet<string>;
+  openTabWorkspaceIds: ReadonlySet<string>;
+}
+
 interface ClientActivity {
   deviceType: "web" | "mobile";
   focusedAgentId: string | null;
@@ -828,6 +866,26 @@ export class Session {
     }
   >();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
+  private unsubscribeTerminalsChanged: (() => void) | null = null;
+  private unsubscribeDaemonConfigChanged: (() => void) | null = null;
+  private observedAutoArchiveAfterMerge = false;
+  /** Last workspace ownership seen per terminal cwd, used to notice terminal lifecycle changes. */
+  private readonly liveTerminalWorkspaceIdsByCwd = new Map<string, ReadonlySet<string>>();
+  /** Last workspace ownership seen from loaded agents, used to notice agent lifecycle changes. */
+  private loadedAgentWorkspaceIds: ReadonlySet<string> | null = null;
+  /** Last workspaces carrying an open agent tab label, part of the same change check. */
+  private openAgentTabWorkspaceIds: ReadonlySet<string> | null = null;
+  /** Workspaces watched on demand outside the liveness sweep, and when they were touched. */
+  private readonly workspaceObserverTouchTimes = new Map<string, number>();
+  /** Tail of the serialized liveness reconciles, so a slow run cannot apply a stale set. */
+  private workspaceGitObserverReconcileTail: Promise<void> = Promise.resolve();
+  /** A liveness read that started before the current reconcile needs its own run afterwards. */
+  private workspaceGitObserverReconcileRequested = false;
+  /** Directories with a one-shot git read in flight for a workspace that is not watched. */
+  private readonly workspaceGitWarmUpCwds = new Set<string>();
+  /** When each directory's last one-shot read failed, so it is not retried on every reconcile. */
+  private readonly workspaceGitWarmUpFailures = new Map<string, number>();
+  private readonly workspaceGitWarmUpLimit = pLimit(WORKSPACE_GIT_WARM_UP_CONCURRENCY);
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
     string,
@@ -847,6 +905,7 @@ export class Session {
   private readonly getDaemonTcpHost: (() => string | null) | null;
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
+  private readonly forgetWorkspaceScriptHealth: ((workspaceId: string) => void) | undefined;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
@@ -1286,6 +1345,7 @@ export class Session {
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.forgetWorkspaceScriptHealth = options.forgetWorkspaceScriptHealth;
     this.workspaceScripts = createWorkspaceScriptsService({
       serviceProxy: this.serviceProxy,
       scriptRuntimeStore: this.scriptRuntimeStore,
@@ -1599,8 +1659,11 @@ export class Session {
     const demanded = [...this.workspaceUpdatesSubscriptions.values()].some((subscription) =>
       this.matchesWorkspaceFilter({ workspace: descriptor, filter: subscription.filter }),
     );
-    if (demanded || this.wantsEvent("checkout_status_update"))
-      this.workspaceGitObserver.syncObservers([descriptor]);
+    if (!demanded && !this.wantsEvent("checkout_status_update")) return;
+    // An on-demand watch counts as activity, so the next reconcile keeps it for the window.
+    this.workspaceObserverTouchTimes.set(workspace.workspaceId, Date.now());
+    this.workspaceGitWarmUpFailures.delete(workspace.cwd);
+    this.workspaceGitObserver.syncObservers([descriptor]);
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
@@ -1878,14 +1941,56 @@ export class Session {
             ),
           );
         }) ?? null;
+      this.unsubscribeTerminalsChanged ??=
+        this.terminalManager?.subscribeTerminalsChanged((event) => {
+          if (!this.terminalLivenessChanged(event)) return;
+          void this.reconcileWorkspaceGitObservers().catch((error) => {
+            this.sessionLogger.warn(
+              { err: error, cwd: event.cwd },
+              "Failed to re-evaluate workspace git observation after terminal change",
+            );
+          });
+        }) ?? null;
+      if (!this.unsubscribeDaemonConfigChanged) {
+        // Turning auto-archive on makes every owned worktree live; the reconcile only runs on events.
+        this.observedAutoArchiveAfterMerge =
+          this.daemonConfigStore.get().autoArchiveAfterMerge === true;
+        this.unsubscribeDaemonConfigChanged = this.daemonConfigStore.onChange((config) => {
+          const enabled = config.autoArchiveAfterMerge === true;
+          if (enabled === this.observedAutoArchiveAfterMerge) return;
+          this.observedAutoArchiveAfterMerge = enabled;
+          void this.reconcileWorkspaceGitObservers().catch((error) => {
+            this.sessionLogger.warn(
+              { err: error },
+              "Failed to re-evaluate workspace git observation after auto-archive setting change",
+            );
+          });
+        });
+      }
     } else {
+      this.unsubscribeDaemonConfigChanged?.();
+      this.unsubscribeDaemonConfigChanged = null;
       this.unsubscribeProjectMutations?.();
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
       this.unsubscribeWorkspaceMutations = null;
       this.unsubscribeTerminalWorkspaceContributionEvents?.();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
+      this.unsubscribeTerminalsChanged?.();
+      this.unsubscribeTerminalsChanged = null;
+      this.resetWorkspaceLivenessBaselines();
     }
+  }
+
+  /**
+   * The change checks compare against the last observed sets, so dropping a
+   * subscription must drop its baselines too. Otherwise a resubscribe compares
+   * fresh events against workspaces that are no longer live.
+   */
+  private resetWorkspaceLivenessBaselines(): void {
+    this.liveTerminalWorkspaceIdsByCwd.clear();
+    this.loadedAgentWorkspaceIds = null;
+    this.openAgentTabWorkspaceIds = null;
   }
 
   private refreshCatalogProducers(legacy: boolean): void {
@@ -2128,6 +2233,10 @@ export class Session {
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
+        if (event.type === "agent_state" || event.type === "agent_removed") {
+          this.reconcileObserversAfterAgentChange();
+        }
+
         if (event.type === "timeline_replacement") {
           this.deliverTimelineReplacement(event.agentId, this.rewindInitiators.get(event.agentId));
           return;
@@ -2162,7 +2271,7 @@ export class Session {
             },
             "agent.session.forward_update",
           );
-          void this.agentUpdates.forwardLiveAgent(event.agent);
+          void this.agentUpdates.forwardLiveAgent(event.agent, event.lastStatus);
           return;
         }
 
@@ -6512,7 +6621,10 @@ export class Session {
 
   private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
+    this.serviceProxy?.removeRoutesForWorkspace(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
+    this.workspaceSetupObservation.forgetWorkspace(workspaceId);
+    this.forgetWorkspaceScriptHealth?.(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   }
 
@@ -7221,18 +7333,260 @@ export class Session {
     return { snapshotByWorkspaceId };
   }
 
-  private async reconcileWorkspaceGitObservers(): Promise<void> {
-    const all = this.wantsEvent("checkout_status_update")
-      ? await this.workspaceDirectory.listObservationTargets()
+  private reconcileWorkspaceGitObservers(): Promise<void> {
+    this.workspaceGitObserverReconcileRequested = true;
+    const run = this.workspaceGitObserverReconcileTail.then(() =>
+      this.runWorkspaceGitObserverReconcile(),
+    );
+    this.workspaceGitObserverReconcileTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runWorkspaceGitObserverReconcile(): Promise<void> {
+    if (!this.workspaceGitObserverReconcileRequested || this.isCleanedUp) return;
+    // Coalesce a burst of events into this run plus at most one rerun that reads fresh data.
+    this.workspaceGitObserverReconcileRequested = false;
+    await this.applyWorkspaceGitObserverReconcile();
+  }
+
+  private async applyWorkspaceGitObserverReconcile(): Promise<void> {
+    this.pruneExpiredWorkspaceObserverTouches();
+    const explicitlySubscribed = this.listExplicitWorkspaceSubscriptions();
+    const wanted = this.wantsEvent("checkout_status_update");
+    const needsGitData = wanted || this.delivery.hasDemand("workspaces");
+    const targets = needsGitData ? await this.workspaceDirectory.listObservationTargets() : [];
+    const live = wanted
+      ? await this.listLiveWorkspaceObservationTargets(targets, explicitlySubscribed)
       : [];
-    const entries = [...this.workspaceUpdatesSubscriptions.values()].flatMap((subscription) =>
-      [...subscription.lastEmittedByWorkspaceId.values()].flatMap((update) =>
-        update.kind === "upsert" ? [update.workspace] : [],
-      ),
-    );
+    // A terminal-triggered check can outlive the session. cleanup() disposed the observer, so
+    // registering here would revive watches for a dead session and keep them running.
+    if (this.isCleanedUp) return;
     this.workspaceGitObserver.reconcileObservers(
-      this.wantsEvent("checkout_status_update") ? [...entries, ...all] : entries,
+      wanted ? [...explicitlySubscribed, ...live] : explicitlySubscribed,
     );
+    if (needsGitData) this.fillGitDataForUnwatchedWorkspaces(targets, live);
+  }
+
+  private pruneExpiredWorkspaceObserverTouches(): void {
+    const now = Date.now();
+    for (const [workspaceId, touchedAt] of this.workspaceObserverTouchTimes) {
+      if (now - touchedAt > WORKSPACE_LIVENESS_WINDOW_MS) {
+        this.workspaceObserverTouchTimes.delete(workspaceId);
+      }
+    }
+  }
+
+  /**
+   * Workspaces a client asked for by narrowing `fetch_workspaces`. The unfiltered
+   * workspace-list subscription feeds every active workspace to the client and
+   * must not force an observation; that is the fan-out this session is avoiding.
+   */
+  private listExplicitWorkspaceSubscriptions(): WorkspaceDescriptorPayload[] {
+    return [...this.workspaceUpdatesSubscriptions.values()].flatMap((subscription) => {
+      const filter = subscription.filter;
+      if (!filter?.projectId?.trim() && !filter?.query?.trim()) return [];
+      return [...subscription.lastEmittedByWorkspaceId.values()].flatMap((update) =>
+        update.kind === "upsert" ? [update.workspace] : [],
+      );
+    });
+  }
+
+  private async listLiveWorkspaceObservationTargets(
+    targets: readonly WorkspaceObservationTarget[],
+    subscribed: Iterable<Pick<WorkspaceDescriptorPayload, "id">>,
+  ): Promise<WorkspaceObservationTarget[]> {
+    if (targets.length === 0) return [];
+    const subscribedWorkspaceIds = new Set(Array.from(subscribed, (workspace) => workspace.id));
+    const [lastUserMessageTimes, liveTerminalWorkspaceIds] = await Promise.all([
+      this.agentDirectory.workspaceLastUserMessageTimes(targets.map((target) => target.id)),
+      this.listLiveTerminalWorkspaceIds(),
+    ]);
+    const agentLiveness = await this.listAgentWorkspaceLiveness();
+    const autoArchiveAfterMerge = this.daemonConfigStore.get().autoArchiveAfterMerge === true;
+    const now = Date.now();
+
+    return targets.filter((target) => {
+      const touchedAt = this.workspaceObserverTouchTimes.get(target.id);
+      const lastActivityAt = latestTimestamp([
+        target.updatedAt,
+        lastUserMessageTimes.get(target.id) ?? null,
+        touchedAt === undefined ? null : new Date(touchedAt).toISOString(),
+      ]);
+      return isLiveWorkspace(
+        {
+          lastActivityAt,
+          hasLoadedAgent: agentLiveness.loadedWorkspaceIds.has(target.id),
+          hasOpenAgentTab: agentLiveness.openTabWorkspaceIds.has(target.id),
+          hasLiveTerminal: liveTerminalWorkspaceIds.has(target.id),
+          hasRunningScript: this.hasRunningWorkspaceScript(target.id),
+          isExplicitlySubscribed: subscribedWorkspaceIds.has(target.id),
+          isAutoArchiveCandidate: autoArchiveAfterMerge && target.isPaseoOwnedWorktree,
+          hasOpenPullRequest: this.hasKnownOpenPullRequest(target.workspaceDirectory),
+        },
+        now,
+      );
+    });
+  }
+
+  /**
+   * Loaded runtimes are the only agent signal that can change without touching storage. Open-tab
+   * labels outlive the runtime: the idle clock collects a runnable agent and leaves its record and
+   * its open tab behind, so they have to be read from the stored records as well. Reading them from
+   * storage does not load a runtime.
+   */
+  private async listAgentWorkspaceLiveness(): Promise<AgentWorkspaceLiveness> {
+    const loadedWorkspaceIds = new Set<string>();
+    const openTabWorkspaceIds = new Set<string>();
+    for (const agent of this.agentManager.listAgents({ includeInternal: true })) {
+      if (!agent.workspaceId) continue;
+      if (agent.lifecycle !== "closed") loadedWorkspaceIds.add(agent.workspaceId);
+      if (hasOpenAgentTab(agent.labels)) openTabWorkspaceIds.add(agent.workspaceId);
+    }
+    for (const record of await this.agentStorage.listActive()) {
+      if (record.workspaceId && hasOpenAgentTab(record.labels)) {
+        openTabWorkspaceIds.add(record.workspaceId);
+      }
+    }
+    return { loadedWorkspaceIds, openTabWorkspaceIds };
+  }
+
+  private async listLiveTerminalWorkspaceIds(): Promise<ReadonlySet<string>> {
+    const terminalManager = this.terminalManager;
+    const workspaceIds = new Set<string>();
+    if (!terminalManager) return workspaceIds;
+    const terminals = await Promise.all(
+      terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
+    );
+    for (const terminal of terminals.flat()) {
+      if (terminal.workspaceId) workspaceIds.add(terminal.workspaceId);
+    }
+    return workspaceIds;
+  }
+
+  private hasRunningWorkspaceScript(workspaceId: string): boolean {
+    const scripts = this.scriptRuntimeStore?.listForWorkspace(workspaceId) ?? [];
+    return scripts.some((script) => script.lifecycle === "running");
+  }
+
+  private hasKnownOpenPullRequest(cwd: string): boolean {
+    const pullRequest = this.workspaceRuntimeStore.get(cwd)?.forge.pullRequest;
+    return pullRequest?.state.toLowerCase() === "open";
+  }
+
+  /**
+   * A workspace with no watcher receives no snapshots, so its list row has no branch, dirty
+   * count or pull-request badge until something opens it. Read each unwatched directory once
+   * to fill the runtime store its descriptor reads. The one-shot read registers no listener,
+   * so no watcher starts, and the target releases after its idle TTL.
+   */
+  private fillGitDataForUnwatchedWorkspaces(
+    targets: readonly WorkspaceObservationTarget[],
+    liveTargets: readonly WorkspaceObservationTarget[],
+  ): void {
+    const liveWorkspaceIds = new Set(liveTargets.map((target) => target.id));
+    // A live directory is either watched or touched, so an earlier failure no longer applies.
+    for (const target of liveTargets) {
+      this.workspaceGitWarmUpFailures.delete(target.workspaceDirectory);
+    }
+    // One directory can back several workspace records and the read is shared by directory, so
+    // collect every record that shares it instead of emitting for whichever was seen first.
+    const workspaceIdsByCwd = new Map<string, string[]>();
+    for (const target of targets) {
+      if (liveWorkspaceIds.has(target.id) || target.workspaceKind === "directory") continue;
+      const workspaceIds = workspaceIdsByCwd.get(target.workspaceDirectory);
+      if (workspaceIds) workspaceIds.push(target.id);
+      else workspaceIdsByCwd.set(target.workspaceDirectory, [target.id]);
+    }
+    for (const [cwd, workspaceIds] of workspaceIdsByCwd) {
+      void this.fillGitDataForWorkspace(cwd, workspaceIds);
+    }
+  }
+
+  private fillGitDataForWorkspace(cwd: string, workspaceIds: readonly string[]): Promise<void> {
+    if (this.workspaceRuntimeStore.get(cwd) || this.workspaceGitWarmUpCwds.has(cwd)) {
+      return Promise.resolve();
+    }
+    const failedAt = this.workspaceGitWarmUpFailures.get(cwd);
+    if (failedAt !== undefined) {
+      if (Date.now() - failedAt < WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS) return Promise.resolve();
+      this.workspaceGitWarmUpFailures.delete(cwd);
+    }
+    this.workspaceGitWarmUpCwds.add(cwd);
+    return this.workspaceGitWarmUpLimit(async () => {
+      try {
+        await this.workspaceGitService.getSnapshot(cwd);
+        if (this.isCleanedUp) return;
+        await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
+      } catch (error) {
+        this.recordWorkspaceGitWarmUpFailure(cwd);
+        this.sessionLogger.warn(
+          { err: error, workspaceIds, cwd },
+          "Failed to read git state for an unwatched workspace",
+        );
+      } finally {
+        this.workspaceGitWarmUpCwds.delete(cwd);
+      }
+    });
+  }
+
+  /**
+   * A directory whose git commands fail fails them again on the next run. Remember the failure
+   * for a while so a stuck repository is retried on that timer, not on every reconcile.
+   */
+  private recordWorkspaceGitWarmUpFailure(cwd: string): void {
+    this.workspaceGitWarmUpFailures.delete(cwd);
+    while (this.workspaceGitWarmUpFailures.size >= WORKSPACE_GIT_WARM_UP_FAILURE_LIMIT) {
+      const oldest = this.workspaceGitWarmUpFailures.keys().next().value;
+      if (oldest === undefined) break;
+      this.workspaceGitWarmUpFailures.delete(oldest);
+    }
+    this.workspaceGitWarmUpFailures.set(cwd, Date.now());
+  }
+
+  /**
+   * Terminal title and activity changes arrive on the same event as terminal
+   * lifecycle changes. Only a change in which workspaces own terminals can change
+   * liveness, so return whether that happened.
+   */
+  private terminalLivenessChanged(event: TerminalsChangedEvent): boolean {
+    const previous = this.liveTerminalWorkspaceIdsByCwd.get(event.cwd);
+    const next = new Set<string>();
+    for (const terminal of event.terminals) {
+      if (terminal.workspaceId) next.add(terminal.workspaceId);
+    }
+    if (next.size === 0) this.liveTerminalWorkspaceIdsByCwd.delete(event.cwd);
+    else this.liveTerminalWorkspaceIdsByCwd.set(event.cwd, next);
+    if (previous && sameWorkspaceIdSet(previous, next)) return false;
+    return true;
+  }
+
+  /**
+   * Loaded agents and open-tab labels are the liveness signals that ride agent
+   * events. Reconcile only when the workspaces they cover change.
+   */
+  private reconcileObserversAfterAgentChange(): void {
+    void this.reconcileObserversAfterAgentChangeRun().catch((error) => {
+      this.sessionLogger.warn(
+        { err: error },
+        "Failed to re-evaluate workspace git observation after agent change",
+      );
+    });
+  }
+
+  private async reconcileObserversAfterAgentChangeRun(): Promise<void> {
+    // Agent state changes arrive constantly. Only a session that projects checkout status uses
+    // the liveness these scans feed, so skip both record scans for every other session.
+    if (!this.wantsEvent("checkout_status_update")) return;
+    const liveness = await this.listAgentWorkspaceLiveness();
+    const next = liveness.loadedWorkspaceIds;
+    const previous = this.loadedAgentWorkspaceIds;
+    this.loadedAgentWorkspaceIds = next;
+    const openTabChanged =
+      this.openAgentTabWorkspaceIds !== null &&
+      !sameWorkspaceIdSet(this.openAgentTabWorkspaceIds, liveness.openTabWorkspaceIds);
+    this.openAgentTabWorkspaceIds = liveness.openTabWorkspaceIds;
+    if (previous && !openTabChanged && sameWorkspaceIdSet(previous, next)) return;
+    await this.reconcileWorkspaceGitObservers();
   }
 
   private seedWorkspaceSubscriptionSnapshot(
@@ -9346,6 +9700,9 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    // Warm-up reads are fire-and-forget. Drop the ones still queued so nothing reads or re-arms a
+    // target for a session that no longer exists.
+    this.workspaceGitWarmUpLimit.clearQueue();
     this.unsubscribeSetupObservation();
     await this.delivery.close();
 
@@ -9365,6 +9722,11 @@ export class Session {
       this.unsubscribeTerminalWorkspaceContributionEvents();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
+    this.unsubscribeTerminalsChanged?.();
+    this.unsubscribeTerminalsChanged = null;
+    this.unsubscribeDaemonConfigChanged?.();
+    this.unsubscribeDaemonConfigChanged = null;
+    this.resetWorkspaceLivenessBaselines();
     this.providerCatalogSession.dispose();
 
     this.terminalController.dispose();

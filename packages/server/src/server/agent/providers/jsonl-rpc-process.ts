@@ -143,6 +143,11 @@ export class JsonlRpcProcess {
     };
   }
 
+  /** True once the transport is closed: every later request rejects. */
+  get isClosed(): boolean {
+    return this.disposed;
+  }
+
   onExit(callback: (exit: JsonlRpcExit) => void): () => void {
     this.exitSubscribers.add(callback);
     return () => {
@@ -250,6 +255,12 @@ export class JsonlRpcProcess {
     const result = await terminateWithTreeKill(this.child, {
       gracefulTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS,
+      onTreeReadFailed: (error) => {
+        this.options.logger.warn(
+          { err: error },
+          `${this.diagnosticName} process tree could not be read; descendants outside its process group may survive`,
+        );
+      },
       onForceSignal: () => {
         this.options.logger.warn(
           { timeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS },
