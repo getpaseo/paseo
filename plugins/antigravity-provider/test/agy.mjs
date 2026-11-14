@@ -60,20 +60,127 @@ if (args.includes("--model")) init.init.model = args[args.indexOf("--model") + 1
 emit(init);
 let interrupted = null;
 const turns = new Map();
-const lines = createInterface({ input: process.stdin });
-lines.on("line", (line) => {
-  const input = JSON.parse(line);
-  record({ input });
-  const text = input.message.content;
+const QUOTA_ERROR = "Individual quota reached. Resets in 66h22m0s.";
+const BROKEN_PIPE_ERROR =
+  'API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": write tcp 192.168.68.65:58997->172.217.115.4:443: write: broken pipe';
+// A later needle overrides an earlier one, so TOOL_HANG follows HANG.
+const FIXTURE_NAMES = [
+  ["Attached image: ", "image-file-external"],
+  ["TOOLS", "tools-default"],
+  ["DENIAL_REPLAY", "denial-replay"],
+  ["SUBAGENT", "subagent"],
+  ["MULTI", "multi-turn-reasoning"],
+  ["RESUME", "resume"],
+  ["HANG", "sigint-mid-text"],
+  ["TOOL_HANG", "sigint-mid-tool"],
+];
+
+function fixtureName(text) {
   let name = "text-turn";
-  if (text.includes("Attached image: ")) name = "image-file-external";
-  if (text.includes("TOOLS")) name = "tools-default";
-  if (text.includes("DENIAL_REPLAY")) name = "denial-replay";
-  if (text.includes("SUBAGENT")) name = "subagent";
-  if (text.includes("MULTI")) name = "multi-turn-reasoning";
-  if (text.includes("RESUME")) name = "resume";
-  if (text.includes("HANG")) name = "sigint-mid-text";
-  if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  for (const [needle, matched] of FIXTURE_NAMES) {
+    if (text.includes(needle)) name = matched;
+  }
+  return name;
+}
+
+function errorResult(error) {
+  return {
+    event: "result",
+    result: {
+      conversation_id: conversationId,
+      status: "ERROR",
+      error,
+      denied_actions: [],
+    },
+  };
+}
+
+function replayUntilResult(name, error) {
+  for (const frame of fixture(name).slice(1)) {
+    if (frame.event === "result") emit(errorResult(error));
+    else emit(frame);
+  }
+}
+
+function handleStaleError() {
+  replayUntilResult("text-turn", QUOTA_ERROR);
+}
+
+// Native agy scans the whole saved trajectory, so once one error_message step is
+// stored, every later turn of the conversation ends with that same ERROR text.
+let persistentError = null;
+
+function handlePersistentStaleError() {
+  persistentError = BROKEN_PIPE_ERROR;
+  replayUntilResult("text-turn", persistentError);
+}
+
+function handleUnansweredError() {
+  emit(errorResult(QUOTA_ERROR));
+}
+
+function handleRunningToolError() {
+  replayUntilResult("sigint-mid-tool", "Tool execution failed abruptly");
+}
+
+function stepFrame(index, type, state, extra = {}) {
+  return {
+    event: "step_update",
+    step_update: {
+      conversation_id: conversationId,
+      step_index: index,
+      state,
+      step_type: type,
+      ...extra,
+    },
+  };
+}
+
+function answerFrame(index) {
+  return stepFrame(index, "agent_response", "DONE", { text_delta: "ANSWERED\n" });
+}
+
+// A tool that started before the final answer and never finished.
+function handleAnsweredWithRunningToolError() {
+  const tool = fixture("sigint-mid-tool").find((frame) => frame.step_update?.step_type === "tool");
+  emit(stepFrame(0, "user_input", "DONE"));
+  emit({ ...tool, step_update: { ...tool.step_update, step_index: 1 } });
+  emit(answerFrame(2));
+  emit(errorResult(QUOTA_ERROR));
+}
+
+// The turn's own API failure is saved as a step after the answer.
+function handleErrorStepAfterAnswerError() {
+  emit(stepFrame(0, "user_input", "DONE"));
+  emit(answerFrame(1));
+  emit(stepFrame(2, "error_message", "DONE"));
+  emit(errorResult(QUOTA_ERROR));
+}
+
+const TURN_HANDLERS = [
+  ["PERSISTENT_STALE_ERROR", handlePersistentStaleError],
+  ["STALE_ERROR", handleStaleError],
+  ["UNANSWERED_ERROR", handleUnansweredError],
+  ["ANSWERED_RUNNING_TOOL_ERROR", handleAnsweredWithRunningToolError],
+  ["RUNNING_TOOL_ERROR", handleRunningToolError],
+  ["ERROR_STEP_AFTER_ANSWER", handleErrorStepAfterAnswerError],
+];
+
+function dispatchSpecialTurn(text) {
+  if (persistentError) {
+    replayUntilResult("text-turn", persistentError);
+    return true;
+  }
+  for (const [needle, handle] of TURN_HANDLERS) {
+    if (text.includes(needle)) {
+      handle();
+      return true;
+    }
+  }
+  return false;
+}
+
+function replayFixtureTurn(name) {
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];
@@ -88,6 +195,14 @@ lines.on("line", (line) => {
     if (resultCount === ordinal) emit(frame);
     if (frame.event === "result") resultCount += 1;
   }
+}
+
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const input = JSON.parse(line);
+  record({ input });
+  if (dispatchSpecialTurn(input.message.content)) return;
+  replayFixtureTurn(fixtureName(input.message.content));
 });
 process.on("SIGINT", () => {
   record({ signal: "SIGINT" });

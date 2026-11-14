@@ -4,6 +4,8 @@ interface SignalOptions {
   platform: NodeJS.Platform;
   pid: number;
   signal: NodeJS.Signals;
+  /** Delivery port for POSIX group signals; defaults to `process.kill`. */
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
 }
 
 type SignalPlan =
@@ -21,9 +23,17 @@ export function signalProcess(options: SignalOptions): void | Promise<void> {
   const plan = signalPlan(options);
   if (plan.type === "tree") return killTree(plan);
   try {
-    process.kill(plan.pid, plan.signal);
+    const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
+    kill(plan.pid, plan.signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ESRCH" || error.code === "EPERM")
+      )
+    )
+      throw error;
   }
 }
 

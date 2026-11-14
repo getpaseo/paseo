@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -567,6 +567,125 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
   ).rejects.toThrow(/prompt.steer/);
 });
 
+it("treats trailing trajectory errors on answered turns as notices and settles completed", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("STALE_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "completed",
+  });
+  const notice = h.events.find(
+    (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+  );
+  expect(notice).toMatchObject({
+    type: "session.notice",
+    notice: {
+      severity: "warning",
+      title: "Antigravity reported a trajectory warning",
+      description: expect.stringMatching(/quota reached/i),
+    },
+  });
+});
+
+it("keeps the same stream-json process after an answered trailing trajectory error", async () => {
+  const h = await harness();
+  await h.open();
+  const first = await h.completed(await h.prompt("STALE_ERROR"));
+  const second = await h.completed(await h.prompt("HELLO AGAIN"));
+  expect(first).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(second).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(
+    h.events.filter(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toHaveLength(1);
+  expect((await h.records()).filter((entry) => entry.args?.includes("stream-json"))).toHaveLength(
+    1,
+  );
+});
+
+it("settles every later turn when agy reprints the saved broken-pipe error, on one process", async () => {
+  const h = await harness();
+  await h.open();
+  const turns = [
+    await h.completed(await h.prompt("PERSISTENT_STALE_ERROR")),
+    await h.completed(await h.prompt("HELLO")),
+    await h.completed(await h.prompt("AGAIN")),
+  ];
+  for (const turn of turns)
+    expect(turn).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(h.events.some((event) => event.type === "session.turn" && event.state === "failed")).toBe(
+    false,
+  );
+  const notices = h.events.flatMap((event) =>
+    event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error")
+      ? [event.notice]
+      : [],
+  );
+  expect(notices).toHaveLength(3);
+  expect(new Set(notices.map((notice) => notice.id)).size).toBe(3);
+  for (const notice of notices) expect(notice.description).toMatch(/broken pipe/);
+  expect((await h.records()).filter((entry) => entry.args?.includes("stream-json"))).toHaveLength(
+    1,
+  );
+});
+
+it("fails turns when an error result arrives without an answer", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("UNANSWERED_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: {
+      message: expect.stringMatching(/quota reached/i),
+    },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
+it("fails turns when an error result arrives while a tool is still running", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("RUNNING_TOOL_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: {
+      message: expect.stringMatching(/abruptly/i),
+    },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  ["ANSWERED_RUNNING_TOOL_ERROR", "an answer is written while an earlier tool is still running"],
+  ["ERROR_STEP_AFTER_ANSWER", "an error step follows the answer"],
+])("fails turns that look answered but are not settled: %s (%s)", async (needle) => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt(needle));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: { message: expect.stringMatching(/quota reached/i) },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
 describe("discovery", () => {
   it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
     const h = await harness();
@@ -688,6 +807,26 @@ describe("process signal plans", () => {
       });
     },
   );
+  function failingKill(code: string): (pid: number, signal: NodeJS.Signals) => void {
+    return () => {
+      throw Object.assign(new Error(`kill ${code}`), { code });
+    };
+  }
+  it.each(["EPERM", "ESRCH"])("ignores %s when signaling POSIX process groups", (code) => {
+    expect(() =>
+      signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL", kill: failingKill(code) }),
+    ).not.toThrow();
+  });
+  it("propagates unexpected errors when signaling POSIX process groups", () => {
+    expect(() =>
+      signalProcess({
+        platform: "linux",
+        pid: 123,
+        signal: "SIGKILL",
+        kill: failingKill("EINVAL"),
+      }),
+    ).toThrow(/EINVAL/);
+  });
 });
 
 describe("image prompts", () => {
