@@ -1,5 +1,5 @@
 import { PackagePlus } from "lucide-react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { SvgXml } from "react-native-svg";
@@ -46,9 +46,12 @@ export function AddProviderSheet({
   const [search, setSearch] = useState("");
   // Each opening starts from an empty search; the field clears when this changes.
   const [session, setSession] = useState(0);
+  // Read when an add finishes, to tell whether the sheet it started in is still open.
+  const sessionRef = useRef(0);
   const endSession = useCallback(() => {
     setSearch("");
-    setSession((current) => current + 1);
+    sessionRef.current += 1;
+    setSession(sessionRef.current);
   }, []);
   const handleClose = useCallback(() => {
     endSession();
@@ -65,8 +68,10 @@ export function AddProviderSheet({
 
   const handleAdd = useCallback(
     (entry: AcpProviderCatalogItem) => {
+      const startedIn = sessionRef.current;
       void add(entry).then((added) => {
-        if (!added) return added;
+        // Closed before the add finished: the provider is added, but the user has moved on.
+        if (!added || sessionRef.current !== startedIn) return added;
         endSession();
         onAdded(entry.id);
         return added;
