@@ -339,9 +339,17 @@ if (forcedUserDataDir) {
 // Must run before app.whenReady().
 const electronFlags = process.env.PASEO_ELECTRON_FLAGS?.trim();
 if (electronFlags) {
-  for (const token of electronFlags.split(/\s+/)) {
+  const tokens = electronFlags.split(/\s+/);
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
     const [key, ...rest] = token.replace(/^--/, "").split("=");
-    app.commandLine.appendSwitch(key, rest.join("=") || undefined);
+    let value = rest.join("=") || undefined;
+    const backend = key === "ozone-platform" || key === "ozone-platform-hint";
+    if (backend && !token.includes("=")) {
+      value = tokens[++index];
+    }
+    if (backend && app.commandLine.hasSwitch(key)) continue;
+    app.commandLine.appendSwitch(key, value);
   }
   log.info("[electron-flags]", electronFlags);
 }

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { parsePassthroughCliArgs } from "./cli/passthrough.js";
 
 // The launcher reads Linux /proc state as well as POSIX command interfaces.
 const it = test.runIf(process.platform === "linux");
@@ -143,10 +144,37 @@ it("passes an environment backend override to Electron on argv", async () => {
     namespaces: true,
     env: { DISPLAY: ":0", PASEO_ELECTRON_FLAGS: "--ozone-platform=wayland" },
   });
-  expect(result.args).toEqual([...result.input, "--ozone-platform=wayland"]);
+  expect(result.args).toEqual(["--ozone-platform=wayland", ...result.input]);
 });
+
+it.each(["--ozone-platform wayland", "--ozone-platform-hint auto"])(
+  "passes separate-value environment backend arguments before startup: %s",
+  async (flags) => {
+    const result = await launch({
+      namespaces: true,
+      env: { DISPLAY: ":0", PASEO_ELECTRON_FLAGS: flags },
+    });
+    expect(result.args).toEqual([...flags.split(" "), ...result.input]);
+  },
+);
 
 it("does not add graphics flags to Node entrypoints with an X display", async () => {
   const result = await launch({ env: { DISPLAY: ":0", ELECTRON_RUN_AS_NODE: "1" } });
   expect(result.args).toEqual(result.input);
+});
+
+it("places environment backend switches before CLI arguments without removing prompt text", async () => {
+  const args = ["agent", "send", "ID", "--prompt", "--ozone-platform=x11 causes a blank window"];
+  const result = await launch({
+    namespaces: true,
+    args,
+    env: { DISPLAY: ":0", PASEO_ELECTRON_FLAGS: "--ozone-platform wayland" },
+  });
+  expect(
+    parsePassthroughCliArgs({
+      argv: ["/usr/bin/Paseo", ...result.args],
+      isDefaultApp: false,
+      forceCli: false,
+    }),
+  ).toEqual(args);
 });

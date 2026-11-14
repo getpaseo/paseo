@@ -18,14 +18,29 @@ for arg in "$@"; do
     --ozone-platform|--ozone-platform=*|--ozone-platform-hint|--ozone-platform-hint=*) backend_requested=true ;;
   esac
 done
+backend_value_pending=false
+backend_flags=
 for flag in ${PASEO_ELECTRON_FLAGS:-}; do
+  if [ "$backend_value_pending" = true ]; then
+    backend_flags="$backend_flags $flag"
+    backend_value_pending=false
+    continue
+  fi
   case "$flag" in
+    --ozone-platform|--ozone-platform-hint)
+      backend_flags="$backend_flags $flag"
+      backend_requested=true
+      backend_value_pending=true
+      ;;
     --ozone-platform=*|--ozone-platform-hint=*)
-      set -- "$@" "$flag"
+      backend_flags="$backend_flags $flag"
       backend_requested=true
       ;;
   esac
 done
+if [ -n "$backend_flags" ]; then
+  set -- $backend_flags "$@"
+fi
 if [ -n "${DISPLAY:-}" ] && [ "$backend_requested" = false ]; then
   set -- --ozone-platform=x11 "$@"
 fi

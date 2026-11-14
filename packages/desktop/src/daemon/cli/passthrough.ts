@@ -20,9 +20,8 @@ export function parsePassthroughCliArgs(input: {
   forceCli: boolean;
 }): string[] | null {
   const startIndex = input.isDefaultApp ? 2 : 1;
-  const effective: string[] = [];
-
-  for (let index = startIndex; index < input.argv.length; index++) {
+  let index = startIndex;
+  for (; index < input.argv.length; index++) {
     const arg = input.argv[index]!;
     if (BACKEND_SWITCHES.has(arg)) {
       index++;
@@ -31,8 +30,9 @@ export function parsePassthroughCliArgs(input: {
     if (IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
       continue;
     }
-    effective.push(arg);
+    break;
   }
+  const effective = input.argv.slice(index);
 
   if (input.forceCli) {
     return effective;
