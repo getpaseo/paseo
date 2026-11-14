@@ -2175,6 +2175,17 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           if (!owner || !name) {
             throw new Error("Unable to resolve GitHub repository for pull request checkout");
           }
+          const host = (await resolveRepoHostCached(input.cwd)) ?? "github.com";
+          const remoteNames = await resolveGitHubCheckoutRemotes(
+            input.cwd,
+            host,
+            `${owner}/${name}`,
+          );
+          if (remoteNames.length === 0) {
+            throw new Error(
+              `No Git remote matches ${host}/${owner}/${name}; add a remote for the selected GitHub repository before checking out this pull request`,
+            );
+          }
 
           const parsed = await runGhJson(
             [
@@ -2193,7 +2204,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed);
+          return toPullRequestCheckoutTarget(parsed, remoteNames);
         },
       });
     },
@@ -3309,6 +3320,48 @@ async function runCurrentPullRequestStatusCommand(options: {
   }
 }
 
+async function resolveGitHubCheckoutRemotes(
+  cwd: string,
+  host: string,
+  repository: string,
+): Promise<string[]> {
+  const { stdout } = await runGitCommand(
+    ["config", "--null", "--get-regexp", "^remote\\..*\\.url$"],
+    {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+      acceptExitCodes: [0, 1],
+    },
+  );
+  const matches: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of stdout.split("\0")) {
+    const separator = entry.indexOf("\n");
+    if (separator < 0) continue;
+    const name = /^remote\.(.+)\.url$/u.exec(entry.slice(0, separator))?.[1];
+    if (!name || seen.has(name)) continue;
+    // Git fetch uses the first configured URL for a remote.
+    seen.add(name);
+    const location = parseGitRemoteLocation(entry.slice(separator + 1));
+    if (!location) continue;
+    const remoteHost =
+      location.transport === "scp" || location.transport === "ssh"
+        ? ((await resolveSshHostname(location.host)) ?? location.host)
+        : location.host;
+    const sameHost =
+      remoteHost.toLowerCase() === host.toLowerCase() ||
+      (isGitHubHost(remoteHost) && isGitHubHost(host));
+    if (
+      sameHost &&
+      parseGitHubRemoteIdentity(location.path)?.repo.toLowerCase() === repository.toLowerCase()
+    ) {
+      matches.push(name);
+    }
+  }
+  return matches;
+}
+
 async function resolveGitHubDefaultRepoSlug(cwd: string, host: string): Promise<string | null> {
   // `gh repo set-default` stores either "base" or an owner/name in the remote's
   // gh-resolved config. Read the raw URLs because `git remote` applies rewrites.
@@ -3688,6 +3741,7 @@ function normalizeRepositorySummary(repository: {
 
 function toPullRequestCheckoutTarget(
   parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
+  remoteNames: string[],
 ): PullRequestCheckoutTarget {
   const pullRequest = parsed.data.repository.pullRequest;
   if (!pullRequest) {
@@ -3697,10 +3751,10 @@ function toPullRequestCheckoutTarget(
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [
-      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
-      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
-    ],
+    checkoutRefs: remoteNames.map((remoteName) => ({
+      remoteName,
+      remoteRef: `refs/pull/${pullRequest.number}/head`,
+    })),
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,

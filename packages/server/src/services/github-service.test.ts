@@ -835,40 +835,50 @@ describe("ForgeService", () => {
   });
 
   it("loads pull request checkout target details through GraphQL", async () => {
-    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
-    const service = createGitHubService({
-      runner: runner.runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-      now: () => 100,
-    });
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-checkout-target-"));
+    execFileSync("git", ["init", "-q", cwd]);
+    execFileSync("git", [
+      "-C",
+      cwd,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/getpaseo/paseo.git",
+    ]);
+    try {
+      const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        now: () => 100,
+      });
 
-    await expect(
-      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 526 }),
-    ).resolves.toEqual({
-      number: 526,
-      baseRefName: "main",
-      headRefName: "main",
-      checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
-      ],
-      headOwnerLogin: "therainisme",
-      headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
-      headRepositoryUrl: "https://github.com/therainisme/paseo",
-      isCrossRepository: true,
-      headRefKind: "branch",
-    });
+      await expect(service.getPullRequestCheckoutTarget?.({ cwd, number: 526 })).resolves.toEqual({
+        number: 526,
+        baseRefName: "main",
+        headRefName: "main",
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+        headOwnerLogin: "therainisme",
+        headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
+        headRepositoryUrl: "https://github.com/therainisme/paseo",
+        isCrossRepository: true,
+        headRefKind: "branch",
+      });
 
-    expect(runner.calls).toHaveLength(2);
-    expect(runner.calls[0]).toEqual({
-      cwd: "/repo",
-      args: ["repo", "view", "--json", "owner,name,parent"],
-    });
-    expect(runner.calls[1]?.cwd).toBe("/repo");
-    expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
-    expect(runner.calls[1]?.args).toContain("owner=getpaseo");
-    expect(runner.calls[1]?.args).toContain("name=paseo");
-    expect(runner.calls[1]?.args).toContain("number=526");
+      expect(runner.calls).toHaveLength(2);
+      expect(runner.calls[0]).toEqual({
+        cwd,
+        args: ["repo", "view", "--json", "owner,name,parent"],
+      });
+      expect(runner.calls[1]?.cwd).toBe(cwd);
+      expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
+      expect(runner.calls[1]?.args).toContain("owner=getpaseo");
+      expect(runner.calls[1]?.args).toContain("name=paseo");
+      expect(runner.calls[1]?.args).toContain("number=526");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
@@ -4894,7 +4904,7 @@ describe("ForgeService", () => {
         cwd,
         "remote",
         "add",
-        "upstream",
+        "github",
         "https://github.acme.internal/acme/repo.git",
       ]);
       execFileSync("git", [
@@ -4904,7 +4914,7 @@ describe("ForgeService", () => {
         "url.https://git.acme.internal/mirrors/.insteadOf",
         "https://github.acme.internal/",
       ]);
-      execFileSync("git", ["-C", cwd, "config", "remote.upstream.gh-resolved", "base"]);
+      execFileSync("git", ["-C", cwd, "config", "remote.github.gh-resolved", "base"]);
       const calls: RunnerCall[] = [];
       const runner: GitHubCommandRunner = async (args, options) => {
         calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
@@ -4948,10 +4958,12 @@ describe("ForgeService", () => {
         "github.acme.internal",
         "github.acme.internal",
       ]);
-      await service.getPullRequestCheckoutTarget({ cwd, number: 526 });
+      expect(
+        (await service.getPullRequestCheckoutTarget({ cwd, number: 526 })).checkoutRefs,
+      ).toEqual([{ remoteName: "github", remoteRef: "refs/pull/526/head" }]);
       expect(calls[3]?.args).toContain("github.acme.internal/acme/repo");
       expect(calls[4]?.args).toContain("owner=acme");
-      execFileSync("git", ["-C", cwd, "config", "--unset", "remote.upstream.gh-resolved"]);
+      execFileSync("git", ["-C", cwd, "config", "--unset", "remote.github.gh-resolved"]);
       expect(await service.listPullRequests({ cwd, query: "implicit" })).toEqual([
         expect.objectContaining({ title: "upstream" }),
       ]);
@@ -4963,9 +4975,109 @@ describe("ForgeService", () => {
       expect(await service.listPullRequests({ cwd, query: "changed" })).toEqual([
         expect.objectContaining({ title: "fork" }),
       ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.origin.gh-resolved", "missing/repo"]);
+      const missingRepoRunner: GitHubCommandRunner = async () => ({
+        stdout: JSON.stringify({ owner: { login: "missing" }, name: "repo" }),
+        stderr: "",
+      });
+      const missingRepoService = createGitHubService({
+        runner: missingRepoRunner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+      await expect(
+        missingRepoService.getPullRequestCheckoutTarget({ cwd, number: 526 }),
+      ).rejects.toThrow("No Git remote matches github.acme.internal/missing/repo");
+      missingRepoService.dispose?.();
       service.dispose?.();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("fetches the selected repository's PR when origin has the same PR number", async () => {
+    vi.useRealTimers();
+    const root = mkdtempSync(join(tmpdir(), "github-checkout-duplicate-pr-"));
+    const cwd = join(root, "workspace");
+    const origin = join(root, "origin.git");
+    const base = join(root, "base.git");
+    try {
+      execFileSync("git", ["init", "-q", cwd]);
+      execFileSync("git", ["init", "-q", "--bare", origin]);
+      execFileSync("git", ["init", "-q", "--bare", base]);
+      const commit = (message: string) => {
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-qm",
+          message,
+        ]);
+        return execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      };
+      const forkSha = commit("fork PR");
+      const baseSha = commit("base PR");
+      execFileSync("git", ["-C", cwd, "push", "-q", origin, `${forkSha}:refs/pull/526/head`]);
+      execFileSync("git", ["-C", cwd, "push", "-q", base, `${baseSha}:refs/pull/526/head`]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "origin",
+        "https://github.acme.internal/fork/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "github",
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.github.gh-resolved", "base"]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        `url.file://${origin}.insteadOf`,
+        "https://github.acme.internal/fork/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        `url.file://${base}.insteadOf`,
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      const runner = createRunner([
+        JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
+        pullRequestCheckoutTargetJson(),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+      const target = await service.getPullRequestCheckoutTarget({ cwd, number: 526 });
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: "github", remoteRef: "refs/pull/526/head" },
+      ]);
+      const ref = target.checkoutRefs?.[0];
+      if (!ref?.remoteName) throw new Error("Missing checkout remote");
+      execFileSync("git", ["-C", cwd, "fetch", "-q", ref.remoteName, ref.remoteRef]);
+      expect(
+        execFileSync("git", ["-C", cwd, "rev-parse", "FETCH_HEAD"], { encoding: "utf8" }).trim(),
+      ).toBe(baseSha);
+      expect(baseSha).not.toBe(forkSha);
+      service.dispose?.();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
