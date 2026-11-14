@@ -48,6 +48,10 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@legendapp/list",
     patchPrefix: "@legendapp+list+",
   },
+  // Native sidebar lists. Besides gesture sessions and panel-gesture arbitration, the drop gives
+  // each moved cell a fresh transform host. Reanimated re-applies a view's last animated
+  // transform to every React commit, so a reused host painted one frame of new order plus old
+  // drag translate (upstream computerjazz/react-native-draggable-flatlist#621, open).
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
