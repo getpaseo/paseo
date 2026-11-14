@@ -214,7 +214,9 @@ export function SettingsAction({ actionLabel, onPress, disabled, ...row }: Setti
 }
 
 const styles = StyleSheet.create((theme) => ({
-  compactRow: { flexWrap: "wrap", gap: theme.spacing[3] },
+  // A control that wraps under the label gets space above it. Across the row, the leading slot and
+  // the label already carry their own margins, so a column gap would double them.
+  compactRow: { flexWrap: "wrap", rowGap: theme.spacing[3] },
   // The same leading slot as `SettingsRowHeader`, so icons and labels share rails across row kinds.
   leading: { marginRight: theme.spacing[3], alignItems: "center", justifyContent: "center" },
   label: { flexGrow: 1, flexShrink: 1, flexBasis: 160, marginRight: theme.spacing[3] },

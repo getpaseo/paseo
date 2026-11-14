@@ -1,6 +1,6 @@
 import { ACP_PROVIDER_ICON_SVGS } from "../../src/assets/acp-provider-icons";
 import { expect, test, type Page } from "../support/fixtures";
-import type { TestInfo } from "@playwright/test";
+import type { Locator, TestInfo } from "@playwright/test";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import {
@@ -10,11 +10,12 @@ import {
   openSettingsHostSection,
 } from "../support/helpers/settings";
 
-async function openProviderCatalog(page: Page) {
+async function openProviderCatalog(page: Page, viewport?: { width: number; height: number }) {
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, getServerId());
   await openSettingsHostSection(page, getServerId(), "providers");
+  if (viewport) await page.setViewportSize(viewport);
   await openAddProvider(page);
 }
 
@@ -48,4 +49,21 @@ test("#7087: the provider catalog shows Devin, Hermes, and Kiro artwork", async 
   await expectProviderArtwork(page, testInfo, "devin", "Devin CLI");
   await expectProviderArtwork(page, testInfo, "hermes", "Hermes");
   await expectProviderArtwork(page, testInfo, "kiro", "Kiro CLI");
+});
+
+/** The space between a row's icon and its label, as drawn. */
+async function gapAfterIcon(row: Locator, label: string): Promise<number> {
+  const icon = await row.locator("svg").first().boundingBox();
+  const text = await row.getByText(label, { exact: true }).boundingBox();
+  if (!icon || !text) throw new Error(`${label} has no icon or label on screen`);
+  return text.x - (icon.x + icon.width);
+}
+
+test("catalog rows keep the provider list's icon rail on a phone", async ({ page }) => {
+  await openProviderCatalog(page, { width: 390, height: 844 });
+  await findAcpCatalogProvider(page, "Kiro CLI");
+
+  const listGap = await gapAfterIcon(page.getByTestId("provider-row-claude"), "Claude");
+  const catalogGap = await gapAfterIcon(page.getByTestId("provider-catalog-row-kiro"), "Kiro CLI");
+  expect(catalogGap).toBe(listGap);
 });
