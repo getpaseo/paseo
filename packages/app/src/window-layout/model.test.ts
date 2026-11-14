@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveHeaderBesideStatusBar,
   resolveSafeAreaInsets,
   resolveTopBand,
   type WindowLayout,
@@ -151,5 +152,54 @@ describe("resolveTopBand", () => {
 
   it("is null before the native layout arrives", () => {
     expect(resolveTopBand(duo.systemTop, null)).toBeNull();
+  });
+});
+
+describe("resolveHeaderBesideStatusBar", () => {
+  const base = {
+    bounds: { x: 0, y: 0, width: 449, height: 900 },
+    verticalBarEdge: "none" as const,
+    verticalBar: null,
+    divisions: [],
+  };
+  const disabled = { ...base, verticalBarBehavior: "disabled" as const };
+  const pill = { x: 274, y: 20, width: 151, height: 56 };
+
+  it("ends the header before the top band's status region", () => {
+    expect(
+      resolveHeaderBesideStatusBar({
+        layout: disabled,
+        topBand: { top: 12, trailingObstruction: { width: 175, height: 60 } },
+        rowHeight: 44,
+      }),
+    ).toEqual({ top: 12, right: 183 });
+  });
+
+  it("falls back to the status pill's occlusion where iOS gives no top band", () => {
+    expect(
+      resolveHeaderBesideStatusBar({
+        layout: { ...disabled, occlusions: [pill] },
+        topBand: null,
+        rowHeight: 44,
+      }),
+    ).toEqual({ top: 26, right: 183 });
+  });
+
+  it("leaves the header alone with the vertical bar on, or without a status pill", () => {
+    expect(
+      resolveHeaderBesideStatusBar({
+        layout: { ...base, verticalBarBehavior: "automatic", occlusions: [pill] },
+        topBand: null,
+        rowHeight: 44,
+      }),
+    ).toBeNull();
+    expect(
+      resolveHeaderBesideStatusBar({
+        layout: { ...disabled, occlusions: [{ x: 0, y: 0, width: 449, height: 54 }] },
+        topBand: null,
+        rowHeight: 44,
+      }),
+    ).toBeNull();
+    expect(resolveHeaderBesideStatusBar({ layout: null, topBand: null, rowHeight: 44 })).toBeNull();
   });
 });

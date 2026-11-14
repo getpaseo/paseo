@@ -6,6 +6,8 @@ import type {
   PluginButtonRegistration,
   PluginHeaderButtonContribution,
   PluginComposerPillContribution,
+  PluginComposerToolbarButtonContribution,
+  PluginVerticalBarButtonContribution,
 } from "@getpaseo/plugin/client";
 import type { InstalledPlugin } from "../types";
 import {
@@ -15,17 +17,23 @@ import {
   type ResolvedPluginButton,
 } from "./validation";
 
-export type ButtonPlacement = "header" | "composer";
+export type ButtonPlacement = "header" | "composer" | "composer-toolbar" | "vertical-bar";
+export type GlobalButtonPlacement = Extract<ButtonPlacement, "composer-toolbar" | "vertical-bar">;
+
+/** Global buttons belong to every composer or workspace; each supplies its context when it renders. */
+export type RegisteredButtonContext = PluginButtonContext | { context: "global" };
 
 export interface RegisteredPluginButton {
   key: number;
   id: string;
   installation: InstalledPlugin;
   placement: ButtonPlacement;
-  context: PluginButtonContext;
+  context: RegisteredButtonContext;
   button: ResolvedPluginButton;
   pending: boolean;
   open: boolean;
+  /** Increments only when the plugin replaces behavior. Label and locale updates keep it. */
+  behaviorRevision: number;
 }
 
 function resolveAction(
@@ -77,22 +85,35 @@ export class PluginButtonStore {
     });
   }
 
+  addComposerToolbarButton(
+    installation: InstalledPlugin,
+    input: PluginComposerToolbarButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
+    return this.add(installation, input, "composer-toolbar", { context: "global" });
+  }
+
+  addVerticalBarButton(
+    installation: InstalledPlugin,
+    input: PluginVerticalBarButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
+    return this.add(installation, input, "vertical-bar", { context: "global" });
+  }
+
   private add(
     installation: InstalledPlugin,
-    input: PluginHeaderButtonContribution<PluginText>,
+    input: { id: string; button: PluginButton<PluginText> },
     placement: ButtonPlacement,
-    context: PluginButtonContext,
+    context: RegisteredButtonContext,
   ): PluginButtonRegistration<PluginText> {
     const id = requireButtonId(input.id);
-    if (!context.workspaceId.trim()) throw new Error("Plugin button needs a workspace");
+    if (context.context !== "global" && !context.workspaceId.trim())
+      throw new Error("Plugin button needs a workspace");
     const duplicate = this.entries.some(
       (entry) =>
         entry.installation === installation &&
         entry.placement === placement &&
         entry.id === id &&
-        entry.context.workspaceId === context.workspaceId &&
-        (entry.context.context === "workspace" ||
-          (context.context === "agent" && entry.context.agentId === context.agentId)),
+        sameButtonContext(entry.context, context),
     );
     if (duplicate) throw new Error(`Duplicate plugin button: ${id}`);
     const key = this.nextKey++;
@@ -109,8 +130,10 @@ export class PluginButtonStore {
         button: initialButton,
         pending: false,
         open: false,
+        behaviorRevision: 0,
       },
     ]);
+    // A locale refresh rebuilds behavior text and must not bump behaviorRevision.
     const unsubscribe = installation.i18n.subscribe(() => {
       this.replace(key, {
         button: validateButton(sourceButton, this.validation, installation.i18n.resolve),
@@ -123,8 +146,12 @@ export class PluginButtonStore {
         const nextSource = { ...sourceButton, ...patch };
         const button = validateButton(nextSource, this.validation, installation.i18n.resolve);
         sourceButton = nextSource;
-        const close = !button.visible || button.disabled || patch.behavior !== undefined;
-        this.replace(key, { button, open: close ? false : entry.open });
+        const behaviorChanged = patch.behavior !== undefined;
+        const close = !button.visible || button.disabled || behaviorChanged;
+        const behaviorRevision = behaviorChanged
+          ? entry.behaviorRevision + 1
+          : entry.behaviorRevision;
+        this.replace(key, { button, open: close ? false : entry.open, behaviorRevision });
       },
       remove: () => {
         unsubscribe();
@@ -156,7 +183,9 @@ export class PluginButtonStore {
 
   private replace(
     key: number,
-    patch: Partial<Pick<RegisteredPluginButton, "button" | "open" | "pending">>,
+    patch: Partial<
+      Pick<RegisteredPluginButton, "button" | "open" | "pending" | "behaviorRevision">
+    >,
   ): void {
     if (!this.entries.some((entry) => entry.key === key)) return;
     this.publish(this.entries.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));
@@ -168,12 +197,31 @@ export class PluginButtonStore {
   }
 }
 
+function sameButtonContext(a: RegisteredButtonContext, b: RegisteredButtonContext): boolean {
+  if (a.context === "global" || b.context === "global") return a.context === b.context;
+  if (a.workspaceId !== b.workspaceId) return false;
+  return a.context === "workspace" || (b.context === "agent" && a.agentId === b.agentId);
+}
+
+export function globalButtonMatches(
+  entry: RegisteredPluginButton,
+  placement: GlobalButtonPlacement,
+  serverId: string,
+): boolean {
+  return (
+    entry.placement === placement &&
+    entry.installation.serverId === serverId &&
+    entry.button.visible
+  );
+}
+
 export function buttonMatches(
   entry: RegisteredPluginButton,
   serverId: string,
   workspaceId: string,
   agentId: string | null,
 ): boolean {
+  if (entry.context.context === "global") return false;
   if (
     entry.installation.serverId !== serverId ||
     entry.context.workspaceId !== workspaceId ||
