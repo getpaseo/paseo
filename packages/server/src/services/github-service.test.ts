@@ -1223,6 +1223,81 @@ describe("ForgeService", () => {
     service.dispose?.();
   });
 
+  it("keeps frozen PR checks separate for matching repositories on different hosts", async () => {
+    let now = 0;
+    const calls: RunnerCall[] = [];
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+      const host = options.envOverlay?.GH_HOST;
+      if (args[3]?.includes("PaseoBatchPullRequestChecks")) {
+        return {
+          stdout: batchPollStatusJson({
+            t0: batchPollChecksAliasJson([
+              {
+                __typename: "StatusContext",
+                context: "ci",
+                state: host === "a.example" ? "SUCCESS" : "FAILURE",
+              },
+            ]),
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        stdout: batchPollStatusJson({
+          t0: batchPollRepositoryJson([
+            batchPollPrNodeJson({ url: `https://${host}/acme/widgets/pull/42` }),
+          ]),
+        }),
+        stderr: "",
+      };
+    };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/ws-a" ? "a.example" : "b.example"),
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statusesA: Array<CurrentPullRequestStatus | null> = [];
+    const statusesB: Array<CurrentPullRequestStatus | null> = [];
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statusesA.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(statusesA).toEqual([expect.objectContaining({ checksStatus: "success" })]);
+
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-a",
+      onStatus: (status) => statusesB.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(statusesB).toEqual([expect.objectContaining({ checksStatus: "failure" })]);
+
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+    expect(statusesA).toHaveLength(2);
+    expect(statusesB).toHaveLength(2);
+    expect(statusesA.at(-1)).toEqual(expect.objectContaining({ checksStatus: "success" }));
+    expect(statusesB.at(-1)).toEqual(expect.objectContaining({ checksStatus: "failure" }));
+    expect(
+      calls
+        .filter((call) => call.args[3]?.includes("PaseoBatchPullRequestChecks"))
+        .map((call) => call.envOverlay?.GH_HOST),
+    ).toEqual(["a.example", "b.example"]);
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
   it("batches the first PR status poll after repository identity resolves", async () => {
     let now = 0;
     let resolveRepositoryIdentity!: () => void;
