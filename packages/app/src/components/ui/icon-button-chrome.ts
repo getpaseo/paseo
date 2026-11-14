@@ -8,6 +8,7 @@ import {
   TOUCH_ICON_SIZE,
   type SizingValue,
 } from "@/components/ui/control-geometry";
+import type { LayoutValue } from "@/components/ui/control-sizing";
 import { ICON_SIZE } from "@/styles/theme";
 
 export { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/ui/icon-color";
@@ -100,6 +101,25 @@ export function iconButtonChromeFrameStyle(
 
 export function iconButtonChromeGlyphSize(size: IconButtonChromeSize, compact = false): number {
   return GLYPH_SIZES[size][controlSizingForLayout(compact)];
+}
+
+/** The glyph for an icon button, sized by its container's chrome the way its frame is. */
+export function useIconButtonChromeGlyphSize(size: IconButtonChromeSize, compact = false): number {
+  const scope = useContext(IconButtonChromeContext);
+  return iconButtonChromeGlyphSize(scope === "header-island" ? "large" : size, compact);
+}
+
+/**
+ * The margin that pulls a button out by how far its frame reaches past its glyph. A row that hangs
+ * its edge buttons by it keeps their glyphs, not their frames, on the row's content rail.
+ */
+export function iconButtonChromeHang(size: IconButtonChromeSize): LayoutValue {
+  const frame = ICON_BUTTON_SIZES[size];
+  const glyph = GLYPH_SIZES[size];
+  return bySizing({
+    touch: (glyph.touch - frame.touch) / 2,
+    pointer: (glyph.pointer - frame.pointer) / 2,
+  });
 }
 
 export function smallIconButtonChromeFrameSize(compact = false): number {

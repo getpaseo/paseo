@@ -114,6 +114,8 @@ Five primitives. The pick is determined by option count, the need to search, and
 
 `<AdaptiveModalSheet>` owns the presentation. Its content inset — the gutter that puts sheet content on the same rails as the sheet header — and compact bottom safe-area padding are the sheet's, not the caller's. A caller declares layout intent through `contentStyle` and never branches on form factor to add its own margins. If a sheet's first snap point is shorter than its header, content, and safe-area clearance, raise that snap point rather than moving the sheet container.
 
+The sheet header (`SheetHeaderView`) is the only sheet title row. A sheet that brings its own Gorhom modal still renders it. Back, Close and every action passed through `header.actions` are `SheetHeaderIconButton`, so all of them get the header island's chrome, as `CompactHeader` does: one frame, glyph, colour and hover. The first and last buttons hang into the row's padding, so their glyphs sit on the content rail.
+
 `confirmDialog` is for destructive yes/no and imperative confirmation. Promise-based: `await confirmDialog({ destructive: true, ... })`. Anything where a wrong click loses work.
 
 Three themes is `DropdownMenu`. Thirty hosts is `Combobox`. A label and a value is `AdaptiveModalSheet`. "Are you sure?" is `confirmDialog`.
