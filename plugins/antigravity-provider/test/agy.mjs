@@ -61,6 +61,8 @@ emit(init);
 let interrupted = null;
 const turns = new Map();
 const QUOTA_ERROR = "Individual quota reached. Resets in 66h22m0s.";
+const BROKEN_PIPE_ERROR =
+  'API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": write tcp 192.168.68.65:58997->172.217.115.4:443: write: broken pipe';
 // A later needle overrides an earlier one, so TOOL_HANG follows HANG.
 const FIXTURE_NAMES = [
   ["Attached image: ", "image-file-external"],
@@ -104,6 +106,15 @@ function handleStaleError() {
   replayUntilResult("text-turn", QUOTA_ERROR);
 }
 
+// Native agy scans the whole saved trajectory, so once one error_message step is
+// stored, every later turn of the conversation ends with that same ERROR text.
+let persistentError = null;
+
+function handlePersistentStaleError() {
+  persistentError = BROKEN_PIPE_ERROR;
+  replayUntilResult("text-turn", persistentError);
+}
+
 function handleUnansweredError() {
   emit(errorResult(QUOTA_ERROR));
 }
@@ -113,12 +124,17 @@ function handleRunningToolError() {
 }
 
 const TURN_HANDLERS = [
+  ["PERSISTENT_STALE_ERROR", handlePersistentStaleError],
   ["STALE_ERROR", handleStaleError],
   ["UNANSWERED_ERROR", handleUnansweredError],
   ["RUNNING_TOOL_ERROR", handleRunningToolError],
 ];
 
 function dispatchSpecialTurn(text) {
+  if (persistentError) {
+    replayUntilResult("text-turn", persistentError);
+    return true;
+  }
   for (const [needle, handle] of TURN_HANDLERS) {
     if (text.includes(needle)) {
       handle();

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   PROVIDER_CAPABILITIES,
   ProviderEventSchema,
@@ -605,6 +605,32 @@ it("keeps the same stream-json process after an answered trailing trajectory err
   );
 });
 
+it("settles every later turn when agy reprints the saved broken-pipe error, on one process", async () => {
+  const h = await harness();
+  await h.open();
+  const turns = [
+    await h.completed(await h.prompt("PERSISTENT_STALE_ERROR")),
+    await h.completed(await h.prompt("HELLO")),
+    await h.completed(await h.prompt("AGAIN")),
+  ];
+  for (const turn of turns)
+    expect(turn).toMatchObject({ type: "session.turn", state: "completed" });
+  expect(h.events.some((event) => event.type === "session.turn" && event.state === "failed")).toBe(
+    false,
+  );
+  const notices = h.events.flatMap((event) =>
+    event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error")
+      ? [event.notice]
+      : [],
+  );
+  expect(notices).toHaveLength(3);
+  expect(new Set(notices.map((notice) => notice.id)).size).toBe(3);
+  for (const notice of notices) expect(notice.description).toMatch(/broken pipe/);
+  expect((await h.records()).filter((entry) => entry.args?.includes("stream-json"))).toHaveLength(
+    1,
+  );
+});
+
 it("fails turns when an error result arrives without an answer", async () => {
   const h = await harness();
   await h.open();
@@ -762,31 +788,25 @@ describe("process signal plans", () => {
       });
     },
   );
-  it("ignores EPERM and ESRCH errors when signaling POSIX process groups", () => {
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-      const error = new Error("kill EPERM");
-      Object.assign(error, { code: "EPERM" });
-      throw error;
-    });
-    try {
-      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).not.toThrow();
-    } finally {
-      killSpy.mockRestore();
-    }
+  function failingKill(code: string): (pid: number, signal: NodeJS.Signals) => void {
+    return () => {
+      throw Object.assign(new Error(`kill ${code}`), { code });
+    };
+  }
+  it.each(["EPERM", "ESRCH"])("ignores %s when signaling POSIX process groups", (code) => {
+    expect(() =>
+      signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL", kill: failingKill(code) }),
+    ).not.toThrow();
   });
   it("propagates unexpected errors when signaling POSIX process groups", () => {
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-      const error = new Error("kill EINVAL");
-      Object.assign(error, { code: "EINVAL" });
-      throw error;
-    });
-    try {
-      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).toThrow(
-        /EINVAL/,
-      );
-    } finally {
-      killSpy.mockRestore();
-    }
+    expect(() =>
+      signalProcess({
+        platform: "linux",
+        pid: 123,
+        signal: "SIGKILL",
+        kill: failingKill("EINVAL"),
+      }),
+    ).toThrow(/EINVAL/);
   });
 });
 
