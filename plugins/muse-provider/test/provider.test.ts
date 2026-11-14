@@ -1330,6 +1330,28 @@ test("text deltas with an omitted field stream as text", async () => {
     ),
   ).toBe(true);
 });
+for (const [variant, env] of [
+  ["U+2028 and U+2029", { MUSE_TEST_AGENT_TEXT: "before middle after" }],
+  [
+    "a multibyte character split across stdout writes",
+    { MUSE_TEST_AGENT_TEXT: "split \u{1F600} here", MUSE_TEST_SPLIT_WRITE: "1" },
+  ],
+] as const) {
+  test(`assistant text with ${variant} arrives in one MSP frame`, async () => {
+    const h = await harness("text-reasoning", env);
+    await h.open();
+    await h.prompt();
+    await h.wait(
+      (e) =>
+        (e.type === "session.turn" && e.state === "completed") ||
+        e.type === "session.runtime_failed",
+    );
+    expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+    expect(
+      h.events.findLast((e) => e.type === "timeline.item" && e.item.type === "assistant_message"),
+    ).toMatchObject({ item: { text: env.MUSE_TEST_AGENT_TEXT } });
+  });
+}
 test("sessions with a null model import and resume without a null persistence model", async () => {
   const h = await harness("resume-without-cursor", { MUSE_TEST_NULL_MODEL: "1" });
   await h.send({
