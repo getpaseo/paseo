@@ -5,6 +5,11 @@ import {
 } from "./terminal-worker-protocol.js";
 
 describe("classifyTerminalWorkerProtocol", () => {
+  it("drains released v6 workers with one protocol bump for workspace launches", () => {
+    expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(7);
+    expect(classifyTerminalWorkerProtocol(6)).toBe("previous");
+    expect(classifyTerminalWorkerProtocol(5)).toBe("obsolete");
+  });
   it("rejects the unreleased cell protocol without a draining adapter", () => {
     expect(classifyTerminalWorkerProtocol(1, 2)).toBe("obsolete");
     expect(classifyTerminalWorkerProtocol(2, 3)).toBe("obsolete");
@@ -28,6 +33,6 @@ describe("classifyTerminalWorkerProtocol", () => {
 });
 
 it("drains v5 terminals while v6 supplies creation timestamps", () => {
-  expect(TERMINAL_WORKER_PROTOCOL_VERSION).toBe(6);
-  expect(classifyTerminalWorkerProtocol(5)).toBe("previous");
+  expect(classifyTerminalWorkerProtocol(6, 6)).toBe("current");
+  expect(classifyTerminalWorkerProtocol(5, 6)).toBe("previous");
 });

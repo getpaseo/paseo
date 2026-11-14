@@ -32,6 +32,11 @@ import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
+import {
+  useWorkspaceLaunchErrors,
+  WorkspaceLaunchesSection,
+  type WorkspaceLaunchesSectionProps,
+} from "@/screens/workspace/workspace-launches-button";
 import { usePluginWorkspaceMenu } from "@/plugins";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
@@ -206,11 +211,17 @@ function HeaderMenuProfileItem({
   );
 }
 
+export type WorkspaceHeaderLaunchesInput = Omit<
+  WorkspaceLaunchesSectionProps,
+  "launchErrors" | "onLaunchError" | "onClearLaunchError"
+>;
+
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   pane?: WorkspaceCompactHeaderActions["pane"];
   onExitFocusMode?: () => void;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  launches: WorkspaceHeaderLaunchesInput;
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
@@ -229,6 +240,7 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   normalizedWorkspaceId,
+  launches,
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
@@ -260,6 +272,10 @@ export function WorkspaceHeaderMenuMobile({
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
   }, [normalizedServerId, router]);
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
+  const { launchErrors, onLaunchError, onClearLaunchError } = useWorkspaceLaunchErrors(
+    launches.workspaceId,
+  );
+  const hasLaunches = launches.launches.length > 0;
   const pluginMenu = usePluginWorkspaceMenu(normalizedServerId, normalizedWorkspaceId);
   const pages = useMemo(
     () => [...scriptsMenu.pages, ...pluginMenu.pages],
@@ -292,6 +308,15 @@ export function WorkspaceHeaderMenuMobile({
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        {hasLaunches ? (
+          <WorkspaceLaunchesSection
+            {...launches}
+            launchErrors={launchErrors}
+            onLaunchError={onLaunchError}
+            onClearLaunchError={onClearLaunchError}
+          />
+        ) : null}
+        {hasLaunches && scriptsMenu.trigger ? <DropdownMenuSeparator /> : null}
         {onExitFocusMode ? (
           <DropdownMenuItem onSelect={onExitFocusMode}>
             {t("workspace.tabs.actions.exitFocusMode")}

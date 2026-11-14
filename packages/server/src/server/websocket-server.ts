@@ -92,6 +92,8 @@ import {
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import type { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
+import type { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
@@ -269,6 +271,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       mainRepoRoot: null,
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
+    peekSnapshot: () => null,
     resolveForge: async () => null,
     getCheckoutDiff: async () => ({ diff: "" }),
     validateBranchRef: async () => ({ kind: "not-found" }),
@@ -604,6 +607,8 @@ export class VoiceAssistantWebSocketServer {
   private terminalManager!: TerminalManager | null;
   private serviceProxy!: ServiceProxySubsystem | null;
   private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
+  private workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService | null = null;
+  private workspaceLaunchManager: WorkspaceLaunchManager | null = null;
   private getDaemonTcpPort!: (() => number | null) | null;
   private getDaemonTcpHost!: (() => string | null) | null;
   private serviceProxyPublicBaseUrl!: string | null;
@@ -839,6 +844,14 @@ export class VoiceAssistantWebSocketServer {
     this.startApplicationSocketLeaseInterval();
 
     this.logger.info("WebSocket server initialized on /ws");
+  }
+
+  setWorkspaceLaunchServices(params: {
+    workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService;
+    workspaceLaunchManager: WorkspaceLaunchManager;
+  }): void {
+    this.workspaceRuntimeEnvironment = params.workspaceRuntimeEnvironment;
+    this.workspaceLaunchManager = params.workspaceLaunchManager;
   }
 
   private assignOptionalServices(params: {
@@ -1670,6 +1683,14 @@ export class VoiceAssistantWebSocketServer {
           ),
         );
       },
+      emitWorkspaceUpdatesForExternalWorkspaceIds: async (workspaceIds) => {
+        const workspaceIdList = Array.from(workspaceIds);
+        await Promise.all(
+          this.listSessions().map((activeSession) =>
+            activeSession.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
+          ),
+        );
+      },
       publishScriptStatusUpdate: (message) => this.publishScriptStatusUpdate(message),
       downloadTokenStore: this.downloadTokenStore,
       pushNotifications: this.pushNotifications,
@@ -1705,6 +1726,8 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
+      workspaceRuntimeEnvironment: this.workspaceRuntimeEnvironment ?? undefined,
+      workspaceLaunchManager: this.workspaceLaunchManager ?? undefined,
       workspaceSetupObservation: this.workspaceSetupObservation,
       workspaceSetupRuntime: this.workspaceSetupRuntime,
       workspaceArchiveOperations: this.workspaceArchiveOperations,
@@ -2209,6 +2232,8 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
+        // COMPAT(workspaceLaunchManagement): added in v0.7.0, remove gate after 2027-08-29.
+        workspaceLaunchManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.

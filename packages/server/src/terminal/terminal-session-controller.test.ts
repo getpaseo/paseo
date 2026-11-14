@@ -197,6 +197,48 @@ describe("terminal-session-controller restore", () => {
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
     expect(decodedTerminalFrames(outputFrames)).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
   });
+
+  test("serves the final snapshot of a retained completed terminal", async () => {
+    const subscribe = vi.fn(() => vi.fn());
+    const onExit = vi.fn(() => vi.fn());
+    const terminal: TerminalSession = {
+      ...listSession({ id: "term-completed", name: "Launch", cwd: "/tmp" }),
+      subscribe,
+      onExit,
+      getExitInfo: () => ({ exitCode: 17, signal: null, lastOutputLines: ["launch failed"] }),
+    };
+    const binaryFrames: TerminalStreamFrame[] = [];
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const terminalManager = {
+      getTerminal: vi.fn(() => terminal),
+      replayTerminal: replayFixture(async () => terminalReplay("launch failed", 4)),
+    } as unknown as TerminalManager;
+    const controller = createController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: (bytes) => {
+        const frame = decodeTerminalStreamFrame(bytes);
+        if (frame) binaryFrames.push(frame);
+      },
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: () => false,
+      sessionLogger: createLogger(),
+    });
+
+    await controller.dispatch({
+      type: "subscribe_terminal_request",
+      terminalId: terminal.id,
+      requestId: "req-completed",
+      restore: { mode: "visible-snapshot", scrollbackLines: 200 },
+    });
+    await flushMicrotasks();
+
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
+    expect(binaryFrames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.Restore]);
+    expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("launch failed");
+    expect(outboundMessages.some((message) => message.type === "terminal_stream_exit")).toBe(false);
+  });
 });
 
 function listSession(input: {
@@ -993,7 +1035,10 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
   });
 });
 
-function exitFixture(readReplay: () => Promise<ReplayFixture | null>, backedUp = false) {
+function exitFixture(
+  readReplay: () => Promise<ReplayFixture | null>,
+  options: { backedUp?: boolean; workspaceLaunch?: TerminalSession["workspaceLaunch"] } = {},
+) {
   const outputs = new Set<(message: ServerMessage) => void>();
   const exits = new Set<Parameters<TerminalSession["onExit"]>[0]>();
   const terminal: TerminalSession = {
@@ -1001,6 +1046,7 @@ function exitFixture(readReplay: () => Promise<ReplayFixture | null>, backedUp =
     name: "Terminal",
     cwd: "/unused",
     workspaceId: "workspace",
+    workspaceLaunch: options.workspaceLaunch,
     send() {},
     subscribe(listener) {
       outputs.add(listener);
@@ -1068,7 +1114,7 @@ function exitFixture(readReplay: () => Promise<ReplayFixture | null>, backedUp =
     hasBinaryChannel: () => true,
     isPathWithinRoot: () => false,
     sessionLogger: pino({ level: "silent" }),
-    getClientBufferedAmount: () => (backedUp ? 8 * 1024 * 1024 : 0),
+    getClientBufferedAmount: () => (options.backedUp ? 8 * 1024 * 1024 : 0),
   });
   return {
     frames,
@@ -1105,6 +1151,126 @@ function exitFixture(readReplay: () => Promise<ReplayFixture | null>, backedUp =
 }
 
 describe("terminal output before natural exit", () => {
+  test("replays output missed during worker disconnection before retaining a completed launch", async () => {
+    let snapshot = terminalReplay("before disconnect", 1);
+    const f = exitFixture(async () => snapshot, {
+      workspaceLaunch: {
+        launchName: "dev",
+        command: "./bin/dev",
+        portBase: 42000,
+        portCount: 100,
+      },
+    });
+    try {
+      await f.subscribe({}, true, "reconnected");
+      await flushMicrotasks();
+      expect(
+        f.frames.filter((row) => row.binary?.opcode === TerminalStreamOpcode.Restore),
+      ).toHaveLength(1);
+      // Recovery announces the retained exit before snapshotReady. These bytes never streamed.
+      snapshot = terminalReplay("final failure while disconnected", 3);
+      f.exit();
+      await flushMicrotasks();
+      const restores = f.frames.filter(
+        (row) => row.binary?.opcode === TerminalStreamOpcode.Restore,
+      );
+      expect(restores).toHaveLength(2);
+      expect(Buffer.from(restores[1].binary!.payload).toString()).toContain(
+        "final failure while disconnected",
+      );
+      expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      await f.delivery.close();
+    }
+  });
+
+  test("explicit close wins over retaining a launch's pending final replay", async () => {
+    const snapshot = deferred<ReplayFixture | null>();
+    const f = exitFixture(() => snapshot.promise, {
+      workspaceLaunch: {
+        launchName: "dev",
+        command: "./bin/dev",
+        portBase: 42000,
+        portCount: 100,
+      },
+    });
+    try {
+      const owner = await f.subscribe({}, true, "closing");
+      f.output("FINAL-BYTES", 1);
+      f.exit();
+      expect(f.controller.killTerminalForClose("exit-terminal")).toEqual({
+        terminalId: "exit-terminal",
+        success: true,
+      });
+      snapshot.resolve(terminalReplay("launch ready", 0));
+      await flushMicrotasks();
+
+      expect(f.frames.slice(1).map((row) => row.binary?.opcode ?? row.message?.type)).toEqual([
+        TerminalStreamOpcode.Restore,
+        TerminalStreamOpcode.Output,
+        "terminal_stream_exit",
+      ]);
+      expect(f.frames.at(-1)?.message).toEqual({
+        type: "terminal_stream_exit",
+        payload: { terminalId: "exit-terminal", subscriptionId: owner.id },
+      });
+      expect(f.delivery.registrationCount).toBe(0);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      snapshot.resolve(null);
+      await f.delivery.close();
+    }
+  });
+
+  test.each([true, false])(
+    "keeps attached launch output after exit during restore (modern=%s)",
+    async (modern) => {
+      const snapshot = deferred<ReplayFixture | null>();
+      const f = exitFixture(() => snapshot.promise, {
+        workspaceLaunch: {
+          launchName: "dev",
+          command: "./bin/dev",
+          portBase: 42000,
+          portCount: 100,
+        },
+      });
+      try {
+        const owners = [
+          await f.subscribe({}, modern, "phone"),
+          await f.subscribe({}, modern, "desktop"),
+        ];
+        f.output("FINAL-BYTES", 1);
+        f.exit();
+        snapshot.resolve(terminalReplay("launch ready", 0));
+        await flushMicrotasks();
+
+        for (const owner of owners) {
+          const frames = f.frames
+            .filter((row) => row.source === owner.source && row.binary?.slot === owner.slot)
+            .map((row) => row.binary!);
+          expect(frames.map((frame) => frame.opcode)).toEqual([
+            TerminalStreamOpcode.Restore,
+            TerminalStreamOpcode.Output,
+          ]);
+          expect(decodedTerminalFrames(frames)).toContain("launch ready");
+          expect(Buffer.from(frames[1].payload).toString()).toBe("FINAL-BYTES");
+        }
+        expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+        expect(f.delivery.registrationCount).toBe(2);
+        expect(f.outputs.size + f.exits.size).toBe(0);
+
+        f.controller.killTerminalForClose("exit-terminal");
+        await flushMicrotasks();
+        expect(f.delivery.registrationCount).toBe(0);
+        expect(f.controller.getMetrics().streamSubscriptionCount).toBe(0);
+      } finally {
+        snapshot.resolve(null);
+        await f.delivery.close();
+      }
+    },
+  );
+
   test.each([true, false])(
     "flushes each observer's final bytes before exit (modern=%s)",
     async (modern) => {
@@ -1153,10 +1319,13 @@ describe("terminal output before natural exit", () => {
     vi.useFakeTimers();
     const snapshot = deferred<ReplayFixture | null>();
     let reads = 0;
-    const f = exitFixture(() => {
-      reads++;
-      return snapshot.promise;
-    }, true);
+    const f = exitFixture(
+      () => {
+        reads++;
+        return snapshot.promise;
+      },
+      { backedUp: true },
+    );
     try {
       await f.subscribe({}, true, "bootstrap");
       f.output("x".repeat(300 * 1024), 1);
@@ -1191,7 +1360,7 @@ describe("terminal output before natural exit", () => {
       let reads = 0;
       const f = exitFixture(
         async () => (++reads === 1 ? terminalReplay("initial", 0) : snapshot.promise),
-        true,
+        { backedUp: true },
       );
       try {
         await f.subscribe({}, true, "pressure");
@@ -1298,11 +1467,14 @@ describe("terminal snapshot failure", () => {
     async (phase) => {
       vi.useFakeTimers();
       let reads = 0;
-      const f = exitFixture(async () => {
-        if (++reads === (phase === "backpressure" ? 2 : 1))
-          throw new Error("Terminal worker request timed out: replayTerminal");
-        return terminalReplay("healthy", 0);
-      }, phase === "backpressure");
+      const f = exitFixture(
+        async () => {
+          if (++reads === (phase === "backpressure" ? 2 : 1))
+            throw new Error("Terminal worker request timed out: replayTerminal");
+          return terminalReplay("healthy", 0);
+        },
+        { backedUp: phase === "backpressure" },
+      );
       try {
         const source = {};
         const failed = await f.subscribe(source, true, "failed");
@@ -1390,10 +1562,13 @@ test.each([false, true])(
   async (backpressure) => {
     vi.useFakeTimers();
     let reads = 0;
-    const f = exitFixture(async () => {
-      if (++reads === (backpressure ? 2 : 1)) throw new Error("Snapshot unavailable");
-      return terminalReplay("recovered", 0);
-    }, backpressure);
+    const f = exitFixture(
+      async () => {
+        if (++reads === (backpressure ? 2 : 1)) throw new Error("Snapshot unavailable");
+        return terminalReplay("recovered", 0);
+      },
+      { backedUp: backpressure },
+    );
     try {
       await f.subscribe({}, false, "legacy-recovery");
       await vi.advanceTimersByTimeAsync(0);

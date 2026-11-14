@@ -68,6 +68,7 @@ import { RetainedPanel } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton, useWorkspaceScriptActions } from "@/screens/workspace/scripts";
+import { canManageWorkspaceLaunches } from "@/screens/workspace/workspace-launches-capability";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
@@ -242,6 +243,7 @@ const NO_SHEETS: readonly SheetTab[] = [];
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
+const EMPTY_WORKSPACE_LAUNCHES: NonNullable<WorkspaceDescriptor["launches"]> = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
 
@@ -253,6 +255,12 @@ function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
 ): WorkspaceDescriptor["scripts"] {
   return workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS;
+}
+
+function getWorkspaceLaunches(
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
+): NonNullable<WorkspaceDescriptor["launches"]> {
+  return workspaceDescriptor?.launches ?? EMPTY_WORKSPACE_LAUNCHES;
 }
 
 interface WorkspaceFileLocationFields {
@@ -1033,6 +1041,61 @@ function useLastMainPane(input: {
   return lastMainPaneRef;
 }
 
+function resolveWorkspaceRunControls<T>({
+  scriptCount,
+  launches,
+  launchManagementAvailable,
+}: {
+  scriptCount: number;
+  launches: T[];
+  launchManagementAvailable: boolean;
+}) {
+  return {
+    visible: scriptCount > 0 || (launchManagementAvailable && launches.length > 0),
+    launches: launchManagementAvailable ? launches : [],
+  };
+}
+
+function WorkspaceRunControlsButton({
+  visible,
+  actions,
+  serverId,
+  workspaceId,
+  scripts,
+  launches,
+  liveTerminalIds,
+  onScriptTerminalStarted,
+  onViewTerminal,
+  onOpenUrlInBrowserTab,
+}: {
+  visible: boolean;
+  actions: ReturnType<typeof useWorkspaceScriptActions>;
+  serverId: string;
+  workspaceId: string;
+  scripts: WorkspaceDescriptor["scripts"];
+  launches: WorkspaceDescriptor["launches"];
+  liveTerminalIds: string[];
+  onScriptTerminalStarted: (terminalId: string) => void;
+  onViewTerminal: (terminalId: string) => void;
+  onOpenUrlInBrowserTab: (url: string) => void;
+}): ReactElement | null {
+  if (!visible) return null;
+  return (
+    <WorkspaceScriptsButton
+      actions={actions}
+      serverId={serverId}
+      workspaceId={workspaceId}
+      scripts={scripts}
+      launches={launches}
+      liveTerminalIds={liveTerminalIds}
+      onScriptTerminalStarted={onScriptTerminalStarted}
+      onViewTerminal={onViewTerminal}
+      onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+      hideLabels
+    />
+  );
+}
+
 /** The docked explorer beside the center column takes the top-right window-chrome corner. */
 function DesktopCenterColumnChrome({
   explorerOpen,
@@ -1050,6 +1113,7 @@ function DesktopCenterColumnChrome({
   );
 }
 
+// oxlint-disable-next-line eslint(complexity) -- workspace header combines current pane and launch controls
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1095,6 +1159,7 @@ function WorkspaceScreenContent({
     );
   }, [isRouteFocused, normalizedServerId, normalizedWorkspaceId]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
+  const workspaceLaunches = getWorkspaceLaunches(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
 
@@ -1102,6 +1167,9 @@ function WorkspaceScreenContent({
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
+  );
+  const workspaceLaunchManagementAvailable = useSessionStore((state) =>
+    canManageWorkspaceLaunches(state.sessions[normalizedServerId]?.serverInfo),
   );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
@@ -3234,20 +3302,27 @@ function WorkspaceScreenContent({
     workspaceKey: persistenceKey,
   });
 
+  const workspaceRunControls = resolveWorkspaceRunControls({
+    scriptCount: workspaceScripts.length,
+    launches: workspaceLaunches,
+    launchManagementAvailable: workspaceLaunchManagementAvailable,
+  });
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
-        {workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
-          <WorkspaceScriptsButton
-            actions={scriptActions}
-            scripts={workspaceDescriptor.scripts}
-            liveTerminalIds={liveTerminalIds}
-            onViewTerminal={handleViewScriptTerminal}
-            onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-            hideLabels
-          />
-        ) : null}
+        <WorkspaceRunControlsButton
+          visible={workspaceRunControls.visible}
+          actions={scriptActions}
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          scripts={workspaceScripts}
+          launches={workspaceRunControls.launches}
+          liveTerminalIds={liveTerminalIds}
+          onScriptTerminalStarted={handleScriptTerminalStarted}
+          onViewTerminal={handleViewScriptTerminal}
+          onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
+        />
         {workspaceDirectory ? (
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
@@ -3276,15 +3351,18 @@ function WorkspaceScreenContent({
       </View>
     ),
     [
-      workspaceDescriptor,
+      workspaceScripts,
+      workspaceRunControls,
       normalizedServerId,
       normalizedWorkspaceId,
       workspaceDirectory,
       activeFileLocation,
       liveTerminalIds,
       scriptActions,
+      handleScriptTerminalStarted,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
+      workspaceDescriptor?.projectId,
       handleToggleExplorerSidebar,
       explorerSidebarToggleLabel,
       explorerSidebarToggleAccessibilityState,
@@ -3409,6 +3487,26 @@ function WorkspaceScreenContent({
       handleOpenUrlInBrowserTab,
     ],
   );
+  const compactHeaderLaunches = useMemo(
+    () => ({
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      launches: workspaceRunControls.launches,
+      liveTerminalIds,
+      onLaunchTerminalStarted: handleScriptTerminalStarted,
+      onViewTerminal: handleViewScriptTerminal,
+      onOpenUrlInBrowserTab: handleOpenUrlInBrowserTab,
+    }),
+    [
+      normalizedServerId,
+      normalizedWorkspaceId,
+      workspaceRunControls,
+      liveTerminalIds,
+      handleScriptTerminalStarted,
+      handleViewScriptTerminal,
+      handleOpenUrlInBrowserTab,
+    ],
+  );
   const renderWorkspaceTabSwitcher = useCallback(
     ({
       tabs: headerTabs,
@@ -3479,6 +3577,7 @@ function WorkspaceScreenContent({
             onExitFocusMode={isFocusModeEnabled ? toggleFocusMode : undefined}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
+            launches={compactHeaderLaunches}
             scripts={compactHeaderScripts}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
@@ -3501,6 +3600,7 @@ function WorkspaceScreenContent({
       isFocusModeEnabled,
       toggleFocusMode,
       canOpenImportSheet,
+      compactHeaderLaunches,
       compactHeaderScripts,
       createTerminalDisabled,
       currentBranchName,

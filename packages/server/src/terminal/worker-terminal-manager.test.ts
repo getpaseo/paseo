@@ -2,6 +2,7 @@ import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode
 import { encodeTerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 import { TerminalSessionController } from "./terminal-session-controller.js";
+import { createTerminalWorkerPool } from "./terminal-worker-pool.js";
 import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
 import {
   decodeTerminalStreamFrame,
@@ -41,6 +42,7 @@ import type {
 import {
   resolvePaseoCliBinDir,
   resolvePaseoCliExecutablePath,
+  type TerminalExitInfo,
   type TerminalSession,
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -252,6 +254,58 @@ afterEach(async () => {
     }
   }
 });
+
+it("keeps a completed retained terminal in the detached worker until it is dismissed", async () => {
+  const paseoHome = createTemporaryHome();
+  manager = await startRealWorkerManager({ paseoHome });
+  const terminal = await manager.createTerminal({
+    workspaceId: "ws-retained",
+    cwd: paseoHome,
+    retainOnExit: true,
+    ...nodeTerminalCommand("process.stdout.write('launch failed'); process.exit(17)"),
+  });
+  const exitInfo = await new Promise<TerminalExitInfo>((resolve) => terminal.onExit(resolve));
+
+  expect(exitInfo.exitCode).toBe(17);
+  expect(manager.getTerminal(terminal.id)).toBe(terminal);
+  const replay = await readReplay(manager, terminal.id);
+  expect(replay).not.toBeNull();
+  expect(getRenderedTextFromState(replay!.state)).toContain("launch failed");
+
+  manager.killTerminal(terminal.id);
+  expect(manager.getTerminal(terminal.id)).toBeUndefined();
+}, 30000);
+
+it("adopts the exit of a retained terminal that completed without a daemon controller", async () => {
+  const paseoHome = createTemporaryHome();
+  const exitRequestPath = join(paseoHome, "exit-requested");
+  const exitObservedPath = join(paseoHome, "exit-observed");
+  const first = await startRealWorkerManager({ paseoHome });
+  const terminal = await first.createTerminal({
+    workspaceId: "ws-retained-disconnected-exit",
+    cwd: paseoHome,
+    retainOnExit: true,
+    ...nodeTerminalCommand(`
+      const { existsSync, writeFileSync } = require("node:fs");
+      const timer = setInterval(() => {
+        if (!existsSync(${JSON.stringify(exitRequestPath)})) return;
+        clearInterval(timer);
+        writeFileSync(${JSON.stringify(exitObservedPath)}, "");
+        process.exit(17);
+      }, 10);
+    `),
+  });
+
+  await first.detach();
+  writeFileSync(exitRequestPath, "");
+  await waitForCondition(() => existsSync(exitObservedPath), 10000);
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const adopted = manager.getTerminal(terminal.id);
+  expect(adopted).toBeDefined();
+  await waitForCondition(() => adopted?.getExitInfo() !== null, 10000);
+  expect(adopted?.getExitInfo()).toMatchObject({ exitCode: 17 });
+}, 30000);
 
 it("retires a killed worker's sessions and shares one replacement across concurrent creates", async () => {
   const paseoHome = createTemporaryHome();
@@ -762,9 +816,16 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-adopt-"));
   temporaryDirs.push(cwd);
   const envPath = join(cwd, "adopt-env.json");
+  const workspaceLaunch = {
+    launchName: "dev",
+    command: "./bin/dev",
+    portBase: 42000,
+    portCount: 8,
+  };
   const first = await startRealWorkerManager({ paseoHome });
   const created = await first.createTerminal({
     workspaceId: "ws-adopt",
+    workspaceLaunch,
     cwd,
     ...nodeTerminalCommand(`
       require("node:fs").writeFileSync(
@@ -785,6 +846,7 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
 
   const adopted = manager.getTerminal(created.id);
   expect(adopted?.workspaceId).toBe("ws-adopt");
+  expect(adopted?.workspaceLaunch).toEqual(workspaceLaunch);
   expect(await manager.getTerminals(cwd)).toHaveLength(1);
   expect(manager.validateTerminalActivityToken(created.id, token)).toBe("valid");
   const messages: string[] = [];
@@ -793,6 +855,30 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   });
   adopted?.send({ type: "input", data: "after-adopt\r" });
   await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
+});
+
+it("retains an ordinary script's port-block ownership when adopting its detached worker", async () => {
+  const paseoHome = createTemporaryHome();
+  const cwd = mkdtempSync(join(tmpdir(), "worker-script-block-adopt-"));
+  temporaryDirs.push(cwd);
+  const first = await startRealWorkerManager({ paseoHome });
+  const workspacePortBlock = { portBase: 42000, portCount: 4 };
+  const created = await first.createTerminal({
+    cwd,
+    workspaceId: "script-block-owner",
+    workspacePortBlock,
+    workspaceScriptName: "dev",
+    ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+  });
+  expect(created.workspacePortBlock).toEqual(workspacePortBlock);
+  expect(created.workspaceScriptName).toBe("dev");
+  await first.detach();
+  manager = await startRealWorkerManager({ paseoHome });
+  const adopted = manager.getTerminal(created.id);
+  expect(adopted?.workspacePortBlock).toEqual(workspacePortBlock);
+  expect(adopted?.workspaceScriptName).toBe("dev");
+  expect(adopted?.workspaceLaunch).toBeUndefined();
+  expect(adopted?.workspaceId).toBe("script-block-owner");
 });
 
 function isProcessAlive(pid: number): boolean {
@@ -1428,7 +1514,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
 
   manager.killTerminal("terminal-a");
   const request = worker.sentMessages.find(
-    (message) => message.type === "killTerminal" && message.terminalId === "terminal-a",
+    (message) => message.type === "killTerminalAndWait" && message.terminalId === "terminal-a",
   );
   if (!request) {
     throw new Error("killTerminal request not sent");
@@ -1454,6 +1540,404 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       workspaceId: "ws-test",
     },
   ]);
+});
+
+it("retains hidden block owners after exit and failed stop until a retry confirms closure", async () => {
+  const worker = new FakeTerminalWorker();
+  const ownedManager = createWorkerTerminalManager({ worker, requestTimeoutMs: 1000 });
+  const drained: number[] = [];
+  const pool = createTerminalWorkerPool({
+    current: null,
+    draining: [
+      {
+        manager: ownedManager,
+        workerPid: 1,
+        exited: new Promise<void>(() => {}),
+        ready: async () => true,
+        stopRecovery() {},
+      },
+    ],
+    incompatible: null,
+    closeAll: () => ownedManager.closeTerminals(),
+    onDrained: (member) => drained.push(member.workerPid),
+  });
+  manager = pool;
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "closing-script",
+      name: "Script",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+    },
+    state: {
+      ...createTerminalState(),
+      workspacePortBlock: { portBase: 42000, portCount: 4 },
+      workspaceScriptName: "dev",
+    },
+  });
+  const session = ownedManager.getTerminal("closing-script");
+  if (!session) throw new Error("Expected script terminal");
+  const closingAtRemoval: string[][] = [];
+  ownedManager.subscribeTerminalsChanged(() => {
+    closingAtRemoval.push((ownedManager.getClosingTerminals?.() ?? []).map((entry) => entry.id));
+  });
+  pool.killTerminal(session.id);
+  expect(closingAtRemoval).toEqual([[session.id]]);
+  expect(ownedManager.getTerminal(session.id)).toBeUndefined();
+  expect(ownedManager.listDirectories()).toEqual([]);
+  expect(pool.getClosingTerminals?.()).toEqual([session]);
+  expect(drained).toEqual([]);
+  expect(worker.connected).toBe(true);
+  const initialStop = worker.sentMessages.at(-1);
+  if (!initialStop || initialStop.type !== "killTerminalAndWait")
+    throw new Error("Expected confirmed stop request");
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: session.id,
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+  expect(ownedManager.getClosingTerminals?.()).toEqual([session]);
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: initialStop.requestId,
+    ok: false,
+    error: "Stop unconfirmed",
+  });
+  const retry = pool.killTerminalAndWait(session.id);
+  const retryRequest = worker.sentMessages.at(-1);
+  if (!retryRequest || retryRequest.type !== "killTerminalAndWait")
+    throw new Error("Expected stop retry");
+  expect(ownedManager.getClosingTerminals?.()).toEqual([session]);
+  worker.emitWorkerMessage({ type: "response", requestId: retryRequest.requestId, ok: true });
+  await retry;
+  expect(ownedManager.getClosingTerminals?.()).toEqual([]);
+  expect(closingAtRemoval).toEqual([[session.id], []]);
+  await ownedManager.detach({ afterPendingRequests: true });
+  expect(worker.connected).toBe(false);
+});
+
+it("delivers missed exits for hidden closes during adoption or confirmed retry exactly once", async () => {
+  const worker = new FakeTerminalWorker();
+  const ownedManager = createWorkerTerminalManager({ worker, requestTimeoutMs: 1000 });
+  manager = ownedManager;
+  function createClosingLaunch(id: string) {
+    const info = {
+      id,
+      name: id,
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    };
+    const state = {
+      ...createTerminalState(),
+      workspaceLaunch: { launchName: id, command: "./bin/dev", portBase: 42000, portCount: 4 },
+    };
+    worker.emitWorkerMessage({ type: "terminalCreated", terminal: info, state });
+    const session = ownedManager.getTerminal(id);
+    if (!session) throw new Error("Expected launch terminal");
+    const exits: TerminalExitInfo[] = [];
+    session.onExit((exit) => exits.push(exit));
+    ownedManager.killTerminal(id);
+    return { info, state, exits, session };
+  }
+  const viaConfirmation = createClosingLaunch("via-confirmation");
+  const viaAdoption = createClosingLaunch("via-adoption");
+  const observed = createClosingLaunch("observed-exit");
+  const observedExit = { exitCode: 17, signal: null, lastOutputLines: ["failed"] };
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: observed.info.id,
+    info: observedExit,
+  });
+  const initialStops = worker.sentMessages.filter(
+    (request) => request.type === "killTerminalAndWait",
+  );
+  expect(initialStops).toHaveLength(3);
+  for (const request of initialStops) {
+    worker.emitWorkerMessage({
+      type: "response",
+      requestId: request.requestId,
+      ok: false,
+      error: "IPC outage",
+    });
+  }
+  const adoption = ownedManager.adoptTerminals();
+  const listing = worker.sentMessages.at(-1);
+  if (!listing || listing.type !== "listTerminals") throw new Error("Expected recovery listing");
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: listing.requestId,
+    ok: true,
+    result: [
+      {
+        terminal: viaConfirmation.info,
+        state: viaConfirmation.state,
+        replayPreamble: "",
+      },
+    ],
+  });
+  await adoption;
+  const unknownExit = { exitCode: null, signal: null, lastOutputLines: [] };
+  expect(viaConfirmation.exits).toEqual([]);
+  expect(viaAdoption.exits).toEqual([unknownExit]);
+  expect(ownedManager.getClosingTerminals?.()).toHaveLength(3);
+  expect(observed.session.getExitInfo()).toEqual(observedExit);
+
+  const retries = [
+    ownedManager.killTerminalAndWait(viaConfirmation.info.id),
+    ownedManager.killTerminalAndWait(viaAdoption.info.id),
+    ownedManager.killTerminalAndWait(observed.info.id),
+  ];
+  for (const request of worker.sentMessages.slice(-3)) {
+    if (request.type !== "killTerminalAndWait") throw new Error("Expected close retry");
+    worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+  }
+  await Promise.all(retries);
+  expect(viaConfirmation.exits).toEqual([unknownExit]);
+  expect(viaAdoption.exits).toEqual([unknownExit]);
+  expect(observed.exits).toEqual([observedExit]);
+  expect(ownedManager.getClosingTerminals?.()).toEqual([]);
+  expect(ownedManager.getTerminal(viaConfirmation.info.id)).toBeUndefined();
+  expect(ownedManager.getTerminal(viaAdoption.info.id)).toBeUndefined();
+});
+
+it("keeps a retained worker terminal available after it exits", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exitInfo = { exitCode: 17, signal: null, lastOutputLines: ["launch failed"] };
+
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(manager.getTerminal("terminal-a")).toBe(session);
+  expect(session.getExitInfo()).toEqual(exitInfo);
+  expect(await manager.getTerminals("/workspace")).toEqual([session]);
+
+  manager.killTerminal("terminal-a");
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+});
+
+it.each(["working", "attention"] as const)(
+  "clears %s activity while keeping completed launch output available",
+  async (state) => {
+    const worker = new FakeTerminalWorker();
+    manager = createWorkerTerminalManager({ requestTimeoutMs: 50, worker });
+    const activity = { state, changedAt: 1000 };
+    worker.emitWorkerMessage({
+      type: "terminalCreated",
+      terminal: {
+        id: "retained-launch",
+        name: "Launch",
+        cwd: "/workspace",
+        workspaceId: "ws-test",
+        activity,
+        retainOnExit: true,
+      },
+      state: createTerminalState(),
+    });
+    const session = manager.getTerminal("retained-launch")!;
+    const contributions: TerminalWorkspaceContributionChangedEvent[] = [];
+    manager.subscribeTerminalWorkspaceContributionChanged((event) => contributions.push(event));
+    const transitions: unknown[] = [];
+    session.onActivityChange((transition) => transitions.push(transition));
+
+    worker.emitWorkerMessage({
+      type: "terminalExit",
+      terminalId: session.id,
+      info: { exitCode: 17, signal: null, lastOutputLines: ["failed"] },
+    });
+    // Buffered activity arriving after exit must not revive workspace status.
+    worker.emitWorkerMessage({
+      type: "terminalActivityChange",
+      terminalId: session.id,
+      activity,
+      previous: null,
+    });
+
+    expect(session.getActivity()).toBeNull();
+    expect(transitions).toEqual([{ activity: null, previous: activity }]);
+    expect(contributions).toEqual([
+      { terminalId: session.id, cwd: "/workspace", workspaceId: "ws-test" },
+    ]);
+    expect(await manager.getTerminals("/workspace")).toEqual([session]);
+    expect(session.getExitInfo()?.exitCode).toBe(17);
+  },
+);
+
+it("removes a running retained worker terminal when explicitly killed", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exits: TerminalExitInfo[] = [];
+  session.onExit((info) => exits.push(info));
+
+  manager.killTerminal("terminal-a");
+
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(await manager.getTerminals("/workspace")).toEqual([]);
+  expect(worker.sentMessages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "killTerminalAndWait", terminalId: "terminal-a" }),
+    ]),
+  );
+
+  const exitInfo = { exitCode: null, signal: 15, lastOutputLines: [] };
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(exits).toEqual([exitInfo]);
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+});
+
+it("keeps a terminal available to retry when kill-and-wait fails", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 50, worker });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-retry",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-retry");
+  if (!session) throw new Error("Expected terminal");
+
+  const failedStop = manager.killTerminalAndWait(session.id);
+  const failedRequest = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!failedRequest || failedRequest.type !== "killTerminalAndWait") {
+    throw new Error("Expected kill-and-wait request");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: failedRequest.requestId,
+    ok: false,
+    error: "worker did not confirm process exit",
+  });
+  await expect(failedStop).rejects.toThrow("worker did not confirm process exit");
+  expect(manager.getTerminal(session.id)).toBe(session);
+
+  const retry = manager.killTerminalAndWait(session.id);
+  const retryRequest = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!retryRequest || retryRequest.type !== "killTerminalAndWait") {
+    throw new Error("Expected retry kill-and-wait request");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: retryRequest.requestId,
+    ok: true,
+  });
+  await expect(retry).resolves.toBeUndefined();
+  expect(manager.getTerminal(session.id)).toBeUndefined();
+});
+
+it("preserves retained terminal output when stopping its foreground process", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preserve-stop-"));
+  temporaryDirs.push(cwd);
+  manager = await startRealWorkerManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      ...nodeTerminalCommand("console.log('launch-stop-output'); setInterval(() => {}, 1000);"),
+      retainOnExit: true,
+    }),
+  );
+
+  await manager.killTerminalAndWait(session.id, {
+    gracefulTimeoutMs: 1000,
+    forceTimeoutMs: 500,
+    preserveSession: true,
+  });
+
+  expect(manager.getTerminal(session.id)).toBe(session);
+  expect(session.getExitInfo()).not.toBeNull();
+  const replay = await readReplay(manager, session.id);
+  expect(replay && getRenderedTextFromState(replay.state)).toContain("launch-stop-output");
+
+  await manager.killTerminalAndWait(session.id);
+  terminalSessions.splice(terminalSessions.indexOf(session), 1);
+  expect(manager.getTerminal(session.id)).toBeUndefined();
+});
+
+it("uses the previous-protocol stop adapter while draining an older worker", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+    workerProtocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-previous",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+
+  const stop = manager.killTerminalAndWait("terminal-previous", { preserveSession: true });
+  const request = worker.sentMessages[worker.sentMessages.length - 1];
+  if (!request || request.type !== "killTerminalAndWait") {
+    throw new Error("Expected kill-and-wait request");
+  }
+  expect(request.options?.preserveSession).toBeUndefined();
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+  await expect(stop).resolves.toBeUndefined();
+  expect(manager.getTerminal("terminal-previous")).toBeUndefined();
 });
 
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
@@ -1639,6 +2123,38 @@ async function leaveWorkerWithTerminal(
   };
 }
 
+it("drains a worker one protocol older: it keeps its terminal, new ones open in a second worker, and it exits after its last", async () => {
+  const paseoHome = createTemporaryHome();
+  const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 1);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(manager.getTerminal(old.terminalId)).toBeDefined();
+  const workers = await workerRecords(paseoHome);
+  expect(workers).toHaveLength(2);
+  const current = workers.find((record) => record.pid !== old.workerPid)!;
+  expect(current.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
+  const added = await manager.createTerminal({
+    workspaceId: "ws-protocol",
+    cwd: old.cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  trackTerminal(added);
+  const currentTerminals = (
+    await readTerminalWorkerRecord(join(terminalWorkerDirectory(paseoHome), `${current.pid}.json`))
+  ).terminals.map((entry) => entry.id);
+  expect(currentTerminals).toEqual([added.id]);
+  expect((await manager.getTerminals(old.cwd)).map((session) => session.id).sort()).toEqual(
+    [old.terminalId, added.id].sort(),
+  );
+
+  await manager.killTerminalAndWait(old.terminalId);
+
+  await waitForCondition(() => !isProcessAlive(old.workerPid), 10000);
+  expect((await workerRecords(paseoHome)).map((record) => record.pid)).toEqual([current.pid]);
+  expect(manager.getTerminal(added.id)).toBeDefined();
+});
+
 it.each([1, 4])(
   "hard cuts unreleased worker protocol %s, closing its terminals",
   async (version) => {
@@ -1666,19 +2182,19 @@ it.each([1, 4])(
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(6);
+    expect(workers[0]!.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   },
 );
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
+  const newer = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION + 1);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 7");
+  expect(unavailable?.message).toContain(`worker protocol ${TERMINAL_WORKER_PROTOCOL_VERSION + 1}`);
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1784,6 +2300,55 @@ it.skipIf(isPlatform("win32"))(
     expect(await liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
   },
 );
+
+it("opens new terminals in a new worker once one of two draining workers exits", async () => {
+  const paseoHome = createTemporaryHome();
+  const first = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
+  const second = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(await liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+  await expect(
+    manager.createTerminal({ workspaceId: "ws-detached", cwd: first.cwd }),
+  ).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
+
+  await manager.killTerminalAndWait(first.terminalId);
+  await waitForCondition(() => !isProcessAlive(first.workerPid), 10000);
+
+  // Concurrent creates start one worker between them.
+  const created = await Promise.all(
+    [0, 1].map(() =>
+      manager!.createTerminal({
+        workspaceId: "ws-detached",
+        cwd: first.cwd,
+        ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+      }),
+    ),
+  );
+  created.forEach(trackTerminal);
+  const workers = await workerRecords(paseoHome);
+  expect(workers.map((record) => record.pid).sort()).toEqual(await liveWorkerPids(paseoHome));
+  expect(workers).toHaveLength(2);
+  const started = workers.find((record) => record.pid !== second.workerPid)!;
+  expect(started.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
+  expect(
+    (
+      await readTerminalWorkerRecord(
+        join(terminalWorkerDirectory(paseoHome), `${started.pid}.json`),
+      )
+    ).terminals
+      .map((entry) => entry.id)
+      .sort(),
+  ).toEqual(created.map((session) => session.id).sort());
+  expect(manager.getTerminal(second.terminalId)).toBeDefined();
+});
 
 it("replays bounded ANSI chunks independently of live output and reconstructs the revision cut", async () => {
   const cwd = createTemporaryHome();

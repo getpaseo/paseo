@@ -1,4 +1,10 @@
-import type { TerminalExitInfo, ServerMessage, ClientMessage } from "./terminal.js";
+import type {
+  TerminalExitInfo,
+  ServerMessage,
+  ClientMessage,
+  WorkspaceLaunchTerminalMetadata,
+  WorkspacePortBlockTerminalMetadata,
+} from "./terminal.js";
 import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
 export interface WorkerTerminalState {
   /** COMPAT(terminal-created-at): v6; v5 draining workers omit this, remove after 2027-06. */
@@ -7,6 +13,9 @@ export interface WorkerTerminalState {
   cols: number;
   hasOutput: boolean;
   title?: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
 }
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -18,12 +27,16 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  retainOnExit?: boolean;
 }
 
 export interface WorkerCreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId?: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -33,6 +46,7 @@ export interface WorkerCreateTerminalOptions {
   cols?: number;
   activityToken?: string;
   activityUrl?: string | null;
+  retainOnExit?: boolean;
   // The worker outlives the daemon that started it, so the controlling daemon
   // sends its own environment and Paseo CLI path with every create instead of
   // letting the worker reuse whatever it inherited at launch.
@@ -45,7 +59,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 6;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 7;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.
@@ -83,11 +97,15 @@ export interface WorkerListedTerminal {
   state: WorkerTerminalState;
   activityToken: string | null;
   replayPreamble: string;
+  /** Present for a retained terminal whose process exited while no daemon was connected. */
+  exitInfo?: TerminalExitInfo;
 }
 
 export interface WorkerKillAndWaitOptions {
   gracefulTimeoutMs?: number;
   forceTimeoutMs?: number;
+  /** Keep a retained terminal session after stopping its foreground process. */
+  preserveSession?: boolean;
 }
 
 export type TerminalWorkerRequest =
