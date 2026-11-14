@@ -86,6 +86,8 @@ import { OmpMcpBridge, type OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import type {
   OmpAgentSessionEvent,
   OmpAgentMessage,
+  OmpGoal,
+  OmpGoalRpcResult,
   OmpImageContent,
   OmpModel,
   OmpRuntimeEvent,
@@ -178,9 +180,10 @@ interface OmpPersistenceMetadata {
 
 /** OMP's outcome for one prompt, correlated by the prompt's request id. */
 interface OmpPromptResult {
-  agentInvoked: boolean;
+  agentInvoked?: boolean;
   /** Why OMP rejected the prompt before its agent ran, such as a missing API key. */
   error: string | null;
+  sessionSettled?: boolean;
 }
 
 function promptResultError(result: {
@@ -248,6 +251,70 @@ interface OmpResumeConfig {
 interface OmpSlashCommandInvocation {
   commandName: string;
   args?: string;
+}
+
+type OmpGoalCommand =
+  | { operation: "get" | "pause" | "resume" | "drop" }
+  | { operation: "create"; objective: string; tokenBudget?: number };
+
+const OMP_GOAL_USAGE =
+  "Usage: /goal [--token-budget n] <objective> | /goal status | /goal pause | /goal resume | /goal clear";
+
+function parseOmpGoalCommand(
+  args: string | undefined,
+): { command: OmpGoalCommand } | { error: string } {
+  const value = args?.trim() ?? "";
+  if (!value) return { error: OMP_GOAL_USAGE };
+
+  const statusCommand = value.toLowerCase();
+  if (statusCommand === "status" || statusCommand === "get") {
+    return { command: { operation: "get" } };
+  }
+  if (statusCommand === "pause") return { command: { operation: "pause" } };
+  if (statusCommand === "resume") return { command: { operation: "resume" } };
+  if (statusCommand === "clear" || statusCommand === "drop") {
+    return { command: { operation: "drop" } };
+  }
+
+  if (
+    value === "--token-budget" ||
+    value.startsWith("--token-budget=") ||
+    value.startsWith("--token-budget ")
+  ) {
+    const match = /^--token-budget(?:=|\s+)(\S+)(?:\s+([\s\S]+))?$/.exec(value);
+    const parsedBudget = match ? Number(match[1]) : Number.NaN;
+    const objective = match?.[2]?.trim();
+    if (!Number.isSafeInteger(parsedBudget) || parsedBudget <= 0 || !objective) {
+      return {
+        error:
+          "Invalid Goal token budget. Use a positive integer before the objective. " +
+          OMP_GOAL_USAGE,
+      };
+    }
+    return {
+      command: { operation: "create", objective, tokenBudget: parsedBudget },
+    };
+  }
+
+  return { command: { operation: "create", objective: value } };
+}
+
+function formatOmpGoalStatus(goal: OmpGoal, mode: string | undefined): string {
+  const status = goal.status ?? mode ?? "unknown";
+  const objective = goal.objective ?? "(objective unavailable)";
+  const budget =
+    typeof goal.tokenBudget === "number"
+      ? `; tokens ${goal.tokensUsed ?? 0}/${goal.tokenBudget}`
+      : typeof goal.tokensUsed === "number"
+        ? `; tokens used ${goal.tokensUsed}`
+        : "";
+  const elapsed =
+    typeof goal.timeUsedSeconds === "number" ? `; elapsed ${goal.timeUsedSeconds}s` : "";
+  return `Goal ${status}: ${objective}${budget}${elapsed}`;
+}
+
+function goalFromRpcResult(result: OmpGoalRpcResult): OmpGoal | null {
+  return result.goal ?? result.state?.goal ?? null;
 }
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
@@ -703,6 +770,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private readonly questionUi = new OmpQuestionUi();
   private activeTurnId: string | null = null;
+  private autonomousTurnId: string | null = null;
   private readonly pendingClientMessages: Array<{ clientMessageId: string | null; text: string }> =
     [];
   private activeAssistantMessageId: string | null = null;
@@ -716,6 +784,12 @@ export class OmpAgentSession implements AgentSession {
   private activePromptAgentInvoked: boolean | null = null;
   private activePromptError: string | null = null;
   private readonly pendingPromptResults = new Map<string, OmpPromptResult>();
+  private pendingTerminalCompletion: {
+    turnId: string | undefined;
+    messages: OmpAgentMessage[];
+  } | null = null;
+  private sessionSettledSignal = false;
+  private readonly providerIdleWakeups = new Set<() => void>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private lastKnownThinkingOptionId: string | null;
   private manualCompactionRunning = false;
@@ -906,6 +980,9 @@ export class OmpAgentSession implements AgentSession {
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
+    this.autonomousTurnId = null;
+    this.pendingTerminalCompletion = null;
+    this.sessionSettledSignal = false;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -1184,9 +1261,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    const turnId = this.activeTurnId;
+    const turnId = this.currentTurnIdForEvent();
     await this.runtimeSession.abort();
-    if (turnId && this.activeTurnId === turnId) {
+    if (turnId && this.currentTurnIdForEvent() === turnId) {
       this.usagePoller.stopTurn();
       this.resetActiveTurn({ terminalizeWork: true });
       this.emit({
@@ -1272,12 +1349,16 @@ export class OmpAgentSession implements AgentSession {
   private resetActiveTurn({ terminalizeWork }: { terminalizeWork: boolean }): void {
     if (terminalizeWork) this.terminalizeActiveWork();
     this.activeTurnId = null;
+    this.autonomousTurnId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.outOfBandTurnStartAnnounced = false;
     this.activeTurnHasUserMessage = false;
     this.pendingClientMessages.length = 0;
+    this.pendingTerminalCompletion = null;
+    this.sessionSettledSignal = false;
+    this.wakeProviderIdleWaiters();
     this.clearNoTurnBuffers();
   }
 
@@ -1301,6 +1382,13 @@ export class OmpAgentSession implements AgentSession {
     }
     this.live = true;
     const commandName = parsed.commandName.toLowerCase();
+    if (commandName === "goal") {
+      return {
+        run: async ({ emit }) => {
+          await this.executeGoalCommand(parsed.args, emit);
+        },
+      };
+    }
     if (commandName === "compact") {
       return {
         run: async ({ emit }) => {
@@ -1375,7 +1463,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private currentTurnIdForEvent(): string | undefined {
-    return this.activeTurnId ?? undefined;
+    return this.activeTurnId ?? this.autonomousTurnId ?? undefined;
   }
 
   private scheduleNoTurnPromptCompletion(turnId: string): void {
@@ -1524,6 +1612,102 @@ export class OmpAgentSession implements AgentSession {
     }
     emitCompaction("completed");
     await this.usagePoller.refresh();
+  }
+
+  private async executeGoalCommand(
+    args: string | undefined,
+    emit: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
+    const parsed = parseOmpGoalCommand(args);
+    if ("error" in parsed) {
+      this.emitGoalCommandMessage(emit, `[Error] ${parsed.error}`);
+      return;
+    }
+
+    try {
+      switch (parsed.command.operation) {
+        case "get": {
+          const result = await this.runtimeSession.getGoal();
+          const goal = goalFromRpcResult(result);
+          const message = goal
+            ? formatOmpGoalStatus(goal, result.state?.mode)
+            : "No active OMP Goal.";
+          this.emitGoalCommandMessage(emit, message);
+          return;
+        }
+        case "create": {
+          const result = await this.runtimeSession.createGoal(
+            parsed.command.objective,
+            parsed.command.tokenBudget,
+          );
+          const goal = goalFromRpcResult(result);
+          if (!goal) {
+            throw new Error("OMP reported success without returning the created Goal state");
+          }
+          this.emitGoalCommandMessage(
+            emit,
+            `Goal created: ${goal.objective ?? parsed.command.objective}`,
+          );
+          return;
+        }
+        case "pause": {
+          const result = await this.runtimeSession.pauseGoal();
+          const goal = goalFromRpcResult(result);
+          const status = goal?.status?.toLowerCase();
+          this.emitGoalCommandMessage(
+            emit,
+            !goal
+              ? "No active OMP Goal to pause."
+              : status === "paused"
+                ? "Goal paused"
+                : `Goal pause RPC completed; current status: ${status ?? "unknown"}`,
+          );
+          return;
+        }
+        case "resume": {
+          const result = await this.runtimeSession.resumeGoal();
+          const goal = goalFromRpcResult(result);
+          const status = goal?.status?.toLowerCase();
+          this.emitGoalCommandMessage(
+            emit,
+            !goal
+              ? "No paused OMP Goal to resume."
+              : status === "active"
+                ? "Goal resumed"
+                : `Goal resume RPC completed; current status: ${status ?? "unknown"}`,
+          );
+          return;
+        }
+        case "drop": {
+          const result = await this.runtimeSession.dropGoal();
+          const goal = goalFromRpcResult(result);
+          this.emitGoalCommandMessage(
+            emit,
+            goal
+              ? `[Error] OMP Goal clear did not remove the Goal (status: ${goal.status ?? "unknown"}).`
+              : "Goal cleared",
+          );
+          return;
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const unsupported = /unknown (?:rpc )?command|unsupported|not supported/i.test(message);
+      this.emitGoalCommandMessage(
+        emit,
+        unsupported
+          ? "[Error] This OMP version does not support native Goal RPC."
+          : `[Error] OMP Goal command failed: ${message}`,
+      );
+    }
+  }
+
+  private emitGoalCommandMessage(emit: (event: AgentStreamEvent) => void, text: string): void {
+    emit({
+      type: "timeline",
+      provider: this.provider,
+      item: { type: "assistant_message", text },
+    });
   }
 
   private async executeAutoCompactCommand(
@@ -1820,14 +2004,24 @@ export class OmpAgentSession implements AgentSession {
         "agentInvoked" in event && typeof event.agentInvoked === "boolean"
           ? event.agentInvoked
           : undefined;
-      if (requestId && agentInvoked !== undefined) {
-        const result = { agentInvoked, error: promptResultError(event) };
+      if (requestId && (agentInvoked !== undefined || typeof event.sessionSettled === "boolean")) {
+        const result: OmpPromptResult = {
+          ...(agentInvoked === undefined ? {} : { agentInvoked }),
+          error: promptResultError(event),
+          ...(typeof event.sessionSettled === "boolean"
+            ? { sessionSettled: event.sessionSettled }
+            : {}),
+        };
+        if (typeof event.sessionSettled === "boolean") {
+          this.sessionSettledSignal = event.sessionSettled;
+          if (event.sessionSettled) this.wakeProviderIdleWaiters();
+        }
         if (requestId === this.activePromptRequestId && this.activeTurnId) {
-          this.activePromptAgentInvoked = agentInvoked;
+          if (agentInvoked !== undefined) this.activePromptAgentInvoked = agentInvoked;
           this.activePromptError = result.error;
           if (agentInvoked === false) {
             this.scheduleNoTurnPromptCompletion(this.activeTurnId);
-          } else {
+          } else if (agentInvoked === true) {
             this.cancelNoTurnPromptCompletion();
           }
         } else if (this.activePromptRequestId === null) {
@@ -1835,6 +2029,24 @@ export class OmpAgentSession implements AgentSession {
         }
       }
       return;
+    }
+    if (event.type === "session_settled") {
+      this.sessionSettledSignal = true;
+      this.wakeProviderIdleWaiters();
+      return;
+    }
+    if (event.type === "goal_updated") {
+      let goalState = this.state.goal;
+      if (event.state === null) {
+        goalState = null;
+      } else if (event.state !== undefined) {
+        goalState = { ...(goalState ?? {}), ...event.state };
+      }
+      if (event.goal !== undefined) {
+        goalState = { ...(goalState ?? {}), goal: event.goal };
+      }
+      this.state = { ...this.state, goal: goalState };
+      this.wakeProviderIdleWaiters();
     }
     if (this.handleExtraRuntimeEvent(event)) {
       return;
@@ -1858,13 +2070,13 @@ export class OmpAgentSession implements AgentSession {
     this.runtimeDead = true;
     void this.hostTools?.close();
     this.usagePoller.stopTurn();
-    if (!this.activeTurnId) {
+    const turnId = this.currentTurnIdForEvent();
+    if (!turnId && !this.activeTurnStarted) {
       this.terminalizeActiveWork();
       this.subagentIndex.clear(this.runtimeSession);
       this.emit({ type: "turn_failed", provider: this.provider, error });
       return;
     }
-    const turnId = this.activeTurnId;
     this.resetActiveTurn({ terminalizeWork: true });
     this.subagentIndex.clear(this.runtimeSession);
     this.emit({
@@ -1876,11 +2088,12 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleSessionEvent(event: OmpAgentSessionEvent): void {
-    const turnId = this.currentTurnIdForEvent();
+    let turnId = this.currentTurnIdForEvent();
 
     switch (event.type) {
       case "agent_start":
         this.activeTurnStarted = true;
+        this.sessionSettledSignal = false;
         this.clearNoTurnBuffers();
         this.emit({
           type: "thread_started",
@@ -1889,6 +2102,20 @@ export class OmpAgentSession implements AgentSession {
         });
         return;
       case "turn_start":
+        this.sessionSettledSignal = false;
+        if (!this.activeTurnId) {
+          if (this.autonomousTurnId === null) {
+            this.usagePoller.startTurn();
+          } else {
+            this.pendingTerminalCompletion = null;
+          }
+          this.autonomousTurnId = randomUUID();
+          this.activeAssistantMessageId = null;
+          this.activeTurnTerminalAssistantMessage = null;
+          this.activeTurnHasUserMessage = false;
+          this.wakeProviderIdleWaiters();
+          turnId = this.currentTurnIdForEvent();
+        }
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         if (this.outOfBandTurnStartAnnounced) {
@@ -2235,8 +2462,11 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
+    const pendingCompletion = { turnId, messages };
+    this.pendingTerminalCompletion = pendingCompletion;
     const deadline = Date.now() + this.providerIdleDeadlineMs;
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
+      if (this.pendingTerminalCompletion !== pendingCompletion) return;
       if (Date.now() >= deadline) {
         this.usagePoller.stopTurn();
         this.resetActiveTurn({ terminalizeWork: true });
@@ -2255,15 +2485,40 @@ export class OmpAgentSession implements AgentSession {
           // An interrupt settled this turn while the state check was in flight.
           return;
         }
-        if (!state.isStreaming && !state.isCompacting) {
+        if (this.isOmpSessionSettled(state)) {
+          this.pendingTerminalCompletion = null;
           this.completeTurn(turnId, messages);
           return;
         }
       } catch (error) {
         this.logger.debug({ err: error }, "OMP state unavailable while waiting for provider idle");
       }
-      await this.providerIdleScheduler.waitForRetry();
+      await this.waitForProviderIdleRetry();
     }
+  }
+
+  private isOmpSessionSettled(state: OmpSessionState): boolean {
+    if (state.hasPendingAsyncWork === true) return false;
+    if (typeof state.isSettled === "boolean") return state.isSettled;
+    if (this.sessionSettledSignal) return true;
+    if (state.goal?.goal?.status?.toLowerCase() === "active") return false;
+    return !state.isStreaming && !state.isCompacting;
+  }
+
+  private waitForProviderIdleRetry(): Promise<void> {
+    let wake!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      wake = resolve;
+      this.providerIdleWakeups.add(wake);
+    });
+    return Promise.race([this.providerIdleScheduler.waitForRetry(), settled]).finally(() => {
+      this.providerIdleWakeups.delete(wake);
+    });
+  }
+
+  private wakeProviderIdleWaiters(): void {
+    for (const wake of this.providerIdleWakeups) wake();
+    this.providerIdleWakeups.clear();
   }
 
   private async refreshState(): Promise<void> {
