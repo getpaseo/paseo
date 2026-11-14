@@ -1,10 +1,12 @@
 package sh.paseo.scroll;
 
 import android.content.Context;
+import android.graphics.Rect;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.widget.TextView;
 import androidx.annotation.Nullable;
 import com.facebook.react.R;
 import com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelper;
@@ -12,7 +14,7 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with two corrections. Java, because the content-position
+ * React Native's vertical scroll view with five corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
@@ -27,6 +29,7 @@ final class PaseoScrollView extends ReactScrollView {
   private @Nullable MaintainVisibleScrollPositionHelper.Config visibleContentPosition = null;
   private boolean isClampPending = false;
   private boolean isUserDragging = false;
+  private boolean isFocusRevealSkipped = false;
 
   PaseoScrollView(Context context) {
     super(context);
@@ -49,6 +52,56 @@ final class PaseoScrollView extends ReactScrollView {
   public void scrollToPreservingMomentum(int x, int y) {
     if (isUserDragging && isEndPinTheAnchor()) return;
     super.scrollToPreservingMomentum(x, y);
+  }
+
+  // Chat text is selectable (enriched-markdown's text views and <Text selectable>), and selectable
+  // text takes focus when touched: a tap on a link, a word, or a long-press to select. React Native
+  // scrolls a newly focused child fully into view, so touching a reply that is partly off screen
+  // scrolled the timeline by up to a screen under the user's finger. Text the user touched is
+  // already where they are looking, so its focus does not scroll. Inputs, and focus moved by a
+  // keyboard, still scroll into view.
+  @Override
+  public void requestChildFocus(View child, View focused) {
+    if (isTouchedReadOnlyText(focused)) {
+      requestChildFocusWithoutScroll(child, focused);
+      return;
+    }
+    super.requestChildFocus(child, focused);
+  }
+
+  // Focused text asks to reveal its selection whenever the selection changes. A streaming reply
+  // replaces its text, which collapses the selection to the start, so a reply that kept focus from
+  // a touch scrolled the timeline back to its first line on the next update. Read-only text has no
+  // caret, so a collapsed selection has nothing to reveal. A selection the user drags still does.
+  @Override
+  public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+    View focused = findFocus();
+    if (isTouchedReadOnlyText(focused) && !((TextView) focused).hasSelection()) return false;
+    return super.requestChildRectangleOnScreen(child, rectangle, immediate);
+  }
+
+  // When the scroll view changes height, Android scrolls the focused view into view again. Touched
+  // chat text keeps focus, so the composer growing or shrinking below the timeline realigned it.
+  @Override
+  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+    isFocusRevealSkipped = isTouchedReadOnlyText(findFocus());
+    try {
+      super.onSizeChanged(w, h, oldw, oldh);
+    } finally {
+      isFocusRevealSkipped = false;
+    }
+  }
+
+  @Override
+  protected int computeScrollDeltaToGetChildRectOnScreen(Rect rect) {
+    if (isFocusRevealSkipped) return 0;
+    return super.computeScrollDeltaToGetChildRectOnScreen(rect);
+  }
+
+  private static boolean isTouchedReadOnlyText(@Nullable View view) {
+    if (!(view instanceof TextView) || !view.isInTouchMode()) return false;
+    TextView text = (TextView) view;
+    return text.isTextSelectable() && !text.onCheckIsTextEditor();
   }
 
   // The drag begins where React Native emits onScrollBeginDrag.
