@@ -2906,6 +2906,7 @@ export const ProjectGithubCloneRequestSchema = z.object({
   repo: z.string().trim().min(MIN_REPOSITORY_PATH_LENGTH),
   cloneProtocol: ProjectGithubCloneProtocolSchema.optional(),
   targetDirectory: z.string().trim().min(1),
+  folderName: z.string().optional(),
   requestId: z.string(),
 });
 
@@ -4057,6 +4058,7 @@ export const ServerInfoStatusPayloadSchema = z
         relayProtectedSecurity: z.boolean().optional(),
         // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
         projectGithubClone: z.boolean().optional(),
+        projectGithubCloneFolderName: z.boolean().optional(),
         // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
         workspaceGithubRepositorySearch: z.boolean().optional(),
         // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
