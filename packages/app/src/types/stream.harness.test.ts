@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hydrateStreamState,
+  replaceWithCanonicalStream,
   type StreamItem,
   type AgentToolCallItem,
   isAgentToolCallItem,
@@ -273,3 +274,97 @@ function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallIte
       isAgentToolCallItem(item) && item.payload.data.callId === callId,
   );
 }
+
+describe("cached assistant replacement identity", () => {
+  const epoch = "cached-epoch";
+  function reply(id: string, seq: number, text = "same reply"): StreamItem {
+    return {
+      kind: "assistant_message",
+      id,
+      messageId: id,
+      text,
+      timestamp: new Date(seq),
+      timelineCursor: { epoch, seq },
+    };
+  }
+  function prompt(id: string, seq: number): StreamItem {
+    return {
+      kind: "user_message",
+      id,
+      messageId: id,
+      clientMessageId: id,
+      text: "ask",
+      timestamp: new Date(seq),
+      timelineCursor: { epoch, seq },
+    };
+  }
+  function replace(canonical: StreamItem[], previousHead: StreamItem[], endSeq: number) {
+    return replaceWithCanonicalStream({
+      canonical,
+      previousHead,
+      previousTail: [],
+      preserveContinuity: true,
+      sendingClientMessageIds: [],
+      canonicalCoverage: { epoch, endSeq },
+    });
+  }
+  function texts(result: ReturnType<typeof replace>) {
+    return [...result.tail, ...result.head]
+      .filter((item) => item.kind === "assistant_message")
+      .map((item) => [item.id, item.text]);
+  }
+  it("does not retain an earlier identical reply during repeated cache preparation", () => {
+    const items = [prompt("u1", 1), reply("r1", 4), prompt("u2", 5), reply("r2", 8)];
+    const result = replace(items, items, 8);
+    expect(texts(result)).toEqual([
+      ["r1", "same reply"],
+      ["r2", "same reply"],
+    ]);
+    expect(texts(replace(items, [...result.tail, ...result.head], 8))).toEqual(texts(result));
+  });
+  it("does not keep an older distinct reply with a longer matching prefix", () => {
+    const items = [
+      prompt("u1", 1),
+      reply("r1", 4, "same reply longer"),
+      prompt("u2", 5),
+      reply("r2", 8),
+    ];
+    expect(texts(replace(items, items, 8))).toEqual([
+      ["r1", "same reply longer"],
+      ["r2", "same reply"],
+    ]);
+  });
+  it("keeps a newer suffix of the same provider message", () => {
+    expect(texts(replace([reply("r1", 4, "same")], [reply("r1", 6)], 4))).toEqual([
+      ["r1", "same reply"],
+    ]);
+  });
+  it("keeps newer messages separate even when their text is identical", () => {
+    expect(texts(replace([reply("r1", 4)], [reply("r2", 6)], 4))).toEqual([
+      ["r1", "same reply"],
+      ["r2", "same reply"],
+    ]);
+  });
+  it("does not retain a covered idless reply from an earlier position", () => {
+    const first = reply("r1", 4);
+    const last = reply("r2", 8);
+    if (first.kind !== "assistant_message" || last.kind !== "assistant_message")
+      throw new Error("Unexpected fixture");
+    delete first.messageId;
+    delete last.messageId;
+    const items = [prompt("u1", 1), first, prompt("u2", 5), last];
+    expect(texts(replace(items, items, 8))).toEqual([
+      ["r1", "same reply"],
+      ["r2", "same reply"],
+    ]);
+  });
+  it("preserves idless newer continuation", () => {
+    const first = reply("r1", 4, "same");
+    const last = reply("r2", 6);
+    if (first.kind !== "assistant_message" || last.kind !== "assistant_message")
+      throw new Error("Unexpected fixture");
+    delete first.messageId;
+    delete last.messageId;
+    expect(texts(replace([first], [last], 4))).toEqual([["r2", "same reply"]]);
+  });
+});
