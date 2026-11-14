@@ -67,13 +67,14 @@ const contributions = [
   action("Group by status", "actions", "query"),
 ];
 
-function listed(tab: CommandCenterTab, query: string) {
+function listed(tab: CommandCenterTab, query: string, archivedMatchedByHost = true) {
   const sections = buildCommandCenterSections({
     tab,
     query,
     rankWorkspaces: createWorkspaceRanker(),
     workspaces,
     archivedWorkspaces: query ? archived : [],
+    archivedMatchedByHost,
     currentWorkspaceId: "workspace:server:current",
     contributions,
     files: [file],
@@ -123,6 +124,18 @@ describe("command center tabs", () => {
     expect(listed("workspaces", "receipts")).toEqual([
       "# Workspaces",
       "workspace:server:onboarding",
+      "workspace:server:billing",
+    ]);
+  });
+
+  it("keeps archived rows the host did not match for this query only if they match it", () => {
+    // The previous query's archived results stand in while the next search loads.
+    expect(listed("workspaces", "receipts", false)).toEqual([
+      "# Workspaces",
+      "workspace:server:onboarding",
+    ]);
+    expect(listed("workspaces", "billing", false)).toEqual([
+      "# Workspaces",
       "workspace:server:billing",
     ]);
   });

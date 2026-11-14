@@ -172,6 +172,73 @@ test.describe("Command center workspaces", () => {
     }
   });
 
+  test("archived workspaces follow active matches and open where they can be unarchived", async ({
+    page,
+  }) => {
+    const active = await seedWorkspace({
+      repoPrefix: "command-center-archived-active-",
+      title: "Billing dashboard",
+    });
+    const archived = await seedWorkspace({
+      repoPrefix: "command-center-archived-",
+      title: "Billing cleanup",
+    });
+    try {
+      await createIdleAgent(archived.client, {
+        cwd: archived.repoPath,
+        workspaceId: archived.workspaceId,
+        title: "Audit invoice totals",
+      });
+      expect((await archived.client.archiveWorkspace(archived.workspaceId)).error).toBeNull();
+      await gotoAppShell(page);
+      const panel = await openCommandCenter(page);
+      const input = panel.getByTestId("command-center-input");
+      const activeRow = panel.getByTestId(
+        `command-center-workspace-${getServerId()}:${active.workspaceId}`,
+      );
+      const archivedRow = panel.getByTestId(
+        `command-center-workspace-${getServerId()}:${archived.workspaceId}`,
+      );
+
+      await test.step("an empty query never lists archived workspaces", async () => {
+        await selectCommandCenterTab(panel, "Workspaces");
+        await expect(activeRow).toBeVisible({ timeout: 30_000 });
+        await expect(archivedRow).toHaveCount(0);
+      });
+
+      await test.step("a query lists the archived workspace after the active one", async () => {
+        await input.fill("billing");
+        await expect(archivedRow).toBeVisible({ timeout: 30_000 });
+        await expect(archivedRow).toContainText("Archived");
+        await expect(activeRow).not.toContainText("Archived");
+        const activeTop = (await activeRow.boundingBox())?.y ?? Number.NaN;
+        const archivedTop = (await archivedRow.boundingBox())?.y ?? Number.NaN;
+        expect(archivedTop).toBeGreaterThan(activeTop);
+      });
+
+      await test.step("an agent title finds the archived workspace on All", async () => {
+        await selectCommandCenterTab(panel, "All");
+        await input.fill("invoice totals");
+        await expect(archivedRow.getByTestId("command-center-workspace-agent")).toHaveText(
+          "Audit invoice totals",
+          { timeout: 30_000 },
+        );
+        await expect(activeRow).toHaveCount(0);
+      });
+
+      await test.step("opening it lands where the workspace can be unarchived", async () => {
+        await page.keyboard.press("Enter");
+        await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible({
+          timeout: 30_000,
+        });
+        await expect(page.getByRole("button", { name: "Unarchive", exact: true })).toBeVisible();
+      });
+    } finally {
+      await active.cleanup();
+      await archived.cleanup();
+    }
+  });
+
   test("single-host workspace subtitle omits the host and shows project · branch", async ({
     page,
   }) => {

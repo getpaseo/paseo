@@ -17,11 +17,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
-import { Archive, ChevronRight } from "lucide-react-native";
+import { ChevronRight } from "lucide-react-native";
 import { useProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { ArchivedBadge } from "@/components/archived-badge";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { findHighlightRanges } from "@/components/ui/highlighted-text-segments";
 
@@ -99,36 +100,30 @@ function formatDateSectionLabel(t: TFunction, section: DateSectionKey): string {
 
 function SessionBadge({
   label,
-  icon,
   tone = "neutral",
 }: {
   label: string;
-  icon?: ReactElement;
   tone?: "neutral" | "warning" | "danger";
 }) {
   let variant: StatusBadgeVariant = "muted";
   if (tone === "warning") variant = "warning";
   else if (tone === "danger") variant = "error";
-  return <StatusBadge label={label} variant={variant} leading={icon} />;
+  return <StatusBadge label={label} variant={variant} />;
 }
 
 function SessionRowBadges({
   agent,
-  archivedIcon,
   pendingPermissionCount,
   showDesktopAttention,
 }: {
   agent: AggregatedAgent;
-  archivedIcon: ReactElement;
   pendingPermissionCount: number;
   showDesktopAttention: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <>
-      {agent.archivedAt ? (
-        <SessionBadge label={t("agentList.badges.archived")} icon={archivedIcon} />
-      ) : null}
+      {agent.archivedAt ? <ArchivedBadge /> : null}
       {pendingPermissionCount > 0 ? (
         <SessionBadge
           label={t("agentList.badges.pending", { count: pendingPermissionCount })}
@@ -214,10 +209,6 @@ function SessionRow({
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
   const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
 
-  const archivedIcon = useMemo(
-    () => <Archive size={theme.fontSize.sm} color={theme.colors.foregroundMuted} />,
-    [theme.fontSize.sm, theme.colors.foregroundMuted],
-  );
   const showDesktopAttention =
     !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
 
@@ -261,7 +252,6 @@ function SessionRow({
           ) : null}
           <SessionRowBadges
             agent={agent}
-            archivedIcon={archivedIcon}
             pendingPermissionCount={pendingPermissionCount}
             showDesktopAttention={showDesktopAttention}
           />

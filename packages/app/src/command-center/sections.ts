@@ -24,8 +24,14 @@ export interface CommandCenterSectionsInput {
   query: string;
   rankWorkspaces: WorkspaceRanker;
   workspaces: readonly CommandCenterWorkspaceResult[];
-  /** Archived workspaces the host matched for this query. Empty without a query. */
+  /** Archived workspaces the host found for the query. Empty without a query. */
   archivedWorkspaces: readonly CommandCenterWorkspaceResult[];
+  /**
+   * The host matched the archived workspaces for this exact query. Its search forgives typos,
+   * so its matches stay even when the client cannot score them. Results from the previous
+   * query must match on their own.
+   */
+  archivedMatchedByHost: boolean;
   /** The open workspace's result ID. Recent workspaces leaves it out: the user is already there. */
   currentWorkspaceId: string | null;
   contributions: readonly CommandCenterContribution[];
@@ -51,7 +57,9 @@ function recentWorkspacesSection(input: CommandCenterSectionsInput): CommandCent
 function workspacesSection(input: CommandCenterSectionsInput): CommandCenterResultSection {
   const active = input.rankWorkspaces(input.workspaces, input.query);
   const archived = input.query.trim()
-    ? input.rankWorkspaces(input.archivedWorkspaces, input.query, { keepUnmatched: true })
+    ? input.rankWorkspaces(input.archivedWorkspaces, input.query, {
+        keepUnmatched: input.archivedMatchedByHost,
+      })
     : [];
   return {
     id: "workspaces",

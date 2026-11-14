@@ -28,6 +28,8 @@ import { Check, ChevronRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetFlatList, type BottomSheetFlatListMethods } from "@gorhom/bottom-sheet";
 import { resolveAgentLabel } from "@/agent-presentation";
+import { useArchivedWorkspaceSearch, type ArchivedWorkspace } from "@/archived-workspaces";
+import { ArchivedBadge } from "@/components/archived-badge";
 import { StatusIcon } from "@/components/status-icon";
 import { useWorkspaceStatus } from "@/workspace-status";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -70,6 +72,7 @@ import {
 import { focusWithRetries } from "@/utils/web-focus";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
+import { getProjectSummaryForHostProject } from "@/utils/projects";
 import {
   COMMAND_CENTER_LINE_HEIGHT,
   COMMAND_CENTER_LIST_METRICS,
@@ -143,15 +146,42 @@ function groupWorkspaceAgents(
   return byWorkspace;
 }
 
+function createArchivedAgentAction(serverId: string, workspaceId: string) {
+  // Opening on an agent with the tab pinned is what offers Unarchive, as History does.
+  return (agentId: string) => {
+    clearCommandCenterFocusRestoreElement();
+    navigateToAgent({ serverId, agentId, workspaceId, pin: true });
+  };
+}
+
+function titledAgents(
+  agents: readonly { id: string; title: string | null; provider: string }[],
+): CommandCenterWorkspaceAgent[] {
+  return agents.flatMap((agent) => {
+    const title = resolveAgentLabel(agent.title);
+    return title ? [{ id: agent.id, title, provider: agent.provider }] : [];
+  });
+}
+
+interface WorkspaceRows {
+  active: CommandCenterWorkspaceResult[];
+  archived: CommandCenterWorkspaceResult[];
+}
+
 /**
  * Build every workspace row. Deliberately not keyed on `query`: none of this work depends on
  * what was typed. Ordering belongs to the workspace ranker, which ranks on every keystroke.
+ * Archived rows come from the host's history search, so they change with its results.
  */
-function useWorkspaceRows(open: boolean): CommandCenterWorkspaceResult[] {
+function useWorkspaceRows(
+  open: boolean,
+  archivedWorkspaces: readonly ArchivedWorkspace[],
+): WorkspaceRows {
   const previousRows = useRef(new Map<string, CommandCenterWorkspaceResult>());
   const { agents } = useAggregatedAgents({ demand: open });
   const { projects } = useProjects({ enabled: open });
-  const showHost = useHosts().length > 1;
+  const hosts = useHosts();
+  const showHost = hosts.length > 1;
   const iconTargets = useMemo(
     () =>
       open
@@ -169,7 +199,7 @@ function useWorkspaceRows(open: boolean): CommandCenterWorkspaceResult[] {
   );
   const iconDataByProjectViewKey = useProjectIcons({ projects: iconTargets });
 
-  return useMemo(() => {
+  const active = useMemo(() => {
     if (!open) {
       previousRows.current.clear();
       return [];
@@ -227,6 +257,50 @@ function useWorkspaceRows(open: boolean): CommandCenterWorkspaceResult[] {
     previousRows.current = nextRows;
     return rows;
   }, [agents, iconDataByProjectViewKey, open, projects, showHost]);
+
+  const archived = useMemo(() => {
+    const activeIds = new Set(active.map((row) => row.id));
+    const hostLabels = new Map(hosts.map((host) => [host.serverId, host.label]));
+    return archivedWorkspaces.flatMap<CommandCenterWorkspaceResult>((workspace) => {
+      const id = `workspace:${workspace.key}`;
+      // The host's history can trail its workspace list; the active row wins.
+      if (activeIds.has(id)) return [];
+      const project = workspace.projectKey
+        ? getProjectSummaryForHostProject(projects, workspace.serverId, workspace.projectKey)
+        : undefined;
+      const projectName = project?.projectName ?? workspace.projectName ?? workspace.name;
+      const openAgent = createArchivedAgentAction(workspace.serverId, workspace.workspaceId);
+      const latestAgentId = workspace.agents[0].id;
+      return [
+        {
+          kind: "workspace",
+          id,
+          title: workspace.name,
+          subtitle: joinSubtitleParts([
+            showHost ? (hostLabels.get(workspace.serverId) ?? workspace.serverId) : null,
+            projectName,
+            workspace.branch,
+          ]),
+          serverId: workspace.serverId,
+          workspaceId: workspace.workspaceId,
+          project: {
+            viewKey: project?.viewKey ?? `archived:${workspace.key}`,
+            name: projectName,
+            iconDataUri: project ? (iconDataByProjectViewKey.get(project.viewKey) ?? null) : null,
+          },
+          changeRequestNumber: null,
+          activityAt: workspace.archivedAt,
+          agents: titledAgents(workspace.agents),
+          matchedAgent: null,
+          archived: true,
+          run: () => openAgent(latestAgentId),
+          openAgent,
+        },
+      ];
+    });
+  }, [active, archivedWorkspaces, hosts, iconDataByProjectViewKey, projects, showHost]);
+
+  return { active, archived };
 }
 
 interface CommandCenterState {
@@ -260,7 +334,10 @@ function useCommandCenterState(
   const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
   const { query, activeId } = useSyncExternalStore(interaction.subscribe, interaction.getSnapshot);
-  const workspaceRows = useWorkspaceRows(open);
+  const archivedSearch = useArchivedWorkspaceSearch(query, {
+    enabled: open && (tab === "all" || tab === "workspaces"),
+  });
+  const workspaceRows = useWorkspaceRows(open, archivedSearch.workspaces);
   const [rankWorkspaces] = useState(createWorkspaceRanker);
   const activeWorkspace = useActiveWorkspaceSelection();
   const currentWorkspaceId = activeWorkspace
@@ -294,8 +371,9 @@ function useCommandCenterState(
             tab,
             query,
             rankWorkspaces,
-            workspaces: workspaceRows,
-            archivedWorkspaces: [],
+            workspaces: workspaceRows.active,
+            archivedWorkspaces: workspaceRows.archived,
+            archivedMatchedByHost: archivedSearch.matchedByHost,
             currentWorkspaceId,
             contributions: snapshot.contributions,
             files,
@@ -307,6 +385,7 @@ function useCommandCenterState(
           })
         : [],
     [
+      archivedSearch.matchedByHost,
       currentWorkspaceId,
       files,
       open,
@@ -565,24 +644,27 @@ function WorkspaceResultIcon({
   const statusBucket = useWorkspaceStatus(result.serverId, result.workspaceId);
   return (
     <StatusIcon statusBucket={statusBucket} size={16} backdrop={backdrop}>
-      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
-        <WorkspaceProjectIcon project={result.project} />
-      </View>
+      <DecorativeProjectIcon project={result.project} />
     </StatusIcon>
   );
 }
 
-/** The same project icon the sidebar's workspace rows lead with: its image, or a lettered square. */
-function WorkspaceProjectIcon({ project }: { project: CommandCenterWorkspaceResult["project"] }) {
+/**
+ * The same project icon the sidebar's workspace rows lead with: its image, or a lettered square.
+ * Hidden from assistive tech so the fallback's initial does not prefix the row's name.
+ */
+function DecorativeProjectIcon({ project }: { project: CommandCenterWorkspaceResult["project"] }) {
   const initial = projectIconPlaceholderLabelFromDisplayName(project.name).charAt(0).toUpperCase();
   return (
-    <ProjectIconView
-      iconDataUri={project.iconDataUri}
-      initial={initial}
-      projectViewKey={project.viewKey}
-      size={16}
-      textStyle={styles.projectIconFallbackText}
-    />
+    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
+      <ProjectIconView
+        iconDataUri={project.iconDataUri}
+        initial={initial}
+        projectViewKey={project.viewKey}
+        size={16}
+        textStyle={styles.projectIconFallbackText}
+      />
+    </View>
   );
 }
 
@@ -625,9 +707,13 @@ function ResultContent({
     return (
       <View style={styles.rowContent} testID={`command-center-workspace-${key}`}>
         <View style={styles.rowMain}>
-          {/* Decorative: the fallback icon's initial must not prefix the row's accessible name. */}
           <View style={styles.iconSlot}>
-            <WorkspaceResultIcon result={result} backdrop={backdrop} />
+            {/* An archived workspace runs nothing, so it has no status to show. */}
+            {result.archived ? (
+              <DecorativeProjectIcon project={result.project} />
+            ) : (
+              <WorkspaceResultIcon result={result} backdrop={backdrop} />
+            )}
           </View>
           <View style={styles.textContent}>
             <QueryHighlightedText
@@ -651,6 +737,7 @@ function ResultContent({
             ) : null}
           </View>
         </View>
+        {result.archived ? <ArchivedBadge /> : null}
       </View>
     );
   }
