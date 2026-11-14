@@ -128,6 +128,7 @@ export class PluginRegistry {
           workspaceRowBadgeItems: [],
           filePanels: [],
           composerItems: [],
+          composerSections: [],
           newWorkspaceItems: [],
           workspacePanels: [],
           commandCenterItems: [],

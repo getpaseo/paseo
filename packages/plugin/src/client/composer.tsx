@@ -66,6 +66,17 @@ export interface PluginComposer {
 
 export interface PluginComposerItemProps extends PluginHostProps {}
 
+/** Inline content below a running agent's composer tracks. Return null to occupy no space. */
+export interface PluginComposerSectionProps extends PluginHostProps {
+  agentId: string;
+  workspaceId: string;
+}
+
+export interface PluginComposerSectionContribution {
+  id: string;
+  Component: ComponentType<PluginComposerSectionProps>;
+}
+
 export interface PluginComposerItemContribution {
   id: string;
   Component: ComponentType<PluginComposerItemProps>;

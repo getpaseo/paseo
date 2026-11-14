@@ -8,6 +8,7 @@ import type { PluginFile } from "./file.js";
 import type {
   PluginComposer,
   PluginComposerItemContribution,
+  PluginComposerSectionContribution,
   PluginComposerSelector,
 } from "./composer.js";
 import type { PluginNewWorkspaceItemContribution } from "./new-workspace.js";
@@ -246,6 +247,8 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
+  /** Inline content above the normal input, separate from toolbar items and track pills. */
+  addComposerSection(contribution: PluginComposerSectionContribution): PluginCleanup;
   addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;

@@ -137,6 +137,7 @@ export function runPluginClientBundle(
     workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
@@ -156,6 +157,7 @@ export function runPluginClientBundle(
   const workspaceRowItemIds = new Set<string>();
   const filePanelIds = new Set<string>();
   const composerItemIds = new Set<string>();
+  const composerSectionIds = new Set<string>();
   const newWorkspaceItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
@@ -292,6 +294,20 @@ export function runPluginClientBundle(
         collector.composerItems,
         { id: normalizedId, Component: contribution.Component },
         () => composerItemIds.delete(normalizedId),
+      );
+    },
+    addComposerSection(contribution) {
+      const sectionId = requireId(contribution.id, "composer section id");
+      if (composerSectionIds.has(sectionId))
+        throw new Error(`Duplicate composer section: ${sectionId}`);
+      if (!isComponentType(contribution.Component)) {
+        throw new Error(`Composer section ${sectionId} is not a component`);
+      }
+      composerSectionIds.add(sectionId);
+      return register(
+        collector.composerSections,
+        { id: sectionId, Component: contribution.Component },
+        () => composerSectionIds.delete(sectionId),
       );
     },
     addNewWorkspaceItem(contribution) {
@@ -657,6 +673,7 @@ export function runPluginClientBundle(
     workspaceRowBadgeItems: collector.workspaceRowBadgeItems,
     filePanels: collector.filePanels,
     composerItems: collector.composerItems,
+    composerSections: collector.composerSections,
     newWorkspaceItems: collector.newWorkspaceItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,

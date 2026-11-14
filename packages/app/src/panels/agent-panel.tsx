@@ -81,6 +81,7 @@ import {
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
+import { PluginComposerSections } from "@/plugins/composer-sections";
 import { OverlayDismissalScope } from "@/components/ui/overlay-dismissal";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -1216,12 +1217,15 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         />
       </RenderProfile>
       {hasActiveComposer && !draft ? (
-        <AgentTracks
-          serverId={serverId}
-          workspaceId={workspaceId}
-          agentId={agentId}
-          parentAgentId={parentPillAgentId}
-        />
+        <>
+          <AgentTracks
+            serverId={serverId}
+            workspaceId={workspaceId}
+            agentId={agentId}
+            parentAgentId={parentPillAgentId}
+          />
+          <PluginComposerSections serverId={serverId} workspaceId={workspaceId} agentId={agentId} />
+        </>
       ) : null}
     </View>
   );

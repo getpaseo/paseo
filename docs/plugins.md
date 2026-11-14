@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, header buttons, composer pills, inline composer sections, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -780,6 +780,17 @@ return a promise.
 The overflow sheet's content portals to the app root, away from the composer. Pass
 `useComposerSheetBridge()` as the sheet's `contextBridge`, or `useComposer()` returns nothing and
 the sheet draws no plugin rows.
+
+## Contribute inline composer sections
+
+Use `addComposerSection` for content that needs to stay above an agent's normal input rather
+than opening from a toolbar item or track pill. The [public contract](../public-docs/plugins/reference.md#composer-sections)
+owns props, lifecycle, and visibility rules.
+
+The agent panel mounts sections beneath `AgentTracks`, inside the composer's docked content.
+They receive the installation environment through `usePluginItemHost`; do not add separate
+SDK clients or cache contexts. Keep generation and section state in the plugin. The host
+supplies placement, identity, and per-section render boundaries only.
 
 ## Contribute New workspace items
 
