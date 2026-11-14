@@ -116,7 +116,12 @@ import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
-import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { PluginTimelineFooters } from "@/plugins/timeline/footers";
+import {
+  PluginTimelineItemView,
+  useInstalledTimelineFilter,
+  useInstalledTimelineTransform,
+} from "@/plugins/timeline";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -293,8 +298,16 @@ function useRetainedValue<T>(value: T, active: boolean): T {
 const EMPTY_PENDING_MESSAGE_SUBMISSIONS: readonly PendingMessageSubmission[] = [];
 const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
 
-function resolveBottomOverlayControlOffset(clearance: number | undefined): number {
-  return Math.max(16, clearance ?? 0);
+const BOTTOM_OVERLAY_CONTROL_GAP = 16;
+
+/** Pinned plugin footers sit below the history, so controls float above them too. */
+function resolveBottomOverlayControlOffset(
+  clearance: number | undefined,
+  timelineFooterHeight: number,
+): number {
+  const aboveFooter =
+    timelineFooterHeight > 0 ? timelineFooterHeight + BOTTOM_OVERLAY_CONTROL_GAP : 0;
+  return Math.max(BOTTOM_OVERLAY_CONTROL_GAP, clearance ?? 0, aboveFooter);
 }
 
 // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
@@ -393,6 +406,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
+    const filterTimelineItems = useInstalledTimelineFilter(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const sessionStreamHead = useSessionStore((state) =>
@@ -532,6 +546,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           tail: effectiveStreamItems,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
+          filter: filterTimelineItems,
           display: chatDisplay,
           autoExpandReasoning,
           expandedTurnHostIds,
@@ -543,6 +558,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         effectiveStreamItems,
         effectiveStreamHead,
         transformTimelineItem,
+        filterTimelineItems,
         chatDisplay,
         autoExpandReasoning,
         expandedTurnHostIds,
@@ -1033,7 +1049,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [baseRenderModel, pendingPermissionsNode, turnFooterNode]);
 
     const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
-    const scrollToBottomOffset = resolveBottomOverlayControlOffset(bottomOverlayControlClearance);
+    const [timelineFooterHeight, setTimelineFooterHeight] = useState(0);
+    const scrollToBottomOffset = resolveBottomOverlayControlOffset(
+      bottomOverlayControlClearance,
+      timelineFooterHeight > 0 ? timelineFooterHeight + bottomOverlayTailClearance : 0,
+    );
     const listEmptyComponent = useMemo(
       () =>
         renderListEmptyComponent({
@@ -1215,6 +1235,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isTimelineDetached={isTimelineDetached}
               bottomOffset={scrollToBottomOffset}
               onPress={scrollToBottom}
+            />
+            <PluginTimelineFooters
+              agentId={agentId}
+              serverId={resolvedServerId}
+              bottomOverlayClearance={bottomOverlayTailClearance}
+              onHeightChange={setTimelineFooterHeight}
             />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
