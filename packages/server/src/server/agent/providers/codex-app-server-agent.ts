@@ -87,6 +87,7 @@ import {
 } from "./codex-feature-definitions.js";
 import {
   CodexAppServerClient,
+  CodexAppServerRequestTimeoutError,
   CodexAppServerRpcError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
@@ -3588,6 +3589,13 @@ interface ConsumedRootCompaction {
   itemId?: string;
 }
 
+interface CodexInterruptTarget {
+  client: CodexAppServerClient;
+  threadId: string;
+  turnId: string;
+  foregroundTurnId: string | null;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3619,6 +3627,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     cancelRequested: boolean;
   } | null = null;
   private client: CodexAppServerClient | null = null;
+  private timedOutInterruptTarget: CodexInterruptTarget | null = null;
   private readonly background = new CodexBackgroundInventory((event) => this.emitEvent(event));
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -4634,6 +4643,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
+      this.clearTimedOutInterruptTarget();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
       this.currentTurnId = null;
@@ -5303,37 +5313,150 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!turnId || (foregroundTurnId && this.activeForegroundTurnId !== foregroundTurnId)) {
       throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
     }
-    const client = this.client;
-    const threadId = this.currentThreadId;
-    const interruptRequest = client.request(
+    await this.requestTurnInterrupt({
+      client: this.client,
+      threadId: this.currentThreadId,
+      turnId,
+      foregroundTurnId,
+    });
+  }
+
+  private async requestTurnInterrupt(target: CodexInterruptTarget): Promise<void> {
+    if (this.matchesTimedOutInterruptTarget(target) && target.client.isDisposed()) {
+      // A previous forced shutdown timed out after closing the RPC transport.
+      // Another explicit Stop retries process termination without sending to that transport.
+      await this.stopUnresponsiveAppServer(target);
+      return;
+    }
+    const interruptRequest = target.client.request(
       "turn/interrupt",
-      {
-        threadId,
-        turnId,
-      },
+      { threadId: target.threadId, turnId: target.turnId },
       INTERRUPT_TIMEOUT_MS,
     );
-    // Once Codex accepts the interrupt, end the commands this turn started. Registered
-    // before the await, so a turn start racing this interrupt waits for it. An already-idle
-    // turn was not interrupted, and what it left running stays.
+    // Register cleanup before awaiting the reply so a new turn waits for commands from
+    // this turn to exit. A rejected interrupt must leave those commands alone.
     this.trackInterruptedTurnCleanup(
       interruptRequest.then(
-        () => this.endInterruptedTurnProcesses(client, threadId, turnId),
+        () => this.endInterruptedTurnProcesses(target.client, target.threadId, target.turnId),
         () => undefined,
       ),
     );
     try {
       await interruptRequest;
+      this.clearTimedOutInterruptTarget(target);
     } catch (error) {
-      if (!isCodexAlreadyIdleInterrupt(error)) {
+      if (error instanceof CodexAppServerRequestTimeoutError) {
+        if (!this.isInterruptTargetActive(target)) {
+          this.clearTimedOutInterruptTarget(target);
+          return;
+        }
+        if (this.matchesTimedOutInterruptTarget(target)) {
+          await this.stopUnresponsiveAppServer(target);
+          return;
+        }
+        this.timedOutInterruptTarget = target;
+        this.logger.warn(
+          {
+            agentId: this.agentId,
+            provider: CODEX_PROVIDER,
+            sessionId: target.threadId,
+            turnId: target.turnId,
+            timeoutMs: INTERRUPT_TIMEOUT_MS,
+          },
+          "provider.codex.interrupt.unacknowledged_retry_required",
+        );
         throw error;
       }
-      this.activeForegroundTurnId = null;
-      this.activeClientMessageId = null;
-      this.currentTurnId = null;
-      this.pendingForegroundTurnIdentification?.resolve(null);
-      this.pendingForegroundTurnIdentification = null;
+      if (!isCodexAlreadyIdleInterrupt(error)) {
+        this.clearTimedOutInterruptTarget(target);
+        throw error;
+      }
+      this.clearTimedOutInterruptTarget(target);
+      this.clearActiveTurnState();
     }
+  }
+
+  private isInterruptTargetActive(target: CodexInterruptTarget): boolean {
+    return (
+      this.client === target.client &&
+      this.currentThreadId === target.threadId &&
+      this.currentTurnId === target.turnId &&
+      this.activeForegroundTurnId === target.foregroundTurnId
+    );
+  }
+
+  private matchesTimedOutInterruptTarget(target: CodexInterruptTarget): boolean {
+    const timedOut = this.timedOutInterruptTarget;
+    return (
+      timedOut?.client === target.client &&
+      timedOut.threadId === target.threadId &&
+      timedOut.turnId === target.turnId &&
+      timedOut.foregroundTurnId === target.foregroundTurnId
+    );
+  }
+
+  private clearTimedOutInterruptTarget(target?: CodexInterruptTarget): void {
+    if (!target || this.matchesTimedOutInterruptTarget(target)) {
+      this.timedOutInterruptTarget = null;
+    }
+  }
+
+  // A timeout alone can be transient. Escalate only after a second explicit cancel
+  // still targets the exact same active turn; never stop a newer turn for a stale RPC.
+  private async stopUnresponsiveAppServer(target: CodexInterruptTarget): Promise<void> {
+    if (!this.isInterruptTargetActive(target)) {
+      return;
+    }
+    this.logger.warn(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: target.threadId,
+        turnId: target.turnId,
+        timeoutMs: INTERRUPT_TIMEOUT_MS,
+      },
+      "provider.codex.interrupt.repeated_unacknowledged_stopping_app_server",
+    );
+    if (!target.client.isDisposed()) {
+      // The shutdown call can time out while the child is still alive. Its eventual
+      // exit must settle the turn even if no further Stop request arrives.
+      void target.client
+        .whenExited()
+        .then(() => this.finishStoppedAppServer(target))
+        .catch((error) => {
+          this.logger.warn({ err: error }, "Failed to settle Codex turn after app-server exit");
+        });
+    }
+    await target.client.forceDispose();
+    this.finishStoppedAppServer(target);
+  }
+
+  private finishStoppedAppServer(target: CodexInterruptTarget): void {
+    const targetTurnStillActive = this.isInterruptTargetActive(target);
+    if (this.client === target.client) {
+      this.client = null;
+      this.connectionState = "disconnected";
+      this.background.stop();
+    }
+    this.clearTimedOutInterruptTarget(target);
+    if (!targetTurnStillActive) {
+      return;
+    }
+    try {
+      this.clearPendingPermissions();
+      this.dismissInterruptedAsyncQuestions();
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } finally {
+      this.clearActiveTurnState();
+    }
+  }
+
+  private clearActiveTurnState(): void {
+    this.activeForegroundTurnId = null;
+    this.activeClientMessageId = null;
+    this.currentTurnId = null;
+    this.pendingForegroundTurnIdentification?.resolve(null);
+    this.pendingForegroundTurnIdentification = null;
   }
 
   stopBackgroundWork(id: string): Promise<void> {
@@ -6635,6 +6758,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
+    this.clearTimedOutInterruptTarget();
     this.markCurrentThreadSaved(parsed.threadId);
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
@@ -6700,6 +6824,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+    this.clearTimedOutInterruptTarget();
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.currentTurnId = null;
