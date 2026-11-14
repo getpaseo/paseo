@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
+import { z } from "zod";
+import { OmpSubmittedUserMessageSchema, type OmpSubmittedUserMessage } from "./message-history.js";
 
 import {
   type AgentCapabilityFlags,
@@ -76,7 +78,7 @@ import { applyProviderOptionsPatch } from "../../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
-import { getUserMessageText } from "./message-history.js";
+import { getUserMessageImages, getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
@@ -162,6 +164,12 @@ interface OmpPromptPayload {
   images?: OmpImageContent[];
 }
 
+interface OmpPendingClientMessage {
+  clientMessageId: string | null;
+  text: string;
+  images: OmpSubmittedUserMessage["images"];
+}
+
 interface OmpModelReference {
   provider?: string;
   id: string;
@@ -174,6 +182,7 @@ interface OmpPersistenceMetadata {
   modeId?: string;
   systemPrompt?: string;
   bridgedTools: Map<string, OmpBridgedToolIdentity>;
+  submittedUserMessages: Map<string, OmpSubmittedUserMessage>;
 }
 
 /** OMP's outcome for one prompt, correlated by the prompt's request id. */
@@ -219,6 +228,7 @@ interface OmpAgentSessionOptions {
    * timeline items.
    */
   live?: boolean;
+  submittedUserMessages?: ReadonlyMap<string, OmpSubmittedUserMessage>;
 }
 
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -398,7 +408,7 @@ function parseModelReference(modelId: string | null): OmpModelReference | null {
 
 function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersistenceMetadata {
   if (!metadata) {
-    return { bridgedTools: new Map() };
+    return { bridgedTools: new Map(), submittedUserMessages: new Map() };
   }
   const bridgedTools = new Map<string, OmpBridgedToolIdentity>();
   if (Array.isArray(metadata.bridgedTools)) {
@@ -412,6 +422,13 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
   }
   return {
     bridgedTools,
+    submittedUserMessages: new Map(
+      Object.entries(
+        z
+          .record(z.string(), OmpSubmittedUserMessageSchema)
+          .parse(metadata.submittedUserMessages ?? {}),
+      ),
+    ),
     ...(typeof metadata.cwd === "string" ? { cwd: metadata.cwd } : {}),
     ...(typeof metadata.model === "string" ? { model: metadata.model } : {}),
     ...(typeof metadata.thinkingOptionId === "string"
@@ -625,6 +642,7 @@ class OmpHistorySession implements AgentSession {
     private readonly sessionFile: string,
     provider: AgentProvider,
     private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity>,
+    private readonly submittedUserMessages: ReadonlyMap<string, OmpSubmittedUserMessage>,
   ) {
     this.provider = provider;
   }
@@ -650,6 +668,7 @@ class OmpHistorySession implements AgentSession {
       sessionFile: this.sessionFile,
       provider: this.provider,
       bridgedTools: this.bridgedTools,
+      submittedUserMessages: this.submittedUserMessages,
     });
     const todo = await readOmpHistoryTodoState(this.sessionFile);
     if (todo) yield { type: "timeline", provider: this.provider, item: todo };
@@ -703,8 +722,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private readonly questionUi = new OmpQuestionUi();
   private activeTurnId: string | null = null;
-  private readonly pendingClientMessages: Array<{ clientMessageId: string | null; text: string }> =
-    [];
+  private readonly pendingClientMessages: OmpPendingClientMessage[] = [];
+  private readonly submittedUserMessages: Map<string, OmpSubmittedUserMessage>;
   private activeAssistantMessageId: string | null = null;
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
@@ -762,6 +781,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
+    this.submittedUserMessages = new Map(options.submittedUserMessages);
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.providerIdleDeadlineMs = options.providerIdleDeadlineMs ?? OMP_PROVIDER_IDLE_DEADLINE_MS;
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -916,7 +936,7 @@ export class OmpAgentSession implements AgentSession {
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("OMP session is closed");
     if (this.activeTurnId !== turnId) return { turnId };
-    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
+    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text, prompt);
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
     if (announceTurn) {
@@ -987,7 +1007,11 @@ export class OmpAgentSession implements AgentSession {
     if (this.closed || this.activeTurnId !== options.expectedTurnId)
       return { status: "unavailable" };
     if (this.parseSlashCommandInput(payload.text)) return { status: "unavailable" };
-    const submission = this.rememberClientMessage(options.clientMessageId ?? null, payload.text);
+    const submission = this.rememberClientMessage(
+      options.clientMessageId ?? null,
+      payload.text,
+      prompt,
+    );
     try {
       await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
@@ -1011,22 +1035,26 @@ export class OmpAgentSession implements AgentSession {
   private rememberClientMessage(
     clientMessageId: string | null,
     text: string,
-  ): {
-    clientMessageId: string | null;
-    text: string;
-  } {
-    const submission = { clientMessageId, text };
+    prompt: AgentPromptInput,
+  ): OmpPendingClientMessage {
+    const images =
+      typeof prompt === "string"
+        ? []
+        : prompt.flatMap((block) =>
+            block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+          );
+    const submission = { clientMessageId, text, images };
     this.pendingClientMessages.push(submission);
     if (this.pendingClientMessages.length > 16) this.pendingClientMessages.shift();
     return submission;
   }
 
-  private forgetClientMessage(submission: { clientMessageId: string | null; text: string }): void {
+  private forgetClientMessage(submission: OmpPendingClientMessage): void {
     const index = this.pendingClientMessages.indexOf(submission);
     if (index >= 0) this.pendingClientMessages.splice(index, 1);
   }
 
-  private takeClientMessage(): { clientMessageId: string | null; text: string } | undefined {
+  private takeClientMessage(): OmpPendingClientMessage | undefined {
     return this.pendingClientMessages.shift();
   }
 
@@ -1043,6 +1071,7 @@ export class OmpAgentSession implements AgentSession {
       runtimeSession: this.runtimeSession,
       provider: this.provider,
       bridgedTools: this.hostTools?.bridge?.toolIdentities(),
+      submittedUserMessages: this.submittedUserMessages,
     });
     for (const item of mapOmpTodoState(this.state)) {
       yield {
@@ -1173,6 +1202,9 @@ export class OmpAgentSession implements AgentSession {
       nativeHandle: this.state.sessionFile,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.submittedUserMessages.size > 0
+          ? { submittedUserMessages: Object.fromEntries(this.submittedUserMessages) }
+          : {}),
         ...(this.hostTools?.bridge
           ? { bridgedTools: [...this.hostTools.bridge.toolIdentities()] }
           : {}),
@@ -2089,7 +2121,8 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     const text = getUserMessageText(event.message.content);
-    if (!text) {
+    const images = getUserMessageImages(event.message.content);
+    if (!text && images.length === 0) {
       return;
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
@@ -2104,7 +2137,27 @@ export class OmpAgentSession implements AgentSession {
         }
         this.emittedUserMessageIds.add(resolvedMessageId);
       }
-      const clientMessageId = this.takeClientMessage()?.clientMessageId;
+      const pending = this.takeClientMessage();
+      const retained = resolvedMessageId
+        ? this.submittedUserMessages.get(resolvedMessageId)
+        : undefined;
+      const submitted = pending
+        ? {
+            ...(pending.clientMessageId ? { clientMessageId: pending.clientMessageId } : {}),
+            ...(pending.images?.length ? { images: pending.images } : {}),
+          }
+        : retained;
+      if (
+        resolvedMessageId &&
+        submitted &&
+        (submitted.clientMessageId || submitted.images?.length)
+      ) {
+        // OMP normalizes images before persisting its native entry. Keep the exact submitted
+        // bytes and client identity under the confirmed native ID for every later replay.
+        this.submittedUserMessages.set(resolvedMessageId, submitted);
+      }
+      const clientMessageId = submitted?.clientMessageId;
+      const originalImages = submitted?.images ?? images;
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -2112,6 +2165,7 @@ export class OmpAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text,
+          ...(originalImages.length > 0 ? { images: originalImages } : {}),
           ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         },
@@ -2430,6 +2484,7 @@ export class OmpAgentClient implements AgentClient {
         sessionFile,
         this.provider,
         persistenceMetadata.bridgedTools,
+        persistenceMetadata.submittedUserMessages,
       );
     }
 
@@ -2473,6 +2528,7 @@ export class OmpAgentClient implements AgentClient {
         usagePollScheduler: this.usagePollScheduler,
         providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         live: false,
+        submittedUserMessages: persistenceMetadata.submittedUserMessages,
       });
     } catch (error) {
       await hostTools?.close();

@@ -7,6 +7,7 @@ import {
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
+  type CreateWorkspaceRequestOptions,
   type DaemonTransport,
   type Logger,
   type PluginClientBundle,
@@ -158,6 +159,50 @@ function parseSentFrame(
       message: z.record(z.string(), z.unknown()),
     })
     .parse(JSON.parse(assertStr(data))).message;
+}
+
+const FIRST_IMAGE_UPLOAD = "upload_00000000-0000-4000-8000-000000000001";
+const SECOND_IMAGE_UPLOAD = "upload_00000000-0000-4000-8000-000000000002";
+
+const answeredUploads = new WeakMap<object, Set<string>>();
+
+async function answerImageUpload(
+  transport: ReturnType<typeof createMockTransport>,
+  id: string,
+): Promise<void> {
+  const answered = answeredUploads.get(transport) ?? new Set<string>();
+  answeredUploads.set(transport, answered);
+  let request: Record<string, unknown> | undefined;
+  await vi.waitFor(() => {
+    request = transport.sent
+      .filter((frame): frame is string => typeof frame === "string")
+      .map((frame) => parseSentFrame(frame))
+      .findLast(
+        (message) =>
+          message.type === "file.upload.request" && !answered.has(String(message.requestId)),
+      );
+    expect(request).toBeDefined();
+  });
+  const pending = request!;
+  answered.add(String(pending.requestId));
+  const fileName = String(pending.fileName);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "file.upload.response",
+      payload: {
+        requestId: String(pending.requestId),
+        file: {
+          type: "uploaded_file",
+          id,
+          fileName,
+          mimeType: String(pending.mimeType),
+          size: Number(pending.size),
+          path: `/uploads/${id}/${fileName}`,
+        },
+        error: null,
+      },
+    }),
+  );
 }
 
 function respondToScheduleRequest(
@@ -352,7 +397,9 @@ test.each([
     });
     clients.push(client);
     const connecting = client.connect();
-    transport.triggerOpen({ features: { agentRequestReceipts: receipts } });
+    transport.triggerOpen({
+      features: { agentRequestReceipts: receipts, timelineImages: true },
+    });
     await connecting;
     const input: CreateAgentRequestOptions = {
       config: {
@@ -8174,6 +8221,145 @@ test("creation lifecycle sends the keyed agent and initial prompt as one intent"
   );
   await expect(creation).rejects.toThrow("provider unavailable");
   expect(transport.sent).toHaveLength(1);
+});
+
+test("an image creation retry keeps the intent while re-uploading", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-image-retry",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, timelineImages: true } });
+  await connected;
+  const input: CreateAgentRequestOptions = {
+    idempotencyKey: "draft-image",
+    provider: "codex",
+    cwd: "/project",
+    workspaceId: "wks_0123456789abcdef",
+    initialPrompt: "Look at this",
+    images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
+  };
+  const creationRequest = () =>
+    transport.sent
+      .filter((frame): frame is string => typeof frame === "string")
+      .map((frame) => parseSentFrame(frame))
+      .findLast((message) => message.type === "agent.create.request");
+  const failCreation = (request: Record<string, unknown>) => {
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "agent.create.response",
+        payload: { requestId: request.requestId, agent: null, error: "provider unavailable" },
+      }),
+    );
+  };
+
+  const first = client.createAgent(input);
+  void first.catch(() => undefined);
+  await answerImageUpload(transport, FIRST_IMAGE_UPLOAD);
+  await vi.waitFor(() =>
+    expect(creationRequest()).toMatchObject({ imageUploads: [{ id: FIRST_IMAGE_UPLOAD }] }),
+  );
+  const firstRequest = creationRequest()!;
+  expect(firstRequest).not.toHaveProperty("images");
+  expect(firstRequest).toMatchObject({
+    clientMessageId: "draft-image:initial-message",
+    imageUploads: [{ fileName: "image", mimeType: "image/png", size: 5 }],
+  });
+  failCreation(firstRequest);
+  await expect(first).rejects.toThrow("provider unavailable");
+
+  const second = client.createAgent(input);
+  void second.catch(() => undefined);
+  await answerImageUpload(transport, SECOND_IMAGE_UPLOAD);
+  await vi.waitFor(() =>
+    expect(creationRequest()).toMatchObject({ imageUploads: [{ id: SECOND_IMAGE_UPLOAD }] }),
+  );
+  const secondRequest = creationRequest()!;
+  const intent = ({
+    requestId: _requestId,
+    imageUploads: _imageUploads,
+    ...rest
+  }: Record<string, unknown>) => rest;
+  expect(intent(secondRequest)).toEqual(intent(firstRequest));
+  failCreation(secondRequest);
+  await expect(second).rejects.toThrow("provider unavailable");
+});
+
+test("an image workspace creation retry keeps the intent while re-uploading", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-image-workspace-retry",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, timelineImages: true } });
+  await connected;
+  const input: CreateWorkspaceRequestOptions = {
+    idempotencyKey: "draft-workspace-image",
+    source: { kind: "directory", path: "/project" },
+    agent: {
+      provider: "codex",
+      cwd: "/project",
+      initialPrompt: "Look at this",
+      images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
+    },
+  };
+  const creationRequest = () =>
+    transport.sent
+      .filter((frame): frame is string => typeof frame === "string")
+      .map((frame) => parseSentFrame(frame))
+      .findLast((message) => message.type === "workspace.create.request");
+  const failCreation = (request: Record<string, unknown>) => {
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "workspace.create.response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          error: "provider unavailable",
+          setupTerminalId: null,
+        },
+      }),
+    );
+  };
+
+  const first = client.createWorkspace(input);
+  await answerImageUpload(transport, FIRST_IMAGE_UPLOAD);
+  await vi.waitFor(() =>
+    expect(creationRequest()).toMatchObject({
+      agent: { imageUploads: [{ id: FIRST_IMAGE_UPLOAD }] },
+    }),
+  );
+  const firstRequest = creationRequest()!;
+  const firstAgent = firstRequest.agent as Record<string, unknown>;
+  expect(firstAgent).not.toHaveProperty("images");
+  expect(firstAgent).toMatchObject({ clientMessageId: "draft-workspace-image:initial-message" });
+  failCreation(firstRequest);
+  expect(await first).toMatchObject({ workspace: null, error: "provider unavailable" });
+
+  const second = client.createWorkspace(input);
+  await answerImageUpload(transport, SECOND_IMAGE_UPLOAD);
+  await vi.waitFor(() =>
+    expect(creationRequest()).toMatchObject({
+      agent: { imageUploads: [{ id: SECOND_IMAGE_UPLOAD }] },
+    }),
+  );
+  const secondRequest = creationRequest()!;
+  const intent = (request: Record<string, unknown>) => {
+    const { requestId: _requestId, agent, ...rest } = request;
+    const { imageUploads: _imageUploads, ...agentIntent } = agent as Record<string, unknown>;
+    return { ...rest, agent: agentIntent };
+  };
+  expect(intent(secondRequest)).toEqual(intent(firstRequest));
+  failCreation(secondRequest);
+  expect(await second).toMatchObject({ workspace: null, error: "provider unavailable" });
 });
 
 test("creation lifecycle acknowledgement reaches the observer before the final response", async () => {

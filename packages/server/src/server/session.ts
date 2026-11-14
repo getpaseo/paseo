@@ -1,3 +1,6 @@
+import { createTimelineResponse } from "./session/timeline/response.js";
+import { TimelineImageStore } from "./agent/timeline-images.js";
+import { readUploadedImages } from "./agent/uploaded-images.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -20,7 +23,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
-import { CreationService, type CreatedAgent } from "./creation/index.js";
+import { CreationService, fingerprintCreationIntent, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
@@ -59,6 +62,8 @@ import { TerminalSessionController } from "../terminal/terminal-session-controll
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import {
+  encodeFileTransferFrame,
+  FileTransferOpcode,
   encodePluginEventFrame,
   encodePluginOutputFrame,
   PluginFrameOpcode,
@@ -694,12 +699,13 @@ function resolveWorkspaceLabelService(
 }
 
 function hasInitialCreationPrompt(
-  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "attachments">,
+  request?: Pick<AgentCreateRequest, "initialPrompt" | "images" | "imageUploads" | "attachments">,
 ): boolean {
   return Boolean(
     request &&
-    buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
-      .length,
+    (request.imageUploads?.length ||
+      buildAgentPrompt(request.initialPrompt?.trim() ?? "", request.images, request.attachments)
+        .length),
   );
 }
 
@@ -3397,6 +3403,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.timeline.image.read.request":
+        return this.handleTimelineImageRead(msg, source);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":
@@ -3424,6 +3432,78 @@ export class Session {
         return undefined;
       default:
         return undefined;
+    }
+  }
+
+  private async handleTimelineImageRead(
+    request: Extract<SessionInboundMessage, { type: "agent.timeline.image.read.request" }>,
+    source?: object,
+  ): Promise<void> {
+    // Binary replies skip the outbound permission check, so a read re-checks the permission for
+    // every frame: revoking `workspace.read` ends a transfer that is already in progress.
+    const requireImageRead = () => {
+      if (!this.authorization.allowsPermission("workspace.read"))
+        throw new Error("Timeline image read is not permitted");
+    };
+    try {
+      const agent =
+        this.agentManager.getAgent(request.agentId) ??
+        (await this.agentStorage.get(request.agentId));
+      if (!agent || agent.internal) throw new Error("Agent not found");
+      if (!this.onBinaryMessage) throw new Error("Binary transfer is unavailable");
+      await new TimelineImageStore(this.paseoHome).stream(
+        request.agentId,
+        request.imageId,
+        async (file) => {
+          requireImageRead();
+          await this.emitBinaryReply(
+            encodeFileTransferFrame({
+              opcode: FileTransferOpcode.FileBegin,
+              requestId: request.requestId,
+              metadata: {
+                mime: "application/octet-stream",
+                size: file.size,
+                encoding: "binary",
+                modifiedAt: file.modifiedAt,
+              },
+            }),
+            source,
+          );
+          for await (const chunk of file.chunks) {
+            requireImageRead();
+            await this.emitBinaryReply(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileChunk,
+                requestId: request.requestId,
+                payload: chunk,
+              }),
+              source,
+            );
+          }
+          await this.emitBinaryReply(
+            encodeFileTransferFrame({
+              opcode: FileTransferOpcode.FileEnd,
+              requestId: request.requestId,
+            }),
+            source,
+          );
+        },
+      );
+      this.emitForSource(
+        {
+          type: "agent.timeline.image.read.response",
+          payload: { requestId: request.requestId, error: null },
+        },
+        source,
+      );
+    } catch (error) {
+      this.emitForSource(
+        {
+          type: "agent.timeline.image.read.response",
+          payload: { requestId: request.requestId, error: getErrorMessage(error) },
+        },
+        source,
+      );
     }
   }
 
@@ -4552,7 +4632,7 @@ export class Session {
       ? (await this.workspaceRegistry.get(id)) !== null
       : this.agentManager.getAgent(id) != null || (await this.agentStorage.get(id)) !== null;
 
-  private createRequestedAgent(
+  private async createRequestedAgent(
     request: AgentCreateRequest,
     observer?: (snapshot: CreationSnapshot) => void,
   ): Promise<CreationSnapshot> {
@@ -4562,6 +4642,7 @@ export class Session {
         kind: "agent",
         key: idempotencyKey ?? requestId,
         request: intent,
+        fingerprint: await fingerprintCreationIntent(this.paseoHome, intent),
         workspaceId: request.workspaceId,
         agentId: request.agentId,
         hasAgent: true,
@@ -4651,6 +4732,7 @@ export class Session {
           kind: "workspace",
           key: idempotencyKey ?? requestId,
           request: intent,
+          fingerprint: await fingerprintCreationIntent(this.paseoHome, intent),
           workspaceId: request.workspaceId,
           agentId: agentInput?.agentId,
           hasAgent: Boolean(agentInput),
@@ -4824,6 +4906,7 @@ export class Session {
       worktree,
       autoArchive,
       images,
+      imageUploads,
       attachments,
       env,
     } = msg;
@@ -4837,6 +4920,10 @@ export class Session {
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
     try {
+      const promptImages = [
+        ...(images ?? []),
+        ...(imageUploads?.length ? await readUploadedImages(this.paseoHome, imageUploads) : []),
+      ];
       const requestedCwd = resolve(config.cwd);
       const needsRequestedDirectory = Boolean(worktree) || (!msg.workspaceId && !msg.callerAgentId);
       if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {
@@ -4896,7 +4983,7 @@ export class Session {
             : undefined,
           clientMessageId,
           outputSchema,
-          images,
+          images: promptImages,
           attachments,
           labels: resolvedIntent.intent.labels,
           metadata: msg.metadata,
@@ -8393,76 +8480,26 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const response = createTimelineResponse({
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        agent: agentPayload,
         direction,
-        cursor,
         limit: msg.limit,
-        wholeTurns: msg.wholeTurns,
-      });
-      const selectedTimeline = {
-        timeline: fetchedControlTimeline,
-        entries: fetchedControlTimeline.rows,
-        startSeq: fetchedControlTimeline.startSeq,
-        endSeq: fetchedControlTimeline.endSeq,
-        hasOlder: fetchedControlTimeline.hasOlder,
-        hasNewer: fetchedControlTimeline.hasNewer,
-      };
-      const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
-      const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
-      const entries = selectedTimeline.entries.filter((entry) =>
-        this.supportsTimelineItem(entry.item, source),
-      );
-
-      this.emitForSource(
-        {
-          type: "fetch_agent_timeline_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId: msg.agentId,
-            agent: agentPayload,
+        mergeWindow: msg.mergeWindow === true,
+        fetchPage: (limit) =>
+          this.agentManager.fetchTimeline(msg.agentId, {
             direction,
-            projection,
-            epoch: selectedTimeline.timeline.epoch,
-            reset: fetchedControlTimeline.reset,
-            staleCursor: fetchedControlTimeline.staleCursor,
-            gap: fetchedControlTimeline.gap,
-            window: selectedTimeline.timeline.window,
-            startCursor,
-            endCursor,
-            hasOlder: selectedTimeline.hasOlder,
-            hasNewer: selectedTimeline.hasNewer,
-            ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: entries.map((entry) => {
-              const payloadEntry = {
-                provider: snapshot.provider,
-                item: entry.item,
-                timestamp: entry.timestamp,
-                seqStart: entry.seqStart,
-                seqEnd: entry.seqEnd,
-                sourceSeqRanges: entry.sourceSeqRanges,
-                turnId: undefined as string | undefined,
-                collapsed: (
-                  source
-                    ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                    : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-                )
-                  ? entry.collapsed
-                  : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-              };
-              payloadEntry.turnId = entry.turnId;
-              return payloadEntry;
-            }),
-            error: null,
-          },
-        },
-        source,
-      );
+            cursor,
+            limit,
+            wholeTurns: msg.wholeTurns,
+          }),
+        supportsItem: (item) => this.supportsTimelineItem(item, source),
+        supportsReasoningMerge: source
+          ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+          : this.supports(CLIENT_CAPS.reasoningMergeEnum),
+      });
+      this.emitForSource(response, source);
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId: msg.agentId },
@@ -8903,7 +8940,13 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const promptImages = [
+        ...(msg.images ?? []),
+        ...(msg.imageUploads?.length
+          ? await readUploadedImages(this.paseoHome, msg.imageUploads)
+          : []),
+      ];
+      const prompt = buildAgentPrompt(msg.text, promptImages, msg.attachments);
       this.sessionLogger.trace(
         {
           agentId,

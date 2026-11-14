@@ -18,6 +18,56 @@ import {
   WorkspaceBaseBranchSetResponseSchema,
 } from "./messages.js";
 
+test("cross-client user images survive wire parsing without requiring images on older messages", async () => {
+  const legacy = { type: "user_message" as const, text: "hello", messageId: "user-1" };
+  const withImages = { ...legacy, images: [{ data: "AA==", mimeType: "image/png" }] };
+  expect(AgentTimelineItemPayloadSchema.parse(withImages)).toEqual(withImages);
+  const { validateWSOutboundMessage } = await import("./validation/ws-outbound.js");
+  const wireMessage = {
+    type: "session",
+    message: {
+      type: "agent_stream",
+      payload: {
+        agentId: "image-agent",
+        timestamp: "2026-10-12T00:00:00.000Z",
+        event: { type: "timeline", provider: "omp", item: withImages },
+      },
+    },
+  };
+  const result = validateWSOutboundMessage(wireMessage);
+  if (!result.success) throw result.error;
+  expect(result.data).toEqual(wireMessage);
+
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  const legacySchema = z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    messageId: z.string().optional(),
+  });
+  expect(legacySchema.parse(withImages)).toEqual(legacy);
+});
+
+test("timeline image references remain compatible with older user messages", () => {
+  const legacy = { type: "user_message" as const, text: "photo", messageId: "user-1" };
+  const item = {
+    ...legacy,
+    imageRefs: [{ id: "a".repeat(64), mimeType: "image/png", size: 307_200 }],
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+  const oldUserMessage = z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    messageId: z.string().optional(),
+  });
+  expect(oldUserMessage.parse(item)).toEqual(legacy);
+  expect(
+    AgentTimelineItemPayloadSchema.safeParse({
+      ...item,
+      imageRefs: [{ ...item.imageRefs[0], id: "../outside" }],
+    }).success,
+  ).toBe(false);
+});
+
 test("base selection RPCs are correlated while older checkout and branch messages remain valid", () => {
   const payload = {
     cwd: "/repo",

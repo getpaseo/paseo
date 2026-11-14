@@ -13,6 +13,7 @@ import {
   DaemonClient,
 } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { TimelineImageStore } from "./agent/timeline-images.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
@@ -181,6 +182,24 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
   }
 });
 
+test("DaemonClient reads timeline image bytes over binary frames", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd: daemon.paseoHome });
+    const bytes = Buffer.alloc(512 * 1024, 0xa5);
+    const image = await new TimelineImageStore(daemon.paseoHome).put(agent.id, {
+      bytes,
+      mimeType: "image/png",
+    });
+    expect(Buffer.from(await client.readTimelineImage(agent.id, image.id))).toEqual(bytes);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("agent.config.apply sets an option that has no control and the next snapshot reports it", async () => {
   const clients = createTestAgentClients();
   const codex = clients.codex as AgentClient;
@@ -231,6 +250,74 @@ test("agent.config.apply sets an option that has no control and the next snapsho
   }
 });
 
+test("image prompts survive upload and can be read by another client", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "timeline-images-e2e-"));
+  const staticDir = path.join(root, "static");
+  mkdirSync(staticDir);
+  let daemon = await createTestPaseoDaemon({ paseoHomeRoot: root, staticDir, cleanup: false });
+  const sender = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const reader = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  let restartedClient: DaemonClient | undefined;
+  try {
+    await sender.connect();
+    await reader.connect();
+    const bytes = Buffer.alloc(300 * 1024, 0xa5);
+    const agent = await sender.createAgent({
+      provider: "codex",
+      cwd: daemon.paseoHome,
+      initialPrompt: "image prompt",
+      images: [{ data: bytes.toString("base64"), mimeType: "image/png" }],
+    });
+    let reference: { id: string; size: number; mimeType: string } | undefined;
+    await expect
+      .poll(async () => {
+        const timeline = await reader.fetchAgentTimeline(agent.id, { direction: "tail", limit: 0 });
+        const item = timeline.entries.find(
+          (entry) => entry.item.type === "user_message" && entry.item.imageRefs?.length,
+        )?.item;
+        if (item?.type !== "user_message") return false;
+        expect(item.images).toBeUndefined();
+        reference = item.imageRefs?.[0];
+        return Boolean(reference);
+      })
+      .toBe(true);
+    expect(reference).toMatchObject({ mimeType: "image/png", size: bytes.length });
+    expect(Buffer.from(await reader.readTimelineImage(agent.id, reference!.id))).toEqual(bytes);
+    await sender.waitForFinish(agent.id, 5000);
+    const nextBytes = Buffer.alloc(320 * 1024, 0xb6);
+    await sender.sendAgentMessage(agent.id, "second image", {
+      images: [{ data: nextBytes.toString("base64"), mimeType: "image/png" }],
+    });
+    let nextId: string | undefined;
+    await expect
+      .poll(async () => {
+        const timeline = await reader.fetchAgentTimeline(agent.id, { direction: "tail", limit: 0 });
+        const item = timeline.entries.find(
+          (entry) => entry.item.type === "user_message" && entry.item.text === "second image",
+        )?.item;
+        nextId = item?.type === "user_message" ? item.imageRefs?.[0]?.id : undefined;
+        return Boolean(nextId);
+      })
+      .toBe(true);
+    expect(Buffer.from(await reader.readTimelineImage(agent.id, nextId!))).toEqual(nextBytes);
+    await sender.waitForFinish(agent.id, 5000);
+    await sender.close();
+    await reader.close();
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({ paseoHomeRoot: root, staticDir, cleanup: false });
+    restartedClient = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    await restartedClient.connect();
+    expect(Buffer.from(await restartedClient.readTimelineImage(agent.id, nextId!))).toEqual(
+      nextBytes,
+    );
+  } finally {
+    await restartedClient?.close();
+    await sender.close();
+    await reader.close();
+    await daemon.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30000);
 test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({
