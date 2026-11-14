@@ -334,7 +334,7 @@ jobs:
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool ibus dbus-x11 python3 libxtst6
 
       - name: Install Playwright browser
         if: ${{ runner.os == 'Linux' }}
@@ -349,6 +349,10 @@ jobs:
         run: xvfb-run -a --server-args="-screen 0 1280x800x24" npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
         env:
           PASEO_DESKTOP_LIFECYCLE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-lifecycle
+
+      - name: Run desktop startup and input recovery E2E (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
 
       - name: Upload desktop lifecycle screenshots
         uses: actions/upload-artifact@v4
