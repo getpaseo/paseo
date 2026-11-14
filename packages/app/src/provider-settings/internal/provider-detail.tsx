@@ -39,12 +39,16 @@ export interface ProviderDetailState {
  * provider this page removes leaves the host's list before the removal answers; both keep showing
  * it until the frame closes.
  */
-export function useProviderDetail(
-  serverId: string,
-  provider: string,
+export function useProviderDetail({
+  serverId,
+  provider,
+  onRemoved,
+}: {
+  serverId: string;
+  provider: string;
   /** The provider was removed; leave its detail. */
-  onRemoved: () => void,
-): ProviderDetailState {
+  onRemoved: () => void;
+}): ProviderDetailState {
   const { entries, error } = useProvidersSnapshot(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const { canRemove, remove, removing } = useProviderConfigActions(serverId);

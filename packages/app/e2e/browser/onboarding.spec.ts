@@ -37,7 +37,11 @@ import {
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { enableRelayAndExpectOffer } from "../support/helpers/pair-device";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { openSettingsHostSection } from "../support/helpers/settings";
+import {
+  installAcpCatalogProvider,
+  openAddProvider,
+  openSettingsHostSection,
+} from "../support/helpers/settings";
 import { createTempDirectory, createTempGitRepo } from "../support/helpers/workspace";
 
 // Midnight's muted foreground (#9a9db0), which the step description is drawn in.
@@ -119,6 +123,33 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
   } finally {
     await host.close();
     await repo.cleanup();
+  }
+});
+
+test("a provider removed in setup can be added back and removed again", async ({ page }) => {
+  test.setTimeout(180_000);
+  const host = await startSetupHost("re-add");
+  const detail = setupSheet(page, "provider-settings-sheet");
+  const remove = detail.getByTestId("provider-remove");
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  try {
+    await openAppAsNewUser(page, host);
+    await continueSetup(page);
+    await expectSetupStep(page, "Your providers");
+
+    await openAddProvider(page);
+    await installAcpCatalogProvider(page, "Junie");
+    await remove.click();
+    await expect(detail).toHaveCount(0);
+
+    // Adding it back opens the same provider's sheet, which must not still be removing it.
+    await openAddProvider(page);
+    await installAcpCatalogProvider(page, "Junie");
+    await expect(remove).toHaveText("Remove");
+    await expect(remove).toBeEnabled();
+  } finally {
+    await host.close();
   }
 });
 

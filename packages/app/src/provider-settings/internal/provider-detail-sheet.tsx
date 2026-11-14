@@ -20,7 +20,7 @@ export function ProviderDetailSheet({
   frame?: ProviderSheetFrame;
 }) {
   const { t } = useTranslation();
-  const detail = useProviderDetail(serverId, provider, onClose);
+  const detail = useProviderDetail({ serverId, provider, onRemoved: onClose });
   const label = detail.label;
   const header = useMemo<SheetHeader>(
     () => ({

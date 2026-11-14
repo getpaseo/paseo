@@ -22,7 +22,7 @@ export function ProviderDetailPage({
   showBack: boolean;
 }) {
   const { t } = useTranslation();
-  const detail = useProviderDetail(serverId, provider, onBack);
+  const detail = useProviderDetail({ serverId, provider, onRemoved: onBack });
   const back = useMemo(
     () => ({
       label: t("settings.providers.detail.backToProviders"),
