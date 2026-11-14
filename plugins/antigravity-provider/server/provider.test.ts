@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -525,6 +529,311 @@ it("resumes after connection close without replay or another system prefix", asy
   ).toEqual(["RESUME"]);
 });
 
+it("replays local transcript_full.jsonl on resume without spawning driver until next prompt", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "antigravity-home-"));
+  temporary.push(home);
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const logsDir = path.join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(logsDir, { recursive: true });
+  const transcriptLines = [
+    JSON.stringify({
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:43Z",
+      content:
+        "<USER_REQUEST>\nSYSTEM PREFIX\n\nCheck the repo status\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nTime\n</ADDITIONAL_METADATA>",
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:44Z",
+      thinking: "Checking status and launching helper.",
+      content: "Let me check git status and inspect files.",
+      tool_calls: [
+        { name: "run_command", args: { CommandLine: "git status --short" } },
+        {
+          name: "edit_file",
+          args: {
+            Path: "/repo/src/index.ts",
+            Target: '  const x = "quoted";',
+            Replacement: '    const x = "quoted";',
+          },
+        },
+        {
+          name: "invoke_subagent",
+          args: { TypeName: "research", Prompt: "Inspect files" },
+        },
+      ],
+    }),
+    JSON.stringify({
+      step_index: 2,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:45Z",
+      content: "M README.md",
+    }),
+    JSON.stringify({
+      step_index: 3,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:45Z",
+      content: "Updated file",
+    }),
+    JSON.stringify({
+      step_index: 4,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:46Z",
+      content:
+        'Created the following subagent:\n{\n  "conversationId": "11111111-2222-3333-4444-555555555555",\n  "logAbsoluteUri": "file:///tmp/subagent.jsonl"\n}',
+    }),
+    JSON.stringify({
+      step_index: 5,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:47Z",
+      content: "Everything looks clean.",
+    }),
+  ];
+  await writeFile(path.join(logsDir, "transcript_full.jsonl"), transcriptLines.join("\n"));
+  await writeFile(
+    path.join(logsDir, "transcript.jsonl"),
+    JSON.stringify({
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      content: "<USER_REQUEST>\ntruncated fallback should not be read\n</USER_REQUEST>",
+    }),
+  );
+
+  const h = await harness({ HOME: home });
+  await h.open({ version: 1, data: { conversationId } });
+
+  const openedIdx = h.events.findIndex((event) => event.type === "session.opened");
+  const firstItemIdx = h.events.findIndex((event) => event.type === "timeline.item");
+  const noticeIdx = h.events.findIndex((event) => event.type === "session.notice");
+  expect(openedIdx).toBeGreaterThanOrEqual(0);
+  expect(firstItemIdx).toBeGreaterThan(openedIdx);
+  expect(noticeIdx).toBeGreaterThan(firstItemIdx);
+
+  const items = h.events
+    .filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item",
+    )
+    .map((event) => event.item);
+  expect(items).toEqual([
+    {
+      type: "user_message",
+      id: "history-step-0",
+      messageId: "history-step-0",
+      text: "Check the repo status",
+    },
+    {
+      type: "reasoning",
+      id: "history-step-1-reasoning",
+      text: "Checking status and launching helper.",
+    },
+    {
+      type: "assistant_message",
+      id: "history-step-1",
+      messageId: "history-step-1",
+      text: "Let me check git status and inspect files.",
+    },
+    {
+      type: "tool_call",
+      id: "history-step-1-tool-0",
+      callId: "history-step-1-tool-0",
+      name: "run_command",
+      status: "completed",
+      error: null,
+      detail: { type: "shell", command: "git status --short", output: "M README.md" },
+    },
+    {
+      type: "tool_call",
+      id: "history-step-1-tool-1",
+      callId: "history-step-1-tool-1",
+      name: "edit_file",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/index.ts",
+        oldString: '  const x = "quoted";',
+        newString: '    const x = "quoted";',
+      },
+    },
+    {
+      type: "tool_call",
+      id: "history-step-1-tool-2",
+      callId: "history-step-1-tool-2",
+      name: "invoke_subagent",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "research",
+        description: "Inspect files",
+        childSessionId: "11111111-2222-3333-4444-555555555555",
+        log: "file:///tmp/subagent.jsonl",
+      },
+    },
+    {
+      type: "assistant_message",
+      id: "history-step-5",
+      messageId: "history-step-5",
+      text: "Everything looks clean.",
+    },
+  ]);
+
+  // Resuming only replayed history and discovered catalog without cold-starting the stream-json driver.
+  expect(
+    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
+  ).toHaveLength(0);
+  await h.completed(await h.prompt("RESUME"));
+  expect(
+    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
+  ).toHaveLength(1);
+});
+
+it("falls back to compact transcript.jsonl, stops GENERIC pairing at non-GENERIC steps, and skips replay when history is skip", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "antigravity-home-compact-"));
+  temporary.push(home);
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const logsDir = path.join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(logsDir, { recursive: true });
+  const compactLines = [
+    JSON.stringify({
+      step_index: 0,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:44Z",
+      tool_calls: [
+        { name: "run_command", args: { CommandLine: '"git status --short"' } },
+        { name: "run_command", args: { CommandLine: '"git diff"' } },
+      ],
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:45Z",
+      content: "M README.md",
+    }),
+    JSON.stringify({
+      step_index: 2,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-05T05:12:46Z",
+      content: "Interrupted before second tool output.",
+    }),
+  ];
+  await writeFile(path.join(logsDir, "transcript.jsonl"), compactLines.join("\n"));
+
+  const h = await harness({ HOME: home });
+  await h.open({ version: 1, data: { conversationId } }, "replayed", "replay");
+  const replayedItems = h.events
+    .filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item" && event.sessionId === "replayed",
+    )
+    .map((event) => event.item);
+  expect(replayedItems).toEqual([
+    {
+      type: "tool_call",
+      id: "history-step-0-tool-0",
+      callId: "history-step-0-tool-0",
+      name: "run_command",
+      status: "completed",
+      error: null,
+      detail: { type: "shell", command: "git status --short", output: "M README.md" },
+    },
+    {
+      type: "tool_call",
+      id: "history-step-0-tool-1",
+      callId: "history-step-0-tool-1",
+      name: "run_command",
+      status: "canceled",
+      error: null,
+      detail: { type: "shell", command: "git diff", output: "" },
+    },
+    {
+      type: "assistant_message",
+      id: "history-step-2",
+      messageId: "history-step-2",
+      text: "Interrupted before second tool output.",
+    },
+  ]);
+
+  await h.open({ version: 1, data: { conversationId } }, "skipped", "skip");
+  const skippedItems = h.events.filter(
+    (event) => event.type === "timeline.item" && event.sessionId === "skipped",
+  );
+  expect(skippedItems).toEqual([]);
+});
+
+it("isolates per-session operation queues so a slow interrupt on one session does not block another session", async () => {
+  const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
+  await h.open(undefined, "s1");
+  await h.open(undefined, "s2");
+  await h.message([{ type: "text", text: "HANG" }], "s1");
+  await h.wait(
+    (event) =>
+      event.type === "timeline.item" &&
+      event.sessionId === "s1" &&
+      event.item.type === "assistant_message",
+  );
+  // Start a slow interrupt on s1 (ignores SIGINT/SIGTERM, taking ~1s to force-stop) without awaiting completion yet.
+  await h.connection.send({
+    type: "session.interrupt",
+    requestId: "interrupt-s1",
+    sessionId: "s1",
+  });
+  // Configure s2 concurrently; its per-session queue should complete before s1's slow interrupt finishes.
+  await h.request({
+    type: "session.configure",
+    requestId: "configure-s2",
+    sessionId: "s2",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  const configureIdx = h.events.findIndex(
+    (event) => event.type === "request.completed" && event.requestId === "configure-s2",
+  );
+  const interruptBeforeWaitIdx = h.events.findIndex(
+    (event) => event.type === "request.completed" && event.requestId === "interrupt-s1",
+  );
+  expect(configureIdx).toBeGreaterThanOrEqual(0);
+  expect(interruptBeforeWaitIdx).toBe(-1);
+  await h.wait((event) => event.type === "request.completed" && event.requestId === "interrupt-s1");
+});
+
 it.each(["auth", "exit", "stderr"])(
   "reports startup %s without waiting for init forever",
   async (startup) => {
@@ -585,6 +894,26 @@ describe("discovery", () => {
     expect(
       (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
     ).toHaveLength(2);
+  });
+  it("shares catalog discovery between status checks and session open for the same launch", async () => {
+    const h = await harness();
+    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+    await h.open();
+    expect(
+      (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
+    ).toHaveLength(1);
+    expect(
+      (await h.records()).filter((entry) => entry.args && entry.args.includes("--version")),
+    ).toHaveLength(1);
+
+    // If catalog is populated first (versionVerified: false), status() still verifies --version once.
+    const oldAfterCatalog = await harness({ AGY_TEST_VERSION: "1.1.14" });
+    await oldAfterCatalog.request({ type: "catalog", requestId: "catalog-first" });
+    expect(await provider.status?.({ launch: oldAfterCatalog.launch })).toMatchObject({
+      available: false,
+      diagnostic: expect.stringContaining("1.1.15"),
+    });
   });
   it.each(["1.1.15", "1.2.12", "1.2.13"])("accepts driver-capable version %s", async (version) => {
     const h = await harness({ AGY_TEST_VERSION: version });

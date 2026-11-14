@@ -177,6 +177,8 @@ function signalGroup(
   return signalProcess({ platform: process.platform, pid: child.pid, signal });
 }
 
+export const PROBE_TIMEOUT_MS = 30_000;
+
 interface ProbeOptions {
   launch: ProviderLaunch;
   args: string[];
@@ -198,7 +200,7 @@ export function probe(options: ProbeOptions): Promise<string> {
         reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
         return undefined;
       }, reject);
-    }, 10_000);
+    }, PROBE_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
