@@ -291,21 +291,13 @@ function useWorkspaceScreenArchiveController({
     serverId,
     workspaceId: workspaceDescriptor?.id ?? "",
     workspaceKind: workspaceDescriptor?.workspaceKind ?? "directory",
+    workspaceDirectory: workspaceDescriptor?.workspaceDirectory ?? "",
     name: workspaceDescriptor?.name ?? branchLabel,
-    isDirty: archiveRisk.isDirty,
-    aheadOfOrigin: archiveRisk.aheadOfOrigin,
     diffStat: workspaceDescriptor?.diffStat ?? null,
     warningLabels: getWorktreeArchiveWarningLabels(t),
     onSetHiding: setIsHidingWorkspace,
-    onArchiveStarted: () => {
-      if (!activeWorkspaceSelection) {
-        return;
-      }
-      redirectIfArchivingActiveWorkspace({
-        serverId,
-        workspaceId: activeWorkspaceSelection.workspaceId,
-        activeWorkspaceSelection,
-      });
+    onArchiveStarted: (archived) => {
+      redirectIfArchivingActiveWorkspace({ ...archived, activeWorkspaceSelection });
     },
   });
 

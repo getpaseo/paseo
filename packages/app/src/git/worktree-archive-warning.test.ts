@@ -1,10 +1,86 @@
 import { describe, expect, it } from "vitest";
 
+import type { CheckoutStatusClient, CheckoutStatusPayload } from "@/git/checkout-status-cache";
 import {
   buildWorktreeArchiveConfirmationMessage,
   buildWorktreeArchiveRiskReasons,
+  readWorktreeArchiveRisk,
   toWorktreeArchiveRisk,
 } from "@/git/worktree-archive-warning";
+
+const WORKTREE = "/home/me/.paseo/worktrees/repo/feature";
+
+function hostAnswering(status: CheckoutStatusPayload): CheckoutStatusClient & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    getCheckoutStatus: async (cwd) => {
+      asked.push(cwd);
+      return status;
+    },
+  };
+}
+
+const NOT_GIT = {
+  cwd: WORKTREE,
+  requestId: "status",
+  isGit: false,
+  isPaseoOwnedWorktree: false,
+  repoRoot: null,
+  currentBranch: null,
+  isDirty: null,
+  baseRef: null,
+  aheadBehind: null,
+  aheadOfOrigin: null,
+  behindOfOrigin: null,
+  hasRemote: false,
+  remoteUrl: null,
+  error: null,
+} satisfies CheckoutStatusPayload;
+
+describe("reading a worktree's archive risk from its host", () => {
+  it("reads uncommitted changes and unpushed commits from the worktree's checkout status", async () => {
+    const host = hostAnswering({
+      cwd: WORKTREE,
+      requestId: "status",
+      isGit: true,
+      isPaseoOwnedWorktree: true,
+      repoRoot: WORKTREE,
+      mainRepoRoot: "/home/me/repo",
+      currentBranch: "feature",
+      isDirty: true,
+      baseRef: "main",
+      aheadBehind: { ahead: 2, behind: 0 },
+      aheadOfOrigin: 2,
+      behindOfOrigin: 0,
+      hasRemote: true,
+      remoteUrl: "git@example.com:me/repo.git",
+      error: null,
+    });
+
+    expect(await readWorktreeArchiveRisk(host, WORKTREE)).toEqual({
+      isDirty: true,
+      aheadOfOrigin: 2,
+    });
+    expect(host.asked).toEqual([WORKTREE]);
+  });
+
+  it("finds nothing to lose in a directory that is no longer a git checkout", async () => {
+    expect(await readWorktreeArchiveRisk(hostAnswering(NOT_GIT), WORKTREE)).toEqual({
+      isDirty: false,
+      aheadOfOrigin: null,
+    });
+  });
+
+  it("rejects with the host's error when it can't read the worktree", async () => {
+    const host = hostAnswering({
+      ...NOT_GIT,
+      error: { code: "UNKNOWN", message: "git status failed" },
+    });
+
+    await expect(readWorktreeArchiveRisk(host, WORKTREE)).rejects.toThrow("git status failed");
+  });
+});
 
 describe("workspace archive warning for worktree backing", () => {
   it("does not require a confirmation for clean and pushed worktrees", () => {

@@ -87,7 +87,6 @@ import {
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
-import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -1252,8 +1251,9 @@ function WorkspaceRowWithMenu({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
     workspaceKind: workspace.workspaceKind,
+    workspaceDirectory: workspace.workspaceDirectory,
     name: workspace.name,
-    ...toWorktreeArchiveRisk(workspace),
+    diffStat: workspace.diffStat,
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
