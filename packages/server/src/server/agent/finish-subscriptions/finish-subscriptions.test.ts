@@ -498,3 +498,26 @@ test("finish recovery protects callers before durable intent has loaded", async 
   expect(recovered.hasPendingForCaller("parent")).toBe(true);
   expect(recovered.hasPendingForCaller("unrelated")).toBe(false);
 });
+
+test("delivers concurrent child completions to their shared parent before either acknowledgment", async () => {
+  const state = await scenario();
+  const childIds = ["child-one", "child-two"];
+  await Promise.all(
+    childIds.map((childAgentId) =>
+      state.service.register({ ...intent, childAgentId, requireParentOwnership: true }),
+    ),
+  );
+  await until(() => state.observation.waits.length === 2);
+  state.observation.waits.forEach((wait, index) => {
+    const result = outcome("idle");
+    result.final!.id = childIds[index]!;
+    wait.result.resolve(result);
+  });
+  await until(() => state.delivery.prompts.length === 2);
+  for (const childId of childIds) {
+    expect(state.delivery.prompts.filter((prompt) => prompt.includes(childId))).toHaveLength(1);
+  }
+  expect(await state.store.list()).toHaveLength(2);
+  state.delivery.acknowledgments.forEach((ack) => ack.resolve("steered"));
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+});
