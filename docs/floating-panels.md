@@ -7,12 +7,12 @@ canonical files and are trying to add or change one.
 
 ## Canonical files
 
-| File                                     | Use case                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
-| `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
-| `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
+| File                                  | Use case                                                          |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `components/ui/combobox.tsx`          | Anchored picker with search; mobile falls back to bottom sheet    |
+| `components/ui/tooltip.tsx`           | Non-interactive hover/long-press tooltip                          |
+| `components/ui/hover-card.tsx`        | Desktop-web hover card the pointer can move onto; Portal          |
+| `components/ui/autocomplete-popover/` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
 non-interactive, hover-card is web-only desktop, autocomplete keeps the composer
@@ -279,6 +279,17 @@ keyboard moved. Both results were observed, so any correction double-lifts the
 popover or leaves it behind the keyboard. `measureAtRest` measures through
 Fabric's transform-free `measureLayout` instead. Re-measure when `isMoving`
 settles; the composer's resting position changes as the draft grows.
+
+A measured rect is an asynchronous copy, so it lands after the anchor's new
+layout has painted. The composer resizes while the autocomplete is open: a
+wrapped line, cleared text, a window resize. Between measurements the popover
+follows the anchor's live size instead. On native a Reanimated frame callback
+reads `measure()` on the UI thread and moves the popover in the frame the new
+layout mounts. On web a `ResizeObserver` commits the placement with `flushSync`,
+which runs after layout and before paint. Keep the portal's
+`KeyboardTranslateView` host-sized with `pointerEvents="box-none"` and position
+the popover inside it, so the popover moves without leaving its parent's bounds
+(Gotcha 1).
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
