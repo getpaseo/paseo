@@ -328,7 +328,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
   );
   return (
     <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
-      <Tooltip enabledOnMobile={false}>
+      <Tooltip openOnLongPress={composer}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent>
           <Text style={styles.tooltipLabel}>{button.title}</Text>
