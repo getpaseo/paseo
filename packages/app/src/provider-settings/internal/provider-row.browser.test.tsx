@@ -137,4 +137,16 @@ describe("provider row", () => {
     expect(updating).toBe(ready);
     expect(failing).toBe(ready);
   });
+
+  it("keeps a long, multi-line error to the row's one line", () => {
+    const ready = mount({ kind: "ready", version: "2.1.321", models: 3 })
+      .row()
+      .getBoundingClientRect().height;
+    const message = [
+      "ACP agent process exited before initialization completed (exit code 1)",
+      "broken-acp: exited with code 1",
+    ].join("\n");
+    const failing = mount({ kind: "failing", message }).row().getBoundingClientRect().height;
+    expect(failing).toBe(ready);
+  });
 });
