@@ -30,7 +30,10 @@ export function resolveTerminalResizeClaim(input: {
   supportsTerminalSizeOwnership: boolean;
   readiness: FocusClaimReadiness;
 }): { shouldSend: boolean; intent: "claim" | "update" } {
-  const intent = input.shouldClaim ? "claim" : "update";
+  // A measured resize on the focused pane claims the size, not just updates it:
+  // an owner-only update is dropped when another client claimed last or the
+  // owner record went stale across reconnects, leaving the PTY at a stale grid.
+  const intent = input.shouldClaim || canRequestFocusClaim(input.readiness) ? "claim" : "update";
   if (intent === "claim") {
     if (!canRequestFocusClaim(input.readiness)) {
       return { shouldSend: false, intent };
