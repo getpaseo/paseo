@@ -27,7 +27,7 @@ export function deriveWorkspaceAgentVisibility(input: {
   const activeAgentIds = new Set<string>();
   const autoOpenAgentIds = new Set<string>();
   const foreignAgentIds = new Set<string>();
-  for (const agent of sessionAgents?.values() ?? []) {
+  for (const agent of agentsByCreation(sessionAgents)) {
     const ownerId = normalizeWorkspaceOpaqueId(agent.workspaceId);
     if (ownerId !== workspaceId) {
       if (ownerId) {
@@ -53,6 +53,13 @@ export function deriveWorkspaceAgentVisibility(input: {
     }
   }
   return { activeAgentIds, autoOpenAgentIds, foreignAgentIds };
+}
+
+// Tabs open in the order their agents were created, so a workspace's first agent stays first.
+function agentsByCreation(agents: Map<string, Agent> | undefined): Agent[] {
+  return [...(agents?.values() ?? [])].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id),
+  );
 }
 
 function shouldAutoOpenAgent(input: {
