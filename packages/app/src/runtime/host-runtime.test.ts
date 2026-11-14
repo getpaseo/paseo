@@ -174,8 +174,22 @@ class FakeDaemonClient {
     hosts: [],
   });
 
+  private hostDirectoryListeners = new Set<(message: SessionOutboundMessage) => void>();
+
   observeHosts() {
-    return subscriptionFixture(this.hostDirectory, () => () => {});
+    return subscriptionFixture(this.hostDirectory, (receive) => {
+      this.hostDirectoryListeners.add(receive);
+      return () => this.hostDirectoryListeners.delete(receive);
+    });
+  }
+
+  /** The daemon's host directory changed: a host renamed, added or removed. */
+  emitHostDirectory(directory: HostDirectory): void {
+    for (const receive of this.hostDirectoryListeners)
+      receive({
+        type: "hosts.changed",
+        payload: { subscriptionId: "sub_hosts", directory },
+      } as SessionOutboundMessage);
   }
 
   public ownedSubscriptions = true;
@@ -2291,6 +2305,72 @@ describe("HostRuntimeStore", () => {
       }
     },
   );
+
+  it("follows the managing daemon's host directory: renamed hosts take its label, removed hosts go", async () => {
+    const origin = new FakeDaemonClient();
+    origin.setConnectionState({ status: "connected" });
+    origin.connectedHosts = true;
+    const listing = (hosts: Array<{ target: string; label: string }>): HostDirectory => ({
+      self: { serverId: "srv_a", label: "A" },
+      hosts: hosts.map(({ target, label }) => ({
+        registrationId: `reg_${target}`,
+        serverId: `srv_${target}`,
+        label,
+        source: { id: "user", key: target },
+        metadata: {},
+        enabled: true,
+        status: "online" as const,
+        targetDescription: `${target}:6767`,
+        lastOnlineAt: null,
+        nextRetryAt: null,
+        error: null,
+      })),
+    });
+    origin.hostDirectory = Promise.resolve(
+      listing([
+        { target: "b", label: "spare" },
+        { target: "c", label: "C" },
+        { target: "d", label: "D" },
+      ]),
+    );
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: ({ host }) =>
+          (host.serverId === "srv_a" ? origin : new FakeDaemonClient()) as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: (host.serverId === "srv_a"
+            ? origin
+            : makeConnectedProbeClient(5)) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label,
+        }),
+        getClientId: async () => "cid_fleet_follow",
+      },
+    });
+    const label = (serverId: string) =>
+      store.getHosts().find((host) => host.serverId === serverId)?.label;
+    try {
+      await store.upsertDirectConnection({ serverId: "srv_a", endpoint: "a:6767" });
+      await waitForHostOnline(store, "srv_a");
+      await vi.waitFor(() => expect(label("srv_d")).toBe("D"));
+      await store.renameHost("srv_d", "My D");
+
+      origin.emitHostDirectory(
+        listing([
+          { target: "b", label: "nice" },
+          { target: "d", label: "Dee" },
+        ]),
+      );
+
+      await vi.waitFor(() => expect(label("srv_b")).toBe("nice"));
+      expect(store.getHosts().some((host) => host.serverId === "srv_c")).toBe(false);
+      expect(label("srv_d")).toBe("My D");
+      expect(store.getHosts().map((host) => host.serverId)).toEqual(["srv_a", "srv_b", "srv_d"]);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
 
   it.each(["active", "inactive", "background"] as const)(
     "keeps reconnect enabled through inactive/background and resumes immediately (mounted %s)",

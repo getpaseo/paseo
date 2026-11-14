@@ -19,6 +19,7 @@ import {
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   pinRelayProtectedSecurityInProfiles,
+  pruneRoutesMissingFromDirectory,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
@@ -2537,6 +2538,21 @@ export class HostRuntimeStore {
             target.serverId,
             this.acquireDirectoryDemand(target.serverId),
           );
+      }
+      // Hosts this daemon no longer lists lose their route through it.
+      const listed = new Set(
+        directory.hosts.flatMap((target) => (target.serverId ? [target.serverId] : [])),
+      );
+      const pruned = pruneRoutesMissingFromDirectory({
+        profiles: this.hosts,
+        originServerId: serverId,
+        listedServerIds: listed,
+      });
+      if (pruned.profiles !== this.hosts) {
+        for (const removed of pruned.removedServerIds)
+          void this.revokePushNotifications({ client: this.getClient(removed), serverId: removed });
+        this.setHostsAndSync(pruned.profiles);
+        void this.persistHosts();
       }
     };
     const unsubscribe = observation.subscribe({
