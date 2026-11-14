@@ -28,7 +28,7 @@ import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
-import { monitorEventLoopDelay } from "node:perf_hooks";
+import { EventLoopDelayMonitor } from "./websocket/event-loop-delay.js";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
@@ -629,7 +629,7 @@ export class VoiceAssistantWebSocketServer {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private applicationSocketLeaseInterval: ReturnType<typeof setInterval> | null = null;
   private readonly applicationSocketLease = new ApplicationSocketLease<WebSocketLike>();
-  private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
+  private eventLoopDelayMonitor: EventLoopDelayMonitor | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private unsubscribeTerminalActivity: (() => void) | null = null;
@@ -920,8 +920,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private startRuntimeMetricsInterval(): void {
-    this.eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 10 });
-    this.eventLoopDelayMonitor.enable();
+    this.eventLoopDelayMonitor = new EventLoopDelayMonitor();
     const runtimeMetricsInterval = setInterval(() => {
       this.flushRuntimeMetrics();
     }, WS_RUNTIME_METRICS_FLUSH_MS);
@@ -945,18 +944,7 @@ export class VoiceAssistantWebSocketServer {
   // Main-loop stall visibility: terminal frames and agent traffic share one event
   // loop, so delay percentiles here are the ground truth for "the daemon is busy".
   private snapshotEventLoopDelay(): { p50Ms: number; p99Ms: number; maxMs: number } | null {
-    const monitor = this.eventLoopDelayMonitor;
-    if (!monitor) {
-      return null;
-    }
-    const toMs = (nanoseconds: number): number => Math.round(nanoseconds / 1e5) / 10;
-    const snapshot = {
-      p50Ms: toMs(monitor.percentile(50)),
-      p99Ms: toMs(monitor.percentile(99)),
-      maxMs: toMs(monitor.max),
-    };
-    monitor.reset();
-    return snapshot;
+    return this.eventLoopDelayMonitor?.snapshot() ?? null;
   }
 
   private verifyWsUpgrade(
@@ -1178,7 +1166,7 @@ export class VoiceAssistantWebSocketServer {
     }
     this.applicationSocketLease.clear();
     this.flushRuntimeMetrics({ final: true });
-    this.eventLoopDelayMonitor?.disable();
+    this.eventLoopDelayMonitor?.stop();
     this.eventLoopDelayMonitor = null;
 
     const uniqueConnections = new Set<SessionConnection>([
