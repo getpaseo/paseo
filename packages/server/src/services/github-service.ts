@@ -1331,20 +1331,24 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     if (!ghPath) {
       throw new GitHubCliMissingError();
     }
-    // Route every gh invocation to the workspace's host. `gh api`/`graphql`
-    // otherwise default to github.com regardless of the resolved repository,
-    // which silently queries the wrong server on GitHub Enterprise. GH_HOST is
-    // safe even for auto-routing subcommands because it matches the repo's host.
+    // Git may rewrite the transport URL to a proxy host. gh would then infer the
+    // wrong host and repository, so name the repository gh would select from
+    // the configured remote URLs instead.
     const host = await resolveRepoHostCached(runOptions.cwd);
+    const slug =
+      host && ["pr", "issue", "repo"].includes(args[0] ?? "")
+        ? await resolveGitHubDefaultRepoSlug({ cwd: runOptions.cwd, host })
+        : null;
+    const effectiveArgs = selectGitHubCommandRepository({ args, host, slug });
     const effectiveOptions: GitHubCommandRunnerOptions = host
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     try {
-      const result = await deps.runner(args, effectiveOptions);
+      const result = await deps.runner(effectiveArgs, effectiveOptions);
       return result.stdout.trim();
     } catch (error) {
       throw githubCliRunner.normalizeError(error, {
-        args,
+        args: effectiveArgs,
         cwd: runOptions.cwd,
       });
     }
@@ -1362,6 +1366,43 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       cwd: runOptions.cwd,
       emptyFallback,
     });
+  }
+
+  // gh names the repository from the cwd when Paseo does not. On Enterprise
+  // Paseo names it, so parent discovery must ask about origin itself: a branch
+  // that tracks origin carries no head owner, and its PR lives in origin's
+  // parent under origin's owner.
+  async function resolveCurrentPullRequestRepositories(
+    cwd: string,
+  ): Promise<{ explicitRepo: boolean; originRepository?: string }> {
+    if ((await resolveRepoHostCached(cwd)) === null) {
+      return { explicitRepo: false };
+    }
+    const originRepository = await deps.resolveOriginRepository(cwd);
+    return { explicitRepo: true, ...(originRepository ? { originRepository } : {}) };
+  }
+
+  async function runPullRequestMerge({
+    args,
+    input,
+  }: {
+    args: string[];
+    input: { cwd: string; prNumber: number; status?: PullRequestCommandStatus | null };
+  }): Promise<void> {
+    const host = await resolveRepoHostCached(input.cwd);
+    let effectiveArgs = args;
+    if (host) {
+      // The PR URL carries the instance's web hostname, which can differ from the
+      // name the remote and gh use (an IP, a DNS alias, an SSH HostName), so only
+      // owner and name come from the URL.
+      const url = input.status?.url;
+      const repo = url ? parseGitHubPullRequestRepo(url) : null;
+      if (!url || !repo || !url.endsWith(`/pull/${input.prNumber}`)) {
+        throw new Error("Cannot identify the GitHub repository for this pull request");
+      }
+      effectiveArgs = [...args, "--repo", `${host}/${repo.owner}/${repo.name}`];
+    }
+    await run(effectiveArgs, { cwd: input.cwd, envOverlay: { GH_PROMPT_DISABLED: "1" } });
   }
 
   function getPollTargetKey(target: {
@@ -1762,7 +1803,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
       const frozenKey =
         node.state !== "OPEN" && node.headRefOid.length > 0
-          ? `${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`
+          ? `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`
           : null;
       const cachedRollup = frozenKey ? frozenPullRequestChecksCache.get(frozenKey) : undefined;
       if (frozenKey && cachedRollup) {
@@ -2142,6 +2183,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           if (!owner || !name) {
             throw new Error("Unable to resolve GitHub repository for pull request checkout");
           }
+          const host = (await resolveRepoHostCached(input.cwd)) ?? "github.com";
+          const remoteNames = await resolveGitHubCheckoutRemotes({
+            cwd: input.cwd,
+            host,
+            repository: `${owner}/${name}`,
+          });
 
           const parsed = await runGhJson(
             [
@@ -2160,7 +2207,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed);
+          return toPullRequestCheckoutTarget({ parsed, remoteNames });
         },
       });
     },
@@ -2181,6 +2228,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headRef: input.headRef,
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
+            ...(await resolveCurrentPullRequestRepositories(input.cwd)),
             run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
@@ -2526,27 +2574,27 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
     async mergePullRequest(input) {
       assertDirectPullRequestMergeReady(input);
-      await run(["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`],
+        input,
       });
       return { success: true };
     },
 
     async enablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeEnableReady(input);
-      await run(["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`],
+        input,
       });
       return { success: true };
     },
 
     async disablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeDisableReady(input);
-      await run(["pr", "merge", String(input.prNumber), "--disable-auto"], {
-        cwd: input.cwd,
-        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), "--disable-auto"],
+        input,
       });
       return { success: true };
     },
@@ -2691,6 +2739,33 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   };
 
   return api;
+}
+
+function selectGitHubCommandRepository({
+  args,
+  host,
+  slug,
+}: {
+  args: string[];
+  host: string | null;
+  slug: string | null;
+}): string[] {
+  if (args[0] === "auth" && args[1] === "status" && !args.includes("--hostname")) {
+    return [...args, "--hostname", host ?? "github.com"];
+  }
+  if (!host || !slug) return args;
+  if (args[0] === "repo" && args[1] === "view" && args[2]?.startsWith("-")) {
+    return [args[0], args[1], `${host}/${slug}`, ...args.slice(2)];
+  }
+  if (
+    (args[0] === "pr" || args[0] === "issue") &&
+    args[1] !== "merge" &&
+    !args.includes("--repo") &&
+    !args.includes("-R")
+  ) {
+    return [...args, "--repo", `${host}/${slug}`];
+  }
+  return args;
 }
 
 function getGithubStatusFacts(
@@ -2984,30 +3059,97 @@ function isGitHubRateLimitError(error: unknown): boolean {
   );
 }
 
+async function tryCurrentPullRequestBranchView(options: {
+  cwd: string;
+  explicitRepo?: boolean;
+  headRef: string;
+  headRepositoryOwner?: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<ResolvedPullRequestCandidate | null> {
+  // gh interprets a numeric positional argument as a PR number, not a branch,
+  // so list the branch's PRs and keep what `gh pr view <branch>` would return:
+  // a PR whose head branch lives in the repository it targets.
+  if (options.explicitRepo && /^\d+$/u.test(options.headRef)) {
+    // A known head owner is matched by the branch listing that follows.
+    if (options.headRepositoryOwner) return null;
+    const candidates = await listCurrentPullRequestCandidates(options);
+    return pickPullRequestCandidate({
+      candidates: candidates.filter(isSameRepositoryPullRequestCandidate),
+      headRef: options.headRef,
+    });
+  }
+  return tryCurrentPullRequestView({
+    ...options,
+    args: options.explicitRepo ? ["pr", "view", options.headRef] : undefined,
+  });
+}
+
+function isSameRepositoryPullRequestCandidate(candidate: ResolvedPullRequestCandidate): boolean {
+  const owner = candidate.headRepositoryOwner?.toLowerCase();
+  return owner !== undefined && owner === candidate.status.repoOwner?.toLowerCase();
+}
+
+async function findCurrentPullRequestViewMatch(options: {
+  cwd: string;
+  headRef: string;
+  headSha?: string;
+  headRepositoryOwner?: string;
+  explicitRepo?: boolean;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<ResolvedPullRequestCandidate | null> {
+  const viewCandidate = await tryCurrentPullRequestBranchView(options);
+  if (!viewCandidate) return null;
+  return pickPullRequestCandidate({
+    candidates: [viewCandidate],
+    headRef: options.headRef,
+    headSha: options.headSha,
+    headRepositoryOwner: options.headRepositoryOwner,
+  });
+}
+
+// Bare `gh pr view` picks the PR from the branch's tracking config. Named
+// repositories lose that, so a same-repository PR whose head is not the
+// checkout's commit must not shadow the user's fork PR on the same branch.
+function isViewMatchForCheckout({
+  viewMatch,
+  checkout,
+}: {
+  viewMatch: ResolvedPullRequestCandidate;
+  checkout: { explicitRepo?: boolean; headRepositoryOwner?: string; headSha?: string };
+}): boolean {
+  return (
+    !checkout.explicitRepo ||
+    checkout.headRepositoryOwner !== undefined ||
+    checkout.headSha === undefined ||
+    viewMatch.headSha === checkout.headSha
+  );
+}
+
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
   headSha?: string;
   headRepositoryOwner?: string;
+  explicitRepo?: boolean;
+  originRepository?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
-  const viewCandidate = await tryCurrentPullRequestView(options);
-  const viewMatch = viewCandidate
-    ? pickPullRequestCandidate({
-        candidates: [viewCandidate],
-        headRef: options.headRef,
-        headSha: options.headSha,
-        headRepositoryOwner: options.headRepositoryOwner,
-      })
-    : null;
-  if (viewMatch?.status.state === "open") {
+  const viewMatch = await findCurrentPullRequestViewMatch(options);
+  if (
+    viewMatch?.status.state === "open" &&
+    isViewMatchForCheckout({ viewMatch, checkout: options })
+  ) {
     return viewMatch.status;
   }
 
   let headRepositoryOwner = options.headRepositoryOwner;
 
   if (!headRepositoryOwner) {
-    const repo = await getGitHubRepoView(options);
+    const repo = await getGitHubRepoView({
+      cwd: options.cwd,
+      repo: options.originRepository,
+      run: options.run,
+    });
     const forkOwner = repo?.owner?.login;
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
@@ -3236,6 +3378,109 @@ async function runCurrentPullRequestStatusCommand(options: {
       cwd: options.cwd,
     });
   }
+}
+
+async function resolveGitHubCheckoutRemotes({
+  cwd,
+  host,
+  repository,
+}: {
+  cwd: string;
+  host: string;
+  repository: string;
+}): Promise<string[]> {
+  const { stdout } = await runGitCommand(
+    ["config", "--null", "--get-regexp", "^remote\\..*\\.url$"],
+    {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+      acceptExitCodes: [0, 1],
+    },
+  );
+  const matches: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of stdout.split("\0")) {
+    const separator = entry.indexOf("\n");
+    if (separator < 0) continue;
+    const name = /^remote\.(.+)\.url$/u.exec(entry.slice(0, separator))?.[1];
+    if (!name || seen.has(name)) continue;
+    // Git fetch uses the first configured URL for a remote.
+    seen.add(name);
+    const location = parseGitRemoteLocation(entry.slice(separator + 1));
+    if (!location) continue;
+    const remoteHost =
+      location.transport === "scp" || location.transport === "ssh"
+        ? ((await resolveSshHostname(location.host)) ?? location.host)
+        : location.host;
+    const sameHost =
+      remoteHost.toLowerCase() === host.toLowerCase() ||
+      (isGitHubHost(remoteHost) && isGitHubHost(host));
+    if (
+      sameHost &&
+      parseGitHubRemoteIdentity(location.path)?.repo.toLowerCase() === repository.toLowerCase()
+    ) {
+      matches.push(name);
+    }
+  }
+  // A clone made before a repository was renamed or transferred keeps the old
+  // owner/name in its remote URL, and GitHub still serves pull refs from it.
+  return matches.length > 0 ? matches : ["origin", "upstream"];
+}
+
+async function resolveGitHubDefaultRepoSlug({
+  cwd,
+  host,
+}: {
+  cwd: string;
+  host: string;
+}): Promise<string | null> {
+  // `gh repo set-default` stores either "base" or an owner/name in the remote's
+  // gh-resolved config. Read the raw URLs because `git remote` applies rewrites.
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(
+      ["config", "--null", "--get-regexp", "^remote\\..*\\.(gh-resolved|url)$"],
+      {
+        cwd,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+        acceptExitCodes: [0, 1],
+      },
+    ));
+  } catch {
+    return null;
+  }
+  const config = new Map<string, string>();
+  for (const entry of stdout.split("\0")) {
+    const separator = entry.indexOf("\n");
+    if (separator !== -1) config.set(entry.slice(0, separator), entry.slice(separator + 1));
+  }
+  const priorities: Record<string, number> = { upstream: 3, github: 2, origin: 1 };
+  const remotes = [...config.keys()]
+    .map((key) => /^remote\.(.+)\.url$/u.exec(key)?.[1])
+    .filter((name): name is string => name !== undefined)
+    .sort(
+      (a, b) =>
+        (priorities[b.toLowerCase()] ?? 0) - (priorities[a.toLowerCase()] ?? 0) ||
+        a.localeCompare(b),
+    );
+  const candidates: Array<{ path: string; selected?: string }> = [];
+  for (const name of remotes) {
+    const location = parseGitRemoteLocation(config.get(`remote.${name}.url`) ?? "");
+    if (!location) continue;
+    const remoteHost =
+      location.transport === "scp" || location.transport === "ssh"
+        ? ((await resolveSshHostname(location.host)) ?? location.host)
+        : location.host;
+    if (remoteHost.toLowerCase() !== host.toLowerCase()) continue;
+    candidates.push({ path: location.path, selected: config.get(`remote.${name}.gh-resolved`) });
+  }
+  const candidate = candidates.find((remote) => remote.selected) ?? candidates[0];
+  if (!candidate) return null;
+  const path =
+    !candidate.selected || candidate.selected === "base" ? candidate.path : candidate.selected;
+  return parseGitHubRemoteIdentity(path)?.repo ?? null;
 }
 
 async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> {
@@ -3569,9 +3814,13 @@ function normalizeRepositorySummary(repository: {
   };
 }
 
-function toPullRequestCheckoutTarget(
-  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
-): PullRequestCheckoutTarget {
+function toPullRequestCheckoutTarget({
+  parsed,
+  remoteNames,
+}: {
+  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>;
+  remoteNames: string[];
+}): PullRequestCheckoutTarget {
   const pullRequest = parsed.data.repository.pullRequest;
   if (!pullRequest) {
     throw new Error("Pull request not found");
@@ -3580,10 +3829,10 @@ function toPullRequestCheckoutTarget(
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [
-      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
-      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
-    ],
+    checkoutRefs: remoteNames.map((remoteName) => ({
+      remoteName,
+      remoteRef: `refs/pull/${pullRequest.number}/head`,
+    })),
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,

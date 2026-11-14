@@ -199,6 +199,29 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(intent).not.toHaveProperty("trackOriginHead");
   });
 
+  test("does not track an unrelated origin when the PR belongs to another remote", async () => {
+    const deps = createResolverHarness();
+    deps.forgeService.getPullRequestCheckoutTarget = async () => ({
+      number: 42,
+      baseRefName: "main",
+      headRefName: "feature",
+      checkoutRefs: [{ remoteName: "github", remoteRef: "refs/pull/42/head" }],
+      headOwnerLogin: "upstream",
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    });
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", githubPrNumber: 42 },
+      repoRoot,
+      deps,
+    );
+    expect(intent).not.toHaveProperty("trackOriginHead");
+    expect(intent).toHaveProperty("checkoutRefs", [
+      { remoteName: "github", remoteRef: "refs/pull/42/head" },
+    ]);
+  });
+
   test("configures the contributor remote for fork PR targets", async () => {
     const deps = createResolverHarness();
     deps.forgeService.getPullRequestCheckoutTarget = async () => ({
