@@ -11,19 +11,7 @@ import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
 import { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
-import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { openExternalUrl } from "@/utils/open-external-url";
-
-vi.mock("@/utils/open-external-url", () => ({
-  openExternalUrl: vi.fn(async () => {}),
-}));
-
-vi.mock("@/utils/navigate-to-agent", () => ({
-  navigateToAgent: vi.fn(
-    (target: { serverId: string; agentId: string }) =>
-      `/h/${target.serverId}/agent/${target.agentId}`,
-  ),
-}));
+import type { NavigateToAgentInput } from "@/utils/navigate-to-agent";
 
 const SOURCE = {
   href: "http://dumm.md",
@@ -81,7 +69,13 @@ function createToast(): ToastApi {
   };
 }
 
-function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; toast?: ToastApi }) {
+function createWrapper(input: {
+  client: TestClient;
+  openedFiles: OpenedFile[];
+  navigatedAgents?: NavigateToAgentInput[];
+  openedExternalUrls?: string[];
+  toast?: ToastApi;
+}) {
   const queryClient = createQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
     const openWorkspaceFile = useCallback(
@@ -90,6 +84,12 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
       },
       [],
     );
+    const onNavigateToAgent = useCallback((target: NavigateToAgentInput) => {
+      input.navigatedAgents?.push(target);
+    }, []);
+    const onOpenExternalUrl = useCallback(async (url: string) => {
+      input.openedExternalUrls?.push(url);
+    }, []);
 
     return (
       <QueryClientProvider client={queryClient}>
@@ -98,6 +98,8 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
           serverId="server-1"
           workspaceRoot="/Users/test/project"
           onOpenWorkspaceFile={openWorkspaceFile}
+          onNavigateToAgent={onNavigateToAgent}
+          onOpenExternalUrl={onOpenExternalUrl}
           toast={input.toast}
         >
           {children}
@@ -364,16 +366,18 @@ describe("useFileLink", () => {
       expected: { serverId: "srv 1", agentId: "a:2" },
     },
   ])("navigates valid paseo:// agent deep links in-app ($label)", async ({ source, expected }) => {
-    vi.mocked(navigateToAgent).mockClear();
-    vi.mocked(openExternalUrl).mockClear();
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const openedFiles: OpenedFile[] = [];
+    const navigatedAgents: NavigateToAgentInput[] = [];
+    const openedExternalUrls: string[] = [];
     const toast = createToast();
 
     const { result } = renderHook(() => useFileLink(source), {
       wrapper: createWrapper({
         client: { getDirectorySuggestions },
         openedFiles,
+        navigatedAgents,
+        openedExternalUrls,
         toast,
       }),
     });
@@ -387,25 +391,27 @@ describe("useFileLink", () => {
     });
 
     await waitFor(() => {
-      expect(navigateToAgent).toHaveBeenCalledWith(expected);
+      expect(navigatedAgents).toEqual([expected]);
     });
-    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(openedExternalUrls).toEqual([]);
     expect(getDirectorySuggestions).not.toHaveBeenCalled();
     expect(openedFiles).toEqual([]);
     expect(toast.show).not.toHaveBeenCalled();
   });
 
   it("navigates paseo:// agent deep links via useAssistantFileLinkActions.open", async () => {
-    vi.mocked(navigateToAgent).mockClear();
-    vi.mocked(openExternalUrl).mockClear();
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const openedFiles: OpenedFile[] = [];
+    const navigatedAgents: NavigateToAgentInput[] = [];
+    const openedExternalUrls: string[] = [];
     const toast = createToast();
 
     const { result } = renderHook(() => useAssistantFileLinkActions(), {
       wrapper: createWrapper({
         client: { getDirectorySuggestions },
         openedFiles,
+        navigatedAgents,
+        openedExternalUrls,
         toast,
       }),
     });
@@ -422,19 +428,19 @@ describe("useFileLink", () => {
     });
 
     await waitFor(() => {
-      expect(navigateToAgent).toHaveBeenCalledWith({ serverId: "srv_2", agentId: "a_9" });
+      expect(navigatedAgents).toEqual([{ serverId: "srv_2", agentId: "a_9" }]);
     });
-    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(openedExternalUrls).toEqual([]);
     expect(getDirectorySuggestions).not.toHaveBeenCalled();
     expect(openedFiles).toEqual([]);
     expect(toast.show).not.toHaveBeenCalled();
   });
 
   it("does not trigger agent navigation or file lookups for invalid paseo:// URLs", async () => {
-    vi.mocked(navigateToAgent).mockClear();
-    vi.mocked(openExternalUrl).mockClear();
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const openedFiles: OpenedFile[] = [];
+    const navigatedAgents: NavigateToAgentInput[] = [];
+    const openedExternalUrls: string[] = [];
     const toast = createToast();
 
     const { result } = renderHook(
@@ -443,6 +449,8 @@ describe("useFileLink", () => {
         wrapper: createWrapper({
           client: { getDirectorySuggestions },
           openedFiles,
+          navigatedAgents,
+          openedExternalUrls,
           toast,
         }),
       },
@@ -457,9 +465,9 @@ describe("useFileLink", () => {
     });
 
     await waitFor(() => {
-      expect(openExternalUrl).toHaveBeenCalledWith("paseo://invalid");
+      expect(openedExternalUrls).toEqual(["paseo://invalid"]);
     });
-    expect(navigateToAgent).not.toHaveBeenCalled();
+    expect(navigatedAgents).toEqual([]);
     expect(getDirectorySuggestions).not.toHaveBeenCalled();
     expect(openedFiles).toEqual([]);
     expect(toast.show).not.toHaveBeenCalled();

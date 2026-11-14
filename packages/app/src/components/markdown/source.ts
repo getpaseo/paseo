@@ -1,3 +1,4 @@
+import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
@@ -40,11 +41,15 @@ const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
 const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
 const HTTP_BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 // Match strict `paseo://h/<serverId>/agent/<agentId>` links without swallowing adjacent CJK/sentence punctuation or longer paths/queries.
-const PASEO_SEGMENT_CHAR = String.raw`[a-zA-Z0-9._~%$+=@*:!-]`;
-const PASEO_SEGMENT_END = String.raw`[a-zA-Z0-9_~%$+=@*-]`;
-const PASEO_SEGMENT = String.raw`(?:${PASEO_SEGMENT_CHAR}*${PASEO_SEGMENT_END})`;
+// Keep `*` over flat character classes only; group alternations inside `*` overflow Java/ICU backtracking stacks on long inputs.
+const PASEO_SEGMENT_RAW_CHAR = String.raw`[a-zA-Z0-9._~%$+=@*:!-]`;
+const PASEO_SEGMENT_RAW_END = String.raw`[a-zA-Z0-9_~$+=@*-]`;
+const PASEO_VALID_PERCENT = String.raw`(?!${PASEO_SEGMENT_RAW_CHAR}*%(?![0-9a-fA-F]{2}))`;
+const PASEO_SEGMENT = String.raw`(?:${PASEO_VALID_PERCENT}${PASEO_SEGMENT_RAW_CHAR}*${PASEO_SEGMENT_RAW_END})`;
 const PASEO_AGENT_DEEP_LINK_URL = String.raw`paseo://h/${PASEO_SEGMENT}/agent/${PASEO_SEGMENT}`;
-const PASEO_AGENT_DEEP_LINK = String.raw`(?<![a-zA-Z0-9._~%$\x2b=@\x2a:/\\-])${PASEO_AGENT_DEEP_LINK_URL}(?![.:!]*${PASEO_SEGMENT_END}|[/?#\\][a-zA-Z0-9._~%$+=@*:/\\?#-])`;
+const PASEO_SENTENCE_BOUNDARY = String.raw`(?:$|[\s<>()"'\x60\x5d\x7d\u2019\u201D\u3001\u3002\u3009-\u3011\u3015\u3017\uFF01\uFF09\uFF0C\uFF1A\uFF1B\uFF1F])`;
+const PASEO_QUERY_SUFFIX = String.raw`\?(?![.,;:!?]*${PASEO_SENTENCE_BOUNDARY})`;
+const PASEO_AGENT_DEEP_LINK = String.raw`(?<![a-zA-Z0-9._~%$\x2b=@\x2a:#/\\-])${PASEO_AGENT_DEEP_LINK_URL}(?![.:!]*(?:${PASEO_SEGMENT_RAW_END}|[/#\\%]|${PASEO_QUERY_SUFFIX}))`;
 const BARE_URL = String.raw`(?:${HTTP_BARE_URL}|${PASEO_AGENT_DEEP_LINK})`;
 
 const TEXT_PATTERN = createTextPattern(PROSE_PATH);
@@ -70,7 +75,7 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>, forgeReferencePatter
     linkRecognition: {
       text: textPattern(forgeReferencePattern),
       inlineCode: new RegExp(
-        String.raw`^(?:https?://[^\s<>]+|${PASEO_AGENT_DEEP_LINK_URL}${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
+        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,
@@ -97,6 +102,15 @@ function collectInlineCodePaths(
     // CommonMark code spans replace line endings and strip one surrounding space.
     if (value.startsWith(" ") && value.endsWith(" ") && /[^ ]/.test(value)) {
       value = value.slice(1, -1);
+    }
+    if (
+      parseAgentDeepLink(value) &&
+      !/[?#\\]/.test(value) &&
+      !value.endsWith("/") &&
+      !value.slice("paseo://".length).includes("//")
+    ) {
+      paths.add(value);
+      continue;
     }
     const classification = classifyAssistantFileLink(value, { workspaceRoot });
     if (

@@ -118,12 +118,12 @@ const MarkdownPart = memo(function MarkdownPart({
     }
     const forgeUrl = sourceType === "text" ? forgeShorthand?.resolve(url) : null;
     if (forgeUrl) {
-      void openExternalUrl(forgeUrl);
+      void (environment.onOpenExternalUrl ?? openExternalUrl)(forgeUrl);
       return;
     }
     const agentTarget = parseAgentDeepLink(url);
     if (agentTarget) {
-      navigateToAgent(agentTarget);
+      (environment.onNavigateToAgent ?? navigateToAgent)(agentTarget);
       return;
     }
     const source = linkSource(url, sourceType);

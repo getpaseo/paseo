@@ -1166,24 +1166,82 @@ describe("paseo agent deep-link recognition", () => {
   });
 
   it.each([
+    ["Is it paseo://h/srv_1/agent/a_1?", "paseo://h/srv_1/agent/a_1"],
+    ["Is it paseo://h/srv_1/agent/a_1? Yes", "paseo://h/srv_1/agent/a_1"],
+    ["(paseo://h/srv_1/agent/a_1?)", "paseo://h/srv_1/agent/a_1"],
+    ["Is it paseo://h/srv_1/agent/a_1?!", "paseo://h/srv_1/agent/a_1"],
+    ["请问是 paseo://h/srv_1/agent/a_1？", "paseo://h/srv_1/agent/a_1"],
+  ])(
+    "preserves valid paseo:// agent deep links followed by trailing question marks: %s",
+    (prose, expected) => {
+      const { linkRecognition } = prepareMarkdownSource(prose, "/repo");
+      expect([...prose.matchAll(linkRecognition.text)].map(([match]) => match)).toEqual([expected]);
+    },
+  );
+
+  it.each([
     "paseo://invalid",
     "paseo://foo/bar",
     "paseo://h/srv/other/1",
     "paseo://h/srv/agent/a_1/extra",
     "paseo://h/srv/agent/a_1?message=hello",
     "paseo://h/srv/agent/a_1#section",
+    "paseo://h/srv_1/agent/a_1#章节",
+    "paseo://h/srv_1/agent/a_1?章节",
+    "paseo://h/srv_1/agent/a_1/章节",
+    "paseo://h/srv_1/agent/a_1/",
+    "paseo://h/srv_1/agent/a_1#",
+    "paseo://h/srv_1/agent/a_1?",
+    "paseo://h/srv_1/agent/a_1%",
+    "paseo://h/srv_1/agent/a_1.#章节",
+    "paseo://h/srv_1/agent/a_1%ZZ",
+    "paseo://h/srv_1/agent/.%ZZ",
+    "paseo://h/srv_1/agent/a_1.%ZZ",
+    "paseo://h/srv_1/agent/a_1%2G",
+    "paseo://h/srv_1/agent/ab#章节",
+    "paseo://h/srv_1/agent/ab%ZZ",
+    "paseo://h/srv_1/agent/a%20#章节",
     "paseo://h/srv_1/agent/",
     "paseo://h//agent/a_1",
   ])("does not auto-recognize invalid paseo:// token in prose or inline code: %s", (token) => {
     const { linkRecognition } = prepareMarkdownSource(`Check ${token} and \`${token}\`.`, "/repo");
-    expect([...`Check ${token} and continue.`.matchAll(linkRecognition.text)]).toEqual([]);
+    if (token !== "paseo://h/srv_1/agent/a_1?") {
+      expect([...`Check ${token} and continue.`.matchAll(linkRecognition.text)]).toEqual([]);
+    }
     expect(linkRecognition.inlineCode.test(token)).toBe(false);
   });
 
-  it("ignores paseo:// embedded in a longer token and stays valid under toNativeLinkRecognition", () => {
-    const prose = "prefix:paseo://h/srv_1/agent/a_1";
+  it("handles 100k-character agent segments cleanly without pathological backtracking", () => {
+    const longAgent = `paseo://h/srv/agent/${"a".repeat(100_000)}`;
+    const longInvalidSuffix = `${longAgent}#章节`;
+    const longPercentEncoded = `paseo://h/srv%201/agent/${"%20".repeat(20_000)}`;
+    const longMidBadEscape = `paseo://h/srv/agent/${"a".repeat(50_000)}%ZZ${"a".repeat(50_000)}`;
+
+    const { linkRecognition } = prepareMarkdownSource("Check link.", "/repo");
+    const native = toNativeLinkRecognition(linkRecognition);
+    const nativeRegex = new RegExp(native.text.pattern, "g");
+
+    expect([...longAgent.matchAll(nativeRegex)].map(([match]) => match)).toEqual([longAgent]);
+    expect([...longInvalidSuffix.matchAll(nativeRegex)]).toEqual([]);
+    expect([...longPercentEncoded.matchAll(nativeRegex)].map(([match]) => match)).toEqual([
+      longPercentEncoded,
+    ]);
+    expect([...longMidBadEscape.matchAll(nativeRegex)]).toEqual([]);
+  });
+
+  it.each([
+    "prefix:paseo://h/srv_1/agent/a_1",
+    "#paseo://h/srv_1/agent/a_1",
+    "%paseo://h/srv_1/agent/a_1",
+    "/paseo://h/srv_1/agent/a_1",
+  ])("ignores paseo:// embedded in a longer token: %s", (prose) => {
     const { linkRecognition } = prepareMarkdownSource(prose, "/repo");
     expect([...prose.matchAll(linkRecognition.text)]).toEqual([]);
+  });
+
+  it("stays valid under toNativeLinkRecognition", () => {
+    const prose = "见 paseo://h/srv_1/agent/a_1，或 `paseo://h/srv_1/agent/a_1`。";
+    const { linkRecognition } = prepareMarkdownSource(prose, "/repo");
 
     const native = toNativeLinkRecognition(linkRecognition);
     expect(native.text).toMatchObject({

@@ -339,10 +339,10 @@ async function dispatchExternalUrl(input: {
   }
   const agentTarget = parseAgentDeepLink(input.url);
   if (agentTarget) {
-    navigateToAgent(agentTarget);
+    (current.onNavigateToAgent ?? navigateToAgent)(agentTarget);
     return;
   }
-  await openExternalUrl(input.url);
+  await (current.onOpenExternalUrl ?? openExternalUrl)(input.url);
 }
 
 async function dispatchUnresolvedError(input: {
