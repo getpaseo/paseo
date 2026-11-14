@@ -6,6 +6,7 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 import {
   captureWorkspaceDraftCleanup,
   createWorkspaceAgentInBackground,
+  seedWorkspaceDraftMetadata,
 } from "./background-handoff";
 
 const DRAFT_ID = "draft_1";
@@ -37,10 +38,27 @@ function run(createAgent: () => Promise<unknown>, clearConsumedDraft = captureCl
 }
 
 beforeEach(() => {
+  useDraftStore.setState({ metadataByDraftKey: {} });
   useWorkspaceDraftSubmissionStore.setState({ pendingByDraftId: {}, setupByDraftId: {} });
   useCreateFlowStore.setState({ pendingByDraftId: {} });
   useWorkspaceAttachmentsStore.setState({ attachmentsByScope: { [SCOPE_KEY]: [] } });
   saveDraft("do the thing");
+});
+
+it("keeps plugin metadata in the destination draft after the new-workspace draft is cleared", () => {
+  const metadata = { "plugin.review": true, "plugin.tag": "issue-1" };
+  useDraftStore.getState().patchDraftMetadata({ draftKey: DRAFT_KEY, patch: metadata });
+  seedWorkspaceDraftMetadata({ serverId: "host", draftId: DRAFT_ID, metadata });
+  useDraftStore.getState().clearDraftMetadata({ draftKey: DRAFT_KEY });
+  const destination = `draft:host:${DRAFT_ID}`;
+  expect(useDraftStore.getState().metadataByDraftKey[destination]).toEqual(metadata);
+  useDraftStore.getState().patchDraftMetadata({
+    draftKey: destination,
+    patch: { "plugin.tag": null },
+  });
+  expect(useDraftStore.getState().metadataByDraftKey[destination]).toEqual({
+    "plugin.review": true,
+  });
 });
 
 describe("createWorkspaceAgentInBackground", () => {

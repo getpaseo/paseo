@@ -1,5 +1,6 @@
 import { useAddHost } from "@/hosts/add-host";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import { draftCreations } from "@/composer/draft/creation-attempts";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -121,7 +122,10 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
+import {
+  captureWorkspaceDraftCleanup,
+  seedWorkspaceDraftMetadata,
+} from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
@@ -303,20 +307,25 @@ async function createMultiplicityWorkspace(input: {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
+  const worktreeSlug = isWorktree
+    ? await draftCreations.worktreeSlug({
+        serverId: input.serverId,
+        draftId: input.idempotencyKey,
+        proposed: input.worktreeSlug,
+      })
+    : undefined;
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
   });
-  const payload = await input.client.createWorkspace({
-    idempotencyKey: input.idempotencyKey,
+  const request: CreateWorkspaceRequestOptions = {
     agent: input.agent,
-    onEvent: input.onEvent,
     source: isWorktree
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
           projectId,
-          worktreeSlug: input.worktreeSlug,
+          worktreeSlug,
           ...input.checkoutRequest,
           ...(input.branchName && startsNewBranch(input.checkoutRequest)
             ? { branchName: input.branchName }
@@ -329,6 +338,14 @@ async function createMultiplicityWorkspace(input: {
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
+  };
+  const payload = await draftCreations.submit({
+    serverId: input.serverId,
+    draftId: input.idempotencyKey,
+    kind: "workspace",
+    request,
+    onEvent: input.onEvent,
+    send: (options) => input.client.createWorkspace({ ...request, ...options }),
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -618,6 +635,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   });
   if (!started) return "navigated";
+  seedWorkspaceDraftMetadata({ serverId, draftId, metadata: composerState.metadata });
   useWorkspaceDraftSubmissionStore.getState().setPending({
     serverId,
     workspaceId,

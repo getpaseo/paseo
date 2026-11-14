@@ -186,6 +186,8 @@ export const ru: TranslationResources = {
     errors: {
       failedToSend: "Не удалось отправить сообщение",
       failedToCreateAgent: "Не удалось создать агента.",
+      creationOutcomeUnknown:
+        "Предыдущий запуск может всё ещё выполняться. Проверьте рабочие пространства и агентов, прежде чем запускать снова.",
       noHostSelected: "Хост не выбран",
       initialPromptRequired: "Необходим инициализирующий промпт",
       alreadyLoading: "Уже загружается",

@@ -185,6 +185,8 @@ export const ko: TranslationResources = {
     errors: {
       failedToSend: "메시지를 보내지 못했습니다",
       failedToCreateAgent: "에이전트를 생성하지 못했습니다",
+      creationOutcomeUnknown:
+        "이전 시작 작업이 아직 진행 중일 수 있습니다. 다시 시작하기 전에 워크스페이스와 에이전트를 확인하세요.",
       noHostSelected: "선택된 호스트가 없습니다",
       initialPromptRequired: "초기 프롬프트가 필요합니다",
       alreadyLoading: "이미 불러오는 중입니다",

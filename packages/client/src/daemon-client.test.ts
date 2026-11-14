@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   DaemonClient,
   DaemonConnectionError,
+  CreationNotSentError,
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
@@ -4316,13 +4317,13 @@ test("metadata needs a host that advertises entityMetadata and sends nothing to 
   const update = "Update the host to use metadata.";
   await expect(
     client.createAgent({ provider: "codex", cwd: "/tmp/project", metadata: { key: "value" } }),
-  ).rejects.toThrow(update);
+  ).rejects.toThrow(CreationNotSentError);
   await expect(
     client.createWorkspace({
       source: { kind: "directory", path: "/tmp/project" },
       metadata: { key: "value" },
     }),
-  ).rejects.toThrow(update);
+  ).rejects.toThrow(CreationNotSentError);
   await expect(client.setAgentMetadata("agent-1", { key: null })).rejects.toThrow(update);
   await expect(client.setWorkspaceMetadata("workspace-1", { key: null })).rejects.toThrow(update);
   expect(mock.sent).toHaveLength(0);

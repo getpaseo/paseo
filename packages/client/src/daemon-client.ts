@@ -1092,6 +1092,14 @@ export class DaemonConnectionError extends Error {
   }
 }
 
+/** Local creation preflight failed before handing any creation to the transport. */
+export class CreationNotSentError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "CreationNotSentError";
+  }
+}
+
 class DaemonRpcError extends Error {
   readonly requestId: string;
   readonly requestType?: string;
@@ -3471,20 +3479,26 @@ export class DaemonClient {
   }
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
-    if (options.git !== undefined || options.worktreeName !== undefined) {
-      throw new Error(
-        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
-      );
+    let prepared: CreateAgentRequestOptions;
+    try {
+      if (options.git !== undefined || options.worktreeName !== undefined) {
+        throw new Error(
+          "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
+        );
+      }
+      if (options.background !== undefined) this.requireBackgroundCreation(options);
+      if (options.metadata !== undefined) this.requireEntityMetadata();
+      const config = resolveAgentConfig(options);
+      prepared = {
+        ...options,
+        config: this.carriesLegacyOptions(config)
+          ? await this.routeLegacyCreateConfig(config)
+          : config,
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    if (options.background !== undefined) this.requireBackgroundCreation(options);
-    if (options.metadata !== undefined) this.requireEntityMetadata();
-    const config = resolveAgentConfig(options);
-    const result = await this.creations.createAgent({
-      ...options,
-      config: this.carriesLegacyOptions(config)
-        ? await this.routeLegacyCreateConfig(config)
-        : config,
-    });
+    const result = await this.creations.createAgent(prepared);
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
   }
@@ -5440,21 +5454,28 @@ export class DaemonClient {
     input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
-    const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
-    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
-    if (input.agent?.background !== undefined)
-      throw new Error("Configure background on the workspace, not its initial agent.");
-    if (input.metadata !== undefined || input.agent?.metadata !== undefined)
-      this.requireEntityMetadata();
-    let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
-    if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
-      agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+    let resolvedRequestId: string;
+    let prepared: CreateWorkspaceRequestOptions;
+    try {
+      resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+      if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+      if (input.agent?.background !== undefined)
+        throw new Error("Configure background on the workspace, not its initial agent.");
+      if (input.metadata !== undefined || input.agent?.metadata !== undefined)
+        this.requireEntityMetadata();
+      let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+      if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
+        agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+      }
+      prepared = {
+        ...input,
+        requestId: resolvedRequestId,
+        ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    const result = await this.creations.createWorkspace({
-      ...input,
-      requestId: resolvedRequestId,
-      ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
-    });
+    const result = await this.creations.createWorkspace(prepared);
     return {
       ...result,
       workspace: result.workspace ?? null,
