@@ -27,7 +27,14 @@ import type {
 } from "@getpaseo/protocol/schedule/types";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
-const SCHEDULE_TICK_INTERVAL_MS = 1000;
+// The service sleeps until the next schedule is due instead of polling: a tick reads every
+// schedule file, so a 1 s poll cost an idle daemon a wakeup and a directory scan each second.
+// Ticks still come no closer than 1 s apart (a due schedule waits for the tick that is running
+// it to claim it), and no further than 30 s: timers stop while the machine sleeps, and a file
+// changed outside the daemon has no event, so this bounds how late either can make a run.
+const SCHEDULE_MIN_WAKE_MS = 1000;
+const SCHEDULE_MAX_WAKE_MS = 30_000;
+const SCHEDULE_WAKE_MARGIN_MS = 25;
 
 // A run failed because its target no longer exists: the agent was deleted or
 // archived, or a new-agent cwd was removed. These are permanent, so the schedule
@@ -286,11 +293,18 @@ export class ScheduleService {
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  // When the armed timer fires (epoch ms); an earlier armed wake is never pushed back.
+  private wakeAtMs: number | null = null;
+  private lastTickAtMs: number | null = null;
+  private started = false;
+  // The latest wake plan, so callers (and tests) can wait for the timer to be armed.
+  private planning: Promise<void> = Promise.resolve();
 
   constructor(options: ScheduleServiceOptions) {
     this.logger = options.logger.child({ module: "schedule-service" });
     this.store = new ScheduleStore(join(options.paseoHome, "schedules"), this.logger);
+    this.store.onChange(() => this.planNextWake());
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.createAgent = options.createAgent;
@@ -304,23 +318,96 @@ export class ScheduleService {
   async start(): Promise<void> {
     await this.recoverInterruptedRuns();
     await this.sweepOrphanedSchedules();
-    if (this.tickTimer) {
+    if (this.started) {
       return;
     }
-    const timer = setInterval(() => {
-      void this.tick().catch((error) => {
-        this.logger.error({ err: error }, "Failed to process schedule tick");
-      });
-    }, SCHEDULE_TICK_INTERVAL_MS);
-    (timer as unknown as { unref?: () => void }).unref?.();
-    this.tickTimer = timer;
+    this.started = true;
+    this.armWakeAt(this.now().getTime() + SCHEDULE_MIN_WAKE_MS);
   }
 
   async stop(): Promise<void> {
-    if (this.tickTimer) {
-      clearInterval(this.tickTimer);
-      this.tickTimer = null;
+    this.started = false;
+    if (this.wakeTimer) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
     }
+    this.wakeAtMs = null;
+    // A plan still reading the store finds the service stopped and arms nothing.
+    await this.planning;
+  }
+
+  /** Arms the wake for `atMs` unless one is already armed for that time or earlier. */
+  private armWakeAt(atMs: number): void {
+    if (!this.started) {
+      return;
+    }
+    if (this.wakeTimer && this.wakeAtMs !== null && this.wakeAtMs <= atMs) {
+      return;
+    }
+    if (this.wakeTimer) {
+      clearTimeout(this.wakeTimer);
+    }
+    const timer = setTimeout(() => this.wake(), Math.max(0, atMs - this.now().getTime()));
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.wakeTimer = timer;
+    this.wakeAtMs = atMs;
+  }
+
+  private wake(): void {
+    this.wakeTimer = null;
+    this.wakeAtMs = null;
+    this.lastTickAtMs = this.now().getTime();
+    // A tick lasts as long as the runs it starts; the next one is planned without waiting for them.
+    void this.tick().catch((error) => {
+      this.logger.error({ err: error }, "Failed to process schedule tick");
+    });
+    this.planNextWake();
+  }
+
+  /**
+   * Arms the wake timer for the earliest due or expiry time; call after due times change. Plans
+   * can finish out of order, which is safe: each can only bring the wake earlier, never later.
+   */
+  private planNextWake(): void {
+    if (!this.started) {
+      return;
+    }
+    this.planning = this.nextWakeAtMs()
+      .catch((error) => {
+        this.logger.error({ err: error }, "Failed to plan the next schedule tick");
+        return this.now().getTime() + SCHEDULE_MIN_WAKE_MS;
+      })
+      .then((atMs) => this.armWakeAt(atMs));
+  }
+
+  private async nextWakeAtMs(): Promise<number> {
+    const now = this.now();
+    let wakeAt = now.getTime() + SCHEDULE_MAX_WAKE_MS;
+    for (const schedule of await this.store.list()) {
+      // Same filter as tick(): a schedule it would skip must not cause a wake either.
+      if (
+        schedule.status !== "active" ||
+        !schedule.nextRunAt ||
+        this.runningScheduleIds.has(schedule.id)
+      ) {
+        continue;
+      }
+      if (shouldCompleteSchedule(schedule, now)) {
+        wakeAt = now.getTime();
+        break;
+      }
+      for (const at of [schedule.nextRunAt, schedule.expiresAt]) {
+        if (at) wakeAt = Math.min(wakeAt, new Date(at).getTime());
+      }
+    }
+    // Timers can fire a little early; waking just after the due time keeps the run on this tick
+    // instead of the next one. Ticks stay at least 1 s apart, counted from the last tick.
+    const earliest =
+      this.lastTickAtMs === null ? now.getTime() : this.lastTickAtMs + SCHEDULE_MIN_WAKE_MS;
+    return Math.min(
+      now.getTime() + SCHEDULE_MAX_WAKE_MS,
+      Math.max(earliest, wakeAt + SCHEDULE_WAKE_MARGIN_MS),
+    );
   }
 
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
@@ -770,6 +857,8 @@ export class ScheduleService {
       }
     } finally {
       this.runningScheduleIds.delete(schedule.id);
+      // A run that outlasted its interval is due again now; planning skipped it while it ran.
+      this.planNextWake();
     }
   }
 
