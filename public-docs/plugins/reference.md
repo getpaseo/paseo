@@ -965,10 +965,51 @@ import { Markdown } from "@getpaseo/plugin/client/ui";
 <Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
 ```
 
-`children` is the only prop and must be a string. Updating it renders the new content
+`children` must be a string. Updating it renders the new content
 immediately; an empty string renders nothing. The host supplies theme, text selection,
 code blocks, tables, diagrams, and link handling. Workspace file links and images use
 workspace context when the containing surface supplies it.
+
+Pass `mermaidColors` or `mermaid.colors` to colour Mermaid diagrams in this
+Markdown. `mermaid.colors` wins per key. Values must be `#RGB` or `#RRGGBB`.
+The keys are `primaryColor`, `primaryTextColor`, `primaryBorderColor`,
+`secondaryColor`, `secondaryTextColor`, `secondaryBorderColor`, `tertiaryColor`,
+`tertiaryTextColor`, `tertiaryBorderColor`, `lineColor`, `textColor`,
+`clusterBkg`, `clusterBorder`, `edgeLabelBackground`, and `titleColor`. When any
+colour is set, Mermaid uses its base theme and derives the rest. Otherwise
+diagrams follow the host's light or dark theme. Provide colours for the current
+host theme. Diagram-authored `classDef` styles and frontmatter can still
+override these defaults.
+
+`mermaid` can also set `look` (`classic`, `handDrawn`, or `neo`), flowchart
+`curve`, `nodeSpacing`, `rankSpacing`, `padding`, `diagramPadding`, `radius`,
+`strokeWidth`, `fontFamily`, and `fontSize`. `fontFamily` is a plain family
+list such as `Inter, sans-serif`. `defaultShape` rewrites plain flowchart
+rectangles (`id[label]`) to `rounded`, `stadium`, `subroutine`, `cylinder`,
+`circle`, `diamond`, or `hexagon`. Nodes that already use another shape, and
+other diagram types, stay as written.
+
+`mermaid.frame` styles the preview box around the inline diagram:
+`backgroundColor`, `borderColor`, `borderRadius`, and `padding`. It does not
+change the source view or the fullscreen diagram. The diagram canvas stays
+transparent.
+
+```tsx
+<Markdown mermaidColors={{ primaryColor: "#dceaff", lineColor: "#365a9c" }}>{content}</Markdown>
+
+<Markdown
+  mermaid={{
+    colors: { primaryColor: "#dceaff", lineColor: "#365a9c", clusterBkg: "#eef3fb" },
+    look: "classic",
+    curve: "linear",
+    defaultShape: "rounded",
+    radius: 8,
+    frame: { backgroundColor: "#f7f8fa", borderRadius: 12 },
+  }}
+>
+  {content}
+</Markdown>
+```
 
 The component adds no page padding or scroll container. Use a surrounding layout or
 scroll view when needed. Fetching content and showing loading or error states belong

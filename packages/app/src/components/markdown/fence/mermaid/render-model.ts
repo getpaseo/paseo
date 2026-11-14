@@ -1,3 +1,6 @@
+import type { MermaidDiagramOptions } from "@getpaseo/plugin/client/ui";
+import { parseMermaidRuntimeStyle, runtimeStyleOf } from "./options";
+import { containsUnsafeMermaidSource } from "./source-policy";
 import type { MarkdownPhase } from "./types";
 
 export type DiagramColorScheme = "light" | "dark";
@@ -16,6 +19,7 @@ export interface MermaidRenderInput {
   source: string;
   phase: MarkdownPhase;
   colorScheme: DiagramColorScheme;
+  styleKey?: string;
   rejected: boolean;
   cached: RenderedDiagram | null;
 }
@@ -31,6 +35,7 @@ export interface MermaidRenderModel {
   source: string;
   phase: MarkdownPhase;
   colorScheme: DiagramColorScheme;
+  styleKey: string;
   status: "pending" | "rendered" | "failed" | "rejected";
   visible: RenderedDiagram | null;
 }
@@ -83,13 +88,84 @@ function reduceRendered(
   };
 }
 
+const renderCache = new Map<string, RenderedDiagram>();
+const RENDER_CACHE_LIMIT = 50;
+
+export function getMermaidStyleKey(options: MermaidDiagramOptions | undefined): string {
+  return JSON.stringify(runtimeStyleOf(options)) ?? "";
+}
+
+function cacheKey(source: string, colorScheme: DiagramColorScheme, styleKey: string): string {
+  return `${colorScheme}\u0000${styleKey}\u0000${source}`;
+}
+
+export function readCachedMermaidRender(
+  source: string,
+  colorScheme: DiagramColorScheme,
+  styleKey: string,
+): RenderedDiagram | null {
+  return renderCache.get(cacheKey(source, colorScheme, styleKey)) ?? null;
+}
+
+export function cacheMermaidRender(rendered: RenderedDiagram, styleKey: string): void {
+  if (renderCache.size >= RENDER_CACHE_LIMIT) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest !== undefined) {
+      renderCache.delete(oldest);
+    }
+  }
+  renderCache.set(cacheKey(rendered.source, rendered.colorScheme, styleKey), rendered);
+}
+
+/**
+ * A reply is only cached while its revision is current: revisions bump whenever the style
+ * changes, and a reply to an older revision was rendered with a style the model has since
+ * dropped, so its dimensions would land under the wrong key.
+ */
+export function cacheMermaidRenderReply(
+  model: MermaidRenderModel,
+  rendered: RenderedDiagram,
+  revision: number,
+): void {
+  if (revision !== model.revision) return;
+  cacheMermaidRender(rendered, model.styleKey);
+}
+
+export function resolveMermaidRenderInput({
+  source,
+  phase,
+  colorScheme,
+  options,
+}: {
+  source: string;
+  phase: MarkdownPhase;
+  colorScheme: DiagramColorScheme;
+  options?: MermaidDiagramOptions;
+}): MermaidRenderInput {
+  const styleKey = getMermaidStyleKey(options);
+  return {
+    source,
+    phase,
+    colorScheme,
+    styleKey,
+    // The sandbox drops a render message it cannot parse, and the host would then wait
+    // forever for a reply, so a style it would reject never becomes a request.
+    rejected:
+      containsUnsafeMermaidSource(source) ||
+      parseMermaidRuntimeStyle(runtimeStyleOf(options)) === null,
+    cached: readCachedMermaidRender(source, colorScheme, styleKey),
+  };
+}
+
 export function createMermaidRenderModel(input: MermaidRenderInput): MermaidRenderModel {
+  const styleKey = input.styleKey ?? "";
   if (input.rejected) {
     return {
       revision: 1,
       source: input.source,
       phase: input.phase,
       colorScheme: input.colorScheme,
+      styleKey,
       status: "rejected",
       visible: input.phase === "complete" ? null : input.cached,
     };
@@ -99,6 +175,7 @@ export function createMermaidRenderModel(input: MermaidRenderInput): MermaidRend
     source: input.source,
     phase: input.phase,
     colorScheme: input.colorScheme,
+    styleKey,
     status: "pending",
     visible: input.cached,
   };
@@ -124,7 +201,11 @@ export function reduceMermaidRenderModel(
   }
 
   const { input } = action;
-  const isSameRender = input.source === state.source && input.colorScheme === state.colorScheme;
+  const styleKey = input.styleKey ?? "";
+  const isSameRender =
+    input.source === state.source &&
+    input.colorScheme === state.colorScheme &&
+    styleKey === state.styleKey;
   if (isSameRender) {
     if (input.phase === state.phase) {
       return state;
@@ -143,6 +224,7 @@ export function reduceMermaidRenderModel(
       source: input.source,
       phase: input.phase,
       colorScheme: input.colorScheme,
+      styleKey,
       status: "rejected",
       visible: input.phase === "complete" ? null : (input.cached ?? state.visible),
     };
@@ -153,6 +235,7 @@ export function reduceMermaidRenderModel(
     source: input.source,
     phase: input.phase,
     colorScheme: input.colorScheme,
+    styleKey,
     status: "pending",
     visible: input.cached ?? state.visible,
   };

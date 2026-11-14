@@ -192,8 +192,109 @@ export declare const Loading: ComponentType;
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
 
+/**
+ * #RGB or #RRGGBB colours for Mermaid diagrams. Any set colour selects the base
+ * theme; unset diagrams keep the host light or dark theme.
+ */
+export interface MermaidColors {
+  /** Default node fill. */
+  primaryColor?: string;
+  primaryTextColor?: string;
+  primaryBorderColor?: string;
+  /** Decision and other secondary nodes. */
+  secondaryColor?: string;
+  secondaryTextColor?: string;
+  secondaryBorderColor?: string;
+  tertiaryColor?: string;
+  tertiaryTextColor?: string;
+  tertiaryBorderColor?: string;
+  /** Edge stroke. */
+  lineColor?: string;
+  /** Fallback text colour. */
+  textColor?: string;
+  /** Subgraph background and border. */
+  clusterBkg?: string;
+  clusterBorder?: string;
+  edgeLabelBackground?: string;
+  titleColor?: string;
+}
+
+export type MermaidLook = "classic" | "handDrawn" | "neo";
+
+export type MermaidCurve =
+  | "basis"
+  | "bumpX"
+  | "bumpY"
+  | "cardinal"
+  | "catmullRom"
+  | "linear"
+  | "monotoneX"
+  | "monotoneY"
+  | "natural"
+  | "step"
+  | "stepAfter"
+  | "stepBefore"
+  | "rounded";
+
+/** Shapes a plugin can apply to plain flowchart rectangles (`id[label]`). */
+export type MermaidNodeShape =
+  | "rect"
+  | "rounded"
+  | "stadium"
+  | "subroutine"
+  | "cylinder"
+  | "circle"
+  | "diamond"
+  | "hexagon";
+
+/** Host chrome around the inline diagram. The source view and fullscreen ignore it. */
+export interface MermaidFrame {
+  backgroundColor?: string;
+  borderColor?: string;
+  /** Pixels, from 0 to 40. */
+  borderRadius?: number;
+  /** Pixels, from 0 to 48. */
+  padding?: number;
+}
+
+export interface MermaidDiagramOptions {
+  /** Wins per key over `MarkdownProps.mermaidColors`. */
+  colors?: MermaidColors;
+  /** Corner radius in pixels, from 0 to 40. Applies to rounded nodes. */
+  radius?: number;
+  /** Stroke width in pixels, from 0 to 8. */
+  strokeWidth?: number;
+  /** A plain family list, such as `Inter, sans-serif`. No `url()` or `@import`. */
+  fontFamily?: string;
+  /** Font size in pixels, from 8 to 32. */
+  fontSize?: number;
+  look?: MermaidLook;
+  curve?: MermaidCurve;
+  /** Flowchart node spacing in pixels, from 0 to 240. */
+  nodeSpacing?: number;
+  /** Flowchart rank spacing in pixels, from 0 to 240. */
+  rankSpacing?: number;
+  /** Flowchart padding in pixels, from 0 to 80. Experimental in Mermaid. */
+  padding?: number;
+  /** Space around the diagram in pixels, from 0 to 80. */
+  diagramPadding?: number;
+  /**
+   * Rewrites plain `id[label]` rectangles in flowchart diagrams. Nodes that
+   * already pick a shape, and other diagram types, stay as written.
+   */
+  defaultShape?: MermaidNodeShape;
+  frame?: MermaidFrame;
+}
+
 export interface MarkdownProps {
   children: string;
+  /**
+   * Optional #RGB or #RRGGBB Mermaid colours. Unset diagrams use the host theme.
+   * `mermaid.colors` overrides these per key.
+   */
+  mermaidColors?: MermaidColors;
+  /** Shape, layout, type, and preview-frame options for Mermaid diagrams in this Markdown. */
+  mermaid?: MermaidDiagramOptions;
 }
 
 /** Renders Markdown using Paseo’s theme, selection, and link behavior. */
