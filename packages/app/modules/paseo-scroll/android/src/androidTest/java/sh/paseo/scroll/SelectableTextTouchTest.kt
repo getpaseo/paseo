@@ -62,6 +62,17 @@ class SelectableTextTouchTest {
     assertEquals("Offset after the tap", OFFSET, timeline.settledScrollY())
   }
 
+  // A reply that is still streaming gets new text while the user's tap holds its focus.
+  @Test fun aStreamingUpdateToTappedTextKeepsTheOffset() {
+    val timeline = openTimeline(edge = Edge.BOTTOM)
+    timeline.tap(visibleY = EDGE_Y - 100)
+    assertTrue("The tap focuses the text", timeline.textHasFocus())
+
+    timeline.updateText("$CHAT_TEXT\nOne more line of the reply.")
+
+    assertEquals("Offset after the update", OFFSET, timeline.settledScrollY())
+  }
+
   @Test fun longPressSelectsAWordAndKeepsTheOffset() {
     val timeline = openTimeline(edge = Edge.TOP)
 
@@ -100,6 +111,15 @@ class SelectableTextTouchTest {
       touch(downTime, MotionEvent.ACTION_DOWN, visibleY)
       SystemClock.sleep(ViewConfiguration.getLongPressTimeout() * 2L)
       touch(downTime, MotionEvent.ACTION_UP, visibleY)
+    }
+
+    // Replaces the text and lays it out again at its top, the way a streaming reply mounts.
+    fun updateText(value: String) {
+      instrumentation.runOnMainSync {
+        text.setText(value)
+        text.measure(exact(WIDTH), unspecified())
+        text.layout(0, text.top, WIDTH, text.top + text.measuredHeight)
+      }
     }
 
     fun textHasFocus(): Boolean {
@@ -194,12 +214,15 @@ class SelectableTextTouchTest {
       val content = ReactViewGroup(context)
       val text =
         if (editable) {
-          // No input connection: building one runs React Native's focus search through Fabric, which
-          // this context does not run. The input is still a text editor, which is what the reveal
-          // checks.
+          // Selectable, as React Native's TextInput makes itself when attached, so only being a text
+          // editor tells it apart from chat text. No input connection: building one runs React
+          // Native's focus search through Fabric, which this context does not run.
           object : EditText(context) {
             override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? = null
-          }.apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE }
+          }.apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setTextIsSelectable(true)
+          }
         } else {
           // How enriched-markdown and React Native's <Text selectable> set up chat text.
           TextView(context).apply { setTextIsSelectable(true) }
@@ -212,7 +235,7 @@ class SelectableTextTouchTest {
       )
       // Fabric lays out React content; nothing in a React view group lays out its children itself.
       content.layout(0, 0, WIDTH, CONTENT_HEIGHT)
-      text.measure(exact(WIDTH), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+      text.measure(exact(WIDTH), unspecified())
       assertTrue("The text is taller than the viewport", text.measuredHeight > VIEWPORT)
       val top = if (edge == Edge.TOP) OFFSET + EDGE_Y else OFFSET + EDGE_Y - text.measuredHeight
       text.layout(0, top, WIDTH, top + text.measuredHeight)
@@ -226,12 +249,14 @@ class SelectableTextTouchTest {
 
   private fun exact(size: Int) = View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY)
 
+  private fun unspecified() = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+
   private companion object {
     const val WIDTH = 600
     const val TOUCH_X = WIDTH / 2f
     const val VIEWPORT = 800
-    const val CONTENT_HEIGHT = 4000
-    const val OFFSET = 1200
+    const val CONTENT_HEIGHT = 6000
+    const val OFFSET = 2400
     // Below the plain activity's action bar, which overlays the top of the window.
     const val EDGE_Y = 500
     val CHAT_TEXT = List(30) { "Line $it of a reply in the chat timeline." }.joinToString("\n")

@@ -1,6 +1,7 @@
 package sh.paseo.scroll;
 
 import android.content.Context;
+import android.graphics.Rect;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,7 +14,7 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with three corrections. Java, because the content-position
+ * React Native's vertical scroll view with four corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
@@ -65,6 +66,17 @@ final class PaseoScrollView extends ReactScrollView {
       return;
     }
     super.requestChildFocus(child, focused);
+  }
+
+  // Focused text asks to reveal its selection whenever the selection changes. A streaming reply
+  // replaces its text, which collapses the selection to the start, so a reply that kept focus from
+  // a touch scrolled the timeline back to its first line on the next update. Read-only text has no
+  // caret, so a collapsed selection has nothing to reveal. A selection the user drags still does.
+  @Override
+  public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+    View focused = findFocus();
+    if (isTouchedReadOnlyText(focused) && !((TextView) focused).hasSelection()) return false;
+    return super.requestChildRectangleOnScreen(child, rectangle, immediate);
   }
 
   private static boolean isTouchedReadOnlyText(@Nullable View view) {
