@@ -28,21 +28,26 @@ export type DetailPresence =
   | { kind: "found"; entry: ProviderSnapshotEntry }
   | { kind: "loading" }
   | { kind: "missing" }
+  | { kind: "removed" }
   | { kind: "offline" }
   | { kind: "failed"; message: string };
 
 /**
  * Whether the page has a provider to show. A page opened from its URL renders before the host's
- * providers arrive, and its id may name a provider the host no longer has.
+ * providers arrive, and its id may name a provider the host no longer has. A provider the page
+ * already showed and that then leaves the list was removed, and the page is on its way out.
  */
 export function readDetailPresence(input: {
   provider: string;
   connected: boolean;
   entries: ProviderSnapshotEntry[] | undefined;
   error: string | null;
+  /** The page has shown this provider before. */
+  wasFound: boolean;
 }): DetailPresence {
   const entry = input.entries?.find((candidate) => candidate.provider === input.provider);
   if (entry) return { kind: "found", entry };
+  if (input.wasFound) return { kind: "removed" };
   if (!input.connected) return { kind: "offline" };
   if (input.entries) return { kind: "missing" };
   if (input.error) return { kind: "failed", message: input.error };

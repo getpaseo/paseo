@@ -71,6 +71,44 @@ async function clickRemoveProviderAndAcceptWarning(page: Page): Promise<Dialog> 
   return warning;
 }
 
+const MISSING_NOTICE = '[data-testid="provider-detail-missing"]';
+
+/** Records whether the page ever says its provider isn't on the host, however briefly. */
+async function watchForMissingNotice(page: Page): Promise<void> {
+  await page.evaluate((selector) => {
+    const flags = window as unknown as { sawMissingNotice?: boolean };
+    flags.sawMissingNotice = false;
+    new MutationObserver(() => {
+      if (document.querySelector(selector)) flags.sawMissingNotice = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  }, MISSING_NOTICE);
+}
+
+async function expectMissingNoticeNeverShown(page: Page): Promise<void> {
+  const saw = await page.evaluate(
+    () => (window as unknown as { sawMissingNotice?: boolean }).sawMissingNotice,
+  );
+  expect(saw).toBe(false);
+}
+
+/**
+ * The daemon may publish the provider list without the removed provider before it answers the
+ * config patch. Hold the answer so the test always sees that order.
+ */
+async function delayConfigResponses(page: Page): Promise<void> {
+  await page.routeWebSocket(/.*/, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (typeof message === "string" && message.includes("set_daemon_config_response")) {
+        setTimeout(() => ws.send(message), 1_500);
+        return;
+      }
+      ws.send(message);
+    });
+  });
+}
+
 test.describe("provider removal", () => {
   test("removes a custom provider from Settings", async ({ page }) => {
     test.setTimeout(120_000);
@@ -81,6 +119,7 @@ test.describe("provider removal", () => {
     try {
       await removeCustomProvider(client);
 
+      await delayConfigResponses(page);
       await gotoAppShell(page);
       await openSettings(page);
       await openSettingsHost(page, getServerId());
@@ -98,9 +137,11 @@ test.describe("provider removal", () => {
 
       await openProviderDetail(page, CUSTOM_PROVIDER.name);
       await expect(page.getByTestId("provider-remove")).toBeVisible();
+      await watchForMissingNotice(page);
       await clickRemoveProviderAndAcceptWarning(page);
-      // Removing leaves the provider's page for the list.
+      // Removing leaves the provider's page for the list, without first calling it missing.
       await expect(page.getByTestId("provider-list")).toBeVisible();
+      await expectMissingNoticeNeverShown(page);
 
       await expect(
         page.getByRole("button", {
