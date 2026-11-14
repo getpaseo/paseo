@@ -1,9 +1,10 @@
 import { useCallback, useLayoutEffect, useState } from "react";
 import { Button, Text, View } from "react-native";
-import { useAnimatedReaction, useSharedValue } from "react-native-reanimated";
+import { useAnimatedReaction, useDerivedValue, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import { RetainedPanel } from "@/components/retained-panel";
-import { useStatusRingRotation } from "@/components/status-ring/clock";
+import { getStatusRingRotation } from "@/components/status-ring/geometry";
+import { useSmallWidgetClock } from "@/hooks/use-small-widget-clock";
 import { StatusRing } from "@/components/status-ring";
 
 interface Sample {
@@ -21,7 +22,8 @@ function recordSample(name: string, value: { updates: number; rotation: number }
 }
 
 function Probe({ name }: { name: string }) {
-  const rotation = useStatusRingRotation();
+  const time = useSmallWidgetClock();
+  const rotation = useDerivedValue(() => getStatusRingRotation(time.value));
   const updates = useSharedValue(0);
   useAnimatedReaction(
     () => rotation.value,
