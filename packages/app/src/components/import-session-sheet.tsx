@@ -311,9 +311,12 @@ function ImportSessionSheetRow({
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
   const ProviderIcon = useProviderIcon(entry.providerId, serverId);
+  // Importing resumes the session in its directory, which fails once the directory is gone.
+  const cwdMissing = entry.cwdMissing === true;
+  const isDisabled = disabled || cwdMissing;
   const accessibilityState = useMemo(
-    () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
-    [disabled],
+    () => (isDisabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
+    [isDisabled],
   );
   const handlePress = useCallback(() => {
     onImportSession(entry);
@@ -321,15 +324,16 @@ function ImportSessionSheetRow({
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
-      Boolean(hovered) && styles.rowHovered,
+      cwdMissing && styles.rowUnavailable,
+      Boolean(hovered) && !cwdMissing && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [],
+    [cwdMissing],
   );
 
   return (
     <Pressable
-      disabled={disabled}
+      disabled={isDisabled}
       onPress={handlePress}
       accessibilityRole="button"
       accessibilityState={accessibilityState}
@@ -360,6 +364,15 @@ function ImportSessionSheetRow({
             testID={`import-session-row-folder-${entry.providerId}-${entry.providerHandleId}`}
           >
             {folder}
+          </Text>
+        ) : null}
+        {cwdMissing ? (
+          <Text
+            style={styles.rowMeta}
+            numberOfLines={1}
+            testID={`import-session-row-cwd-missing-${entry.providerId}-${entry.providerHandleId}`}
+          >
+            {t("importSession.row.cwdMissing")}
           </Text>
         ) : null}
       </View>
@@ -1010,6 +1023,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     marginHorizontal: -theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
+  },
+  rowUnavailable: {
+    opacity: theme.opacity[50],
   },
   rowHovered: {
     backgroundColor: theme.colors.surface1,

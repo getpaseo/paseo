@@ -464,6 +464,7 @@ export const ru: TranslationResources = {
     },
     row: {
       importing: "Импортируется...",
+      cwdMissing: "Папка больше не существует",
     },
   },
   workspace: {

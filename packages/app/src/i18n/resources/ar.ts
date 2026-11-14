@@ -460,6 +460,7 @@ export const ar: TranslationResources = {
     },
     row: {
       importing: "جارٍ الاستيراد...",
+      cwdMissing: "المجلد لم يعد موجودًا",
     },
   },
   workspace: {

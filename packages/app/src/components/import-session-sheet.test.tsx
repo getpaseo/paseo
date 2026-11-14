@@ -653,6 +653,56 @@ describe("ImportSessionSheet", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("marks a session whose folder no longer exists and does not import it", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "codex",
+          providerLabel: "Codex",
+          providerHandleId: "removed-thread",
+          cwd: "/repo/removed",
+          cwdMissing: true,
+        }),
+        createProviderSessionEntry({
+          providerId: "codex",
+          providerLabel: "Codex",
+          providerHandleId: "present-thread",
+          cwdMissing: false,
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      { snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("codex")] } },
+    );
+
+    const removedRow = await screen.findByTestId("import-session-session-codex-removed-thread");
+    expect(removedRow.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      screen.getByTestId("import-session-row-cwd-missing-codex-removed-thread").textContent,
+    ).toBe("Folder no longer exists");
+    expect(screen.queryByTestId("import-session-row-cwd-missing-codex-present-thread")).toBeNull();
+
+    fireEvent.click(removedRow);
+    expect(importAgent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("import-session-session-codex-present-thread"));
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledTimes(1);
+    });
+    expect(importAgent).toHaveBeenCalledWith({
+      providerId: "codex",
+      providerHandleId: "present-thread",
+      cwd: "/repo/paseo",
+    });
+  });
+
   it("fans out one request per enabled provider when snapshot is supported", async () => {
     const fetchRecentProviderSessions = vi.fn(
       async (options: { providers?: string[] } | undefined) => ({
