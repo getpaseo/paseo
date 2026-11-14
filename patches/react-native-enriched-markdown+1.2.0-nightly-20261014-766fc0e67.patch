@@ -2996,11 +2996,15 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      color: Int,
      private val size: Int,
    ) : Drawable() {
-@@ -347,21 +347,21 @@
-     // iOS sizes the SF Symbol by point size (kENRMHeaderIconScale = 0.72) but
-     // the symbol renders roughly half again as tall as its point size; this box
-     // is scaled up to land the drawn glyph at the same on-screen size.
+@@ -344,24 +344,22 @@
+     private const val HEADER_LABEL_SCALE = 0.85f
+ 
+     // Drawable box for the copy glyph, as a multiple of the code font size.
+-    // iOS sizes the SF Symbol by point size (kENRMHeaderIconScale = 0.72) but
+-    // the symbol renders roughly half again as tall as its point size; this box
+-    // is scaled up to land the drawn glyph at the same on-screen size.
 -    private const val HEADER_ICON_SCALE = 1.08f
++    // Match the Lucide image size used by the iOS code and quote controls.
 +    internal const val HEADER_ICON_SCALE = 1.08f
  
      private val headerTypeface: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -3498,7 +3502,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/c
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,244 @@
 +package com.swmansion.enriched.markdown
 +
 +import android.text.TextPaint
@@ -3588,6 +3592,35 @@ new file mode 100644
 +      assertEquals(size, paint.textSize, 0f)
 +      assertEquals(font, paint.typeface)
 +    }
++  }
++
++  @Test fun quoteCopyGlyphDrawsInsideReservedHeader() {
++    val context = android.view.ContextThemeWrapper(RuntimeEnvironment.getApplication(), androidx.appcompat.R.style.Theme_AppCompat)
++    com.facebook.react.uimanager.DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(context)
++    val block = JavaOnlyMap.of(
++      "fontFamily", "", "fontWeight", "normal", "fontSize", 16.0,
++      "color", -16777216.0, "backgroundColor", 0.0, "borderColor", 0.0,
++      "borderWidth", 0.0, "borderRadius", 0.0, "gapWidth", 0.0, "padding", 8.0,
++      "marginTop", 0.0, "marginBottom", 0.0, "lineHeight", 20.0,
++    )
++    val style = StyleConfig(JavaOnlyMap.of("blockquote", block, "codeBlock", block), context, false, 1f)
++    val config = com.swmansion.enriched.markdown.segments.SegmentViewConfig(
++      context, style, false, 1f,
++      com.swmansion.enriched.markdown.accessibility.AccessibilityLabels(),
++      com.swmansion.enriched.markdown.utils.text.view.SelectionMenuConfig(),
++      "simple", true, null, null, emptyList(),
++      com.swmansion.enriched.markdown.segments.DynamicBlockProps(), null, null, null, null,
++    )
++    val quote = com.swmansion.enriched.markdown.segments.BlockquoteContainerView(context, config)
++    quote.measure(android.view.View.MeasureSpec.makeMeasureSpec(320, android.view.View.MeasureSpec.EXACTLY),
++      android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED))
++    quote.layout(0, 0, quote.measuredWidth, quote.measuredHeight)
++    val bitmap = android.graphics.Bitmap.createBitmap(quote.width, quote.height, android.graphics.Bitmap.Config.ARGB_8888)
++    quote.draw(android.graphics.Canvas(bitmap))
++    val pixels = IntArray(quote.width * quote.height)
++    bitmap.getPixels(pixels, 0, quote.width, 0, 0, quote.width, quote.height)
++    assertTrue("The copy glyph must paint in the otherwise transparent quote header", pixels.any { android.graphics.Color.alpha(it) > 0 })
++    bitmap.recycle()
 +  }
 +
 +  private fun node(type: NodeType, vararg children: MarkdownASTNode, text: String = "", attributes: Map<String, String> = emptyMap()) =
@@ -4340,17 +4373,19 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
  
    // Only the outermost quote carries vertical margins; a quote nested directly
    // inside another quote is separated by the parent's padding alone (matches the
-@@ -108,7 +133,8 @@
+@@ -108,7 +133,10 @@
  
    init {
      setWillNotDraw(false)
++    // The copy control lives in the header reserved by top padding.
++    clipToPadding = false
 -    setPadding(leftInset, verticalInset, rightInset, verticalInset)
 +    setPadding(leftInset, verticalInset + copyHeaderHeight, rightInset, verticalInset)
 +    addView(copyButton)
      segmentViewFactory = ChildFactory()
      trailingMarginEnabled = false
      isLongClickable = true
-@@ -125,6 +151,9 @@
+@@ -125,6 +153,9 @@
      // Reserve the header band above the body by enlarging the top padding.
      setPadding(leftInset, verticalInset + reservedHeaderHeight(), rightInset, verticalInset)
  
@@ -4360,7 +4395,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      cachedMarkdown = MarkdownASTSerializer.serializeBlockquote(node)
      cachedPlainText = MarkdownASTSerializer.plainText(node)
  
-@@ -140,6 +169,7 @@
+@@ -140,6 +171,7 @@
          onLatexError = parentConfig.onLatexError,
        )
      applySegments(rendered, reset = false)
@@ -4368,7 +4403,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      requestLayout()
    }
  
-@@ -167,6 +197,10 @@
+@@ -167,6 +199,10 @@
    ) {
      val measuredWidth = MeasureSpec.getSize(widthSpec)
      measureSegmentChildren(measuredWidth)
@@ -4379,7 +4414,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      setMeasuredDimension(measuredWidth, computeSegmentsTotalHeight())
    }
  
-@@ -178,6 +212,15 @@
+@@ -178,6 +214,15 @@
      b: Int,
    ) {
      layoutSegments()
@@ -4395,7 +4430,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
    }
  
    override fun onDraw(canvas: Canvas) {
-@@ -368,7 +411,7 @@
+@@ -368,7 +413,7 @@
          if (node.type == MarkdownASTNode.NodeType.Admonition) {
            ceil(admonitionHeaderReservedHeight(style))
          } else {
@@ -4591,7 +4626,40 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBl
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBlockContainerView.m
-@@ -231,6 +231,50 @@
+@@ -24,9 +24,31 @@
+ static const CGFloat kENRMHeaderLabelScale = 0.85;
+ // The copy glyph reads cleaner a touch smaller than the language label and at a
+ // regular (not medium) weight; sized independently so the two never couple.
+-static const CGFloat kENRMHeaderIconScale = 0.72;
++static const CGFloat kENRMHeaderIconScale = 1.08;
+ static const CGFloat kENRMHeaderSecondaryAlpha = 0.6;
+ static const CGFloat kENRMHeaderDividerAlpha = 0.2;
++
++// Lucide's 24-unit Copy icon. Copyright Lucide Icons and Contributors (ISC).
++// See COPY-ICON-LICENSE. Keep in sync with lucide-react-native's Copy icon.
++static void ENRMDrawCopyIcon(CGContextRef context, CGFloat size)
++{
++  CGContextScaleCTM(context, size / 24.0, size / 24.0);
++  CGContextSetLineWidth(context, 2);
++  CGContextSetLineCap(context, kCGLineCapRound);
++  CGContextSetLineJoin(context, kCGLineJoinRound);
++  CGContextSetRGBStrokeColor(context, 0, 0, 0, 1);
++  CGMutablePathRef path = CGPathCreateMutable();
++  CGPathAddRoundedRect(path, NULL, CGRectMake(8, 8, 14, 14), 2, 2);
++  CGPathMoveToPoint(path, NULL, 4, 16);
++  CGPathAddCurveToPoint(path, NULL, 2.9, 16, 2, 15.1, 2, 14);
++  CGPathAddLineToPoint(path, NULL, 2, 4);
++  CGPathAddCurveToPoint(path, NULL, 2, 2.9, 2.9, 2, 4, 2);
++  CGPathAddLineToPoint(path, NULL, 14, 2);
++  CGPathAddCurveToPoint(path, NULL, 15.1, 2, 16, 2.9, 16, 4);
++  CGContextAddPath(context, path);
++  CGContextStrokePath(context);
++  CGPathRelease(path);
++}
+ 
+ // Height geometry and code-run construction shared by the instance layout path
+ // and the view-free measureHeightForCodeBlockNode:, so the two cannot drift.
+@@ -231,6 +253,52 @@
  #endif
  }
  
@@ -4604,19 +4672,21 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBl
 +{
 +#if !TARGET_OS_OSX
 +  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-+  UIImageSymbolConfiguration *symbolConfig =
-+      [UIImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
-+                                                     weight:UIImageSymbolWeightRegular];
-+  [button setImage:[UIImage systemImageNamed:@"doc.on.doc" withConfiguration:symbolConfig]
-+          forState:UIControlStateNormal];
++  CGFloat size = [config codeBlockFont].pointSize * kENRMHeaderIconScale;
++  UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(size, size)];
++  UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
++    ENRMDrawCopyIcon(context.CGContext, size);
++  }];
++  [button setImage:[image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] forState:UIControlStateNormal];
 +  button.tintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
 +  [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
 +#else
-+  NSImageSymbolConfiguration *symbolConfig =
-+      [NSImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
-+                                                     weight:NSFontWeightRegular];
-+  NSImage *copyImage = [[NSImage imageWithSystemSymbolName:@"doc.on.doc"
-+                               accessibilityDescription:nil] imageWithSymbolConfiguration:symbolConfig];
++  CGFloat size = [config codeBlockFont].pointSize * kENRMHeaderIconScale;
++  NSImage *copyImage = [NSImage imageWithSize:NSMakeSize(size, size) flipped:YES drawingHandler:^BOOL(NSRect rect) {
++    ENRMDrawCopyIcon(NSGraphicsContext.currentContext.CGContext, size);
++    return YES;
++  }];
++  copyImage.template = YES;
 +  NSButton *button = [NSButton buttonWithImage:copyImage target:target action:action];
 +  button.bordered = NO;
 +  button.contentTintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
@@ -4642,7 +4712,7 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBl
  - (void)setPending:(BOOL)pending
  {
    if (_pending == pending) {
-@@ -273,28 +317,16 @@
+@@ -273,28 +341,16 @@
      UIContextMenuInteraction *contextMenu = [[UIContextMenuInteraction alloc] initWithDelegate:self];
      [self addInteraction:contextMenu];
  
@@ -4675,7 +4745,7 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMCodeBl
      [self addSubview:_copyButton];
  #endif
    }
-@@ -363,15 +395,7 @@
+@@ -363,15 +419,7 @@
  
  - (void)layoutHeaderButton
  {
@@ -4912,3 +4982,158 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/Block
    return (
      <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
    );
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CopyGlyph.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CopyGlyph.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CopyGlyph.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CopyGlyph.kt
+@@ -3,99 +3,29 @@
+ import android.graphics.Canvas
+ import android.graphics.Paint
+ import android.graphics.Path
+-import android.graphics.PorterDuff
+-import android.graphics.PorterDuffXfermode
++import android.graphics.RectF
+ 
+-/**
+- * Draws the copy glyph so Android matches the SF Symbol doc.on.doc rendered on
+- * iOS: two portrait document pages with a folded (dog-eared) top-right corner,
+- * a front page in the lower-left laid over a back page in the upper-right.
+- *
+- * The back page is punched out where the front page (plus a hairline of
+- * clearance) covers it, so the front reads as sitting on top exactly as the SF
+- * Symbol does, instead of both outlines crossing. The clear is done inside an
+- * offscreen layer so the punched region reveals whatever background the drawable
+- * sits on, without the glyph needing to know that color.
+- *
+- * One instance is held per drawable rather than shared: the paths and clear
+- * paint are reused across draws to keep draw() allocation-free, and two drawables
+- * of different sizes must not share those buffers. All coordinates use a 24-unit
+- * grid scaled to the drawable width, matching the grid the iOS symbol is authored
+- * on.
+- */
++// Lucide's 24-unit Copy icon. Copyright Lucide Icons and Contributors (ISC).
++// See COPY-ICON-LICENSE. Keep in sync with lucide-react-native's Copy icon.
+ internal class CopyGlyph {
+-  private val back = Path()
+-  private val front = Path()
+-  private val backFold = Path()
+-  private val frontFold = Path()
++  private val outline = Path().apply {
++    addRoundRect(RectF(8f, 8f, 22f, 22f), 2f, 2f, Path.Direction.CW)
++    moveTo(4f, 16f)
++    cubicTo(2.9f, 16f, 2f, 15.1f, 2f, 14f)
++    lineTo(2f, 4f)
++    cubicTo(2f, 2.9f, 2.9f, 2f, 4f, 2f)
++    lineTo(14f, 2f)
++    cubicTo(15.1f, 2f, 16f, 2.9f, 16f, 4f)
++  }
+ 
+-  // Color and colorFilter are irrelevant under PorterDuff.CLEAR; only the
+-  // widened stroke (set per draw) matters, so this is configured once.
+-  private val clearPaint =
+-    Paint(Paint.ANTI_ALIAS_FLAG).apply {
+-      style = Paint.Style.FILL_AND_STROKE
+-      strokeJoin = Paint.Join.ROUND
+-      strokeCap = Paint.Cap.ROUND
+-      xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+-    }
+-
+-  fun draw(
+-    canvas: Canvas,
+-    width: Float,
+-    stroke: Paint,
+-  ) {
+-    val u = width / 24f
+-    val fold = 4f * u
+-    val corner = 2f * u
+-
+-    buildPage(back, 9 * u, 1 * u, 20 * u, 17 * u, fold, corner)
+-    buildPage(front, 3 * u, 7 * u, 14 * u, 23 * u, fold, corner)
+-    buildFold(backFold, 20 * u, 1 * u, fold)
+-    buildFold(frontFold, 14 * u, 7 * u, fold)
+-    clearPaint.strokeWidth = stroke.strokeWidth * 3f
+-
+-    val saved = canvas.saveLayer(0f, 0f, width, width, null)
+-    canvas.drawPath(back, stroke)
+-    canvas.drawPath(backFold, stroke)
+-    canvas.drawPath(front, clearPaint)
+-    canvas.drawPath(front, stroke)
+-    canvas.drawPath(frontFold, stroke)
++  fun draw(canvas: Canvas, width: Float, stroke: Paint) {
++    val saved = canvas.save()
++    canvas.scale(width / 24f, width / 24f)
++    // Lucide uses a 2-unit stroke on its 24-unit grid.
++    val previousWidth = stroke.strokeWidth
++    stroke.strokeWidth = 2f
++    canvas.drawPath(outline, stroke)
++    stroke.strokeWidth = previousWidth
+     canvas.restoreToCount(saved)
+   }
+-
+-  // A page outline whose top-right corner is cut back by fold, with the other
+-  // three corners rounded by corner.
+-  private fun buildPage(
+-    path: Path,
+-    l: Float,
+-    t: Float,
+-    r: Float,
+-    b: Float,
+-    fold: Float,
+-    corner: Float,
+-  ) {
+-    path.rewind()
+-    path.moveTo(l, t + corner)
+-    path.quadTo(l, t, l + corner, t)
+-    path.lineTo(r - fold, t)
+-    path.lineTo(r, t + fold)
+-    path.lineTo(r, b - corner)
+-    path.quadTo(r, b, r - corner, b)
+-    path.lineTo(l + corner, b)
+-    path.quadTo(l, b, l, b - corner)
+-    path.close()
+-  }
+-
+-  // The two inner edges of the folded-over corner, at the page's top-right.
+-  private fun buildFold(
+-    path: Path,
+-    r: Float,
+-    t: Float,
+-    fold: Float,
+-  ) {
+-    path.rewind()
+-    path.moveTo(r - fold, t)
+-    path.lineTo(r - fold, t + fold)
+-    path.lineTo(r, t + fold)
+-  }
+ }
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ContextMenuPopup.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ContextMenuPopup.kt
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ContextMenuPopup.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ContextMenuPopup.kt
+@@ -185,7 +185,7 @@
+ 
+       private val copyGlyph = CopyGlyph()
+ 
+-      // COPY mirrors SF Symbol doc.on.doc, DOCUMENT mirrors doc.text; the copy
++      // COPY uses Lucide, DOCUMENT mirrors doc.text; the copy
+       // glyph is shared with the header button in CodeBlockContainerView.
+       override fun draw(canvas: Canvas) {
+         val u = bounds.width() / 24f
+diff --git a/node_modules/react-native-enriched-markdown/COPY-ICON-LICENSE b/node_modules/react-native-enriched-markdown/COPY-ICON-LICENSE
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/COPY-ICON-LICENSE
+@@ -0,0 +1,15 @@
++ISC License
++
++Copyright (c) 2026 Lucide Icons and Contributors
++
++Permission to use, copy, modify, and/or distribute this software for any
++purpose with or without fee is hereby granted, provided that the above
++copyright notice and this permission notice appear in all copies.
++
++THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.

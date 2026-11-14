@@ -20,6 +20,26 @@ const resolvePackageEntry = (packageName: string) => {
 export default defineConfig({
   plugins: [
     {
+      name: "reanimated-web-style-helpers",
+      async transform(_source, id) {
+        // Metro resolves these guarded CommonJS imports. Bundle the real RN Web
+        // helpers as ESM so Vite also converts their CommonJS color dependency.
+        if (!id.split("?")[0].endsWith("/ReanimatedModule/js-reanimated/webUtils.web.js")) return;
+        const result = await build({
+          stdin: {
+            contents: `export { default as createReactDOMStyle } from "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle";
+export { createTransformValue, createTextShadowValue } from "react-native-web/dist/exports/StyleSheet/preprocess";`,
+            resolveDir: __dirname,
+          },
+          bundle: true,
+          format: "esm",
+          platform: "browser",
+          write: false,
+        });
+        return { code: result.outputFiles[0].text, map: null };
+      },
+    },
+    {
       name: "markdown-wasm-commonjs-export",
       transform(source, id) {
         // The ESM package contains a CommonJS WASM factory. Metro handles the
