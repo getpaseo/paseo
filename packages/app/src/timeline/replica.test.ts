@@ -36,7 +36,7 @@ function item(id: string, text: string, seq: number): StreamItem {
     id,
     text,
     timestamp: new Date("2026-08-26T10:00:00.000Z"),
-    timelineCursor: { epoch: "epoch-1", seq },
+    timelineCursor: { epoch: "epoch-1", seq, anchorSeq: seq },
   };
 }
 
@@ -572,6 +572,235 @@ describe("viewed timeline persistence", () => {
     }
 
     expect(keys).toEqual([AGENT_ID, "agent-2"]);
+    owner.dispose();
+  });
+});
+
+describe("conversation rewind through the owner", () => {
+  const page = {
+    requestId: "page-1",
+    agentId: AGENT_ID,
+    agent: null,
+    direction: "tail",
+    projection: "projected",
+    reset: false,
+    epoch: "epoch-1",
+    error: null,
+    hasNewer: false,
+    hasOlder: false,
+    staleCursor: false,
+    gap: false,
+  } as const;
+
+  function entry(seq: number, type: "user_message" | "assistant_message", text: string) {
+    return {
+      seqStart: seq,
+      seqEnd: seq,
+      sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+      collapsed: [],
+      provider: "codex",
+      item: { type, text },
+      timestamp: `2026-08-26T10:00:0${seq}.000Z`,
+    };
+  }
+
+  function texts(items: readonly StreamItem[]): string[] {
+    return items.flatMap((row) =>
+      row.kind === "user_message" || row.kind === "assistant_message" ? [row.text] : [],
+    );
+  }
+
+  function viewed(): string[] {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    const timeline = selectAgentTimelineState(session, AGENT_ID);
+    const tail = timeline.status === "cold" ? [] : timeline.items;
+    return texts([...tail, ...(session?.agentStreamHead.get(AGENT_ID) ?? [])]);
+  }
+
+  function latestRewind() {
+    return useSessionStore.getState().sessions[SERVER_ID]?.agentTimelineLatestRewind.get(AGENT_ID);
+  }
+
+  it("retires B from the viewed and persisted timeline without refetching", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const commits: CachedTimeline[] = [];
+    const owner = createOwner({
+      readTimeline: async () => undefined,
+      commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+    });
+    owner.applyTimelineResponse({
+      ...page,
+      window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+      startCursor: { epoch: "epoch-1", seq: 1 },
+      endCursor: { epoch: "epoch-1", seq: 4 },
+      entries: [
+        entry(1, "user_message", "A"),
+        entry(2, "assistant_message", "reply A"),
+        entry(3, "user_message", "B"),
+        entry(4, "assistant_message", "reply B"),
+      ],
+    });
+
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "rewind", retireFromSeq: 3 },
+      seq: 5,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:05.000Z"),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "C", messageId: "c" },
+      } as AgentStreamEventPayload,
+      seq: 6,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:06.000Z"),
+    });
+    owner.flushStreamAgent(AGENT_ID);
+
+    expect(viewed()).toEqual(["A", "reply A", "C"]);
+    expect(texts(commits.at(-1)?.items ?? [])).toEqual(["A", "reply A", "C"]);
+    expect(commits.at(-1)?.range).toMatchObject({ epoch: "epoch-1", endSeq: 6 });
+    expect(latestRewind()).toEqual({ epoch: "epoch-1", seq: 5 });
+    owner.dispose();
+  });
+
+  it("brings a second client that loads after the rewind to the same conversation", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const owner = createOwner({ readTimeline: async () => undefined, commitTimeline: () => {} });
+
+    owner.applyTimelineResponse({
+      ...page,
+      window: { minSeq: 1, maxSeq: 6, nextSeq: 7 },
+      startCursor: { epoch: "epoch-1", seq: 1 },
+      endCursor: { epoch: "epoch-1", seq: 6 },
+      entries: [
+        entry(1, "user_message", "A"),
+        entry(2, "assistant_message", "reply A"),
+        entry(6, "user_message", "C"),
+      ],
+      retirements: [{ seq: 5, retireFromSeq: 3 }],
+    });
+
+    expect(viewed()).toEqual(["A", "reply A", "C"]);
+    expect(latestRewind()).toEqual({ epoch: "epoch-1", seq: 5 });
+    owner.dispose();
+  });
+
+  function liveRewindOfB(owner: ViewedTimelineOwner, retirement: { seq: number }): void {
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "rewind", retireFromSeq: 3 },
+      seq: retirement.seq,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:06.000Z"),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "C", messageId: "c" },
+      } as AgentStreamEventPayload,
+      seq: retirement.seq + 1,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:07.000Z"),
+    });
+    owner.flushStreamAgent(AGENT_ID);
+  }
+
+  /** A, reply A, B, reply B as a page served before B was rewound. */
+  const pageServedBeforeTheRewind: Parameters<ViewedTimelineOwner["applyTimelineResponse"]>[0] = {
+    ...page,
+    direction: "before",
+    hasOlder: false,
+    window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+    startCursor: { epoch: "epoch-1", seq: 1 },
+    endCursor: { epoch: "epoch-1", seq: 4 },
+    entries: [
+      entry(1, "user_message", "A"),
+      entry(2, "assistant_message", "reply A"),
+      entry(3, "user_message", "B"),
+      entry(4, "assistant_message", "reply B"),
+    ],
+  };
+
+  function loadTheEndOfB(owner: ViewedTimelineOwner): void {
+    owner.applyTimelineResponse({
+      ...page,
+      hasOlder: true,
+      window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+      startCursor: { epoch: "epoch-1", seq: 5 },
+      endCursor: { epoch: "epoch-1", seq: 5 },
+      entries: [entry(5, "assistant_message", "more of B")],
+    });
+  }
+
+  it("refuses an older page served before the rewind and takes the one served after it", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const owner = createOwner({ readTimeline: async () => undefined, commitTimeline: () => {} });
+    loadTheEndOfB(owner);
+    liveRewindOfB(owner, { seq: 6 });
+    expect(viewed()).toEqual(["C"]);
+
+    const outcome = owner.applyTimelineResponse(pageServedBeforeTheRewind);
+    expect(viewed()).toEqual(["C"]);
+    expect(outcome).toBe("stale");
+
+    owner.applyTimelineResponse({
+      ...pageServedBeforeTheRewind,
+      window: { minSeq: 1, maxSeq: 7, nextSeq: 8 },
+      // Retired rows count as covered, so the page reaches the loaded start.
+      endCursor: { epoch: "epoch-1", seq: 4 },
+      entries: [entry(1, "user_message", "A"), entry(2, "assistant_message", "reply A")],
+    });
+    expect(viewed()).toEqual(["A", "reply A", "C"]);
+    owner.dispose();
+  });
+
+  it("refuses a prompt jump window served before the rewind", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const owner = createOwner({ readTimeline: async () => undefined, commitTimeline: () => {} });
+    loadTheEndOfB(owner);
+    liveRewindOfB(owner, { seq: 6 });
+
+    const outcome = owner.applyTimelineResponse({
+      ...pageServedBeforeTheRewind,
+      mergeWindow: true,
+    });
+    expect(viewed()).toEqual(["C"]);
+    expect(outcome).toBe("stale");
+    owner.dispose();
+  });
+
+  it("refuses a first page served before a rewind that reached the chat while it loaded", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const owner = createOwner({ readTimeline: async () => undefined, commitTimeline: () => {} });
+    liveRewindOfB(owner, { seq: 5 });
+
+    const outcome = owner.applyTimelineResponse({
+      ...pageServedBeforeTheRewind,
+      direction: "tail",
+      window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+    });
+    expect(viewed()).toEqual(["C"]);
+    expect(outcome).toBe("stale");
+
+    owner.applyTimelineResponse({
+      ...page,
+      window: { minSeq: 1, maxSeq: 6, nextSeq: 7 },
+      startCursor: { epoch: "epoch-1", seq: 1 },
+      endCursor: { epoch: "epoch-1", seq: 6 },
+      entries: [
+        entry(1, "user_message", "A"),
+        entry(2, "assistant_message", "reply A"),
+        {
+          ...entry(6, "user_message", "C"),
+          item: { type: "user_message", text: "C", messageId: "c" },
+        },
+      ],
+      retirements: [{ seq: 5, retireFromSeq: 3 }],
+    });
+    expect(viewed()).toEqual(["A", "reply A", "C"]);
     owner.dispose();
   });
 });

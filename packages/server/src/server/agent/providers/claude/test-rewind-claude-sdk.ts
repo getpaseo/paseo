@@ -5,6 +5,7 @@ export class FakeClaudeSdk implements ClaudeRewindSdk {
   readonly recordedFileRewinds: Array<{ userMessageId: string }> = [];
 
   private nextSessionId = "forked-session-1";
+  forkError: Error | null = null;
 
   setNextSessionId(sessionId: string): void {
     this.nextSessionId = sessionId;
@@ -15,6 +16,7 @@ export class FakeClaudeSdk implements ClaudeRewindSdk {
     options: { upToMessageId: string; transcriptPath: string },
   ): Promise<{ sessionId: string }> {
     this.recordedForks.push({ upToMessageId: options.upToMessageId });
+    if (this.forkError) throw this.forkError;
     return { sessionId: this.nextSessionId };
   }
 

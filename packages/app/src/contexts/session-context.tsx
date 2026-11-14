@@ -385,6 +385,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] timeline replacement refresh failed", { serverId, error });
       });
     };
+    const onRewind = (message: SessionOutboundMessage) => {
+      if (message.type !== "agent.timeline.rewind") return;
+      const { agentId, epoch, seq, retireFromSeq } = message.payload;
+      sync.applyStreamEvent(agentId, {
+        event: { type: "rewind", retireFromSeq },
+        seq,
+        epoch,
+        timestamp: new Date(),
+      });
+    };
     const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
       canCheckFreshness: () =>
         client.getLastServerInfoMessage()?.features?.timelineFreshnessCheck === true,
@@ -395,6 +405,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           update: (message) => {
             if (message.type === "agent_stream") onStream(message);
             else if (message.type === "agent.timeline.replacement") onReplacement(message);
+            else if (message.type === "agent.timeline.rewind") onRewind(message);
           },
         });
         return observation;

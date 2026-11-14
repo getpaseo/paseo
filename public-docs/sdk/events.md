@@ -64,6 +64,8 @@ Pass `subscribe(listener, { onError })` to receive setup or list errors. After a
 ## Follow timeline events
 
 ```ts
+let entries = (await agent.timeline.refetch()).entries;
+
 const unsubscribe = agent.timeline.subscribe((update) => {
   const { event } = update;
   if (event.type === "subscription_restored") {
@@ -80,6 +82,13 @@ const unsubscribe = agent.timeline.subscribe((update) => {
     void agent.timeline.refetch().then((page) => console.log(page.entries));
     return;
   }
+  if (event.type === "rewind") {
+    // Entries that started in [retireFromSeq, seq) left the conversation. Later ones stay.
+    entries = entries.filter(
+      (entry) => entry.seqStart < event.retireFromSeq || entry.seqStart >= event.seq,
+    );
+    return;
+  }
   if (event.type === "timeline" && event.item.type === "assistant_message") {
     process.stdout.write(event.item.text);
   }
@@ -94,7 +103,7 @@ Await `unsubscribe.ready` before starting work whose events you need to observe.
 
 After reconnect, the same handle receives `{ agentId, subscriptionId, event: { type: "subscription_restored" } }` before subsequent live updates. This is a local SDK notification after membership acknowledgement (local attachment on broadcast-only hosts). The subscription gets a fresh ID. No history is fetched automatically, and missed events are not replayed.
 
-Choose recovery for your consumer: continue live, request a recent page, or call `timeline.refetch({ direction: "after", cursor: { epoch, seq } })` using your saved position. Live delivery continues while your read is pending; buffer or reconcile those events with the returned page by epoch and sequence. Follow `hasNewer` and `endCursor` to read further pages when needed. A live `replacement` invalidates the previous epoch. A failed explicit history read rejects that read and leaves the live subscription active.
+Choose recovery for your consumer: continue live, request a recent page, or call `timeline.refetch({ direction: "after", cursor: { epoch, seq } })` using your saved position. Live delivery continues while your read is pending; buffer or reconcile those events with the returned page by epoch and sequence. Follow `hasNewer` and `endCursor` to read further pages when needed. A live `replacement` invalidates the previous epoch. A live `rewind` keeps the epoch and removes the entries whose `seqStart` is at least `retireFromSeq` and below `seq`; entries from `seq` on belong to the rewound conversation. A failed explicit history read rejects that read and leaves the live subscription active.
 
 Subscription establishment failures deliver `{ agentId, event: { type: "error", error } }` and release the observation. Establish a new subscription when ready to retry. Releasing a subscription stops its callbacks and prevents restoration after reconnect.
 
@@ -116,7 +125,7 @@ for (const entry of page.entries) {
 }
 ```
 
-Use `startCursor`, `endCursor`, `hasOlder`, and `hasNewer` from the result to page without inventing offsets.
+Use `startCursor`, `endCursor`, `hasOlder`, and `hasNewer` from the result to page without inventing offsets. A page can carry `retirements`, the rewinds whose `seq` falls inside it. When you append the page to entries you already hold, first drop held entries whose `seqStart` is at least that retirement's `retireFromSeq` and below its `seq`. Entries you hold from `seq` on stay.
 
 ## Follow workspace updates
 

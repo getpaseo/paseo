@@ -16,7 +16,12 @@ import type {
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
+import { RewindOutcomeUnknownError } from "./rewind/rewind.js";
+import {
+  RewindNotAppliedError,
+  type AgentClient,
+  type AgentStreamEvent,
+} from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
@@ -27,7 +32,7 @@ import {
   StaleProviderSessionError,
 } from "./stale-provider-session-error.js";
 
-test("long concurrent plugin and child streams retain text-sized history and release it on archive", () => {
+test("long concurrent plugin and child streams retain text-sized history through archive and release it on delete", () => {
   const fixture = fileURLToPath(new URL("./test-utils/plugin-stream-memory.ts", import.meta.url));
   const output = execFileSync(
     process.execPath,
@@ -37,8 +42,12 @@ test("long concurrent plugin and child streams retain text-sized history and rel
       timeout: 20_000,
     },
   );
-  const memory = JSON.parse(output) as { retained: number; closed: number };
+  const memory = JSON.parse(output) as { retained: number; archived: number; closed: number };
   expect(memory.retained).toBeLessThan(24 * 1024 * 1024);
+  // Archiving closes the runtimes and keeps the stored history; it adds nothing.
+  expect(memory.archived).toBeLessThanOrEqual(memory.retained);
+  // Deleting the agents releases their histories and their children's.
+  expect(memory.closed).toBeLessThan(memory.archived);
   expect(memory.closed).toBeLessThan(6 * 1024 * 1024);
 });
 
@@ -377,7 +386,7 @@ async function withRewindAgent(
     manager: AgentManager;
     agentId: string;
     nativeMessages: string[];
-    messages: () => string[];
+    messages: () => Promise<string[]>;
   }) => Promise<void>,
   options: Parameters<typeof createRewindProviderHarness>[0] = {},
 ) {
@@ -395,17 +404,15 @@ async function withRewindAgent(
     undefined,
     { workspaceId: undefined },
   );
-  const messages = () =>
-    manager
-      .getTimeline(agent.id)
-      .flatMap((item) =>
-        item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
-      );
+  const messages = async () =>
+    (await manager.getTimeline(agent.id)).flatMap((item) =>
+      item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
+    );
   try {
     await manager.runAgent(agent.id, "A", { clientMessageId: "client-A" });
     await manager.runAgent(agent.id, "B", { clientMessageId: "client-B" });
     await manager.runAgent(agent.id, "C", { clientMessageId: "client-C" });
-    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
+    expect(await messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
     await run({ manager, agentId: agent.id, nativeMessages: harness.nativeMessages, messages });
   } finally {
     await manager.closeAgent(agent.id);
@@ -415,11 +422,11 @@ async function withRewindAgent(
 
 test("conversation rewind discards withdrawn plugin turns before and after a replacement prompt", async () => {
   await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
-    await manager.rewind(agentId, "user-B", "conversation");
-    const afterRewind = messages();
+    await manager.rewind(agentId, "client-B", "conversation");
+    const afterRewind = await messages();
     expect(nativeMessages).toEqual(["A"]);
     await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
-    const afterReplacement = messages();
+    const afterReplacement = await messages();
     expect(nativeMessages).toEqual(["A", "D"]);
     expect({ afterRewind, afterReplacement }).toEqual({
       afterRewind: ["A", "Reply A"],
@@ -430,11 +437,20 @@ test("conversation rewind discards withdrawn plugin turns before and after a rep
 
 test("file-only plugin rewind preserves the conversation before and after a replacement prompt", async () => {
   await withRewindAgent(async ({ manager, agentId, nativeMessages, messages }) => {
-    await manager.rewind(agentId, "user-B", "files");
+    await manager.rewind(agentId, "client-B", "files");
     expect(nativeMessages).toEqual(["A", "B", "C"]);
-    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
+    expect(await messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C"]);
     await manager.runAgent(agentId, "D", { clientMessageId: "client-D" });
-    expect(messages()).toEqual(["A", "Reply A", "B", "Reply B", "C", "Reply C", "D", "Reply D"]);
+    expect(await messages()).toEqual([
+      "A",
+      "Reply A",
+      "B",
+      "Reply B",
+      "C",
+      "Reply C",
+      "D",
+      "Reply D",
+    ]);
   });
 });
 
@@ -726,18 +742,22 @@ test("failed plugin rewind replay blocks prompts until retry without repeating n
   );
 });
 
-test("retrying a failed plugin rewind replay replaces the manager timeline before prompting", async () => {
+test("a failed plugin rewind replay blocks prompts until a reload settles the committed rewind", async () => {
   let failReplay = true;
   await withRewindAgent(
     async ({ manager, agentId, messages }) => {
-      await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
-        "replay failed",
+      // The native revert committed, but the session could not replay what it kept.
+      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toMatchObject({
+        name: "RewindOutcomeUnknownError",
+        cause: { message: "replay failed" },
+      });
+      await expect(manager.runAgent(agentId, "D")).rejects.toBeInstanceOf(
+        RewindOutcomeUnknownError,
       );
-      await expect(manager.runAgent(agentId, "D")).rejects.toThrow("Retry the rewind or reload");
-      await manager.rewind(agentId, "user-B", "conversation");
-      expect(messages()).toEqual(["A", "Reply A"]);
+      await manager.reloadAgentSession(agentId);
+      expect(await messages()).toEqual(["A", "Reply A"]);
       await manager.runAgent(agentId, "D");
-      expect(messages()).toEqual(["A", "Reply A", "D", "Reply D"]);
+      expect(await messages()).toEqual(["A", "Reply A", "D", "Reply D"]);
     },
     {
       handleInput: async (input, emit) => {
@@ -759,12 +779,12 @@ test("reload after failed plugin rewind replay resumes the committed fork", asyn
   let failReplay = true;
   await withRewindAgent(
     async ({ manager, agentId, messages }) => {
-      await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
-        "replay failed",
-      );
+      await expect(manager.rewind(agentId, "client-B", "conversation")).rejects.toMatchObject({
+        name: "RewindOutcomeUnknownError",
+        cause: { message: "replay failed" },
+      });
       await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
-      await manager.hydrateTimelineFromProvider(agentId, { force: true });
-      expect(messages()).toEqual(["A", "Reply A"]);
+      expect(await messages()).toEqual(["A", "Reply A"]);
     },
     {
       forkOnRevert: true,
@@ -1662,7 +1682,7 @@ describe("PluginAgentClientRegistry", () => {
           state: "completed",
         });
         await nextTurn();
-        const [child] = manager.listProviderSubagents(agent.id);
+        const [child] = await manager.listProviderSubagents(agent.id);
         expect(child).toMatchObject({
           id: "reusable-child",
           title: "Plugin child",
@@ -1676,7 +1696,7 @@ describe("PluginAgentClientRegistry", () => {
           state: "started",
         });
         await nextTurn();
-        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+        expect(await manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: "running" },
         ]);
 
@@ -1687,7 +1707,7 @@ describe("PluginAgentClientRegistry", () => {
           state: outcome,
         });
         await nextTurn();
-        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+        expect(await manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: outcome },
         ]);
       } finally {
@@ -2093,6 +2113,80 @@ describe("PluginAgentClientRegistry", () => {
       const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
       expect(result).toEqual({ status: "unavailable" });
       expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+});
+
+describe("plugin conversation rewind", () => {
+  async function openRevertableSession(reply: "request.completed" | "request.failed") {
+    const harness = createProviderHarness({
+      capabilities: [...CAPABILITIES, "session.revert.conversation"],
+      openChildren: (sessionId, emit) => {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          item: { type: "user_message", id: "prompt-b", text: "B", revertToken: "before-b" },
+        });
+      },
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.revert") return false;
+        emit(
+          reply === "request.completed"
+            ? { type: "request.completed", requestId: input.requestId }
+            : { type: "request.failed", requestId: input.requestId, error: { message: "Busy" } },
+        );
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    return { harness, registry, session };
+  }
+
+  // The plugin protocol completes a revert without saying which messages it removed, so the
+  // resumed session's replay settles it.
+  test("a completed revert is unreported", async () => {
+    const { harness, registry, session } = await openRevertableSession("request.completed");
+    try {
+      await expect(session.revertConversation!({ messageId: "prompt-b" })).resolves.toEqual({
+        kind: "unreported",
+      });
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([
+        expect.objectContaining({ token: "before-b", scope: "conversation" }),
+      ]);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  // A failed request may still have removed messages.
+  test("a failed revert leaves the outcome unknown", async () => {
+    const { registry, session } = await openRevertableSession("request.failed");
+    try {
+      const rewind = session.revertConversation!({ messageId: "prompt-b" });
+      await expect(rewind).rejects.toThrow("Busy");
+      await expect(rewind).rejects.not.toBeInstanceOf(RewindNotAppliedError);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("a message without a revert token is not sent to the plugin", async () => {
+    const { harness, registry, session } = await openRevertableSession("request.completed");
+    try {
+      await expect(session.revertConversation!({ messageId: "unknown" })).rejects.toBeInstanceOf(
+        RewindNotAppliedError,
+      );
+      expect(harness.inputs.filter((input) => input.type === "session.revert")).toEqual([]);
     } finally {
       await session.close();
       registry.replace([]);

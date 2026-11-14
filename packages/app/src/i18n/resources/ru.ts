@@ -729,6 +729,8 @@ export const ru: TranslationResources = {
         resumeCommandUnavailable: "Команда возобновления недоступна",
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Агент перезагружен",
+        reloadedAgentHistoryDiverged:
+          "Агент перезагружен, но история провайдера не совпадает с этим чатом, поэтому она не синхронизирована",
         failedToReloadAgent: "Не удалось перезагрузить агента",
         failedToCloseAgent: "Не удалось закрыть агента",
       },

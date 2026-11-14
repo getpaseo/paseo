@@ -62,6 +62,8 @@ unsubscribe();
 ## 跟踪时间线事件 {#follow-timeline-events}
 
 ```ts
+let entries = (await agent.timeline.refetch()).entries;
+
 const unsubscribe = agent.timeline.subscribe((update) => {
   const { event } = update;
   if (event.type === "subscription_restored") {
@@ -78,6 +80,13 @@ const unsubscribe = agent.timeline.subscribe((update) => {
     void agent.timeline.refetch().then((page) => console.log(page.entries));
     return;
   }
+  if (event.type === "rewind") {
+    // Entries that started in [retireFromSeq, seq) left the conversation. Later ones stay.
+    entries = entries.filter(
+      (entry) => entry.seqStart < event.retireFromSeq || entry.seqStart >= event.seq,
+    );
+    return;
+  }
   if (event.type === "timeline" && event.item.type === "assistant_message") {
     process.stdout.write(event.item.text);
   }
@@ -92,7 +101,7 @@ const unsubscribe = agent.timeline.subscribe((update) => {
 
 重连后，同一个句柄会在后续实时更新之前收到 `{ agentId, subscriptionId, event: { type: "subscription_restored" } }`。这是 SDK 在成员关系确认后（在只支持广播的主机上是本地挂载后）发出的本地通知。订阅会获得一个新的 ID。不会自动获取历史，错过的事件也不会重放。
 
-请为你的使用方选择恢复方式：继续接收实时事件、请求最近一页，或者用你保存的位置调用 `timeline.refetch({ direction: "after", cursor: { epoch, seq } })`。读取进行期间，实时投递会继续；请按 epoch 和序号缓冲这些事件，或与返回的页面进行对账。需要时，根据 `hasNewer` 和 `endCursor` 继续读取后面的页面。实时的 `replacement` 会使之前的 epoch 失效。显式的历史读取失败时，只会让那次读取 reject，实时订阅仍然有效。
+请为你的使用方选择恢复方式：继续接收实时事件、请求最近一页，或者用你保存的位置调用 `timeline.refetch({ direction: "after", cursor: { epoch, seq } })`。读取进行期间，实时投递会继续；请按 epoch 和序号缓冲这些事件，或与返回的页面进行对账。需要时，根据 `hasNewer` 和 `endCursor` 继续读取后面的页面。实时的 `replacement` 会使之前的 epoch 失效。实时的 `rewind` 保持 epoch 不变，并移除 `seqStart` 不小于 `retireFromSeq` 且小于 `seq` 的条目；从 `seq` 起的条目属于回退后的对话。显式的历史读取失败时，只会让那次读取 reject，实时订阅仍然有效。
 
 订阅建立失败时会投递 `{ agentId, event: { type: "error", error } }` 并释放该观察。准备好重试时，请建立新的订阅。释放订阅会停止它的回调，并阻止重连后的恢复。
 
@@ -114,7 +123,7 @@ for (const entry of page.entries) {
 }
 ```
 
-使用结果中的 `startCursor`、`endCursor`、`hasOlder` 和 `hasNewer` 翻页，不要自己计算偏移量。
+使用结果中的 `startCursor`、`endCursor`、`hasOlder` 和 `hasNewer` 翻页，不要自己计算偏移量。页面可能带有 `retirements`，即 `seq` 落在该页范围内的回退。把页面追加到已持有的条目之前，先针对每个回退丢弃 `seqStart` 不小于其 `retireFromSeq` 且小于其 `seq` 的已持有条目。从 `seq` 起已持有的条目保留。
 
 ## 跟踪工作区更新 {#follow-workspace-updates}
 

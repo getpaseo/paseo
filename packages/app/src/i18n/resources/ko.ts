@@ -724,6 +724,8 @@ export const ko: TranslationResources = {
         resumeCommandUnavailable: "재개 명령을 사용할 수 없습니다",
         reloadingAgent: "에이전트 다시 로드 중...",
         reloadedAgent: "에이전트를 다시 로드했습니다",
+        reloadedAgentHistoryDiverged:
+          "에이전트를 다시 로드했지만 제공자 기록이 이 채팅과 일치하지 않아 동기화하지 않았습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
         failedToCloseAgent: "에이전트를 닫지 못했습니다",
       },

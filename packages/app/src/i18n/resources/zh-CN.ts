@@ -722,6 +722,8 @@ export const zhCN: TranslationResources = {
         resumeCommandUnavailable: "恢复命令不可用",
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
+        reloadedAgentHistoryDiverged:
+          "已重新加载 Agent，但提供方的历史记录与此对话不一致，因此未同步",
         failedToReloadAgent: "重新加载 Agent 失败",
         failedToCloseAgent: "关闭 Agent 失败",
       },

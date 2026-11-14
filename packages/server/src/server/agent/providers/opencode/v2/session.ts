@@ -21,9 +21,11 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
+  ConversationRewindCut,
   SteerActiveTurnOptions,
   SteerResult,
 } from "../../../agent-sdk-types.js";
+import { RewindNotAppliedError } from "../../../agent-sdk-types.js";
 
 import { toDiagnosticErrorMessage } from "../../diagnostic-utils.js";
 
@@ -451,15 +453,21 @@ export class OpenCodeV2Session implements AgentSession {
   interrupt() {
     return this.turns.interrupt();
   }
-  async revertBoth(input: { messageId: string }) {
-    await this.interrupt();
-    await this.reconnectIfExited();
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
+    try {
+      await this.interrupt();
+      await this.reconnectIfExited();
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
+    }
+    // A rejected stage or commit may still have changed the session, so its error is left unknown.
     await this.client.session.revert.stage({
       sessionID: this.id,
       messageID: input.messageId,
       files: true,
     });
     await this.client.session.revert.commit({ sessionID: this.id });
+    return { kind: "at_target" };
   }
   getPendingPermissions() {
     return [...this.permissions.list()];

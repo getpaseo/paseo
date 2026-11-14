@@ -11,6 +11,7 @@ import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
 } from "../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../timeline/index.js";
 import { ClaudeTaskProtocolSource } from "./live-source.js";
 import { foldSubagentObservations, type SubagentObservation } from "./observation.js";
 import {
@@ -40,11 +41,13 @@ function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
   };
 }
 
-function applyToStore(observations: SubagentObservation[]): ProviderSubagentDescriptor | null {
-  const store = new ProviderSubagentStore();
+async function applyToStore(
+  observations: SubagentObservation[],
+): Promise<ProviderSubagentDescriptor | null> {
+  const store = new ProviderSubagentStore(new AgentTimeline());
   let descriptor: ProviderSubagentDescriptor | null = null;
   for (const event of foldSubagentObservations(observations)) {
-    const applied = store.apply("parent", "claude", event);
+    const applied = await store.apply("parent", "claude", event);
     if (applied.type === "upsert") descriptor = applied.subagent;
   }
   return descriptor;
@@ -247,7 +250,7 @@ describe("observeReplaySubagents", () => {
   it("drops a terminal subagent the parent has no Task call for", async () => {
     // A legacy grandchild: its toolUseId names a Task call made inside a sibling's transcript, so
     // no tool_result for it can ever reach the parent. Left running, it never stops.
-    const descriptor = applyToStore(
+    const descriptor = await applyToStore(
       (
         await observeReplaySubagents({
           subagents: [
@@ -275,7 +278,7 @@ describe("observeReplaySubagents", () => {
   it("drops a terminal skill-spawned subagent that has no link at all", async () => {
     // A /code-review run: no Task tool_use exists to name it, so its sidecar carries only
     // agentType and its id appears nowhere in the parent transcript.
-    const descriptor = applyToStore(
+    const descriptor = await applyToStore(
       (
         await observeReplaySubagents({
           subagents: [
@@ -301,7 +304,7 @@ describe("observeReplaySubagents", () => {
   });
 
   it("reports a scraped link's failure as failed", async () => {
-    const descriptor = applyToStore(
+    const descriptor = await applyToStore(
       (
         await observeReplaySubagents({
           subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
@@ -343,7 +346,7 @@ describe("observeReplaySubagents", () => {
   });
 
   it("finishes a terminal Task child when the parent has not recorded its outcome", async () => {
-    const descriptor = applyToStore(
+    const descriptor = await applyToStore(
       (
         await observeReplaySubagents({
           subagents: [
@@ -619,7 +622,7 @@ describe("replay usage", () => {
   });
 
   it("lands the complete provider-owned subtitle on the descriptor", async () => {
-    const store = new ProviderSubagentStore();
+    const store = new ProviderSubagentStore(new AgentTimeline());
     const observations = (
       await observeReplaySubagents({
         subagents: [
@@ -640,10 +643,10 @@ describe("replay usage", () => {
       })
     ).observations;
     for (const event of foldSubagentObservations(observations)) {
-      store.apply("parent", "claude", event);
+      await store.apply("parent", "claude", event);
     }
 
-    expect(store.get("parent", TOOL_USE_ID)?.subtitle).toBe("general-purpose · 7 tokens");
+    expect((await store.get("parent", TOOL_USE_ID))?.subtitle).toBe("general-purpose · 7 tokens");
   });
 });
 
@@ -689,8 +692,8 @@ describe("live and replay agree", () => {
       })
     ).observations;
 
-    const fromWire = applyToStore(liveObservations);
-    const fromDisk = applyToStore(replayObservations);
+    const fromWire = await applyToStore(liveObservations);
+    const fromDisk = await applyToStore(replayObservations);
 
     const identity = (descriptor: ProviderSubagentDescriptor | null) => ({
       id: descriptor?.id,

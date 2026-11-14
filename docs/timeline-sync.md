@@ -5,15 +5,9 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon retains projected items in memory. Each source event advances the stream sequence,
-then replaces the previous tool state or merges into the current text item. Intermediate payloads
-are never retained for history or catch-up. Provider history is the durable transcript authority
-and rebuilds the projection when an agent resumes.
-
-Pagination bounds each read, not total resident history. Active and idle agents retain their
-projected transcript; archive releases it and later history reads rebuild it from the provider.
-Streaming overhead must remain proportional to the retained transcript. Cumulative text snapshots
-must be released after their deltas have been consumed.
+Pagination bounds each read, not total resident history. Streaming overhead must remain
+proportional to the retained transcript. Cumulative text snapshots must be released after their
+deltas have been consumed.
 
 The invariants are:
 
@@ -31,6 +25,44 @@ budget does not bound wide objects or multi-byte text. The same
 bounded item is used for runtime timeline rows and live stream events. Provider history hydration
 applies the same rule so reopening an agent cannot restore an oversized payload. Fetches apply it
 again to assistant and reasoning rows the projection merges from many chunks.
+
+## Owned history
+
+The daemon owns each agent's history in `AgentTimeline`
+(`packages/server/src/server/agent/timeline/`): one ordered history per agent, with each provider
+child's descriptor and history in a child scope of the same agent. Each source event advances the
+stream sequence, then replaces the previous tool state or merges into the current text item.
+Intermediate payloads are never retained for history or catch-up.
+
+History is append-only: rewind, import, reload and archive never delete or rewrite a row. Only
+deleting the agent, or a provider removing one of its own children, deletes history.
+
+- **Rewind** retires a range of rows. They leave the conversation and stay stored, in the same
+  epoch. See [Rewind retires rows](#rewind-retires-rows).
+- **Provider history** is imported only into an agent that has no history. After that, resume
+  does not read it. Reload agent and Unarchive append only the rows the provider has after the
+  owned conversation, as ordinary live rows. Any other difference, including an answer Paseo saw only part of or a prompt sent with
+  attachments, changes nothing and is reported as diverged. A provider child Paseo already holds,
+  listed or retired, is never imported again.
+- **Archive and reload** keep the history and the provider children. An archived chat reads them
+  without its provider. Deleting the agent deletes its history and every child's, retired ones
+  included.
+
+`epoch` is the stored history's identity, minted once when the history is created.
+
+`AgentTimeline` serializes every operation of one agent, child scopes included, and keeps its
+state in an `AgentTimelineBackend`: the sequence, the rows and retirements, prompt identities, the
+open rewind, and the children. The backend contract suite is `agent-timeline.test.ts`, run over
+`TIMELINE_CONTRACT_BACKENDS` in `timeline/testing.ts`. The only backend keeps everything in
+memory, so a daemon restart loses the owned history: the next resume imports provider history into
+a new epoch, and clients take the destructive reset below. Rewinds retired before the restart come
+back if the provider history still holds them. Retained history costs memory for every loaded,
+closed or archived agent until the daemon exits or the agent is deleted.
+
+An open rewind is stored with the history. Resuming an agent whose history holds one settles it
+before the agent takes prompts: a recorded provider cut is committed, and an unknown outcome is
+judged from the resumed provider history. When that history proves nothing, the rewind stays open
+and the agent refuses prompts with the unknown-outcome error.
 
 ## Presence is not delivery
 
@@ -159,7 +191,7 @@ or retry backoff. This cannot keep a mobile socket alive after the operating sys
   bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
 - When the page overlaps or is adjacent to the local end cursor, only projected items newer than
   that cursor are applied. Already-covered rows are not replayed.
-- A true middle gap, epoch change, or rewind atomically replaces stale canonical history with the
+- A true middle gap or epoch change atomically replaces stale canonical history with the
   latest tail. The replacement reconciles positioned live rows beyond its coverage and unresolved
   local submissions; it never retains two discontiguous canonical ranges.
 
@@ -171,6 +203,24 @@ A plan approval keeps the original proposal's tool-call identity through resolut
 history replay. The pending approval UI can hide that tool from presentation, but the client model
 must retain its position. Creating a new history card on rejection places it after the prompt that
 rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
+## Rewind retires rows
+
+A conversation rewind commits a retirement `{ seq, retireFromSeq }`: active rows anchored in
+`[retireFromSeq, seq)` leave the conversation, and `seq` is the retirement's own position in the
+sequence. The provider children spawned by retired tool calls, and their descendants, are retired
+in the same commit. They leave the listing, keep their history, and drop late provider events.
+
+Clients learn of a retirement live through `agent.timeline.rewind`, and on pages through
+`retirements`, which lists the retirements whose `seq` lies inside the page's span. The client
+drops the rows it holds in that range; rows without a timeline position are unechoed local sends
+and stay. Retired ranges and the retirement's `seq` count as covered, so forward cursors advance
+through them. Tail, before and prompt-jump pages are served from active rows, so one served before
+a retirement the client already applied is stale and is refetched (`viewed-timeline-sync.ts`).
+
+Clients without `timeline_rewind_operations` cannot drop retired rows. For them the session derives
+a wire epoch that changes with each retirement, so they take the destructive replacement they
+always took on rewind. The shim is tagged `COMPAT(timelineRewindOperations)`.
 
 ## Provider child history
 
@@ -336,7 +386,7 @@ the draft-create handoff is the one boundary that also permits the legacy canoni
 arrived first. Generic reducers and consumers do not reimplement message identity matching.
 
 Ordinary bootstrap, same-epoch reset, and catch-up replacement preserve unmatched locally submitted
-rows because a provider may never echo them. A known epoch change or rewind replaces history and
+rows because a provider may never echo them. A known epoch change replaces history and
 drops acknowledged local rows omitted by the new canonical epoch; every transaction not yet
 acknowledged by the provider, and no other local row, crosses that destructive boundary. A cold
 reset without an existing epoch is destructive because the client has no continuity anchor.
@@ -352,6 +402,7 @@ canonical assistant prefix, it stays in the head lane. No row may be returned in
 
 ## Relevant code
 
+- Server owned history: `packages/server/src/server/agent/timeline/`
 - Server live stream forwarding: `packages/server/src/server/session.ts`
 - App sync planning: `packages/app/src/timeline/timeline-sync-plan.ts`
 - App viewed-agent synchronization: `packages/app/src/timeline/viewed-timeline-sync.ts`

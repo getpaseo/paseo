@@ -20,6 +20,7 @@ import {
   isUnreconciledLocalUserMessage,
   type AgentToolCallData,
   type StreamItem,
+  type TimelinePosition,
 } from "@/types/stream";
 import type { UnsettledTurn } from "@/timeline/turn-liveness";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -80,7 +81,15 @@ const IsoDateSchema = z.iso.datetime();
 const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
+  // COMPAT(timelineRewindOperations): absent on caches written before rows were anchored, added in
+  // v0.14.1, remove after 2027-05-10. Such a cache is not restored; the chat loads its tail instead.
+  anchorSeq: z.number().int().nonnegative().optional(),
 });
+type StoredTimelinePosition = z.infer<typeof TimelinePositionSchema>;
+
+function isAnchored(position: StoredTimelinePosition | undefined): boolean {
+  return position === undefined || position.anchorSeq !== undefined;
+}
 const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
   z.union([
     z.null(),
@@ -415,6 +424,10 @@ function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | nu
   if (!stored) {
     return null;
   }
+  // A rewind retires rows by anchor, so an unanchored row could not be retired.
+  if (!stored.items.every((item) => isAnchored(item.timelineCursor))) {
+    return null;
+  }
   return {
     agentId: stored.agentId,
     items: stored.items.map(deserializeTimelineItem),
@@ -529,11 +542,20 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   }
 }
 
+function anchoredPosition(position: StoredTimelinePosition | undefined): {
+  timelineCursor?: TimelinePosition;
+} {
+  if (!position || position.anchorSeq === undefined) return {};
+  return {
+    timelineCursor: { epoch: position.epoch, seq: position.seq, anchorSeq: position.anchorSeq },
+  };
+}
+
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   if (item.kind === "plugin") {
     return {
       id: item.id,
-      ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+      ...anchoredPosition(item.timelineCursor),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
       kind: item.kind,
@@ -552,7 +574,7 @@ function deserializeBuiltinTimelineItem(
 ): StreamItem {
   const base = {
     id: item.id,
-    ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...anchoredPosition(item.timelineCursor),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };

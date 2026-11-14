@@ -211,6 +211,37 @@ test("SDK subscribers receive timeline replacement instead of silently losing hi
   }
 });
 
+test("SDK subscribers receive a conversation rewind as a retired range", async () => {
+  const { createPaseoApi } = await import("./index");
+  const h = connection();
+  const received: unknown[] = [];
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    const off = createPaseoApi(h.client)
+      .agents.ref("agent")
+      .timeline.subscribe((event) => received.push(event));
+    await off.ready;
+    h.receive({
+      type: "agent.timeline.rewind",
+      payload: {
+        agentId: "agent",
+        epoch: "epoch-1",
+        seq: 12,
+        retireFromSeq: 7,
+        subscriptionId: off.subscriptionId,
+      },
+    });
+    expect(received).toEqual([
+      { agentId: "agent", event: { type: "rewind", epoch: "epoch-1", seq: 12, retireFromSeq: 7 } },
+    ]);
+    off();
+  } finally {
+    await h.client.close();
+  }
+});
+
 test("local listeners create no demand before or after reconnect", async () => {
   const h = connection();
   try {

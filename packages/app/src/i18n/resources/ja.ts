@@ -729,6 +729,8 @@ export const ja: TranslationResources = {
         resumeCommandUnavailable: "再開コマンドが利用できません",
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
+        reloadedAgentHistoryDiverged:
+          "エージェントを再読み込みしましたが、プロバイダーの履歴がこのチャットと一致しないため同期しませんでした",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
         failedToCloseAgent: "エージェントを閉じられませんでした",
       },

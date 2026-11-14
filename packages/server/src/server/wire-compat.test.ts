@@ -22,7 +22,7 @@ import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
-import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import { AgentTimeline } from "./agent/timeline/index.js";
 import type { AgentTimelineFetchOptions } from "./agent/agent-timeline-store-types.js";
 import { handleCreatePaseoWorktreeRequest } from "./worktree-session.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -60,14 +60,18 @@ interface SessionInternals {
 }
 
 class InMemoryAgentManager {
-  private readonly timeline = new InMemoryAgentTimelineStore();
+  private readonly timeline = new AgentTimeline();
 
   constructor(rows: AgentTimelineRow[]) {
-    this.timeline.initialize("agent-1", {
-      epoch: "epoch-1",
-      rows,
-      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
-    });
+    // The timeline runs operations in call order, so every fetch observes this seed.
+    void this.timeline.create(
+      { agentId: "agent-1" },
+      {
+        epoch: "epoch-1",
+        rows,
+        nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+      },
+    );
   }
 
   getAgent() {
@@ -101,7 +105,6 @@ class InMemoryAgentManager {
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
       persistence: null,
-      historyPrimed: true,
       lastUsage: undefined,
       lastError: undefined,
       attention: { requiresAttention: false, attentionReason: null, attentionTimestamp: null },
@@ -119,7 +122,7 @@ class InMemoryAgentManager {
   }
 
   fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
-    return this.timeline.fetch("agent-1", options);
+    return this.timeline.fetch({ agentId: "agent-1" }, options);
   }
 
   listAgents() {

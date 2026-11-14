@@ -149,7 +149,10 @@ describe.skipIf(!RUN_REAL_HUB_POLICY)("Hub provider policy (real providers)", ()
                 provider,
                 scenario: "replying_worker",
                 actions: sink.calls,
-                agent: redactDiagnostic(hub.ownedAgentDiagnostic(created.agentId), hub.repoRoot()),
+                agent: redactDiagnostic(
+                  await hub.ownedAgentDiagnostic(created.agentId),
+                  hub.repoRoot(),
+                ),
                 permissionsRequested: permissionRequests(events),
                 toolOutcomes: toolOutcomes(events),
               })}`,

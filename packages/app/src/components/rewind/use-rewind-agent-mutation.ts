@@ -9,6 +9,7 @@ import { useRewindComposerRestore } from "./composer-restore";
 import { useSessionStore } from "@/stores/session-store";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { hostSupportsFeature } from "@/runtime/host-features";
 
 interface UseRewindAgentMutationInput {
   serverId?: string;
@@ -35,7 +36,16 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
-      if (mode !== "files") {
+      // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10. A daemon with
+      // the feature delivers the rewind on the live timeline; an older one replaced the timeline
+      // and this client has to read it again.
+      const appliesLive =
+        input.serverId !== undefined &&
+        hostSupportsFeature(
+          useSessionStore.getState().sessions[input.serverId]?.serverInfo,
+          "timelineRewindOperations",
+        );
+      if (mode !== "files" && !appliesLive) {
         const cursor = input.serverId
           ? useSessionStore
               .getState()

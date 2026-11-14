@@ -130,6 +130,7 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
+  type ConversationRewindCut,
   type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
@@ -140,6 +141,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
   type ToolCallDetail,
+  RewindNotAppliedError,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
@@ -368,9 +370,10 @@ interface ClaudeRewindTurnAnchor {
   assistantMessageId: string | null;
 }
 
+/** Where a conversation rewind forks, and which prompts the fork keeps. */
 type ClaudeConversationRewindTarget =
   | { kind: "fresh-session" }
-  | { kind: "fork"; messageId: string };
+  | { kind: "fork"; messageId: string; cut: ConversationRewindCut };
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -3166,22 +3169,43 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
-    await this.ensureHistoryReady();
-    const target = await this.resolveConversationRewindTarget(input.messageId);
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
+    let target: ClaudeConversationRewindTarget;
+    try {
+      await this.ensureHistoryReady();
+      target = await this.resolveConversationRewindTarget(input.messageId);
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
+    }
     if (target.kind === "fresh-session") {
       this.startFreshConversationSession();
-      return;
+      return { kind: "after", retainedMessageId: null };
     }
+    // A fork leaves the original session as it was; the rewind happened once this session
+    // continues the fork instead.
     const currentSessionId = this.claudeSessionId;
-    await revertClaudeConversation({
-      sdk: this.rewindSdk,
-      sessionId: currentSessionId,
-      transcriptPath: currentSessionId ? await this.resolveHistoryPath(currentSessionId) : null,
-      messageId: target.messageId,
-      resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
-    });
+    let failure: unknown = null;
+    try {
+      await revertClaudeConversation({
+        sdk: this.rewindSdk,
+        sessionId: currentSessionId,
+        transcriptPath: currentSessionId ? await this.resolveHistoryPath(currentSessionId) : null,
+        messageId: target.messageId,
+        resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
+        setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    if (this.claudeSessionId === currentSessionId) {
+      throw RewindNotAppliedError.from(
+        failure ?? new Error("Claude did not switch to the rewound session"),
+      );
+    }
+    if (failure) {
+      this.logger.warn({ err: failure }, "Claude rewound the conversation but failed afterwards");
+    }
+    return target.cut;
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
@@ -3193,9 +3217,13 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
-    await this.revertFiles(input);
-    await this.revertConversation(input);
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
+    try {
+      await this.revertFiles(input);
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
+    }
+    return this.revertConversation(input);
   }
 
   private resolveSlashCommandInvocation(prompt: AgentPromptInput): SlashCommandInvocation | null {
@@ -3519,7 +3547,8 @@ class ClaudeAgentSession implements AgentSession {
         ? await findSteeredMessageParent(transcriptPath, targetUserMessageId)
         : null;
       if (steerParent) {
-        return { kind: "fork", messageId: steerParent };
+        // The fork point is just before the steered message, so exactly it and what followed go.
+        return { kind: "fork", messageId: steerParent, cut: { kind: "at_target" } };
       }
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
@@ -3530,9 +3559,16 @@ class ClaudeAgentSession implements AgentSession {
     // the immediately preceding anchor let one such turn fail every later rewind in the
     // conversation.
     for (let previous = index - 1; previous >= 0; previous -= 1) {
-      const assistantMessageId = this.rewindTurnAnchors[previous]?.assistantMessageId;
-      if (assistantMessageId) {
-        return { kind: "fork", messageId: assistantMessageId };
+      const anchor = this.rewindTurnAnchors[previous];
+      if (anchor?.assistantMessageId) {
+        return {
+          kind: "fork",
+          messageId: anchor.assistantMessageId,
+          cut:
+            previous === index - 1
+              ? { kind: "at_target" }
+              : { kind: "after", retainedMessageId: anchor.userMessageId },
+        };
       }
     }
     return { kind: "fresh-session" };

@@ -140,7 +140,7 @@ describe("collapseTurns", () => {
   it("stands at its host's timeline position, taking a new row when that position lands", () => {
     const live = collapse([user("u1"), shell("c1"), reply("r1")]);
     expect(live.summaryRowsByHostId.get("u1")).not.toHaveProperty("timelineCursor");
-    const cursor = { epoch: "epoch-1", seq: 7 };
+    const cursor = { epoch: "epoch-1", seq: 7, anchorSeq: 7 };
     const placed = [{ ...user("u1"), timelineCursor: cursor }, shell("c1"), reply("r1")];
     const canonical = collapse(placed, { previousSummaryRowsByHostId: live.summaryRowsByHostId });
     expect(canonical.summaryRowsByHostId.get("u1")).not.toBe(live.summaryRowsByHostId.get("u1"));

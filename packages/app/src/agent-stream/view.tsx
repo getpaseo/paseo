@@ -411,6 +411,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
     );
+    const timelineRewindSeq = useSessionStore((state) => {
+      const rewind = state.sessions[resolvedServerId]?.agentTimelineLatestRewind.get(agentId);
+      return rewind && rewind.epoch === timelineEpoch ? rewind.seq : null;
+    });
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -1166,6 +1170,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         agentId={agentId}
         serverId={resolvedServerId}
         epoch={timelineEpoch}
+        rewindSeq={timelineRewindSeq}
         items={findItems}
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}

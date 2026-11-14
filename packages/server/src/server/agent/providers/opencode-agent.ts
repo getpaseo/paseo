@@ -60,6 +60,8 @@ import {
   type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
+  type ConversationRewindCut,
+  RewindNotAppliedError,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
@@ -3755,14 +3757,18 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
-    await this.reconnectIfServerExited();
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
+    await this.reconnectIfServerExited().catch((error: unknown) => {
+      throw RewindNotAppliedError.from(error);
+    });
+    // A rejected revert may still have staged its removal, so its error is left unknown.
     await revertOpenCodeConversationAndFiles({
       client: this.client,
       sessionId: this.sessionId,
       cwd: this.config.cwd,
       messageId: input.messageId,
     });
+    return { kind: "at_target" };
   }
 
   private abortSession(turnId: string | null, reason: string): Promise<void> {

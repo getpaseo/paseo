@@ -34,7 +34,7 @@ import {
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
+import { AgentNotFoundError, loadAgentHistory } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
@@ -3190,20 +3190,23 @@ function createToolCatalog(
       },
     },
     async ({ agentId, limit }) => {
-      await ensureAgentLoaded(agentId, {
+      const source = await loadAgentHistory(agentId, {
         agentManager,
         agentStorage,
         logger: childLogger,
       });
-      const timeline = agentManager.getTimeline(agentId);
-      const snapshot = agentManager.getAgent(agentId);
+      const timeline = await agentManager.getTimeline(agentId);
+      const currentModeId =
+        source.kind === "live"
+          ? (agentManager.getAgent(agentId) ?? source.agent).currentModeId
+          : (source.record.lastModeId ?? null);
 
       return {
         content: [],
         structuredContent: ensureValidJson({
           agentId,
           ...summarizeAgentActivity(timeline, limit),
-          currentModeId: snapshot?.currentModeId ?? null,
+          currentModeId: currentModeId ?? null,
         }),
       };
     },

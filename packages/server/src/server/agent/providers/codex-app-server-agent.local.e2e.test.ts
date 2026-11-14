@@ -275,9 +275,8 @@ describe("Codex app-server provider (local e2e)", () => {
         const threadId = manager.getAgent(agentId)?.persistence?.sessionId;
         expect(threadId).toBeTruthy();
         for (let i = 0; i < 3; i++) {
-          const reloaded = await manager.reloadAgentSession(agentId, undefined, {
-            rehydrateFromDisk: true,
-          });
+          const reloaded = await manager.reloadAgentSession(agentId);
+          await manager.reconcileProviderHistory(agentId);
           expect(reloaded.persistence?.sessionId).toBe(threadId);
           expect(reloaded.lifecycle).toBe("idle");
         }

@@ -722,6 +722,8 @@ export const ar: TranslationResources = {
         resumeCommandUnavailable: "أمر الاستئناف غير متوفر",
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
+        reloadedAgentHistoryDiverged:
+          "تمت إعادة تحميل الوكيل، لكن سجل المزوّد لا يطابق هذه المحادثة، لذا لم تتم مزامنته",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
         failedToCloseAgent: "فشل في إغلاق الوكيل",
       },

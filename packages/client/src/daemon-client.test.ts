@@ -1129,6 +1129,7 @@ test("advertises client capabilities in hello", async () => {
       all_providers: true,
       selective_agent_timeline: true,
       timeline_replacement_invalidation: true,
+      timeline_rewind_operations: true,
       provider_snapshot_references: true,
       explicit_event_subscriptions: true,
       owned_subscriptions: true,

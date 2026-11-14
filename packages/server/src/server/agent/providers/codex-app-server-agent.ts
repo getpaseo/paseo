@@ -41,6 +41,9 @@ import {
   type ProviderCatalog,
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
+  type ConversationRewindCut,
+  type ConversationRewindResult,
+  RewindNotAppliedError,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
@@ -4799,6 +4802,11 @@ export class CodexAppServerAgentSession implements AgentSession {
           : { index, turnId: this.userMessageProviderTurnIds.get(messageId) ?? null };
       },
       count: () => this.userMessageTurnIds.length,
+      list: () =>
+        this.userMessageTurnIds.map((messageId) => ({
+          messageId,
+          turnId: this.userMessageProviderTurnIds.get(messageId) ?? null,
+        })),
     };
   }
 
@@ -5236,37 +5244,63 @@ export class CodexAppServerAgentSession implements AgentSession {
       : null;
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
-    await this.connect();
-    if (!this.client) {
-      throw new Error("Codex client is not initialized");
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindResult> {
+    let threadBefore: string | null;
+    let client: CodexAppServerClient;
+    try {
+      await this.connect();
+      if (!this.client) {
+        throw new Error("Codex client is not initialized");
+      }
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+      await this.ensureHistoryIndexed();
+      threadBefore = this.currentThreadId;
+      client = this.client;
+    } catch (error) {
+      throw RewindNotAppliedError.from(error);
     }
-    if (this.currentThreadId) {
-      await this.ensureThreadLoaded();
-    } else {
-      await this.ensureThread();
-    }
-    await this.ensureHistoryIndexed();
 
-    await revertCodexConversation({
-      client: this.client,
-      threadId: this.currentThreadId,
-      messageId: input.messageId,
-      cwd: this.config.cwd ?? null,
-      model: this.config.model ?? null,
-      serviceTier: this.serviceTier,
-      config: this.buildCodexInnerConfig(),
-      userMessageTurns: this.codexUserMessageTurns(),
-      threadRollbackAvailable: this.threadRollbackAvailable,
-      setThreadId: async (threadId) => {
-        this.currentThreadId = threadId;
-        // Codex writes a forked thread's rollout when it forks it, even before any turn.
-        this.savedThreadId = threadId;
-        this.cachedRuntimeInfo = null;
-        this.stagedHistory = await this.readThreadHistory(this.client);
-        this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
-      },
-    });
+    // The rewind forks; the thread it started from stays as it was. It happened once this session
+    // continues the fork.
+    let failure: unknown = null;
+    let cut: ConversationRewindCut | null = null;
+    try {
+      cut = await revertCodexConversation({
+        client,
+        threadId: threadBefore,
+        messageId: input.messageId,
+        cwd: this.config.cwd ?? null,
+        model: this.config.model ?? null,
+        serviceTier: this.serviceTier,
+        config: this.buildCodexInnerConfig(),
+        userMessageTurns: this.codexUserMessageTurns(),
+        threadRollbackAvailable: this.threadRollbackAvailable,
+        setThreadId: async (threadId) => {
+          this.currentThreadId = threadId;
+          // Codex writes a forked thread's rollout when it forks it, even before any turn.
+          this.savedThreadId = threadId;
+          this.cachedRuntimeInfo = null;
+          this.stagedHistory = await this.readThreadHistory(client);
+          this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    if (this.currentThreadId === threadBefore) {
+      throw RewindNotAppliedError.from(
+        failure ?? new Error("Codex did not switch to the rewound thread"),
+      );
+    }
+    if (failure) {
+      this.logger.warn({ err: failure }, "Codex rewound the conversation but failed afterwards");
+    }
+    // A failure after the switch leaves what the fork kept unreported; the resumed history shows it.
+    return cut ?? { kind: "unreported" };
   }
 
   async interrupt(): Promise<void> {

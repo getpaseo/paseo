@@ -43,6 +43,17 @@ export interface ProjectedTimelinePageSelection {
   endSeq: number | null;
   hasOlder: boolean;
   hasNewer: boolean;
+  /** Retirements whose seq lies in the page's span, coalesced; see `TimelineProjection.retire`. */
+  retirements: TimelineRetirement[];
+}
+
+/**
+ * A rewind's record: the rows anchored in `[retireFromSeq, seq)` left the active conversation.
+ * `seq` is the retirement's own position in the change sequence.
+ */
+export interface TimelineRetirement {
+  seq: number;
+  retireFromSeq: number;
 }
 
 function appendSeqToRanges(ranges: TimelineSeqRange[], seq: number): TimelineSeqRange[] {
@@ -308,12 +319,16 @@ interface ProjectedTimelinePageOptions {
 export class TimelineProjection {
   private readonly rows: ProjectedTimelineRow[] = [];
   private readonly identities = new Map<string, number>();
-  private lastAssistantRowIndex: number | null = null;
   // Disjoint source-coverage spans in display order. A tail starting inside a
   // span must include its first anchor to cover interleaved lifecycle updates.
   private readonly spans: { start: number; endSeq: number }[] = [];
 
+  // Every source seq in order. `rowIndex` -1 marks seqs covered without an active row: the rows a
+  // rewind retired, and each retirement's own seq. Forward pages advance through them.
   private readonly sourceRanges: { startSeq: number; endSeq: number; rowIndex: number }[] = [];
+  private readonly retirements: TimelineRetirement[] = [];
+  private readonly retiredIdentities = new Set<string>();
+  private readonly retiredTurnIds = new Set<string>();
 
   constructor(rows: readonly AgentTimelineRow[] = []) {
     for (const row of rows) this.appendProjected(row);
@@ -356,7 +371,6 @@ export class TimelineProjection {
       return this.rows.length - 1;
     }
     if (identity !== null) this.identities.set(identity, this.rows.length);
-    if (entry.item.type === "assistant_message") this.lastAssistantRowIndex = this.rows.length;
     this.rows.push({ ...entry, seq: entry.seqEnd });
     const last = this.spans.at(-1);
     if (last && last.endSeq >= entry.seqStart) {
@@ -394,7 +408,126 @@ export class TimelineProjection {
     return this.rows.map((row) => ({ ...row }));
   }
 
+  /**
+   * Whether a new source row belongs to retired history: late output of a turn with no active
+   * rows left, or a late update to a retired item. An update to an active item is never retired.
+   */
+  isRetired(row: Pick<AgentTimelineRow, "item" | "turnId">): boolean {
+    if (row.turnId !== undefined && this.retiredTurnIds.has(row.turnId)) return true;
+    const identity = timelineItemIdentity(row.item);
+    if (identity === null || this.identities.has(identity)) return false;
+    return this.retiredIdentities.has(identity);
+  }
+
+  /**
+   * Retires the active rows anchored at or after `retireFromSeq`. Rows are in anchor order, so they
+   * form the display suffix. Their source seqs and the retirement's own seq stay covered.
+   */
+  retire(retirement: TimelineRetirement): ProjectedTimelineRow[] {
+    const cut = this.firstRowAnchoredAtOrAfter(retirement.retireFromSeq);
+    const retired = this.rows.splice(cut);
+    const activeTurnIds = new Set(this.rows.map((row) => row.turnId));
+    for (const row of retired) {
+      const identity = timelineItemIdentity(row.item);
+      if (identity !== null) this.retiredIdentities.add(identity);
+      if (row.turnId !== undefined && !activeTurnIds.has(row.turnId)) {
+        this.retiredTurnIds.add(row.turnId);
+      }
+    }
+    for (const [identity, index] of this.identities) {
+      if (index >= cut) this.identities.delete(identity);
+    }
+    while (this.spans.length > 0 && this.spans[this.spans.length - 1].start >= cut)
+      this.spans.pop();
+    const lastSpan = this.spans.at(-1);
+    if (lastSpan) {
+      lastSpan.endSeq = 0;
+      for (let index = lastSpan.start; index < cut; index++) {
+        lastSpan.endSeq = Math.max(lastSpan.endSeq, this.rows[index].seqEnd);
+      }
+    }
+    for (const range of this.sourceRanges) {
+      if (range.rowIndex >= cut) range.rowIndex = -1;
+    }
+    this.sourceRanges.push({ startSeq: retirement.seq, endSeq: retirement.seq, rowIndex: -1 });
+    this.retirements.push({ ...retirement });
+    return retired;
+  }
+
+  private firstRowAnchoredAtOrAfter(seq: number): number {
+    let low = 0;
+    let high = this.rows.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.rows[middle].seqStart < seq) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  /**
+   * Retirements with seq in `[startSeq, endSeq]`, merging neighbours that no active row separates.
+   * Merging keeps the meaning (drop rows anchored in `[retireFromSeq, seq)`) and bounds the count
+   * by the active rows in the span, so a page never carries an unbounded list.
+   */
+  private retirementsInSpan(startSeq: number, endSeq: number): TimelineRetirement[] {
+    let low = 0;
+    let high = this.retirements.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.retirements[middle].seq < startSeq) low = middle + 1;
+      else high = middle;
+    }
+    const inSpan: TimelineRetirement[] = [];
+    for (let index = low; index < this.retirements.length; index++) {
+      const retirement = this.retirements[index];
+      if (retirement.seq > endSeq) break;
+      inSpan.push(retirement);
+    }
+    return this.coalesceRetirements(inSpan);
+  }
+
+  private coalesceRetirements(retirements: readonly TimelineRetirement[]): TimelineRetirement[] {
+    const coalesced: TimelineRetirement[] = [];
+    for (const retirement of retirements) {
+      const previous = coalesced.at(-1);
+      if (previous && !this.hasActiveAnchorIn(previous.seq, retirement.retireFromSeq)) {
+        coalesced[coalesced.length - 1] = {
+          seq: retirement.seq,
+          retireFromSeq: Math.min(previous.retireFromSeq, retirement.retireFromSeq),
+        };
+        continue;
+      }
+      coalesced.push({ ...retirement });
+    }
+    return coalesced;
+  }
+
+  private hasActiveAnchorIn(startSeq: number, endSeq: number): boolean {
+    const index = this.firstRowAnchoredAtOrAfter(startSeq);
+    return index < this.rows.length && this.rows[index].seqStart < endSeq;
+  }
+
+  get size(): number {
+    return this.rows.length;
+  }
+
   selectPage(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
+    if (this.rows.length === 0 && this.sourceRanges.length > 0) {
+      // Every row is retired. Forward pages still advance; a tail covers the whole window so a
+      // client can apply the retirements to what it holds.
+      if (input.direction === "after") return this.selectAfter(input);
+      if (input.direction === "tail") {
+        return {
+          entries: [],
+          startSeq: input.bounds.minSeq,
+          endSeq: input.bounds.maxSeq,
+          hasOlder: false,
+          hasNewer: false,
+          retirements: this.retirementsInSpan(input.bounds.minSeq, input.bounds.maxSeq),
+        };
+      }
+    }
     if (this.rows.length === 0) {
       const cursor =
         input.cursorSeq ??
@@ -411,6 +544,7 @@ export class TimelineProjection {
           input.direction === "after"
             ? cursor < input.bounds.maxSeq
             : input.direction === "before" && cursor <= input.bounds.maxSeq,
+        retirements: [],
       };
     }
     switch (input.direction) {
@@ -434,6 +568,7 @@ export class TimelineProjection {
       endSeq: input.bounds.maxSeq,
       hasOlder: start > 0,
       hasNewer: false,
+      retirements: this.retirementsInSpan(this.rows[start].seqStart, input.bounds.maxSeq),
     };
   }
 
@@ -461,27 +596,57 @@ export class TimelineProjection {
       else high = middle;
     }
     const indexes = new Set<number>();
+    const covered: TimelineSeqRange[] = [];
     const limit = Math.max(0, Math.floor(input.limit ?? 0));
+    let retirementIndex = this.firstRetirementAtOrAfter(startSeq);
+    const retirements: TimelineRetirement[] = [];
     for (let i = low; i < this.sourceRanges.length; i++) {
       const range = this.sourceRanges[i];
       if (range.startSeq > input.bounds.maxSeq) break;
-      indexes.add(range.rowIndex);
-      if (limit > 0 && indexes.size === limit) break;
+      if (range.rowIndex >= 0) {
+        indexes.add(range.rowIndex);
+      } else {
+        covered.push({ startSeq: Math.max(range.startSeq, startSeq), endSeq: range.endSeq });
+        const retirement = this.retirements[retirementIndex];
+        if (retirement && retirement.seq === range.startSeq) {
+          retirements.push(retirement);
+          retirementIndex++;
+        }
+      }
+      // Each retirement counts toward the limit, so a page stays bounded however many it crosses.
+      if (limit > 0 && indexes.size + retirements.length >= limit) break;
     }
     const entries = [...indexes].sort((a, b) => a - b).map((index) => this.rows[index]);
     const selected = selectProjectedEntriesAfter({
       entries,
+      covered,
       startSeq,
       maxSeq: input.bounds.maxSeq,
       limit,
     });
+    const endSeq = selected.endSeq;
     return {
       entries: selected.entries,
-      startSeq: selected.endSeq === null ? null : startSeq,
-      endSeq: selected.endSeq,
+      startSeq: endSeq === null ? null : startSeq,
+      endSeq,
       hasOlder: startSeq > input.bounds.minSeq,
-      hasNewer: selected.endSeq !== null && selected.endSeq < input.bounds.maxSeq,
+      hasNewer: endSeq !== null && endSeq < input.bounds.maxSeq,
+      retirements:
+        endSeq === null
+          ? []
+          : this.coalesceRetirements(retirements.filter((retirement) => retirement.seq <= endSeq)),
     };
+  }
+
+  private firstRetirementAtOrAfter(seq: number): number {
+    let low = 0;
+    let high = this.retirements.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.retirements[middle].seq < seq) low = middle + 1;
+      else high = middle;
+    }
+    return low;
   }
 
   private selectBefore(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
@@ -506,25 +671,45 @@ export class TimelineProjection {
       let selectedEnd = endSeq;
       if (input.wholeTurns)
         selectedEnd = low === this.rows.length ? input.bounds.maxSeq : this.rows[low].seqStart - 1;
+      const pageStart = this.rows[start]?.seqStart ?? null;
       return {
         entries: this.rows.slice(start, low),
-        startSeq: this.rows[start]?.seqStart ?? null,
+        startSeq: pageStart,
         endSeq: selectedEnd,
         hasOlder: start > 0,
         hasNewer: selectedEnd < input.bounds.maxSeq,
+        retirements: pageStart === null ? [] : this.retirementsInSpan(pageStart, selectedEnd),
       };
     }
-    return { entries: [], startSeq: null, endSeq: null, hasOlder: false, hasNewer: true };
+    return {
+      entries: [],
+      startSeq: null,
+      endSeq: null,
+      hasOlder: false,
+      hasNewer: true,
+      retirements: [],
+    };
   }
 
   getLastItem(seq: number): AgentTimelineItem | null {
     const last = this.sourceRanges.at(-1);
-    return last?.endSeq === seq ? this.rows[last.rowIndex].item : null;
+    return last?.endSeq === seq && last.rowIndex >= 0 ? this.rows[last.rowIndex].item : null;
   }
 
+  /**
+   * The text of the trailing run of assistant rows, joined in order. Rows after the run are
+   * skipped; the first non-assistant row before it ends the run.
+   */
   getLastAssistantMessage(): string | null {
-    const row = this.lastAssistantRowIndex === null ? null : this.rows[this.lastAssistantRowIndex];
-    return row?.item.type === "assistant_message" ? row.item.text : null;
+    let end = this.rows.length;
+    while (end > 0 && this.rows[end - 1].item.type !== "assistant_message") end -= 1;
+    let start = end;
+    while (start > 0 && this.rows[start - 1].item.type === "assistant_message") start -= 1;
+    if (start === end) return null;
+    return this.rows
+      .slice(start, end)
+      .map((row) => (row.item.type === "assistant_message" ? row.item.text : ""))
+      .join("");
   }
 
   enrichSubmittedUserMessage(
@@ -664,6 +849,8 @@ interface ProjectedEntryCandidate {
 
 function selectProjectedEntriesAfter(input: {
   entries: readonly TimelineProjectionEntry[];
+  /** Seqs covered without an active row; they advance the cursor but add no entry. */
+  covered?: readonly TimelineSeqRange[];
   startSeq: number;
   maxSeq: number;
   limit: number;
@@ -680,11 +867,13 @@ function selectProjectedEntriesAfter(input: {
   const selectedEntries = selected
     .sort((left, right) => left.index - right.index)
     .map((candidate) => candidate.entry);
-  if (selectedEntries.length === 0) return { entries: [], endSeq: null };
+  const covered = input.covered ?? [];
+  if (selectedEntries.length === 0 && covered.length === 0) return { entries: [], endSeq: null };
 
-  const selectedRanges = selectedEntries
-    .flatMap((entry) => entry.sourceSeqRanges)
-    .sort((left, right) => left.startSeq - right.startSeq || left.endSeq - right.endSeq);
+  const selectedRanges = [
+    ...selectedEntries.flatMap((entry) => entry.sourceSeqRanges),
+    ...covered,
+  ].sort((left, right) => left.startSeq - right.startSeq || left.endSeq - right.endSeq);
   // Wide projected entries can include future, discontiguous source ranges. The
   // page cursor advances only through source rows covered without a gap.
   let endSeq = input.startSeq - 1;

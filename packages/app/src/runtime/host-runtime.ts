@@ -244,6 +244,7 @@ const PROBE_STEADY_MS = 10_000;
 const PROBE_MAX_BACKOFF_MS = 30_000;
 const PROBE_INACTIVE_WHILE_ONLINE_MS = 120_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
+const MAX_STALE_TIMELINE_PAGE_ATTEMPTS = 3;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
 const CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS = 1_000;
 
@@ -2857,12 +2858,19 @@ export class HostRuntimeStore {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
     const owner = useSessionStore.getState().sessions[serverId]?.viewedTimelineSync;
-    const page = await directory.fetchTimeline(agentId, request);
-    if (owner && useSessionStore.getState().sessions[serverId]?.viewedTimelineSync === owner) {
+    // A page served before a rewind this client applied is asked for again. Seqs only grow within
+    // an epoch, so the next page includes the rewind unless another one landed meanwhile.
+    for (let attempt = 1; ; attempt += 1) {
+      const page = await directory.fetchTimeline(agentId, request);
+      if (!owner || useSessionStore.getState().sessions[serverId]?.viewedTimelineSync !== owner) {
+        return page;
+      }
       owner.flushStreamAgent(agentId);
-      owner.applyTimelineResponse(page);
+      if (owner.applyTimelineResponse(page) === "applied") return page;
+      if (attempt === MAX_STALE_TIMELINE_PAGE_ATTEMPTS) {
+        throw new Error(`Timeline page for ${agentId} stayed behind a rewind`);
+      }
     }
-    return page;
   }
 
   createViewedTimelineOwner(

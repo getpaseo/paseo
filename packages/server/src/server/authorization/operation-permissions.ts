@@ -272,6 +272,7 @@ const OUTBOUND_PERMISSION = {
   "agent.timeline.list_prompts.response": "workspace.read",
   "agent.timeline.append.response": "workspace.write",
   "agent.timeline.replacement": ["workspace.read", "hub.execute"],
+  "agent.timeline.rewind": ["workspace.read", "hub.execute"],
   "browser.host.register.response": ["workspace.write"],
   "subscription.release.response": null,
   "session.events.set_subscription.response": ["workspace.read", "daemon.read", "hub.execute"],

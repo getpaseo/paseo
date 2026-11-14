@@ -7,6 +7,7 @@ import type {
   CodexThreadRollbackResponse,
 } from "./app-server-transport.js";
 import {
+  type CodexUserMessageTurn,
   type CodexUserMessageTurnIndex,
   type CodexRewindClient,
   revertCodexConversation,
@@ -74,6 +75,15 @@ class CodexMessageTurns implements CodexUserMessageTurnIndex {
 
   count(): number {
     return this.indexesByMessageId.size;
+  }
+
+  list(): CodexUserMessageTurn[] {
+    return [...this.indexesByMessageId]
+      .sort(([, left], [, right]) => left - right)
+      .map(([messageId]) => ({
+        messageId,
+        turnId: this.turnIdsByMessageId.get(messageId) ?? null,
+      }));
   }
 }
 

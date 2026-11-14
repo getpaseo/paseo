@@ -100,7 +100,6 @@ function makeManagedAgent(args: {
       ...(args.nativeHandle ? { nativeHandle: args.nativeHandle } : {}),
       metadata: { provider, cwd: args.cwd },
     },
-    historyPrimed: true,
     lastUserMessageAt: null,
     attention: { requiresAttention: false },
     foregroundTurnWaiters: new Set(),
@@ -678,8 +677,7 @@ class ProviderImportHarness {
         this.activeAgent = this.snapshot;
         return this.snapshot;
       },
-      hydrateTimelineFromProvider: async () => {},
-      getTimeline: () => this.timeline,
+      getTimeline: async () => this.timeline,
       closeAgent: async (agentId: string) => {
         this.closedAgentIds.push(agentId);
         this.activeAgent = null;
