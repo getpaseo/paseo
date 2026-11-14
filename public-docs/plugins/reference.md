@@ -1180,6 +1180,10 @@ not import `lucide-react-native` or `react-native-svg`.
 
 An unknown name or an SVG that breaks a rule renders nothing.
 
+## Timeline footer
+
+`client.addTimelineFooter({ id, Component })` registers one surface at the end of each agent's chat on the plugin's host. The component receives `agentId`, `host`, `theme`, `layout`, and `activeCalls`: an immutable list of tool calls currently running in the active turn, before timeline transformers run. It is mounted even when no plugin timeline rows are visible. Return `null` when the surface has nothing to show. Registrations are removed when the plugin stops.
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
