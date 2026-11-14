@@ -57,11 +57,8 @@ import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import {
-  FILE_UPLOAD_MAX_BYTES,
-  formatUploadLimit,
-  resolveUploadMaxFileBytes,
-} from "@/attachments/upload-limit";
+import { FILE_UPLOAD_MAX_BYTES, resolveUploadMaxFileBytes } from "@/attachments/upload-limit";
+import { formatFileSize } from "@/utils/format-file-size";
 import { getDesktopHost } from "@/desktop/host";
 import { routeTerminalDrop } from "@/terminal/drop/terminal-file-drop";
 import { prepareDroppedPathsForTerminal } from "@/terminal/drop/terminal-path";
@@ -357,7 +354,7 @@ export function TerminalPane({
     const reason =
       error instanceof TerminalFileTooLargeError
         ? t("composer.errors.fileTooLarge", {
-            size: formatUploadLimit(error.limitBytes),
+            size: formatFileSize(error.limitBytes),
             fileName: error.fileName,
           })
         : toErrorMessage(error);
