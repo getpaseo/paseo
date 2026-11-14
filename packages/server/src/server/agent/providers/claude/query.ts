@@ -1,12 +1,16 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { query, type Options, type Query, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { Logger } from "pino";
 
 import {
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
+import { spawnProcess as defaultSpawnProcess } from "../../../../utils/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -16,10 +20,14 @@ export type ClaudeOptions = Options;
 export type ClaudeQueryInput = Parameters<typeof query>[0] & { options: ClaudeOptions };
 export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 
+export type ClaudeQueryLogger = Pick<Logger, "warn">;
+
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
+  logger?: ClaudeQueryLogger;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
+  spawnProcess?: typeof defaultSpawnProcess;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
 }
@@ -53,11 +61,54 @@ function resolveClaudeSpawnCommand(
   };
 }
 
+function materializeInlineMcpConfig(
+  args: string[],
+  logger?: ClaudeQueryLogger,
+): { args: string[]; cleanup?: () => void } {
+  const configFlagIndex = args.findIndex(
+    (arg, index) => arg === "--mcp-config" && args[index + 1]?.trimStart().startsWith("{"),
+  );
+  if (configFlagIndex === -1) {
+    return { args };
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), "paseo-claude-mcp-"));
+  const configPath = join(dir, "mcp.json");
+  let cleanupStarted = false;
+  // Removal can fail while another process still holds the file open (Windows).
+  // These listeners run in the daemon's child-process callbacks, so a throw here
+  // reaches the fatal handler and takes the daemon down with it.
+  const cleanup = () => {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      logger?.warn({ err: error, dir }, "failed to remove Claude MCP config");
+    }
+  };
+  try {
+    writeFileSync(configPath, args[configFlagIndex + 1]!, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  const nextArgs = [...args];
+  nextArgs[configFlagIndex + 1] = configPath;
+  return { args: nextArgs, cleanup };
+}
+
 function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const {
+    runtimeSettings,
+    launchEnv,
+    onChildProcess,
+    logger,
+    spawnProcess = defaultSpawnProcess,
+  } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -81,19 +132,35 @@ function applyRuntimeSettingsToClaudeOptions(
         ? buildSelfNodeCommand(resolved.args, providerEnv)
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
-      const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
-        cwd: spawnOptions.cwd,
-        ...(selfNodeCommand
-          ? { env: selfNodeCommand.env, envMode: "internal" as const }
-          : providerEnvSpec),
-        signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe"],
-        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
-        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
-        // The command is always a resolved binary path, so shell routing is unnecessary.
-        shell: false,
-      });
+      // The SDK serializes MCP config inline. Use a file so headers never enter process argv.
+      const mcpConfig = materializeInlineMcpConfig(selfNodeCommand?.args ?? resolved.args, logger);
+      const args = mcpConfig.args;
+      let child: ChildProcess;
+      try {
+        child = spawnProcess(command, args, {
+          cwd: spawnOptions.cwd,
+          ...(selfNodeCommand
+            ? { env: selfNodeCommand.env, envMode: "internal" as const }
+            : providerEnvSpec),
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+          // The command is always a resolved binary path, so shell routing is unnecessary.
+          shell: false,
+        });
+      } catch (error) {
+        mcpConfig.cleanup?.();
+        throw error;
+      }
+      if (mcpConfig.cleanup) {
+        const cleanup = mcpConfig.cleanup;
+        const cleanupAfterChild = () => {
+          spawnOptions.signal.removeEventListener("abort", cleanup);
+          cleanup();
+        };
+        child.once("exit", cleanupAfterChild);
+        child.once("error", cleanupAfterChild);
+        spawnOptions.signal.addEventListener("abort", cleanup, { once: true });
+      }
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
