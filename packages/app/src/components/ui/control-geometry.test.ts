@@ -144,9 +144,18 @@ describe("toolbar glyphs and spacing", () => {
     expect(toolbarGlyphsFor("touch").label).toEqual({
       size: 20,
       strokeWidth: 1.5,
-      tone: "foreground",
+      tone: "muted",
     });
     expect(TOOLBAR_GLYPH_SIZES.label).toEqual({ xs: 20, md: 16 });
+  });
+
+  it("mutes a touch glyph paired with a label while keeping an icon-only touch glyph foreground", () => {
+    const { icon, label } = toolbarGlyphsFor("touch");
+    const colors = { foreground: "#fafafa", foregroundMuted: "#a1a5a4" };
+    const palette = { colors } as unknown as Theme;
+
+    expect(toolbarGlyphColor(palette, label.tone)).toBe(colors.foregroundMuted);
+    expect(toolbarGlyphColor(palette, icon.tone)).toBe(colors.foreground);
   });
 
   it("sizes the touch context ring to the toolbar glyph's ink and keeps the pointer ring", () => {
