@@ -141,7 +141,7 @@ import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
-function assertChildWithPipes(
+export function assertChildWithPipes(
   child: ChildProcess,
 ): asserts child is ChildProcessWithoutNullStreams {
   if (!child.stdin || !child.stdout || !child.stderr) {
@@ -236,7 +236,7 @@ export function summarizeACPRequestError(error: unknown): {
 }
 
 // Keeps the JSON-RPC code so callers can still tell invalid params from other failures.
-class ACPRequestError extends Error {
+export class ACPRequestError extends Error {
   readonly code: number;
 
   constructor(error: ACPError) {
@@ -246,7 +246,7 @@ class ACPRequestError extends Error {
   }
 }
 
-function toACPRequestError(error: unknown): Error {
+export function toACPRequestError(error: unknown): Error {
   if (!isACPError(error)) {
     return error instanceof Error ? error : new Error(String(error));
   }
@@ -514,6 +514,7 @@ interface ACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
+  transportAcquirer?: ACPTransportAcquirer;
 }
 
 interface ACPAgentSessionOptions {
@@ -550,7 +551,22 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  transportAcquirer?: ACPTransportAcquirer;
 }
+
+export interface ACPTransportAcquisition {
+  child?: ChildProcessWithoutNullStreams | null;
+  connection: ClientSideConnection;
+  initialize: InitializeResponse;
+  registerSession?: (session: ACPAgentSession) => void;
+  unregisterSession?: (sessionId: string) => void;
+  release?: () => Promise<void>;
+}
+
+export type ACPTransportAcquirer = (options: {
+  cwd: string;
+  launchEnv?: Record<string, string>;
+}) => Promise<ACPTransportAcquisition>;
 
 export interface SpawnedACPProcess {
   child: ChildProcessWithoutNullStreams;
@@ -989,6 +1005,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
+  protected readonly transportAcquirer?: ACPTransportAcquirer;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
@@ -1018,6 +1035,7 @@ export class ACPAgentClient implements AgentClient {
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
     this.now = options.now ?? Date.now;
+    this.transportAcquirer = options.transportAcquirer;
   }
 
   async createSession(
@@ -1058,6 +1076,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        transportAcquirer: this.transportAcquirer,
       },
     );
     await session.initializeNewSession();
@@ -1118,6 +1137,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      transportAcquirer: this.transportAcquirer,
     });
     await session.initializeResumedSession();
     return session;
@@ -1806,6 +1826,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly transportAcquirer?: ACPTransportAcquirer;
+  private transportAcquisition: ACPTransportAcquisition | null = null;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1854,6 +1876,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.transportAcquirer = options.transportAcquirer;
   }
 
   get id(): string | null {
@@ -1872,10 +1895,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async initializeNewSession(): Promise<void> {
     try {
-      const spawned = await this.spawnProcess();
-      this.child = spawned.child;
-      this.connection = spawned.connection;
-      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      if (this.transportAcquirer) {
+        const acquired = await this.transportAcquirer({
+          cwd: this.config.cwd,
+          launchEnv: this.launchEnv,
+        });
+        this.transportAcquisition = acquired;
+        this.child = acquired.child ?? null;
+        this.connection = acquired.connection;
+        this.agentCapabilities = acquired.initialize.agentCapabilities ?? null;
+      } else {
+        const spawned = await this.spawnProcess();
+        this.child = spawned.child;
+        this.connection = spawned.connection;
+        this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      }
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1884,6 +1918,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         }),
       );
       this.sessionId = response.sessionId;
+      this.transportAcquisition?.registerSession?.(this);
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
       for (const update of this.earlySessionUpdates.splice(0)) {
@@ -1909,11 +1944,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error("Resume requested without persistence handle");
       }
 
-      const spawned = await this.spawnProcess();
-      this.child = spawned.child;
-      this.connection = spawned.connection;
-      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      if (this.transportAcquirer) {
+        const acquired = await this.transportAcquirer({
+          cwd: this.config.cwd,
+          launchEnv: this.launchEnv,
+        });
+        this.transportAcquisition = acquired;
+        this.child = acquired.child ?? null;
+        this.connection = acquired.connection;
+        this.agentCapabilities = acquired.initialize.agentCapabilities ?? null;
+      } else {
+        const spawned = await this.spawnProcess();
+        this.child = spawned.child;
+        this.connection = spawned.connection;
+        this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      }
       this.sessionId = handle.sessionId;
+      this.transportAcquisition?.registerSession?.(this);
       this.bootstrapThreadEventPending = true;
 
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
@@ -2738,6 +2785,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
+    if (this.sessionId && this.transportAcquisition?.unregisterSession) {
+      this.transportAcquisition.unregisterSession(this.sessionId);
+    }
+
     const terminalTerminations = Array.from(this.terminalEntries.values())
       .filter((terminal) => terminal.running)
       .map((terminal) =>
@@ -2749,7 +2800,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
 
-    if (this.child) {
+    if (this.transportAcquisition) {
+      const acquisition = this.transportAcquisition;
+      this.transportAcquisition = null;
+      try {
+        await acquisition.release?.();
+      } catch (error) {
+        this.logger.debug({ err: error }, "ACP transport release failed during shutdown");
+      }
+    } else if (this.child) {
       await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
 
@@ -3053,19 +3112,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     const processError = rejectOnProcessFailure(child, stderrChunks);
     child.once("exit", (code, signal) => {
-      if (this.closed || this.historyRuntimeReleased) {
-        return;
-      }
-      if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
-          turnId: this.activeForegroundTurnId,
-        });
-      }
+      this.handleProcessExit(code, signal, stderrChunks.join("").trim() || undefined);
     });
 
     const stream = createLoggedNdJsonStream(
@@ -3093,6 +3140,36 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
 
     return { child, connection, initialize };
+  }
+
+  handleProcessExit(code: number | null, signal: NodeJS.Signals | null, diagnostic?: string): void {
+    if (this.closed || this.historyRuntimeReleased) {
+      return;
+    }
+    this.closed = true;
+    this.connection = null;
+    this.child = null;
+    this.transportAcquisition = null;
+    if (this.activeForegroundTurnId) {
+      this.synthesizeCanceledToolCalls();
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+        diagnostic: diagnostic || undefined,
+        turnId: this.activeForegroundTurnId,
+      });
+    } else {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "notification",
+          level: "error",
+          message: `ACP agent process exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+        },
+      });
+    }
   }
 
   private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
