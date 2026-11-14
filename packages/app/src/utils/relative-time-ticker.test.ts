@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { activeRelativeTimeTickerCount, subscribeToRelativeTimeTick } from "./relative-time-ticker";
+import {
+  activeRelativeTimeTickerCount,
+  followCompactTimeUntil,
+  subscribeToRelativeTimeTick,
+} from "./relative-time-ticker";
 
 const MINUTE = 60_000;
 
@@ -95,5 +99,63 @@ describe("subscribeToRelativeTimeTick", () => {
     expect(survivor).toHaveBeenCalledTimes(2);
 
     unsubSurvivor();
+  });
+});
+
+describe("followCompactTimeUntil", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // Half-way through a wall-clock minute, so the wall clock and the countdown disagree.
+    vi.setSystemTime(new Date("2026-11-13T20:02:30.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("changes when the time left reaches a whole minute, not on the wall clock's minute", () => {
+    // A `/loop` wake published by a dev daemon, due 334 ms past a minute.
+    const labels: string[] = [];
+    followCompactTimeUntil(new Date("2026-11-13T20:04:00.334Z"), (label) => labels.push(label));
+    expect(labels).toEqual(["2m"]);
+
+    // The wall clock's minute passes with a minute and a millisecond still left.
+    vi.advanceTimersByTime(30_333);
+    expect(labels).toEqual(["2m"]);
+
+    vi.advanceTimersByTime(1);
+    expect(labels).toEqual(["2m", "<1m"]);
+    // "<1m" is final until the wake moves, so nothing is left running.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("waits for the next change in one timer, however far away", () => {
+    const labels: string[] = [];
+    const stop = followCompactTimeUntil(new Date("2026-11-13T21:32:30.000Z"), (label) =>
+      labels.push(label),
+    );
+    expect(labels).toEqual(["1h"]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // "1h" holds until 59 minutes are left.
+    vi.advanceTimersByTime(31 * MINUTE - 1);
+    expect(labels).toEqual(["1h"]);
+    vi.advanceTimersByTime(1);
+    expect(labels).toEqual(["1h", "59m"]);
+
+    stop();
+  });
+
+  it("clears its timer when stopped", () => {
+    const labels: string[] = [];
+    const stop = followCompactTimeUntil(new Date("2026-11-13T20:12:30.000Z"), (label) =>
+      labels.push(label),
+    );
+    expect(vi.getTimerCount()).toBe(1);
+
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10 * MINUTE);
+    expect(labels).toEqual(["10m"]);
   });
 });

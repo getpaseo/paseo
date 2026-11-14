@@ -14239,6 +14239,54 @@ test("folds provider background work and clears it when the agent closes", async
   expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toBeUndefined();
 });
 
+test("reports a provider's scheduled wake in the summary without marking the agent busy", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-scheduled-wakeup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let activeSession: TestAgentSession | null = null;
+  class WakeupClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new WakeupClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000203",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: snapshot.id, replayState: false });
+  const wakeAt = "2026-11-13T18:58:00.073Z";
+
+  activeSession?.pushEvent({ type: "scheduled_wakeup", provider: "codex", nextWakeAt: wakeAt });
+
+  await vi.waitFor(() =>
+    expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toEqual({
+      count: 0,
+      nextWakeAt: wakeAt,
+    }),
+  );
+  // Subscribers refresh the agent from the background work event; nothing reaches the timeline.
+  expect(events).toContainEqual({ type: "background_work", agentId: snapshot.id, items: [] });
+  expect(events.some((event) => event.type === "agent_stream")).toBe(false);
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+
+  events.length = 0;
+  activeSession?.pushEvent({ type: "scheduled_wakeup", provider: "codex", nextWakeAt: wakeAt });
+  activeSession?.pushEvent({ type: "scheduled_wakeup", provider: "codex", nextWakeAt: null });
+  await vi.waitFor(() =>
+    expect(manager.getAgentBackgroundWorkSummary(snapshot.id)).toBeUndefined(),
+  );
+  // The repeated time changed nothing, so only the clear was dispatched.
+  expect(events.filter((event) => event.type === "background_work")).toHaveLength(1);
+
+  await manager.closeAgent(snapshot.id);
+});
+
 test("does not deliver an internal agent's background work to global subscribers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-internal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

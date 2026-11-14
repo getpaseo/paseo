@@ -1343,6 +1343,8 @@ export const ja: TranslationResources = {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
+        wakesIn: "{{time}}後",
+        wakeScheduled: "自動で再開します",
       },
       checks: {
         passed: "成功: {{count}}",

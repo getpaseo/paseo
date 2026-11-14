@@ -92,6 +92,30 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry scheduled wake", () => {
+  const wakeAt = "2026-07-16T12:30:00.000Z";
+  const activity = (status: WorkspaceDescriptor["status"]) =>
+    new Map([["ws-1", { agentId: "agent", status, enteredAt: null, nextWakeAt: wakeAt }]]);
+
+  it("shows when an idle workspace will wake on its own", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceAgentActivity: activity("done"),
+    });
+    expect(entry).toMatchObject({ statusBucket: "done", nextWakeAt: wakeAt });
+  });
+
+  it("hides the wake while the workspace is busy", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceAgentActivity: activity("running"),
+    });
+    expect(entry).toMatchObject({ statusBucket: "running", nextWakeAt: null });
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

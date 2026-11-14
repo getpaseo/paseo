@@ -83,6 +83,43 @@ export function describeCompactTimeAgo(date: Date, now: Date = new Date()): Rela
   return { label: age.value, resolution: age.resolution };
 }
 
+/**
+ * The compact countdown to something that has not happened yet: "<1m", "11m", "3h", "2d".
+ * Minutes round up so it never reads lower than the time left; the last minute, and a due or
+ * overdue time, read "<1m" because it is about to happen.
+ */
+export function formatCompactTimeUntil(date: Date, now: Date = new Date()): string {
+  const minutes = minutesLeft(date, now);
+  if (minutes <= 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * When `formatCompactTimeUntil(date)` will next read differently, or null once it reads "<1m" for
+ * good. The label depends only on whole minutes left, so it changes as the time left reaches a
+ * whole minute, which the target sets, not the wall clock: a wake due at 03:04:00.3 turns "2m"
+ * into "<1m" at 03:03:00.3.
+ */
+export function nextCompactTimeUntilChange(date: Date, now: Date = new Date()): Date | null {
+  const minutes = minutesLeft(date, now);
+  if (minutes <= 1) return null;
+  const hours = Math.floor(minutes / 60);
+  // The most minutes left that already read differently from now.
+  let next: number;
+  if (minutes < 60) next = minutes - 1;
+  else if (hours < 24) next = hours * 60 - 1;
+  else next = Math.floor(hours / 24) * 24 * 60 - 1;
+  return new Date(date.getTime() - next * MINUTE_MS);
+}
+
+/** Whole minutes left, rounded up: 1 for anything from a millisecond to a minute, 0 once due. */
+function minutesLeft(date: Date, now: Date): number {
+  return Math.max(0, Math.ceil((date.getTime() - now.getTime()) / MINUTE_MS));
+}
+
 export function formatCompactTimeAgo(date: Date, now: Date = new Date()): string {
   return describeCompactTimeAgo(date, now).label;
 }

@@ -1319,6 +1319,8 @@ export const zhCN: TranslationResources = {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
+        wakesIn: "{{time}}后",
+        wakeScheduled: "将自动继续",
       },
       checks: {
         passed: "成功: {{count}}",

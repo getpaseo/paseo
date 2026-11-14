@@ -1336,6 +1336,8 @@ export const ko: TranslationResources = {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
+        wakesIn: "{{time}} 후",
+        wakeScheduled: "자동으로 다시 시작됩니다",
       },
       checks: {
         passed: "통과: {{count}}개",

@@ -1347,6 +1347,8 @@ export const ru: TranslationResources = {
         serviceRunning: "Сервис {{name}} запущен",
         serviceUnhealthy: "Сервис {{name}} работает некорректно",
         creating: "Создание...",
+        wakesIn: "через {{time}}",
+        wakeScheduled: "Продолжит работу сам",
       },
       checks: {
         passed: "Успешные: {{count}}",

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  AgentBackgroundWorkSummarySchema,
   ServerInfoStatusPayloadSchema,
   SessionEventSubscriptionSchema,
   SessionInboundMessageSchema,
@@ -59,6 +60,12 @@ describe("agent background work protocol", () => {
       payload: { agentId: "agent-1", items: [ITEM, withCommand] },
     });
     expect(parsed).toMatchObject({ payload: { items: [ITEM, withCommand] } });
+  });
+
+  test("summarizes a pending wake beside the count, optional for older daemons", () => {
+    const wake = { count: 0, nextWakeAt: "2026-11-13T18:58:00.073Z" };
+    expect(AgentBackgroundWorkSummarySchema.parse(wake)).toEqual(wake);
+    expect(AgentBackgroundWorkSummarySchema.parse({ count: 2 })).toEqual({ count: 2 });
   });
 
   test("is a subscribable event", () => {
