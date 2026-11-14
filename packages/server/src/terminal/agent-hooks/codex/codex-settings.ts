@@ -77,7 +77,7 @@ export const codexHooksFormat: AgentHookConfigFormat<CodexHooksFile> = {
     return provider.events.every((event) =>
       normalizeMatchers(hooks[event.event]).some((entry) =>
         normalizeCommandHooks(entry.hooks).some((hook) =>
-          hasPaseoCommands(hook, install.hookMarker),
+          hasPaseoCommands(hook, install.hookMarker, buildAgentHookWindowsCommand(provider, event)),
         ),
       ),
     );
@@ -115,9 +115,15 @@ function removePaseoHooks(value: unknown, marker: string): CodexMatcherGroup[] {
   return entries;
 }
 
-function hasPaseoCommands(hook: CodexCommandHook, marker: string): boolean {
+function hasPaseoCommands(
+  hook: CodexCommandHook,
+  marker: string,
+  expectedWindowsCommand: string,
+): boolean {
   return (
-    commandFieldContainsMarker(hook.command, marker) && windowsCommandContainsMarker(hook, marker)
+    commandFieldContainsMarker(hook.command, marker) &&
+    (hook.commandWindows === expectedWindowsCommand ||
+      hook.command_windows === expectedWindowsCommand)
   );
 }
 
