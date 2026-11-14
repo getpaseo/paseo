@@ -66,7 +66,6 @@ import {
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "@/composer/types";
-import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
@@ -86,6 +85,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
+import { useComposerAutoFocus } from "./auto-focus";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { pasteLinkedClipboardText } from "@/composer/pasted-text";
@@ -573,26 +573,6 @@ function usePasteEffect(args: PasteEffectArgs): void {
   }, [disabled, textarea, isConnected, isDictating, isRealtimeVoiceForCurrentAgent, onAddImages]);
 }
 
-function useAutoFocusOnWebEffect(
-  textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>,
-  autoFocus: boolean,
-  autoFocusKey: string | undefined,
-): void {
-  useEffect(() => {
-    if (!isWeb || !autoFocus) return;
-    return focusWithRetries({
-      focus: () => textInputRef.current?.focus(),
-      isFocused: () => {
-        const element = getTextInputNativeElement(textInputRef.current);
-        const active = typeof document !== "undefined" ? document.activeElement : null;
-        return Boolean(element) && active === element;
-      },
-      deferInitialAttempt: true,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFocus, autoFocusKey]);
-}
-
 function MessageInputAutoFocus({
   enabled,
   autoFocusKey,
@@ -603,7 +583,7 @@ function MessageInputAutoFocus({
   textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>;
 }) {
   const { isPaneFocused } = useComposerKeyboardScope();
-  useAutoFocusOnWebEffect(textInputRef, enabled && isPaneFocused, autoFocusKey);
+  useComposerAutoFocus(textInputRef, enabled && isPaneFocused, autoFocusKey);
   return null;
 }
 
