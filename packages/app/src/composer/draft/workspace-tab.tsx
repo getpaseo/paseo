@@ -8,8 +8,7 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { type ComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
-import { ComposerImportPill } from "@/composer/draft/import-pill";
-import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
+import { DraftAttachmentActions } from "@/composer/draft/attachment-actions";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
@@ -263,16 +262,6 @@ interface WorkspaceDraftComposerProps {
   editingSession: ComposerEditingSession;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenImportSheet?: () => void;
-}
-
-function resolveImportPillPress(
-  onOpenImportSheet: (() => void) | undefined,
-  isSubmitting: boolean,
-): (() => void) | null {
-  if (isSubmitting) {
-    return null;
-  }
-  return onOpenImportSheet ?? null;
 }
 
 /**
@@ -564,7 +553,6 @@ export function WorkspaceDraftComposer({
   const handleDropdownCloseFocus = useCallback(() => {
     focusInputRef.current?.();
   }, []);
-  const importPillPress = resolveImportPillPress(onOpenImportSheet, isSubmitting);
   const composerAgentControls = useMemo(
     () => ({
       ...composerState.agentControls,
@@ -582,12 +570,14 @@ export function WorkspaceDraftComposer({
           </View>
         </View>
       ) : null}
-      {importPillPress && !isComposerFullscreen ? (
-        <View style={styles.importPillRow}>
-          <View style={styles.importPillContent}>
-            <ComposerImportPill onPress={importPillPress} />
-          </View>
-        </View>
+      {!isSubmitting && !isComposerFullscreen ? (
+        <DraftAttachmentActions
+          serverId={serverId}
+          client={client}
+          attachments={draftInput.attachments}
+          onChangeAttachments={draftInput.setAttachments}
+          onOpenImportSheet={onOpenImportSheet}
+        />
       ) : null}
       <Composer
         agentId={tabId}
@@ -632,24 +622,6 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     paddingHorizontal: theme.spacing[4],
     alignItems: "center",
-  },
-  importPillRow: {
-    width: "100%",
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: {
-      xs: COMPOSER_PILL_CLEARANCE.compact,
-      md: COMPOSER_PILL_CLEARANCE.wide,
-    },
-    paddingBottom: {
-      xs: COMPOSER_PILL_CLEARANCE.compact,
-      md: COMPOSER_PILL_CLEARANCE.wide,
-    },
-    alignItems: "center",
-  },
-  importPillContent: {
-    width: "100%",
-    maxWidth: theme.contentMaxWidth,
-    flexDirection: "row",
   },
   formError: {
     width: "100%",

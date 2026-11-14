@@ -39,6 +39,8 @@ import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-f
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
+import { withAttachmentSourceFixture } from "../support/helpers/attachment-source";
+import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -53,6 +55,41 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("New Agent offers an attachment source shortcut with a default result", async ({
+    page,
+  }, info) => {
+    await withAttachmentSourceFixture(page, info, async (context) => {
+      await context.openShortcut();
+      await context.attachDefaultResult();
+      await context.expectAttachmentInDraft();
+    });
+  });
+
+  test("failed attachment source setup releases its workspace", async ({ page }, info) => {
+    await expect(
+      withAttachmentSourceFixture(page, info, async () => {}, {
+        fixtureName: "missing-attachment-source",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("failed attachment source startup removes its configured plugin", async ({ page }, info) => {
+    const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    try {
+      const before = (await client.getDaemonConfig()).config;
+      await expect(
+        withAttachmentSourceFixture(page, info, async () => {}, {
+          fixtureName: "attachment-source-failed-startup",
+        }),
+      ).rejects.toThrow("Intentional attachment source startup failure");
+      const after = (await client.getDaemonConfig()).config;
+      expect(after.plugins?.["test-attachment-source"]).toBeUndefined();
+      expect(after.pluginsEnabled).toBe(before.pluginsEnabled);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,
