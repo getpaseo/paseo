@@ -1092,12 +1092,12 @@ export async function resolveACPModelThinkingByProbe({
       match.level && choices.some((choice) => choice.id === match.level)
         ? match.level
         : choices.find((choice) => choice.isDefault)?.id;
-    // deriveSelectorOptions built these choices for this response alone, so marking the
-    // default in place touches nothing shared.
+    // Models that share a base share one probed list, so mark the default on a copy.
+    const thinkingOptions: typeof choices = [];
     for (const choice of choices) {
-      choice.isDefault = choice.id === defaultThinkingOptionId;
+      thinkingOptions.push({ ...choice, isDefault: choice.id === defaultThinkingOptionId });
     }
-    return { ...model, thinkingOptions: choices, defaultThinkingOptionId, metadata };
+    return { ...model, thinkingOptions, defaultThinkingOptionId, metadata };
   });
 }
 

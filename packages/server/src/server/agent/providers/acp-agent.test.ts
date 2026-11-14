@@ -2644,6 +2644,7 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
       id: model.id,
       thinking: model.thinkingOptions?.map((option) => option.id),
       defaultThinkingOptionId: model.defaultThinkingOptionId,
+      markedDefault: model.thinkingOptions?.find((option) => option.isDefault)?.id,
       thinkingOptionsError: model.metadata?.thinkingOptionsError !== undefined,
     }));
     expect(agentConnection.signal.aborted).toBe(false);
@@ -2660,36 +2661,42 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
         id: "base-medium",
         thinking: ["low", "medium", "high"],
         defaultThinkingOptionId: "medium",
+        markedDefault: "medium",
         thinkingOptionsError: false,
       },
       {
         id: "base-high",
         thinking: ["low", "medium", "high"],
         defaultThinkingOptionId: "high",
+        markedDefault: "high",
         thinkingOptionsError: false,
       },
       {
         id: "large-low",
         thinking: ["low", "medium", "high", "xhigh"],
         defaultThinkingOptionId: "low",
+        markedDefault: "low",
         thinkingOptionsError: false,
       },
       {
         id: "large-xhigh",
         thinking: ["low", "medium", "high", "xhigh"],
         defaultThinkingOptionId: "xhigh",
+        markedDefault: "xhigh",
         thinkingOptionsError: false,
       },
       {
         id: "plain",
         thinking: undefined,
         defaultThinkingOptionId: undefined,
+        markedDefault: undefined,
         thinkingOptionsError: false,
       },
       {
         id: "unmatched",
         thinking: undefined,
         defaultThinkingOptionId: undefined,
+        markedDefault: undefined,
         thinkingOptionsError: false,
       },
     ]);
@@ -2712,10 +2719,12 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
     expect(models.find(({ id }) => id === "base-high")).toMatchObject({
       thinking: ["low", "medium", "high"],
       defaultThinkingOptionId: "high",
+      markedDefault: "high",
     });
     expect(models.find(({ id }) => id === "large-xhigh")).toMatchObject({
       thinking: undefined,
       defaultThinkingOptionId: undefined,
+      markedDefault: undefined,
     });
     expect(requests).toEqual([
       "session/new",
