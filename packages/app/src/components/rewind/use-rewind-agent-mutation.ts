@@ -5,7 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useToast } from "@/contexts/toast-context";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { RewindMode } from "./use-rewind-capabilities";
-import { useRewindComposerRestore } from "./composer-restore";
+import { type RewoundMessage, useRewindComposerRestore } from "./composer-restore";
 import { useSessionStore } from "@/stores/session-store";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -15,6 +15,8 @@ interface UseRewindAgentMutationInput {
   agentId?: string;
   messageId?: string;
   client?: DaemonClient | null;
+  images: RewoundMessage["images"];
+  attachments: RewoundMessage["attachments"];
 }
 
 interface RewindAgentInput {
@@ -52,7 +54,11 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       if (!shouldRestoreComposerForRewindMode(variables.mode)) {
         return;
       }
-      composerRestore?.completeRewind(variables.rewoundText);
+      composerRestore?.completeRewind({
+        text: variables.rewoundText,
+        images: input.images,
+        attachments: input.attachments,
+      });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : t("rewind.errors.failed"));

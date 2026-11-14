@@ -4,6 +4,8 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
 import {
+  attachImageFromMenu,
+  attachFileFromMenu,
   composerLocator,
   expectComposerDraft,
   expectComposerVisible,
@@ -258,6 +260,68 @@ test.describe("Rewind sheet", () => {
       await session.cleanup();
     }
   });
+
+  for (const prompt of ["Review these attachments", ""]) {
+    test(`restores images and files after rewind (${prompt ? "with text" : "attachments only"})`, async ({
+      page,
+    }, testInfo) => {
+      const session = await seedMockAgentWorkspace({
+        repoPrefix: "rewind-attachments-e2e-",
+        title: "Rewind attachments",
+      });
+      try {
+        await openAgentRoute(page, session);
+        await expectComposerVisible(page);
+        await attachImageFromMenu(page, {
+          name: "screenshot.png",
+          mimeType: "image/png",
+          buffer: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            "base64",
+          ),
+        });
+        await attachFileFromMenu(page, {
+          name: "notes.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("Review notes"),
+        });
+        await expect(page.getByTestId("composer-image-attachment-pill")).toBeVisible();
+        await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("notes.txt");
+        await fillComposerDraft(page, prompt);
+        await page.getByRole("button", { name: "Send message", exact: true }).click();
+        await expect(page.getByTestId("user-message")).toHaveCount(1);
+        await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+        await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+        await session.client.waitForFinish(session.agentId);
+        await page.getByTestId("user-message").getByText("notes.txt", { exact: true }).hover();
+        await page.getByTestId("rewind-menu-trigger").click();
+        await selectRewindOption(page, "Rewind conversation");
+        await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
+        await expectComposerDraft(page, prompt);
+        const screenshotPath = testInfo.outputPath("restored-composer.png");
+        await page.screenshot({ path: screenshotPath });
+        await testInfo.attach("restored-composer", {
+          path: screenshotPath,
+          contentType: "image/png",
+        });
+        await expect(page.getByTestId("composer-image-attachment-pill")).toBeVisible();
+        await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("notes.txt");
+        await page.getByRole("button", { name: "Send message", exact: true }).click();
+        await expect(page.getByTestId("user-message").last()).toContainText("notes.txt");
+        await expect(
+          page
+            .getByTestId("user-message")
+            .last()
+            .getByRole("button", { name: "Open image attachment" }),
+        ).toBeVisible();
+        await expectComposerDraft(page, "");
+        await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+        await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
 
   test("surfaces rewind failures without crashing the page", async ({ page }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for failed rewind turn.";
