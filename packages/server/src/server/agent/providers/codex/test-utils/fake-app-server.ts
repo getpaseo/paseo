@@ -141,6 +141,7 @@ export interface FakeCodexAppServer {
     serverName: string;
     message: string;
     requestedSchema: Record<string, unknown>;
+    _meta?: Record<string, unknown> | null;
   }): void;
   waitForMcpElicitationDecision(): Promise<unknown>;
   resolvesMcpElicitation(): void;
@@ -678,7 +679,7 @@ export function createFakeCodexAppServer(
           params: {
             ...params,
             mode: "openai/form",
-            _meta: null,
+            _meta: params._meta ?? null,
           },
         })}\n`,
       );
