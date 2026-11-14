@@ -1,5 +1,6 @@
 import {
   cpSync,
+  realpathSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -8,7 +9,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export function seedPaseoHome(source, target) {
@@ -77,6 +78,6 @@ function isDirectory(path) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   seedPaseoHome(process.argv[2], process.argv[3]);
 }

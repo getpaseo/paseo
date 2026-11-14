@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mkdtemp, rm, mkdir, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -161,7 +161,11 @@ for (const seeder of ["setup", "shell", "setup-bom"] as const) {
           execFileSync(process.execPath, [join(repo, "scripts/seed-worktree-dev-state.mjs")], {
             env,
           });
-        else execFileSync("bash", [join(repo, "scripts/dev-home.sh")], { env });
+        else {
+          const linkedRepo = join(root, "linked-checkout");
+          await symlink(repo, linkedRepo, "dir");
+          execFileSync("bash", [join(linkedRepo, "scripts/dev-home.sh")], { env });
+        }
         expect((await readdir(target)).sort()).toEqual(["agents", "config.json"]);
         const config = readPersistedConfig(target);
         const copied = new AgentStorage(join(target, "agents"), createTestLogger());
