@@ -53,3 +53,19 @@ it("never hands back a URL it already released when the same attachment returns"
   expect(latest).not.toEqual({ status: "ready", url: released });
   expect(await waitForReady()).not.toBe(released);
 });
+
+it("retries a failed attachment from loading when it returns", async () => {
+  const stored = await persistAttachmentFromBlob({
+    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    mimeType: "image/png",
+    fileName: "shot.png",
+  });
+  const missing = { ...stored, id: "missing-attachment", storageKey: "missing-attachment" };
+
+  await render(missing);
+  await vi.waitFor(() => expect(latest?.status).toBe("failed"));
+  await render(null);
+  await render(missing);
+
+  expect(latest).toEqual({ status: "loading" });
+});

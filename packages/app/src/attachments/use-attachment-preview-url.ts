@@ -65,10 +65,10 @@ export function useAttachmentPreviewUrl(
       disposed = true;
       if (currentUrl) {
         void releaseAttachmentPreviewUrl({ attachment: current, url: currentUrl });
-        // The URL is gone: a result for this key must not survive it, or the same attachment
-        // coming back would read the released URL until the next lookup lands.
-        setResolved((previous) => (previous?.key === key ? null : previous));
       }
+      // A result lives only as long as its lookup. Kept, the same attachment coming back would
+      // read a released URL, or an old failure, until the next lookup lands.
+      setResolved((previous) => (previous?.key === key ? null : previous));
     };
   }, [key]);
 
