@@ -44,6 +44,7 @@ export type PullRequestOpenLocation = "main" | "side" | "explorer";
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 /** How much of an agent's work the chat shows between the user's message and the reply. */
 export type ChatDisplay = "full" | "collapseToolCalls" | "collapseTurns";
+export type ChatOpenPosition = "start" | "end";
 
 const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
@@ -106,6 +107,7 @@ export interface AppSettings {
   usage: UsagePreferences;
   autoExpandReasoning: boolean;
   chatDisplay: ChatDisplay;
+  chatOpenPosition: ChatOpenPosition;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   sendShortcut: SendShortcut;
@@ -164,6 +166,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   usage: DEFAULT_USAGE_PREFERENCES,
   autoExpandReasoning: false,
   chatDisplay: "collapseTurns",
+  chatOpenPosition: "end",
   chatOutlineEnabled: true,
   vimKeybindings: false,
   sendShortcut: "enter",
@@ -262,6 +265,7 @@ const StoredAppSettingsSchema = z
     usage: UsagePreferencesSchema,
     autoExpandReasoning: z.boolean().catch(false),
     chatDisplay: z.enum(["full", "collapseToolCalls", "collapseTurns"]).optional().catch("full"),
+    chatOpenPosition: z.enum(["start", "end"]).catch("end"),
     // COMPAT(toolCallDetailLevel): replaced by chatDisplay in v0.13, remove after 2027-04-24.
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])

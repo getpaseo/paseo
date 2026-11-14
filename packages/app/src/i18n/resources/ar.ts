@@ -239,6 +239,9 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "جارٍ فتح بداية المحادثة…",
+    openStartFailed:
+      "تعذّر فتح بداية المحادثة. أعد المحاولة، أو حدّث المضيف إذا كان لا يدعم التنقل في السجل.",
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
@@ -2520,6 +2523,11 @@ export const ar: TranslationResources = {
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+      },
+      chatOpenPosition: {
+        label: "فتح المحادثة عند",
+        description: "موضع البدء عند فتح محادثة",
+        options: { end: "نهاية المحادثة", start: "بداية المحادثة" },
       },
       chatDisplay: {
         label: "عرض المحادثة",

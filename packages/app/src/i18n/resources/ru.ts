@@ -241,6 +241,9 @@ export const ru: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "Открывается начало разговора…",
+    openStartFailed:
+      "Не удалось открыть начало разговора. Повторите попытку или обновите хост, если он не поддерживает переходы по истории.",
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
@@ -2526,6 +2529,11 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию полностью разворачивать блоки размышлений и хода рассуждений агента",
+      },
+      chatOpenPosition: {
+        label: "Открывать чат с",
+        description: "Начальная позиция при открытии чата",
+        options: { end: "Конца разговора", start: "Начала разговора" },
       },
       chatDisplay: {
         label: "Отображение чата",

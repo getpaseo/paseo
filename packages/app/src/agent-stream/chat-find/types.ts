@@ -13,6 +13,8 @@ export interface ChatFindProps {
   viewportRef: RefObject<StreamViewportHandle | null>;
   revealLoadedMessage(messageId: string): boolean;
   visibleMessageIds: MountedMessageIds;
+  /** Called before a match moves the viewport, so other navigation can stand down. */
+  onNavigate?(): void;
   children: ReactNode;
 }
 export interface ChatFindExpansionProps {

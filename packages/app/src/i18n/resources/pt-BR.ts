@@ -240,6 +240,9 @@ export const ptBR: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "Abrindo o início da conversa…",
+    openStartFailed:
+      "Não foi possível abrir o início da conversa. Tente novamente ou atualize o host se ele não oferecer navegação pelo histórico.",
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
@@ -2522,6 +2525,11 @@ export const ptBR: TranslationResources = {
         label: "Sempre expandir raciocínio",
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+      },
+      chatOpenPosition: {
+        label: "Abrir chat no",
+        description: "Onde começar ao abrir um chat",
+        options: { end: "Fim da conversa", start: "Início da conversa" },
       },
       chatDisplay: {
         label: "Exibição do chat",

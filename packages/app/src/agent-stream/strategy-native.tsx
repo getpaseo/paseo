@@ -35,6 +35,7 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
+import { createNativeStartHold, type NativeStartHold } from "./native-start-hold";
 import {
   createNativeDisclosureHold,
   disclosureAnchor,
@@ -81,6 +82,9 @@ const NATIVE_STREAM_DRAW_DISTANCE = 2000;
 const AT_END_OFFSET_PX = 1;
 // A disclosure settles after this many frames without an item size change.
 const DISCLOSURE_QUIET_FRAMES = 2;
+// The list must stay at the top this long after an "open at start" jump before the hold lets go.
+const START_HOLD_QUIET_FRAMES = 12;
+const START_HOLD_MAX_FRAMES = 120;
 const BOTTOM_ANCHOR_TRANSPORT_BEHAVIOR = Object.freeze({
   verificationDelayFrames: 2,
   verificationRetryMode: "recheck" as const,
@@ -147,6 +151,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     isInitialHistoryLoading,
     revealInitialHistory,
     onNearBottomChange,
+    onUserScroll,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -179,6 +184,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const isReleasedAtEndRef = useRef(false);
   const programmaticScrollEventBudgetRef = useRef(0);
+  // Set once the start hold exists; the bottom scroll below is created before it.
+  const startHoldRef = useRef<NativeStartHold | null>(null);
   const historyStartReadyRef = useRef(false);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
 
@@ -267,6 +274,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const scrollToBottom = useCallback(
     (animated: boolean) => {
+      // A bottom scroll is a newer request than an "open at start" jump; the hold must not pull the
+      // list back to the top on its next frame.
+      startHoldRef.current?.cancel();
       programmaticScrollEventBudgetRef.current = 3;
       const metrics = streamViewportMetricsRef.current;
       // The native scroll view finds its end from the content it has mounted, and the end pin holds
@@ -333,6 +343,24 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onRelease: releaseDisclosure,
     }),
   );
+  const scrollListToStart = useStableEvent(() => {
+    // Through LegendList, not the native scroll view: the top offset does not depend on row
+    // estimates, and LegendList must know where the list is. A raw native scroll left its own
+    // offset stale, and its next position adjustment moved the list back down by the header.
+    void listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  });
+  const [startHold] = useState(() =>
+    createNativeStartHold({
+      quietFrames: START_HOLD_QUIET_FRAMES,
+      maxFrames: START_HOLD_MAX_FRAMES,
+      requestFrame: requestAnimationFrame,
+      cancelFrame: cancelAnimationFrame,
+      readOffset: () => scrollOffsetYRef.current,
+      scrollToStart: scrollListToStart,
+    }),
+  );
+  startHoldRef.current = startHold;
+  useEffect(() => () => startHold.cancel(), [startHold]);
   const cancelDisclosureHold = useStableEvent(() => {
     disclosureHold.cancel();
     setEndHold(null);
@@ -460,6 +488,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
       },
       holdRow,
+      holdReadingPosition: () => bottomAnchorController.detachByUser(),
+      scrollToStart: () => {
+        bottomAnchorController.detachByUser();
+        startHold.hold();
+      },
     };
     viewportRef.current = handle;
     return () => {
@@ -467,7 +500,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, holdRow, viewportRef]);
+  }, [agentId, bottomAnchorController, holdRow, startHold, viewportRef]);
 
   // The scroll-to-bottom button shows whenever following would not resume on its own. A detached
   // list resumes only from the end, so the button shows anywhere short of it. While following, the
@@ -562,6 +595,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     finishInitialFill();
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;
+    startHold.cancel();
+    onUserScroll?.();
     scrollKeyboardDismiss.onScrollBeginDrag(event);
     // The gesture takes the viewport from a disclosure hold. Size changes from a streaming row can
     // keep the hold's quiet frames from ever passing, and a held row that scrolls away would leave

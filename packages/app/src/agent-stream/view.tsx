@@ -1,5 +1,8 @@
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useChatOpenPosition } from "./use-chat-open-position";
 import React, {
   forwardRef,
   memo,
@@ -117,6 +120,32 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+
+function ChatOpeningNotice({
+  status,
+  retry,
+  onGoToBottom,
+}: {
+  status: ReturnType<typeof useChatOpenPosition>["status"];
+  retry: () => void;
+  onGoToBottom: () => void;
+}) {
+  const { t } = useTranslation();
+  if (status === "loading" || status === "positioning") {
+    return <Alert description={t("agentStream.openingStart")} testID="chat-opening-start" />;
+  }
+  if (status !== "error") return null;
+  return (
+    <Alert
+      variant="error"
+      description={t("agentStream.openStartFailed")}
+      testID="chat-open-start-error"
+    >
+      <Button onPress={retry}>{t("common.actions.retry")}</Button>
+      <Button onPress={onGoToBottom}>{t("agentStream.scrollToBottom")}</Button>
+    </Alert>
+  );
+}
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -366,6 +395,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
+    const chatOpenPosition = useSettings((settings) => settings.chatOpenPosition);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const pendingClientMessageIds = useMemo(
@@ -629,21 +659,48 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       mountedHistoryMessageIds,
       revealLoadedMessage: revealLoadedHistory,
     });
+    const {
+      status: chatOpeningStatus,
+      cancel: cancelChatOpening,
+      yieldToReader: yieldChatOpeningToReader,
+      retry: retryChatOpening,
+      bottomAnchorRequest: effectiveBottomAnchorRequest,
+    } = useChatOpenPosition({
+      agentId,
+      serverId: resolvedServerId,
+      active: isActive,
+      position: chatOpenPosition,
+      ready: isAuthoritativeHistoryReady,
+      epoch: timelineEpoch,
+      supportsPromptIndex: supportsChatOutline,
+      items: effectiveStreamItems,
+      head: effectiveStreamHead,
+      mountedMessageIds,
+      revealLoadedMessage: revealLoadedHistory,
+      viewportRef,
+      bottomAnchorRequest: routeBottomAnchorRequest,
+    });
+    const jumpToOutlinePrompt = useStableEvent((sequenceNumber: number) => {
+      cancelChatOpening();
+      chatOutline.jumpToPrompt(sequenceNumber);
+    });
 
     useImperativeHandle(
       ref,
       () => ({
         scrollToBottom(reason = "jump-to-bottom") {
+          cancelChatOpening();
           viewportRef.current?.scrollToBottom(reason);
         },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
       }),
-      [],
+      [cancelChatOpening],
     );
 
     const scrollToBottom = useCallback(() => {
+      cancelChatOpening();
       if (!isTimelineDetached) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
@@ -656,7 +713,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    }, [
+      agentId,
+      cancelChatOpening,
+      handleTimelineHistoryLoadError,
+      isTimelineDetached,
+      resolvedServerId,
+    ]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -1170,9 +1233,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
+        onNavigate={yieldChatOpeningToReader}
       >
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
+            <ChatOpeningNotice
+              status={chatOpeningStatus}
+              retry={retryChatOpening}
+              onGoToBottom={scrollToBottom}
+            />
             <MessageOuterSpacingProvider disableOuterSpacing>
               <ToolCallExpansionContext.Provider value={toolCallExpansion}>
                 <UserMessageExpansionContext.Provider value={userMessageExpansion}>
@@ -1186,12 +1255,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     renderers,
                     listEmptyComponent,
                     viewportRef,
-                    routeBottomAnchorRequest,
+                    routeBottomAnchorRequest: effectiveBottomAnchorRequest,
                     isAuthoritativeHistoryReady,
                     isInitialHistoryLoading,
                     revealInitialHistory,
                     onNearBottomChange: nearBottom.set,
                     onReadingPositionChange: handleReadingPositionChange,
+                    onUserScroll: yieldChatOpeningToReader,
                     onNearHistoryStart: loadOlder,
                     isLoadingOlderHistory: isLoadingOlder,
                     hasOlderHistory: hasOlder,
@@ -1208,7 +1278,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <ChatOutlineRail
               prompts={chatOutline.prompts}
               activePrompt={chatOutline.activePrompt}
-              onJumpToPrompt={chatOutline.jumpToPrompt}
+              onJumpToPrompt={jumpToOutlinePrompt}
             />
             <ScrollToBottomButton
               nearBottom={nearBottom}

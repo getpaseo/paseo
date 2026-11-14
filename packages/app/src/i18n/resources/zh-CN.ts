@@ -239,6 +239,8 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    openingStart: "正在加载会话开头…",
+    openStartFailed: "无法打开会话开头。请重试；如果主机不支持历史跳转，请先更新主机。",
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
@@ -2457,6 +2459,11 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      chatOpenPosition: {
+        label: "会话打开位置",
+        description: "打开会话时，从哪里开始阅读",
+        options: { end: "会话末尾", start: "会话开头" },
       },
       chatDisplay: {
         label: "聊天显示",

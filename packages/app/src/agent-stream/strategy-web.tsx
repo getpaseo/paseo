@@ -144,6 +144,18 @@ function isUpwardViewportScrollKey(event: KeyboardEvent): boolean {
   );
 }
 
+function isDownwardViewportScrollKey(event: KeyboardEvent): boolean {
+  if (isEditableEventTarget(event.target)) {
+    return false;
+  }
+  return (
+    event.key === "ArrowDown" ||
+    event.key === "PageDown" ||
+    event.key === "End" ||
+    (event.key === " " && !event.shiftKey)
+  );
+}
+
 function canNestedScrollerConsumeUpwardInput(
   target: EventTarget | null,
   scrollContainer: HTMLElement,
@@ -308,6 +320,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     revealInitialHistory,
     onNearBottomChange,
     onReadingPositionChange,
+    onUserScroll,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -316,6 +329,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     contentMaxWidth,
     isMobileBreakpoint,
   } = props;
+  const reportUserScroll = useStableEvent(() => onUserScroll?.());
   const historyVirtualized = useRevisedHistoryRows(
     inputSegments.historyVirtualized,
     historyRowRevision,
@@ -694,7 +708,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reportReadingPosition();
   }, [onNearBottomChange, reportReadingPosition]);
 
-  const { isJumpSettling, scrollToMessage } = useScrollToMessage({
+  const { isJumpSettling, cancelJump, scrollToMessage } = useScrollToMessage({
     active: isActive,
     scrollContainerRef,
     rowVirtualizer,
@@ -1024,6 +1038,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
     };
     const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && event.deltaY !== 0) {
+        reportUserScroll();
+      }
       if (
         !event.ctrlKey &&
         event.deltaY < 0 &&
@@ -1033,9 +1050,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isDownwardViewportScrollKey(event)) {
+        reportUserScroll();
+        return;
+      }
       if (!isUpwardViewportScrollKey(event)) {
         return;
       }
+      reportUserScroll();
       if (canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)) {
         return;
       }
@@ -1053,10 +1075,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       if (event.button === 0) {
         if (isVerticalScrollbarGutterPress(event, scrollContainer)) {
+          reportUserScroll();
           mouseScrollGestureRef.current = { kind: "scrollbar", pointerId: event.pointerId };
         }
         return;
       }
+      reportUserScroll();
       mouseScrollGestureRef.current = {
         kind: "autoscroll",
         pointerId: event.pointerId,
@@ -1107,6 +1131,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       }
       const previousTouchY = lastTouchClientYRef.current;
+      if (previousTouchY !== null && Math.abs(touch.clientY - previousTouchY) > 1) {
+        reportUserScroll();
+      }
       if (
         previousTouchY !== null &&
         touch.clientY > previousTouchY + 1 &&
@@ -1157,12 +1184,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
+    reportUserScroll,
   ]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
       focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
+        // A bottom jump is newer than a prompt jump still correcting toward its prompt; that
+        // correction would pull the list back up on its next frame.
+        cancelJump();
         setFollowOutput(true);
         cancelPendingStickToBottom();
         forceStickToBottom();
@@ -1182,6 +1213,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         disclosurePendingRef.current = true;
         apply();
       },
+      holdReadingPosition: () => {
+        cancelPendingStickToBottom();
+        setFollowOutput(false);
+        readingAnchor.scroll(scrollContainerRef.current?.scrollTop ?? 0);
+      },
       scrollToMessage,
     };
     viewportRef.current = handle;
@@ -1192,6 +1228,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       cancelPendingStickToBottom();
     };
   }, [
+    cancelJump,
     cancelPendingStickToBottom,
     forceStickToBottom,
     measureRows,
@@ -1381,6 +1418,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         <DomOverlayScrollbar
           scrollContainerRef={scrollContainerRef}
           onUserScrollUp={stopFollowingOutputFromUserIntent}
+          onUserScrollStart={reportUserScroll}
         />
       ) : null}
     </div>
