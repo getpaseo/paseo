@@ -562,6 +562,13 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
+An ACP agent can report a `thought_level` selector only for its selected model, without
+per-model reasoning metadata. Paseo then shows thinking options only for models it can
+confirm. Set `options.probeModelThinking: true` to have the catalog probe switch its throwaway
+session's `model` selector to each model and read that model's `thought_level` choices. A model
+id of the form `<model>-<level>` defaults to that level. Enable it only for agents that do not
+save a session's model switch as your default model.
+
 ACP agents execute filesystem operations in their own environment by default,
 while terminal operations run through Paseo on the host. To customize which
 operations Paseo handles, configure client capabilities in provider options:

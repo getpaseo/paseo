@@ -2531,6 +2531,208 @@ describe("ACPAgentClient catalog discovery without a model resolver", () => {
   });
 });
 
+describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
+  // Shaped like an agent whose model ids combine a base model and a thinking level, while
+  // its config options split them into a `model` select of base ids and a thought_level
+  // select that describes only the selected base model.
+  const BASE_LEVELS: Record<string, string[] | undefined> = {
+    base: ["low", "medium", "high"],
+    large: ["low", "medium", "high", "xhigh"],
+    plain: undefined,
+  };
+
+  function modelConfigOptions(model: string, level: string | undefined): SessionConfigOption[] {
+    const levels = BASE_LEVELS[model];
+    return [
+      selectConfigOption("model", Object.keys(BASE_LEVELS), model),
+      ...(levels
+        ? [
+            selectConfigOption(
+              "thought_level",
+              levels,
+              level && levels.includes(level) ? level : "medium",
+            ),
+          ]
+        : []),
+    ];
+  }
+
+  async function fetchProbedCatalog(input: {
+    providerOptions?: Record<string, unknown>;
+    rejectModel?: string;
+  }) {
+    const requests: string[] = [];
+    let currentModel = "base";
+    let currentLevel: string | undefined = "medium";
+    const response: NewSessionResponse = {
+      sessionId: "catalog-session",
+      models: {
+        currentModelId: "base-medium",
+        availableModels: [
+          { modelId: "base-medium", name: "Base (Medium)" },
+          { modelId: "base-high", name: "Base (High)" },
+          { modelId: "large-low", name: "Large (Low)" },
+          { modelId: "large-xhigh", name: "Large (XHigh)" },
+          { modelId: "plain", name: "Plain" },
+          { modelId: "unmatched", name: "Unmatched" },
+        ],
+      },
+      configOptions: modelConfigOptions("base", "medium"),
+    };
+    const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+    const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+    const agent: Agent = {
+      async initialize() {
+        return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+      },
+      async newSession() {
+        requests.push("session/new");
+        return response;
+      },
+      async setSessionConfigOption(params) {
+        const value = String(params.value);
+        requests.push(`set:${params.configId}=${value}`);
+        if (params.configId !== "model-option") {
+          throw new Error(`unexpected config option ${params.configId}`);
+        }
+        if (value === input.rejectModel) {
+          throw new RequestError(-32602, `unknown model ${value}`);
+        }
+        currentModel = value;
+        currentLevel = BASE_LEVELS[value] ? currentLevel : undefined;
+        return { configOptions: modelConfigOptions(currentModel, currentLevel) };
+      },
+      async prompt() {
+        throw new Error("Catalog discovery must not send a prompt");
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    const initialize = await connection.initialize({ protocolVersion: PROTOCOL_VERSION });
+    class CatalogClient extends GenericACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return { child: createProbeChildStub(), connection, initialize };
+      }
+      protected override async closeProbe(): Promise<void> {
+        requests.push("close");
+      }
+    }
+    const client = new CatalogClient({
+      logger: createTestLogger(),
+      command: ["test-acp"],
+      providerId: "combined-ids",
+    });
+    const catalog = await client.fetchCatalog({
+      scope: "global",
+      force: true,
+      providerOptions: input.providerOptions,
+    });
+    const models = catalog.models.map((model) => ({
+      id: model.id,
+      thinking: model.thinkingOptions?.map((option) => option.id),
+      defaultThinkingOptionId: model.defaultThinkingOptionId,
+      thinkingOptionsError: model.metadata?.thinkingOptionsError !== undefined,
+    }));
+    expect(agentConnection.signal.aborted).toBe(false);
+    return { models, requests };
+  }
+
+  test("reads each model's thinking options by switching the probe session's model select", async () => {
+    const { models, requests } = await fetchProbedCatalog({
+      providerOptions: { probeModelThinking: true },
+    });
+
+    expect(models).toEqual([
+      {
+        id: "base-medium",
+        thinking: ["low", "medium", "high"],
+        defaultThinkingOptionId: "medium",
+        thinkingOptionsError: false,
+      },
+      {
+        id: "base-high",
+        thinking: ["low", "medium", "high"],
+        defaultThinkingOptionId: "high",
+        thinkingOptionsError: false,
+      },
+      {
+        id: "large-low",
+        thinking: ["low", "medium", "high", "xhigh"],
+        defaultThinkingOptionId: "low",
+        thinkingOptionsError: false,
+      },
+      {
+        id: "large-xhigh",
+        thinking: ["low", "medium", "high", "xhigh"],
+        defaultThinkingOptionId: "xhigh",
+        thinkingOptionsError: false,
+      },
+      {
+        id: "plain",
+        thinking: undefined,
+        defaultThinkingOptionId: undefined,
+        thinkingOptionsError: false,
+      },
+      {
+        id: "unmatched",
+        thinking: undefined,
+        defaultThinkingOptionId: undefined,
+        thinkingOptionsError: false,
+      },
+    ]);
+    // One switch per base model, never a prompt, and the probe session is closed.
+    expect(requests).toEqual([
+      "session/new",
+      "set:model-option=base",
+      "set:model-option=large",
+      "set:model-option=plain",
+      "close",
+    ]);
+  });
+
+  test("leaves the remaining models unknown once a model switch fails", async () => {
+    const { models, requests } = await fetchProbedCatalog({
+      providerOptions: { probeModelThinking: true },
+      rejectModel: "large",
+    });
+
+    expect(models.find(({ id }) => id === "base-high")).toMatchObject({
+      thinking: ["low", "medium", "high"],
+      defaultThinkingOptionId: "high",
+    });
+    expect(models.find(({ id }) => id === "large-xhigh")).toMatchObject({
+      thinking: undefined,
+      defaultThinkingOptionId: undefined,
+    });
+    expect(requests).toEqual([
+      "session/new",
+      "set:model-option=base",
+      "set:model-option=large",
+      "close",
+    ]);
+  });
+
+  test("does not switch models unless the provider opts in", async () => {
+    const { models, requests } = await fetchProbedCatalog({});
+
+    expect(models.find(({ id }) => id === "large-xhigh")?.thinking).toBeUndefined();
+    expect(requests).toEqual(["session/new", "close"]);
+  });
+});
+
 describe("ACPAgentClient config features", () => {
   test("enables Auto Accept for unattended ACP creation", () => {
     const client = new ACPAgentClient({
