@@ -1,7 +1,9 @@
 import {
+  createContext,
   type ReactElement,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,6 +17,7 @@ import {
   type NativeSyntheticEvent,
   type ScrollView,
   type ScrollViewProps,
+  type ViewProps,
   type ViewStyle,
 } from "react-native";
 import {
@@ -28,12 +31,15 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useTranslation } from "react-i18next";
-import type { StreamItem } from "@/types/stream";
+import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
-import { useBottomAnchorController } from "./bottom-anchor-controller";
+import {
+  useBottomAnchorController,
+  type BottomAnchorLocalRequest,
+} from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import {
   createNativeDisclosureHold,
@@ -58,6 +64,13 @@ import { useHistoryStartPagination } from "./use-history-start-pagination";
 import { nativeHistoryStartGeometry } from "./native-history-start-geometry";
 import { useStreamTopOverlayInset } from "./top-overlay";
 import {
+  createNativePromptJumpSession,
+  NATIVE_PROMPT_JUMP_APPROACH_BUDGET,
+  stepNativePromptJump,
+} from "./prompt-jump-native";
+import { PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
+import { resolveNativeReadingRow, type CellFrame } from "./reading-anchor";
+import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
@@ -66,10 +79,11 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
+const HISTORY_START_SLOT_HEIGHT = 32;
 const historyStartSlotStyle: ViewStyle = {
   alignItems: "center",
   justifyContent: "center",
-  height: 32,
+  height: HISTORY_START_SLOT_HEIGHT,
   flexShrink: 0,
 };
 const HISTORY_START_SETTLE_FRAMES = 2;
@@ -128,8 +142,44 @@ const initialFillStyle: ViewStyle = {
   justifyContent: "center",
 };
 
+const PROMPT_JUMP_TICK_MS = 50;
+
+interface ScrollToIndexAtTopInput {
+  index: number;
+  animated: boolean;
+}
+
 function keyExtractor(item: { id: string }): string {
   return item.id;
+}
+
+type CellFrameListener = (cellKey: string, frame: CellFrame | null) => void;
+
+const CellFrameListenerContext = createContext<CellFrameListener | null>(null);
+
+interface StreamCellProps extends ViewProps {
+  cellKey: string;
+  children: ReactNode;
+}
+
+// A cell's frame is in content coordinates, which the list keeps private. The reading
+// position needs it to find the row under the floating header, which viewability ignores.
+function StreamCell({ cellKey, onLayout, children, ...viewProps }: StreamCellProps) {
+  const onFrame = useContext(CellFrameListenerContext);
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onLayout?.(event);
+      const { y, height } = event.nativeEvent.layout;
+      onFrame?.(cellKey, { y, height });
+    },
+    [cellKey, onFrame, onLayout],
+  );
+  useEffect(() => () => onFrame?.(cellKey, null), [cellKey, onFrame]);
+  return (
+    <View {...viewProps} onLayout={handleLayout}>
+      {children}
+    </View>
+  );
 }
 
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
@@ -147,6 +197,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     isInitialHistoryLoading,
     revealInitialHistory,
     onNearBottomChange,
+    onReadingPositionChange,
+    onUserScrollStart,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -181,6 +233,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const programmaticScrollEventBudgetRef = useRef(0);
   const historyStartReadyRef = useRef(false);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
+  const [cellFrames] = useState(() => new Map<string, CellFrame>());
+  const readingPositionFrameIdRef = useRef<number | null>(null);
 
   const historyItems = useMemo(() => {
     if (segments.historyVirtualized.length === 0) {
@@ -385,6 +439,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     (info: { size: number; previous: number; itemKey: string; itemData: StreamItem }) => {
       newRowEstimates.noteMeasured(info.itemData, info.size);
       disclosureHold.noteItemSizeChanged();
+      scheduleReadingPosition();
     },
   );
   const shouldRestorePosition = useStableEvent((item: StreamItem) => {
@@ -448,10 +503,182 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [clearPendingUserScrollEnd, disposeHistoryStart, evaluateHistoryStart]);
 
+  const getCellFrame = useStableEvent((cellKey: string): CellFrame | null => {
+    const frame = cellFrames.get(cellKey);
+    if (!frame) return null;
+    const position = listRef.current?.getState().positionByKey(cellKey);
+    const y =
+      position === undefined ? frame.y : topOverlayInset + HISTORY_START_SLOT_HEIGHT + position;
+    return { y, height: frame.height };
+  });
+
+  const reportReadingPosition = useStableEvent(() => {
+    if (!onReadingPositionChange) {
+      return;
+    }
+    const metrics = streamViewportMetricsRef.current;
+    const frames = new Map<string, CellFrame>();
+    for (const key of cellFrames.keys()) {
+      const frame = getCellFrame(key);
+      if (frame) frames.set(key, frame);
+    }
+    const readingRow = resolveNativeReadingRow({
+      frames,
+      offsetY: metrics.offsetY,
+      viewportHeight: metrics.viewportHeight,
+      topInset: topOverlayInset,
+    });
+    if (readingRow?.kind === "row") {
+      onReadingPositionChange(readingRow.id);
+      return;
+    }
+    if (readingRow?.kind === "live-head") {
+      // The live head runs oldest-first, so its last row is the newest row at the end.
+      onReadingPositionChange(segments.liveHead.at(-1)?.id ?? historyRows.at(-1)?.id ?? null);
+      return;
+    }
+    onReadingPositionChange(null);
+  });
+
+  const scheduleReadingPosition = useStableEvent(() => {
+    if (readingPositionFrameIdRef.current !== null) {
+      return;
+    }
+    readingPositionFrameIdRef.current = requestAnimationFrame(() => {
+      readingPositionFrameIdRef.current = null;
+      reportReadingPosition();
+    });
+  });
+
+  const handleCellFrame = useStableEvent((cellKey: string, frame: CellFrame | null) => {
+    if (frame) {
+      cellFrames.set(cellKey, frame);
+    } else {
+      cellFrames.delete(cellKey);
+    }
+    scheduleReadingPosition();
+  });
+
+  const requestBottomAnchor = useStableEvent((request: BottomAnchorLocalRequest) => {
+    onUserScrollStart?.();
+    bottomAnchorController.requestLocalAnchor(request);
+  });
+  const [promptJump] = useState(() =>
+    createNativePromptJumpSession({
+      schedule: (callback) => {
+        const timer = setTimeout(callback, PROMPT_JUMP_TICK_MS);
+        return () => clearTimeout(timer);
+      },
+      setBatchActive: () => undefined,
+      requestBottomAnchor,
+    }),
+  );
+  const cancelPromptJump = promptJump.cancel;
+  const endPromptJump = promptJump.end;
+
+  useEffect(
+    () => () => {
+      if (readingPositionFrameIdRef.current !== null) {
+        cancelAnimationFrame(readingPositionFrameIdRef.current);
+      }
+      cancelPromptJump();
+    },
+    [cancelPromptJump],
+  );
+
+  useEffect(() => {
+    endPromptJump();
+  }, [agentId, endPromptJump]);
+
+  // First approach, and the landing scroll when the list already measured the row.
+  // viewPosition 0 plus a positive viewOffset puts the row's top edge just under the header.
+  const scrollToIndexAtTop = useStableEvent(({ index, animated }: ScrollToIndexAtTopInput) => {
+    listRef.current?.scrollToIndex({
+      index,
+      animated,
+      viewPosition: 0,
+      viewOffset: topOverlayInset + PROMPT_JUMP_TOP_INSET_PX,
+    });
+  });
+
+  const schedulePromptJumpTick = useStableEvent(() => {
+    promptJump.schedule(correctPromptJump);
+  });
+
+  const correctPromptJump = useStableEvent(() => {
+    const jump = promptJump.getCurrent();
+    if (jump === null) return;
+    if (isUserScrollActiveRef.current) {
+      endPromptJump();
+      return;
+    }
+    const index = rows.findIndex((item) => getStreamItemMessageId(item) === jump.messageId);
+    const row = index >= 0 ? rows[index] : undefined;
+    const frame = row ? getCellFrame(row.id) : null;
+    const metrics = streamViewportMetricsRef.current;
+    const step = stepNativePromptJump({
+      frame,
+      offsetY: metrics.offsetY,
+      viewportHeight: metrics.viewportHeight,
+      contentHeight: metrics.contentHeight,
+      topInset: topOverlayInset,
+      sampled: jump.sampled,
+      stable: jump.stable,
+    });
+    if (step.kind === "settled" || step.kind === "stopped") {
+      endPromptJump();
+      return;
+    }
+    if (step.kind === "correct") {
+      jump.sampled = step.sampled;
+      jump.stable = step.stable;
+      listRef.current?.scrollToOffset({ offset: step.offset, animated: false });
+      schedulePromptJumpTick();
+      return;
+    }
+    if (step.kind === "hold") {
+      jump.sampled = step.sampled;
+      jump.stable = step.stable;
+      schedulePromptJumpTick();
+      return;
+    }
+    jump.approachSteps += 1;
+    if (jump.approachSteps > NATIVE_PROMPT_JUMP_APPROACH_BUDGET) {
+      endPromptJump();
+      return;
+    }
+    if (index >= 0) {
+      scrollToIndexAtTop({ index, animated: false });
+    }
+    schedulePromptJumpTick();
+  });
+
+  const beginPromptJump = useStableEvent((messageId: string) => {
+    const index = rows.findIndex((item) => getStreamItemMessageId(item) === messageId);
+    // The list reads the larger batch on its next render-window update.
+    promptJump.begin(messageId);
+    if (index >= 0) {
+      scrollToIndexAtTop({ index, animated: false });
+    }
+    schedulePromptJumpTick();
+  });
+
+  const scrollToMessage = useStableEvent((messageId: string) => {
+    const index = rows.findIndex((item) => getStreamItemMessageId(item) === messageId);
+    if (index < 0) {
+      return;
+    }
+    bottomAnchorController.detachByUser();
+    onNearBottomChange(false);
+    beginPromptJump(messageId);
+  });
+
   useEffect(() => {
     const handle: StreamViewportHandle = {
+      scrollToMessage,
+      cancelScrollToMessage: endPromptJump,
       scrollToBottom: (reason = "jump-to-bottom") => {
-        bottomAnchorController.requestLocalAnchor({
+        promptJump.requestBottomAnchor({
           agentId,
           reason,
         });
@@ -467,7 +694,15 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, holdRow, viewportRef]);
+  }, [
+    agentId,
+    bottomAnchorController,
+    endPromptJump,
+    holdRow,
+    promptJump,
+    scrollToMessage,
+    viewportRef,
+  ]);
 
   // The scroll-to-bottom button shows whenever following would not resume on its own. A detached
   // list resumes only from the end, so the button shows anywhere short of it. While following, the
@@ -536,6 +771,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
     const nearBottom = isScrollEventNearBottom(event);
     publishNearBottom();
+    reportReadingPosition();
 
     evaluateHistoryStart();
 
@@ -561,6 +797,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     finishInitialFill();
     clearPendingUserScrollEnd();
+    // Non-animated scrollTo does not emit begin-drag, so this is the reader's finger.
+    endPromptJump();
+    onUserScrollStart?.();
     isUserScrollActiveRef.current = true;
     scrollKeyboardDismiss.onScrollBeginDrag(event);
     // The gesture takes the viewport from a disclosure hold. Size changes from a streaming row can
@@ -631,6 +870,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousViewportHeight,
       viewportHeight,
     });
+    scheduleReadingPosition();
     evaluateHistoryStart();
   });
 
@@ -691,11 +931,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // StreamRow's memo limits that pass to the rows whose layout item changed.
   const renderItem = useStableEvent(
     ({ item, index }: LegendListRenderItemProps<StreamItem>): ReactElement => (
-      <RowLayoutSync rowId={item.id} registry={rowLayoutSyncRegistry}>
-        {liveRowIds.has(item.id)
-          ? renderLiveHeadRow(item, index - historyRows.length, segments.liveHead)
-          : renderHistoryMountedRow(item, index, historyItems)}
-      </RowLayoutSync>
+      <StreamCell cellKey={item.id}>
+        <RowLayoutSync rowId={item.id} registry={rowLayoutSyncRegistry}>
+          {liveRowIds.has(item.id)
+            ? renderLiveHeadRow(item, index - historyRows.length, segments.liveHead)
+            : renderHistoryMountedRow(item, index, historyItems)}
+        </RowLayoutSync>
+      </StreamCell>
     ),
   );
 
@@ -733,48 +975,50 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   }, [historyStartPaginationState, hasOlderHistory, retryHistoryStart, t]);
 
   return (
-    <View style={viewportStyle}>
-      <LegendList<StreamItem>
-        ref={listRef}
-        data={rows}
-        renderItem={renderItem}
-        extraData={renderHistoryMountedRow}
-        keyExtractor={keyExtractor}
-        testID="agent-chat-scroll"
-        nativeID="agent-chat-scroll-native-virtualized"
-        ListHeaderComponent={historyStartContent}
-        ListFooterComponent={liveAuxiliaryContent ?? undefined}
-        contentContainerStyle={listContentContainerStyle}
-        automaticallyAdjustContentInsets={false}
-        automaticallyAdjustsScrollIndicatorInsets={false}
-        contentInsetAdjustmentBehavior="never"
-        style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
-        onLayout={handleListLayout}
-        onScroll={handleScroll}
-        onScrollBeginDrag={handleScrollBeginDrag}
-        onScrollEndDrag={handleScrollEndDrag}
-        onMomentumScrollBegin={handleMomentumScrollBegin}
-        onMomentumScrollEnd={handleMomentumScrollEnd}
-        scrollEventThrottle={16}
-        onContentSizeChange={handleContentSizeChange}
-        onItemSizeChanged={handleItemSizeChanged}
-        onReady={handleListPlaced}
-        maintainVisibleContentPosition={maintainVisibleContentPosition}
-        renderScrollComponent={renderScrollComponent}
-        recycleItems={false}
-        alignItemsAtEnd
-        initialScrollAtEnd
-        drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
-        getEstimatedItemSize={getEstimatedItemSize}
-        scrollEnabled={scrollEnabled}
-        showsVerticalScrollIndicator
-      />
-      {!historyStartPaginationState.visible ? (
-        <View pointerEvents="none" testID="agent-initial-fill" style={initialFillStyle}>
-          <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
-        </View>
-      ) : null}
-    </View>
+    <CellFrameListenerContext.Provider value={handleCellFrame}>
+      <View style={viewportStyle}>
+        <LegendList<StreamItem>
+          ref={listRef}
+          data={rows}
+          renderItem={renderItem}
+          extraData={renderHistoryMountedRow}
+          keyExtractor={keyExtractor}
+          testID="agent-chat-scroll"
+          nativeID="agent-chat-scroll-native-virtualized"
+          ListHeaderComponent={historyStartContent}
+          ListFooterComponent={liveAuxiliaryContent ?? undefined}
+          contentContainerStyle={listContentContainerStyle}
+          automaticallyAdjustContentInsets={false}
+          automaticallyAdjustsScrollIndicatorInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
+          onLayout={handleListLayout}
+          onScroll={handleScroll}
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScrollEndDrag={handleScrollEndDrag}
+          onMomentumScrollBegin={handleMomentumScrollBegin}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
+          scrollEventThrottle={16}
+          onContentSizeChange={handleContentSizeChange}
+          onItemSizeChanged={handleItemSizeChanged}
+          onReady={handleListPlaced}
+          maintainVisibleContentPosition={maintainVisibleContentPosition}
+          renderScrollComponent={renderScrollComponent}
+          recycleItems={false}
+          alignItemsAtEnd
+          initialScrollAtEnd
+          drawDistance={NATIVE_STREAM_DRAW_DISTANCE}
+          getEstimatedItemSize={getEstimatedItemSize}
+          scrollEnabled={scrollEnabled}
+          showsVerticalScrollIndicator
+        />
+        {!historyStartPaginationState.visible ? (
+          <View pointerEvents="none" testID="agent-initial-fill" style={initialFillStyle}>
+            <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
+          </View>
+        ) : null}
+      </View>
+    </CellFrameListenerContext.Provider>
   );
 }
 
