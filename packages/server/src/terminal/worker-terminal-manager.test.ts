@@ -1618,6 +1618,82 @@ it("retains hidden block owners after exit and failed stop until a retry confirm
   expect(worker.connected).toBe(false);
 });
 
+it("delivers missed exits for hidden closes during adoption or confirmed retry exactly once", async () => {
+  const worker = new FakeTerminalWorker();
+  const ownedManager = createWorkerTerminalManager({ worker, requestTimeoutMs: 1000 });
+  manager = ownedManager;
+  function createClosingLaunch(id: string) {
+    const info = {
+      id,
+      name: id,
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    };
+    const state = {
+      ...createTerminalState(),
+      workspaceLaunch: { launchName: id, command: "./bin/dev", portBase: 42000, portCount: 4 },
+    };
+    worker.emitWorkerMessage({ type: "terminalCreated", terminal: info, state });
+    const session = ownedManager.getTerminal(id);
+    if (!session) throw new Error("Expected launch terminal");
+    const exits: TerminalExitInfo[] = [];
+    session.onExit((exit) => exits.push(exit));
+    ownedManager.killTerminal(id);
+    return { info, state, exits };
+  }
+  const viaConfirmation = createClosingLaunch("via-confirmation");
+  const viaAdoption = createClosingLaunch("via-adoption");
+  const initialStops = worker.sentMessages.filter(
+    (request) => request.type === "killTerminalAndWait",
+  );
+  expect(initialStops).toHaveLength(2);
+  for (const request of initialStops) {
+    worker.emitWorkerMessage({
+      type: "response",
+      requestId: request.requestId,
+      ok: false,
+      error: "IPC outage",
+    });
+  }
+  const adoption = ownedManager.adoptTerminals();
+  const listing = worker.sentMessages.at(-1);
+  if (!listing || listing.type !== "listTerminals") throw new Error("Expected recovery listing");
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: listing.requestId,
+    ok: true,
+    result: [
+      {
+        terminal: viaConfirmation.info,
+        state: viaConfirmation.state,
+        replayPreamble: "",
+      },
+    ],
+  });
+  await adoption;
+  const unknownExit = { exitCode: null, signal: null, lastOutputLines: [] };
+  expect(viaConfirmation.exits).toEqual([]);
+  expect(viaAdoption.exits).toEqual([unknownExit]);
+  expect(ownedManager.getClosingTerminals?.()).toHaveLength(2);
+
+  const retries = [
+    ownedManager.killTerminalAndWait(viaConfirmation.info.id),
+    ownedManager.killTerminalAndWait(viaAdoption.info.id),
+  ];
+  for (const request of worker.sentMessages.slice(-2)) {
+    if (request.type !== "killTerminalAndWait") throw new Error("Expected close retry");
+    worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+  }
+  await Promise.all(retries);
+  expect(viaConfirmation.exits).toEqual([unknownExit]);
+  expect(viaAdoption.exits).toEqual([unknownExit]);
+  expect(ownedManager.getClosingTerminals?.()).toEqual([]);
+  expect(ownedManager.getTerminal(viaConfirmation.info.id)).toBeUndefined();
+  expect(ownedManager.getTerminal(viaAdoption.info.id)).toBeUndefined();
+});
+
 it("keeps a retained worker terminal available after it exits", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({

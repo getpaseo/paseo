@@ -803,7 +803,8 @@ export function createWorkerTerminalManager(
     const listed = (await sendRequest({ type: "listTerminals" })) as TerminalWorkerListResult;
     const cwds = new Set<string>();
     const liveIds = new Set(listed.map((item) => item.terminal.id));
-    for (const terminalId of Array.from(recordsById.keys())) {
+    const cachedIds = new Set([...recordsById.keys(), ...closingRecordsById.keys()]);
+    for (const terminalId of cachedIds) {
       if (!liveIds.has(terminalId))
         handleTerminalExitEvent({
           type: "terminalExit",
@@ -818,6 +819,13 @@ export function createWorkerTerminalManager(
         closing.info = info;
         closing.state = item.state;
         closing.replayPreamble = item.replayPreamble;
+        if (item.exitInfo) {
+          handleTerminalExitEvent({
+            type: "terminalExit",
+            terminalId: info.id,
+            info: item.exitInfo,
+          });
+        }
         continue;
       }
       registerRecord({ info, state: item.state });
@@ -1016,6 +1024,13 @@ export function createWorkerTerminalManager(
       });
       // Never discard an owner on timeout/IPC failure, including an explicitly hidden one.
       if (!preserveSession) {
+        if (record?.exitInfo === null) {
+          handleTerminalExitEvent({
+            type: "terminalExit",
+            terminalId: id,
+            info: { exitCode: null, signal: null, lastOutputLines: [] },
+          });
+        }
         const wasClosing = closingRecordsById.delete(id);
         const removed = removeRecordAndEmit(id);
         if (wasClosing && !removed && record) {
