@@ -107,6 +107,8 @@ import {
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
+// senpi (a Pi-compatible runtime) reports lifecycle.state in get_state: only these mean nothing is left running.
+const PI_FINISHED_LIFECYCLE_STATES: ReadonlySet<string> = new Set(["done", "failed", "cancelled"]);
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_REWIND_ENTRY_TYPE = "paseo_rewind";
@@ -1647,6 +1649,11 @@ export class PiRpcAgentSession implements AgentSession {
     )
       return false;
     const state = await this.runtimeSession.getState();
+    if (
+      state.lifecycle?.state !== undefined &&
+      !PI_FINISHED_LIFECYCLE_STATES.has(state.lifecycle.state)
+    )
+      return false;
     return !state.isStreaming && !state.isCompacting && state.pendingMessageCount === 0;
   }
 
