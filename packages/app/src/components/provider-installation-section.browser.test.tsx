@@ -42,6 +42,12 @@ function mount(
   const view = within(container);
   return {
     view,
+    rerender: (nextUpdates: ProviderUpdatesState, nextAction?: ProviderUpdateAction) =>
+      act(() =>
+        root.render(
+          <ProviderInstallationSection state={state} updates={nextUpdates} action={nextAction} />,
+        ),
+      ),
     installButton: () => view.queryByRole("button", { name: "Install" }),
     installLink: () => view.queryByRole("link", { name: "Install instructions" }),
   };
@@ -350,6 +356,96 @@ describe("update action", () => {
       .element(section.view.getByRole("link", { name: "Update instructions" }))
       .toBeVisible();
     await expect.element(section.view.getByRole("button", { name: "Update" })).toBeVisible();
+  });
+
+  // One update shows one progress indicator, in its own row, from the tap until it settles.
+  describe("progress", () => {
+    const runningUpdate = {
+      operation: { ...operation, status: "running" as const },
+      output: [{ type: "stdout" as const, text: "downloading\n" }],
+    };
+    function progress(section: ReturnType<typeof mount>) {
+      const indicators = section.view.queryAllByRole("progressbar");
+      const run = section.view.queryByTestId("provider-update-run");
+      return {
+        count: indicators.length,
+        inRunRow: indicators.every((indicator) => run?.contains(indicator) ?? false),
+      };
+    }
+    function geometry(section: ReturnType<typeof mount>) {
+      const button = section.view.getByRole("button", { name: "Update" }).getBoundingClientRect();
+      const status = section.view.queryByTestId("provider-update-status")?.parentElement;
+      return {
+        button: { x: button.x, y: button.y, width: button.width, height: button.height },
+        statusLine: status
+          ? { x: status.getBoundingClientRect().x, height: status.getBoundingClientRect().height }
+          : null,
+      };
+    }
+    const isDisabled = (section: ReturnType<typeof mount>) =>
+      section.view.getByRole("button", { name: "Update" }).getAttribute("aria-disabled") === "true";
+
+    it("keeps one indicator in the update's row from tap to settle, and moves nothing", () => {
+      const previous = {
+        operation: { ...operation, status: "failed" as const, finishedAt, message: "exit 1" },
+        output: [{ type: "stderr" as const, text: "old failure\n" }],
+      };
+      const section = mount(installed(true), available, action({ current: previous }).value);
+      const idle = geometry(section);
+      expect(progress(section).count).toBe(0);
+      expect(isDisabled(section)).toBe(false);
+
+      // Tapped, the host has not answered yet: the previous result gives way to the start.
+      section.rerender(available, action({ current: previous, starting: true }).value);
+      expect(progress(section)).toEqual({ count: 1, inRunRow: true });
+      expect(section.view.getByTestId("provider-update-status").textContent).toBe("Updating…");
+      expect(section.view.queryByText("old failure")).toBeNull();
+      expect(isDisabled(section)).toBe(true);
+      expect(geometry(section).button).toEqual(idle.button);
+      const startingLine = geometry(section).statusLine;
+
+      // Progress can arrive before the host's answer to the start request.
+      section.rerender(available, action({ current: runningUpdate, starting: true }).value);
+      expect(progress(section)).toEqual({ count: 1, inRunRow: true });
+      expect(section.view.getByTestId("provider-update-output").textContent).toBe("downloading\n");
+
+      section.rerender(available, action({ current: runningUpdate }).value);
+      expect(progress(section)).toEqual({ count: 1, inRunRow: true });
+      expect(isDisabled(section)).toBe(true);
+      expect(geometry(section).button).toEqual(idle.button);
+      expect(geometry(section).statusLine).toEqual(startingLine);
+
+      section.rerender(
+        { status: "ready", updateCheck: { status: "current" } },
+        action({
+          current: {
+            ...runningUpdate,
+            operation: { ...operation, status: "succeeded", finishedAt },
+          },
+        }).value,
+      );
+      expect(progress(section).count).toBe(0);
+      expect(section.view.getByTestId("provider-update-status").textContent).toBe("Updated");
+      expect(isDisabled(section)).toBe(false);
+      expect(geometry(section).button).toEqual(idle.button);
+      expect(geometry(section).statusLine).toEqual(startingLine);
+    });
+
+    it("shows a running update in its row alone when the sheet reopens mid-update", () => {
+      const section = mount(installed(true), available, action({ current: runningUpdate }).value);
+      expect(progress(section)).toEqual({ count: 1, inRunRow: true });
+      expect(isDisabled(section)).toBe(true);
+    });
+
+    it("drops the indicator when the host refuses the start", () => {
+      const section = mount(installed(true), available, action({ starting: true }).value);
+      expect(progress(section)).toEqual({ count: 1, inRunRow: true });
+      const startingLine = geometry(section).statusLine;
+      section.rerender(available, action({ startError: "Busy" }).value);
+      expect(progress(section).count).toBe(0);
+      expect(section.view.getByTestId("provider-update-status").textContent).toBe("Update failed");
+      expect(geometry(section).statusLine).toEqual(startingLine);
+    });
   });
 
   it("shows why the host refused to start the update", async () => {
