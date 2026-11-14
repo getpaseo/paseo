@@ -4,6 +4,7 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
   openAttachmentMenu,
+  pasteTextWithImageIntoComposer,
   expectAttachmentSheetRowsOnTitleRail,
   openGithubPickerFromMenu,
   attachImageFromMenu,
@@ -53,6 +54,20 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("pastes copied document text instead of its image representation", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "paste-document-text-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    const text = "Document text with 한글 and two lines.\nSecond line.";
+    await pasteTextWithImageIntoComposer({ page, text, png: MINIMAL_PNG });
+    await expectComposerDraft(page, text);
+    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,
