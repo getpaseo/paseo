@@ -4,12 +4,12 @@ const COMMANDS = ["rubymine", "rubymine64"] as const;
 
 export const rubymineTarget: EditorTarget = {
   id: "rubymine",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "RubyMine",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("rubymine.png"),
     };
   },
   async isInstalled(runtime) {

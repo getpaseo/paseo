@@ -4,12 +4,12 @@ const COMMANDS = ["dataspell", "dataspell64"] as const;
 
 export const dataspellTarget: EditorTarget = {
   id: "dataspell",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "DataSpell",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("dataspell.png"),
     };
   },
   async isInstalled(runtime) {

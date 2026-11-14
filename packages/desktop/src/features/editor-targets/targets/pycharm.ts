@@ -4,12 +4,12 @@ const COMMANDS = ["pycharm", "pycharm64"] as const;
 
 export const pycharmTarget: EditorTarget = {
   id: "pycharm",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "PyCharm",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("pycharm.png"),
     };
   },
   async isInstalled(runtime) {
