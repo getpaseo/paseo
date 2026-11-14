@@ -1,6 +1,8 @@
 import { Text } from "react-native";
-import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
+import { forwardRef, useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useTranslation } from "react-i18next";
 import type {
+  BlockquoteRendererProps,
   CodeBlockRendererProps,
   LinkRendererProps,
   MarkdownRenderers,
@@ -9,7 +11,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { CopyButton, HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
 import { markdownLinkSource } from "./source";
@@ -26,6 +28,37 @@ const codeStyle = (theme: Theme) => ({
 function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   if (language?.toLowerCase() === "mermaid") return <MermaidFence code={code} />;
   return <ThemedCodeBlock code={code} language={language} uniProps={codeStyle} />;
+}
+
+// The quote keeps its text clear of the corner copy button.
+const QUOTE_COPY_GUTTER = 44;
+
+function WebBlockquote({ style, children }: BlockquoteRendererProps) {
+  const { t } = useTranslation();
+  const quoteRef = useRef<HTMLQuoteElement>(null);
+  // The quote as it reads on screen, paragraph breaks kept: what the person would paste.
+  const getText = useCallback(() => quoteRef.current?.innerText.trim() ?? "", []);
+  const quoteStyle = useMemo(
+    () => ({
+      ...style,
+      position: "relative" as const,
+      paddingRight: QUOTE_COPY_GUTTER,
+    }),
+    [style],
+  );
+  return (
+    <blockquote ref={quoteRef} style={quoteStyle}>
+      {children}
+      <CopyButton
+        getCode={getText}
+        visible
+        label={t("message.actions.copyQuote")}
+        chromeStyle={styles.quoteCopy}
+        iconSize={15}
+        copiedColor={styles.quoteCopied.color}
+      />
+    </blockquote>
+  );
 }
 
 // The library styles links inline, so a stylesheet :hover rule cannot underline them.
@@ -94,6 +127,16 @@ const InlineLinkTrigger = forwardRef<HTMLSpanElement, ComponentProps<"span">>(
   },
 );
 const styles = StyleSheet.create((theme) => ({
+  quoteCopy: {
+    padding: 6,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  quoteCopied: {
+    color: theme.colors.statusSuccess,
+  },
   tooltipPath: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
@@ -102,3 +145,9 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const WEB_RENDERERS: MarkdownRenderers = { codeBlock: WebCodeBlock, link: WebLink };
+
+/** Assistant replies hand over drafts as quotes, so their quotes carry the copy button too. */
+export const WEB_QUOTE_COPY_RENDERERS: MarkdownRenderers = {
+  ...WEB_RENDERERS,
+  blockquote: WebBlockquote,
+};

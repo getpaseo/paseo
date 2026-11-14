@@ -14,7 +14,7 @@ import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 import { density, resolveDensity } from "@/styles/density";
 import { MarkdownBlockStack } from "./block-stack";
-import { WEB_RENDERERS } from "./renderers";
+import { WEB_QUOTE_COPY_RENDERERS, WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
 import { splitStreamingMarkdown } from "./streaming";
@@ -52,6 +52,8 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
+  /** Quotes carry a copy button (web): assistant replies hand over drafts as quotes. */
+  quoteCopy?: boolean;
 }
 
 /** All Markdown surfaces share the same engine and source adaptation. */
@@ -86,6 +88,7 @@ const MarkdownPart = memo(function MarkdownPart({
   streaming = false,
   onLinkPress,
   agentCommands: _agentCommands,
+  quoteCopy = false,
   commandHints = null,
   ...imageContext
 }: MarkdownRendererProps & { commandHints?: CommandHints | null }) {
@@ -108,6 +111,7 @@ const MarkdownPart = memo(function MarkdownPart({
     { commandNames: commandHints?.names, forgeReferencePattern: forgeShorthand?.pattern },
   );
   const [image, setImage] = useState<ImageLightboxSource | null>(null);
+  const webRenderers = quoteCopy ? WEB_QUOTE_COPY_RENDERERS : WEB_RENDERERS;
   const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
     const command = commandHints && matchCommandLink(url, sourceType, commandHints.names);
     if (command) {
@@ -154,7 +158,7 @@ const MarkdownPart = memo(function MarkdownPart({
               streamingAnimation={false}
               onLinkPress={pressLink}
               onImagePress={pressImage}
-              renderers={isWeb ? WEB_RENDERERS : undefined}
+              renderers={isWeb ? webRenderers : undefined}
             />
           ),
         )}
