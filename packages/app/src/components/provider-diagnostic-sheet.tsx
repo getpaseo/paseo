@@ -374,7 +374,8 @@ interface ProviderModalBodyProps {
 interface ProviderSheetFooterInput {
   fetchedAt: string | null;
   isCompact: boolean;
-  modelsRefreshing: boolean;
+  /** Models or the installation are being read again. */
+  refreshing: boolean;
   t: TFunction;
   onOpenAddSheet: () => void;
   onOpenDiagSheet: () => void;
@@ -384,7 +385,7 @@ interface ProviderSheetFooterInput {
 function renderProviderSheetFooter({
   fetchedAt,
   isCompact,
-  modelsRefreshing,
+  refreshing,
   t,
   onOpenAddSheet,
   onOpenDiagSheet,
@@ -412,12 +413,12 @@ function renderProviderSheetFooter({
         </Button>
         <Button
           variant="default"
-          leftIcon={modelsRefreshing ? undefined : RotateCw}
+          leftIcon={refreshing ? undefined : RotateCw}
           onPress={onRefreshModels}
-          disabled={modelsRefreshing}
+          disabled={refreshing}
           style={buttonStyle}
         >
-          {modelsRefreshing
+          {refreshing
             ? t("settings.providers.diagnostic.refreshing")
             : t("settings.providers.diagnostic.refresh")}
         </Button>
@@ -647,7 +648,7 @@ export function ProviderDiagnosticSheet({
         footer={renderProviderSheetFooter({
           fetchedAt: providerEntry?.fetchedAt ?? null,
           isCompact,
-          modelsRefreshing,
+          refreshing: modelsRefreshing || installation.refreshing,
           t,
           onOpenAddSheet: handleOpenAddSheet,
           onOpenDiagSheet: handleOpenDiagSheet,

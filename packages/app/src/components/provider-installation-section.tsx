@@ -80,7 +80,7 @@ export function ProviderInstallationSection({
             action={installation.canUpdate ? action : undefined}
           />
         ) : null}
-        {action && (action.current || action.startError) ? (
+        {action && (action.starting || action.current || action.startError) ? (
           <UpdateRunRow action={action} updateUrl={installation?.updateUrl} />
         ) : null}
       </View>
@@ -269,7 +269,14 @@ function UpdateCheckSummary({ updates }: { updates: ProviderUpdatesState }) {
   );
 }
 
-/** Update runs the provider's updater; without one, the provider's update guide opens. */
+function isUpdating(action: ProviderUpdateAction): boolean {
+  return action.starting || action.current?.operation.status === "running";
+}
+
+/**
+ * Update runs the provider's updater; without one, the provider's update guide opens. While an
+ * update starts or runs the button only disables: the update's own row shows its progress.
+ */
 function UpdateButton({
   action,
   updateUrl,
@@ -286,7 +293,7 @@ function UpdateButton({
       <Button
         variant="outline"
         onPress={action.start}
-        loading={action.starting || action.current?.operation.status === "running"}
+        disabled={isUpdating(action)}
         testID="provider-update-start"
       >
         {t("settings.providers.installation.update")}
@@ -300,6 +307,21 @@ function UpdateButton({
   );
 }
 
+/**
+ * What the update's row shows. From the tap until the host answers, the row already shows the
+ * update starting, so its progress never moves. A refused start replaces the previous result.
+ */
+function readUpdateRun(action: ProviderUpdateAction): {
+  status: ProviderInstallationUpdate["operation"]["status"];
+  update: ProviderInstallationUpdate | null;
+} {
+  if (isUpdating(action) && action.current?.operation.status !== "running") {
+    return { status: "running", update: null };
+  }
+  if (action.startError || !action.current) return { status: "failed", update: null };
+  return { status: action.current.operation.status, update: action.current };
+}
+
 function UpdateRunRow({
   action,
   updateUrl,
@@ -310,9 +332,7 @@ function UpdateRunRow({
   const { t } = useTranslation();
   const scroll = useRef<ScrollView>(null);
   const followOutput = useCallback(() => scroll.current?.scrollToEnd({ animated: false }), []);
-  // A refused start replaces the previous update's result.
-  const update = action.startError ? null : action.current;
-  const status = update?.operation.status ?? "failed";
+  const { status, update } = readUpdateRun(action);
   let title = t("settings.providers.installation.updateFailed");
   if (status === "running") title = t("settings.providers.installation.updating");
   else if (status === "succeeded") title = t("settings.providers.installation.updated");
@@ -323,13 +343,13 @@ function UpdateRunRow({
   return (
     <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="provider-update-run">
       <View style={settingsStyles.rowContent}>
-        <View style={styles.trailing}>
-          {status === "running" ? (
-            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          ) : null}
+        <View style={styles.status}>
           <Text style={settingsStyles.rowTitle} testID="provider-update-status">
             {title}
           </Text>
+          {status === "running" ? (
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          ) : null}
         </View>
         {message ? (
           <Text style={settingsStyles.rowHint} selectable testID="provider-update-message">
@@ -393,6 +413,13 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+  },
+  status: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    // The small spinner's height on every platform, so the line keeps its height when it settles.
+    minHeight: 20,
   },
   trailing: {
     flexDirection: "row",

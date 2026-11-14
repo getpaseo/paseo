@@ -19,6 +19,8 @@ export interface ProviderInstallationRead {
   action: ProviderUpdateAction | undefined;
   /** Ask the provider again, skipping the host's caches. */
   refresh: () => void;
+  /** A refresh is in flight. The last answers stay on screen until the new ones arrive. */
+  refreshing: boolean;
 }
 
 /**
@@ -172,17 +174,17 @@ export function useProviderInstallation(input: {
 
   let state: ProviderInstallationState;
   if (!supported) state = { status: "unsupported" };
-  else if (installationQuery.isPending || refreshInstallation.isPending)
-    state = { status: "loading" };
+  else if (installationQuery.isPending) state = { status: "loading" };
   else if (installationQuery.isError)
     state = { status: "error", message: installationQuery.error.message };
   else state = { status: "ready", installation: installationQuery.data ?? null };
 
   let updates: ProviderUpdatesState;
   if (!supported || !installed) updates = { status: "hidden" };
-  else if (updatesQuery.isPending || refreshUpdates.isPending) updates = { status: "loading" };
+  else if (updatesQuery.isPending) updates = { status: "loading" };
   else if (updatesQuery.isError) updates = { status: "error", message: updatesQuery.error.message };
   else updates = { status: "ready", updateCheck: updatesQuery.data ?? null };
 
-  return { state, updates, action, refresh };
+  const refreshing = refreshInstallation.isPending || refreshUpdates.isPending;
+  return { state, updates, action, refresh, refreshing };
 }
