@@ -122,7 +122,9 @@ test("command center tabs rotate with Tab and never move the header", async ({ p
       await expectCommandCenterTab(panel, "All");
     });
 
+    const results = panel.getByTestId("command-center-results");
     const headerOnAll = await header.boundingBox();
+    const resultsTopOnAll = (await results.boundingBox())?.y;
 
     await test.step("Tab walks forward and wraps; Shift+Tab walks back", async () => {
       await page.keyboard.press("Tab");
@@ -132,6 +134,7 @@ test("command center tabs rotate with Tab and never move the header", async ({ p
       await page.keyboard.press("Tab");
       await expectCommandCenterTab(panel, "Actions");
       expect(await header.boundingBox()).toEqual(headerOnAll);
+      expect((await results.boundingBox())?.y).toBe(resultsTopOnAll);
       await page.keyboard.press("Tab");
       await expectCommandCenterTab(panel, "All");
       await page.keyboard.press("Shift+Tab");

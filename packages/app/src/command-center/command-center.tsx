@@ -1018,8 +1018,8 @@ export function CommandCenter() {
                 label={t("shell.commandCenter.searchingFiles")}
               />
             </View>
-            {tabs}
           </View>
+          <View style={styles.tabBar}>{tabs}</View>
           {fileSearchError}
           <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
         </OverlayLayerProvider>
@@ -1051,8 +1051,8 @@ export function CommandCenter() {
                   label={t("shell.commandCenter.searchingFiles")}
                 />
               </View>
-              {tabs}
             </View>
+            <View style={styles.tabBar}>{tabs}</View>
             {fileSearchError}
             <FlatList ref={listRef} {...commonListProps} />
           </View>
@@ -1098,13 +1098,18 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     ...theme.shadow.lg,
   },
-  // The tabs sit in the header under the field, so switching tabs never moves the field or list.
   header: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
-    gap: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  // Below the divider, above the list. The first section label brings its own top gap, so the
+  // pills sit with equal space above and below. A fixed bar, so switching tabs never moves the
+  // field or the list.
+  tabBar: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: COMMAND_CENTER_SECTION_GAP,
   },
   input: {
     fontSize: theme.fontSize.base,
