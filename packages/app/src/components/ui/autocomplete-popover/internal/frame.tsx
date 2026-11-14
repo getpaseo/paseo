@@ -26,29 +26,39 @@ export function PopoverFrame({
   "use no memo";
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
   const anchorHeight = useSharedValue(anchorAtRest.height);
+  const anchorLost = useSharedValue(false);
   const readAnchorHeight = useCallback(() => {
     "worklet";
+    if (anchorLost.value) return;
     const measured = measure(anchorRef);
-    if (measured && measured.height !== anchorHeight.value) {
+    if (!measured) {
+      // The anchor left the shadow tree, usually as the composer unmounts; the portal removes the
+      // frame a commit later. Each failed measure() logs a warning, and a busy JS thread holds
+      // that commit for many frames, so stop measuring and follow the rest measurement.
+      anchorLost.value = true;
+      return;
+    }
+    if (measured.height !== anchorHeight.value) {
       anchorHeight.value = measured.height;
     }
-  }, [anchorHeight, anchorRef]);
+  }, [anchorHeight, anchorLost, anchorRef]);
   useFrameCallback(readAnchorHeight);
 
   const style = useAnimatedStyle(() => {
     const anchorBottom = anchorAtRest.y + anchorAtRest.height;
+    const liveHeight = anchorLost.value ? anchorAtRest.height : anchorHeight.value;
     return {
       position: "absolute",
       left: anchorAtRest.x,
       width: anchorAtRest.width,
       ...placeAboveAnchor({
-        anchorTop: anchorBottom - anchorHeight.value,
+        anchorTop: anchorBottom - liveHeight,
         hostHeight: anchorAtRest.hostHeight,
         reservedLift: reservedLift.value,
         topInset,
       }),
     };
-  }, [anchorAtRest, anchorHeight, reservedLift, topInset]);
+  }, [anchorAtRest, anchorHeight, anchorLost, reservedLift, topInset]);
 
   return (
     <Animated.View testID="composer-autocomplete-popover" style={style}>
