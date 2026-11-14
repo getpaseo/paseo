@@ -135,6 +135,31 @@ export async function* streamOmpHistory(input: {
   }
 }
 
+/**
+ * Replays the session, then the current todo snapshot. The snapshot has no session entry of
+ * its own, so it takes the last replayed timestamp: unstamped, the daemon records it at
+ * hydration time, and the last turn's footer then reads "now" and a duration spanning every
+ * day since the turn really ended.
+ */
+export async function* streamOmpHistoryWithTodos(
+  input: Parameters<typeof streamOmpHistory>[0],
+  readTodos: () => Promise<readonly AgentTimelineItem[]> | readonly AgentTimelineItem[],
+): AsyncGenerator<AgentStreamEvent> {
+  let lastTimestamp: string | undefined;
+  for await (const event of streamOmpHistory(input)) {
+    if (event.type === "timeline" && event.timestamp) lastTimestamp = event.timestamp;
+    yield event;
+  }
+  for (const item of await readTodos()) {
+    yield {
+      type: "timeline",
+      provider: input.provider,
+      item,
+      ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
+    };
+  }
+}
+
 async function* replaySubagentTranscript(
   transcript: OmpSubagentTranscript,
   provider: AgentProvider,
