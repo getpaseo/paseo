@@ -136,7 +136,7 @@ async function expectForkFailureWithoutOverlappingStatus(page: Page) {
 async function observeToastReplacement(page: Page) {
   const observation = await page
     .getByRole("alert")
-    .filter({ hasText: "Reconnecting to host" })
+    .filter({ hasText: "Reconnecting" })
     .evaluateHandle((toast) => {
       const frames: Array<{ connected: boolean; opacity: number; transform: string }> = [];
       let frame = 0;
