@@ -505,7 +505,7 @@ export class VoiceSession {
     };
     this.voiceModeBaseConfig = baseConfig;
     const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
+      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt),
     };
 
     try {
@@ -540,7 +540,7 @@ export class VoiceSession {
       const baseConfig = this.voiceModeBaseConfig;
       try {
         await this.host.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
+          systemPrompt: baseConfig.systemPrompt,
         });
       } catch (error) {
         this.sessionLogger.warn(

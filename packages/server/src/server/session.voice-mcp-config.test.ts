@@ -34,7 +34,7 @@ describe("voice MCP stdio config", () => {
 
 describe("voice mode prompt instructions", () => {
   test("builds enabled voice instructions and preserves base prompt", () => {
-    const prompt = buildVoiceModeSystemPrompt("Base system prompt", true);
+    const prompt = buildVoiceModeSystemPrompt("Base system prompt");
 
     expect(prompt).toContain("Base system prompt");
     expect(prompt).toContain("<paseo_voice_mode>");
@@ -43,7 +43,7 @@ describe("voice mode prompt instructions", () => {
     expect(prompt).toContain("</paseo_voice_mode>");
   });
 
-  test("builds disabled voice instructions and supersedes previous voice block", () => {
+  test("enabled voice instructions supersede a previous voice block", () => {
     const existing = [
       "Base system prompt",
       "<paseo_voice_mode>",
@@ -51,11 +51,10 @@ describe("voice mode prompt instructions", () => {
       "</paseo_voice_mode>",
     ].join("\n\n");
 
-    const prompt = buildVoiceModeSystemPrompt(existing, false);
+    const prompt = buildVoiceModeSystemPrompt(existing);
 
     expect(prompt).toContain("Base system prompt");
-    expect(prompt).toContain("Paseo voice mode is now off.");
-    expect(prompt).toContain("Ignore any earlier Paseo voice mode instructions in this thread.");
+    expect(prompt).toContain("Paseo voice mode is now on.");
     expect(prompt.match(/<paseo_voice_mode>/g)?.length ?? 0).toBe(1);
     expect(prompt).not.toContain("legacy voice instruction");
   });
