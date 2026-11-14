@@ -10,7 +10,7 @@ import {
 import { readCommandVersionOutput } from "./diagnostic-utils.js";
 import { runUpdateCommand } from "./update-command.js";
 
-/** The provider's CLI as configured, found on the PATH its agents launch with. */
+/** The provider's CLI as configured, found on the provider's PATH. */
 export interface InstalledCli {
   /** The resolved executable. */
   command: string;
@@ -55,8 +55,7 @@ export function createCliInstallation(options: CliInstallationOptions): AgentCli
       commandConfig: runtimeSettings?.command,
       defaultBinary: options.defaultBinary,
     });
-    // Agents spawn the bare command with the provider's environment, so its PATH picks the copy
-    // shown and updated here.
+    // The agent spawn looks the bare command up on the provider's PATH; find it the same way.
     const availability = await checkProviderLaunchAvailable({
       ...launch,
       env: createProviderEnv({ runtimeSettings }),

@@ -309,8 +309,8 @@ describe.each(selfUpdatingClis)("$name installation", (cli) => {
   });
 });
 
-// Agents spawn the bare command with the provider's environment, so its PATH picks the copy.
-test("Copilot reports the copy on the provider's PATH, the one its agents launch", async () => {
+// The agent spawn looks the bare command up on the provider's PATH, so the installation does too.
+test("Copilot reports the copy on the provider's PATH", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-provider-path-"));
   roots.push(dir);
   if (process.platform === "win32") {
