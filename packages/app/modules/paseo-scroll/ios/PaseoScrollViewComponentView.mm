@@ -132,7 +132,7 @@ using namespace facebook::react;
   if (!props.maintainVisibleContentPosition || scrollView.contentSize.width > self.frame.size.width) {
     return nil;
   }
-  NSArray<UIView *> *children = [self contentView].subviews;
+  NSArray<UIView *> *children = [self paseoScrollContentView].subviews;
   NSUInteger first = props.maintainVisibleContentPosition.value().minIndexForVisible;
   for (NSUInteger index = first; index < children.count; ++index) {
     UIView *child = children[index];
@@ -149,7 +149,9 @@ using namespace facebook::react;
       [((RCTViewComponentView *)view).nativeId isEqualToString:@"paseo-end-pin"];
 }
 
-- (UIView *)contentView
+// Keep the inherited contentView getter intact: gesture-handler unwraps it before binding
+// its native scroll recognizer, which must stay on RCTScrollViewComponentView.
+- (UIView *)paseoScrollContentView
 {
   for (UIView *child in self.containerView.subviews) {
     if (![child conformsToProtocol:@protocol(RCTCustomPullToRefreshViewProtocol)]) {

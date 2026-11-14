@@ -154,6 +154,12 @@ in the detached state LegendList uses the same native correction, and a history 
 mid-drag needs it. They key on the drag, not the touch, so a tap or long press while following
 keeps following.
 
+An expanded tool detail viewport owns drags that start inside it. Keep its body
+wrapper a `View`, not a hover-only `Pressable`: `Pressable` takes the JS responder
+even without `onPress`, and iOS then prevents descendant scroll views from
+cancelling touches. Press handling belongs on the disclosure header; body hover
+handlers are web-only. Do not disable timeline scrolling to make details draggable.
+
 Following resumes only for a gesture that ends within 1 px of the end, either when the finger lifts
 or when momentum stops. A release past the end counts: iOS bounces back to the end, and lines that
 land during the bounce must keep scrolling in. A release anywhere short of the end stays detached
@@ -187,6 +193,11 @@ Drop a hunk when the installed LegendList ships its fix.
 `modules/paseo-scroll` replaces React Native's scroll view on both platforms with a subclass:
 Android's `PaseoScrollView` and iOS's `PaseoScrollViewComponentView`.
 `VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
+
+After an iOS change, [rebuild the native client](development.md#running-the-ios-app-on-a-local-simulator)
+and check the compact tool-detail sheet as well as the timeline: drag its body in both
+directions and scroll wide content horizontally. A chat-only check misses the sheet's
+native gesture binding.
 
 **Content clamp.** A mount that shrinks the content while `maintainVisibleContentPosition` is set
 applies the shrink twice on both platforms: the scroll view clamps its offset to the new end during
