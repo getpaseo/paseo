@@ -103,6 +103,20 @@ export function createMarkdownStyles(
       inlineImage: { size: paragraph.lineHeight },
       image: { ...block, height: 320, resizeMode: "contain", borderRadius: 8 },
       thematicBreak: { ...block, color: theme.colors.border, height: 1 },
+      // The library defaults math to a light card (#F3F4F6 on #1F2937), which reads as a
+      // white box on Paseo's dark themes. Follow the paragraph colour and block gap instead.
+      inlineMath: { color: theme.colors.foreground },
+      math: {
+        ...block,
+        fontSize: Math.round(fontSize * 1.15),
+        color: theme.colors.foreground,
+        backgroundColor: "transparent",
+        // The library renders display math as a scrolling block. A little vertical padding
+        // keeps the scroll container taller than its content, so no horizontal scrollbar
+        // is painted on a formula that fits. Zero padding always shows one.
+        padding: 8,
+        textAlign: "center",
+      },
     },
   };
 }

@@ -1,6 +1,7 @@
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
+import { findMath, inMathRange, withinMathRange } from "./tex-delimiters";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
@@ -130,7 +131,7 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
   return link.url.slice(workspaceRoot.length + 1);
 }
 
-/** Preserve source spelling; adapt workspace images, spoiler delimiters, and entity text. */
+/** Preserve source spelling; adapt workspace images, spoiler and TeX delimiters, and entity text. */
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
@@ -158,6 +159,8 @@ export function prepareMarkdownSource(
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
+    !source.includes("\\(") &&
+    !source.includes("\\[") &&
     // Match content, header, and delimiter lines; quote-only lines count as blank.
     !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
       source,
@@ -174,6 +177,9 @@ export function prepareMarkdownSource(
     if ("children" in node) node.children.forEach(definitionsIn);
   }
   definitionsIn(getTree());
+  // Math keeps its TeX: md4c reads it raw, so prose rewrites below must not touch it.
+  const math = findMath(source, getTree());
+  edits.push(...math.edits);
   function collectImage(
     node: Extract<Nodes, { type: "image" | "imageReference" }>,
     start: number,
@@ -241,6 +247,8 @@ export function prepareMarkdownSource(
     if (position?.start.offset !== undefined && position.end.offset !== undefined) {
       const start = position.start.offset;
       const end = position.end.offset;
+      // md4c reads a formula raw, so nothing inside one is an image, link or entity.
+      if (node.type !== "root" && withinMathRange(math.ranges, start, end)) return;
       if (node.type === "paragraph") splitStandaloneImages(node, start, end);
       if (
         node.type === "table" &&
@@ -273,13 +281,18 @@ export function prepareMarkdownSource(
         return;
       }
       if (node.type === "text") {
-        const text = source
-          .slice(start, end)
-          .replace(/(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);/g, (entity) =>
-            decodeString(entity).replace(/[!-/:-@[-`{-~]/g, "\\$&"),
-          )
-          .replace(/(?<!\\)\|\|/g, "\\|\\|");
-        if (text !== source.slice(start, end)) edits.push({ start, end, text });
+        const text = source.slice(start, end);
+        const rewrite = (pattern: RegExp, replace: (match: string) => string) => {
+          for (const match of text.matchAll(pattern)) {
+            const at = start + match.index;
+            if (inMathRange(math.ranges, at, at + match[0].length)) continue;
+            edits.push({ start: at, end: at + match[0].length, text: replace(match[0]) });
+          }
+        };
+        rewrite(/(?<!\\)&(?:#(?:[xX][\da-fA-F]+|\d+)|[a-zA-Z][a-zA-Z\d]+);/g, (entity) =>
+          decodeString(entity).replace(/[!-/:-@[-`{-~]/g, "\\$&"),
+        );
+        rewrite(/(?<!\\)\|\|/g, () => "\\|\\|");
       }
     }
     if ("children" in node)
