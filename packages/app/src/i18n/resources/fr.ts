@@ -3128,6 +3128,10 @@ export const fr: TranslationResources = {
         discovered: "Détectés",
         custom: "Modèles personnalisés",
         updated: "Mis à jour {{time}}",
+        setDefault: "Définir par défaut pour les nouvelles sessions",
+        clearDefault: "Effacer le défaut (utiliser celui du fournisseur)",
+        defaultBadge: "Défaut",
+        setDefaultFailed: "Impossible de mettre à jour le modèle par défaut",
       },
       diagnostic: {
         title: "Diagnostic",

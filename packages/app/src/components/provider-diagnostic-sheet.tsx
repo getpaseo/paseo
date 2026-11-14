@@ -1,10 +1,12 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import { AlertTriangle, Copy, FileText, Pin, Plus, RotateCw, Trash2 } from "lucide-react-native";
+
+const ThemedPin = withUnistyles(Pin, (theme) => ({ size: theme.iconSize.sm }));
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import {
   AdaptiveModalSheet,
   AdaptiveTextInput,
@@ -18,6 +20,7 @@ import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -49,11 +52,55 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
   return scored.map((entry) => entry.item);
 }
 
-function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
+function DiscoveredModelRow({
+  model,
+  isDefault,
+  onToggleDefault,
+  disableToggle,
+  pinColor,
+  pinFill,
+}: {
+  model: AgentModelDefinition;
+  isDefault: boolean;
+  onToggleDefault?: (modelId: string) => void;
+  disableToggle?: boolean;
+  pinColor: string;
+  pinFill: string;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => onToggleDefault?.(model.id), [model.id, onToggleDefault]);
+  const buttonStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.defaultStarButton,
+      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
+    ],
+    [],
+  );
   return (
     <View style={sheetStyles.modelRow}>
+      <Pressable
+        onPress={handlePress}
+        hitSlop={8}
+        disabled={disableToggle}
+        style={buttonStyle}
+        accessibilityRole="button"
+        accessibilityLabel={
+          isDefault
+            ? t("settings.providers.models.clearDefault")
+            : t("settings.providers.models.setDefault")
+        }
+        testID={`provider-model-default-${model.id}`}
+      >
+        <ThemedPin color={pinColor} fill={pinFill} />
+      </Pressable>
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
         {model.label}
+        {isDefault ? (
+          <Text style={sheetStyles.defaultBadgeText}>
+            {" "}
+            {t("settings.providers.models.defaultBadge")}
+          </Text>
+        ) : null}
       </Text>
       <Text
         style={sheetStyles.monoHint}
@@ -405,6 +452,10 @@ interface ProviderModalBodyProps {
   deletingModelId: string | null;
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
+  defaultModelId: string | null;
+  onToggleDefault: (modelId: string) => void;
+  disableDefaultToggle: boolean;
+  pinColors: { active: string; inactive: string; activeFill: string; inactiveFill: string };
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
 }
 
@@ -496,6 +547,10 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     deletingModelId,
     onRefresh,
     onDeleteCustom,
+    defaultModelId,
+    onToggleDefault,
+    disableDefaultToggle,
+    pinColors,
     theme,
   } = props;
 
@@ -544,7 +599,19 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
           />
           <View style={settingsStyles.card}>
             {filteredDiscovered.map((model) => (
-              <DiscoveredModelRow key={model.id} model={model} />
+              <DiscoveredModelRow
+                key={model.id}
+                model={model}
+                isDefault={model.id === defaultModelId}
+                onToggleDefault={onToggleDefault}
+                disableToggle={disableDefaultToggle}
+                pinColor={
+                  model.id === defaultModelId ? pinColors.active : pinColors.inactive
+                }
+                pinFill={
+                  model.id === defaultModelId ? pinColors.activeFill : pinColors.inactiveFill
+                }
+              />
             ))}
           </View>
         </View>
@@ -580,12 +647,15 @@ export function ProviderDiagnosticSheet({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
+  const toast = useToast();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
-  const { config, patchConfig } = useDaemonConfig(serverId);
+  const { config, isLoading: configLoading, patchConfig } = useDaemonConfig(serverId);
+  const { preferences, updatePreferences } = useFormPreferences();
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
+
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -613,6 +683,82 @@ export function ProviderDiagnosticSheet({
     previousCache: stableDiscoveredRef.current,
   });
   stableDiscoveredRef.current = nextDiscoveredCache;
+
+  const configReady = config !== null && !configLoading;
+  const defaultModelId = useMemo(
+    () =>
+      preferences.providerPreferences?.[provider]?.pinnedModel ??
+      additionalModels.find((model) => model.isDefault === true)?.id ??
+      null,
+    [additionalModels, preferences, provider],
+  );
+  const handleToggleDefaultModel = useCallback(
+    async (modelId: string) => {
+      if (!configReady) {
+        return;
+      }
+      const previousPreferences = preferences;
+      const alreadyDefault =
+        preferences.providerPreferences?.[provider]?.pinnedModel === modelId ||
+        additionalModels.some((model) => model.id === modelId && model.isDefault === true);
+      try {
+        // The pin lives in its own preference field (chat model switches write
+        // `model`, and a switch must never override the pin) and is mirrored
+        // into the daemon config so the default also holds for headless
+        // clients: the agent manager's catalog resolution reads isDefault
+        // from the provider's additionalModels.
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: provider as AgentProvider,
+            updates: { pinnedModel: alreadyDefault ? null : modelId },
+          }),
+        );
+        // Compute the next list before patching: the daemon replaces the
+        // additionalModels array wholesale, so the patch must carry every
+        // existing entry, not just the changed one.
+        const cleared = additionalModels.map((model) =>
+          model.isDefault ? { ...model, isDefault: false } : model,
+        );
+        let nextModels = cleared;
+        if (!alreadyDefault) {
+          const existing = cleared.find((model) => model.id === modelId);
+          const label =
+            existing?.label ??
+            discoveredModels.find((model) => model.id === modelId)?.label ??
+            modelId;
+          nextModels = [
+            ...cleared.filter((model) => model.id !== modelId),
+            { id: modelId, label, isDefault: true },
+          ];
+        }
+        await patchConfig({
+          providers: {
+            [provider]: {
+              additionalModels: nextModels,
+            },
+          },
+        });
+      } catch (error) {
+        console.warn("[ProviderDiagnosticSheet] toggle default model failed", error);
+        // Roll the preference back so the app-side pin cannot disagree with
+        // the daemon-side default after a failed save.
+        await updatePreferences(() => previousPreferences).catch(() => undefined);
+        toast.error(t("settings.providers.models.setDefaultFailed"));
+      }
+    },
+    [
+      additionalModels,
+      configReady,
+      discoveredModels,
+      patchConfig,
+      preferences,
+      provider,
+      t,
+      toast,
+      updatePreferences,
+    ],
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -701,6 +847,15 @@ export function ProviderDiagnosticSheet({
           deletingModelId={deletingModelId}
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
+          defaultModelId={defaultModelId}
+          onToggleDefault={handleToggleDefaultModel}
+          disableDefaultToggle={!configReady}
+          pinColors={{
+            active: theme.colors.foreground,
+            inactive: theme.colors.foregroundMuted,
+            activeFill: theme.colors.foregroundMuted,
+            inactiveFill: "none",
+          }}
           theme={theme}
         />
       </AdaptiveModalSheet>
@@ -786,6 +941,13 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  defaultStarButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.full,
+  },
   modelRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -806,6 +968,10 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   modelRowFiller: {
     flex: 1,
+  },
+  defaultBadgeText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   emptyState: {
     paddingVertical: theme.spacing[8],

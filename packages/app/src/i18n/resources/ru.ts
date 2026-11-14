@@ -3112,6 +3112,10 @@ export const ru: TranslationResources = {
         discovered: "Обнаруженные модели",
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",
+        setDefault: "Сделать по умолчанию для новых сессий",
+        clearDefault: "Убрать по умолчанию (использовать модель провайдера)",
+        defaultBadge: "По умолчанию",
+        setDefaultFailed: "Не удалось обновить модель по умолчанию",
       },
       diagnostic: {
         title: "Диагностика",

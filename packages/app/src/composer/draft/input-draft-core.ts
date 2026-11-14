@@ -2,6 +2,14 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
+import {
+  resolveDraftSelectionSource,
+  type DraftSelectionSource,
+  type DraftSelectionSourceFlags,
+} from "@/composer/draft/selection-source";
+
+export { resolveDraftSelectionSource };
+export type { DraftSelectionSource, DraftSelectionSourceFlags };
 
 export interface DraftKeyContext {
   selectedServerId: string | null;

@@ -3120,6 +3120,10 @@ export const es: TranslationResources = {
         discovered: "descubierto",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",
+        setDefault: "Establecer como predeterminado para sesiones nuevas",
+        clearDefault: "Borrar el predeterminado (usar el del proveedor)",
+        defaultBadge: "Predeterminado",
+        setDefaultFailed: "No se pudo actualizar el modelo predeterminado",
       },
       diagnostic: {
         title: "Diagnóstico",

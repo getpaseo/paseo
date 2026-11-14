@@ -526,6 +526,7 @@ const AgentSessionConfigSchema = z.object({
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
+  selectionSource: z.enum(["explicit", "implicit"]).optional(),
   thinkingOptionId: z.string().optional(),
   // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Folded into providerOptions.
   featureValues: z.record(z.string(), z.unknown()).optional(),
