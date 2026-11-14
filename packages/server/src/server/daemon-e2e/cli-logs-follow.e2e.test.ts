@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { once } from "node:events";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -7,6 +8,90 @@ import { expect, test } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
+
+test("logs preserves saved and live notifications in text and JSON", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  let follow: ReturnType<typeof spawn> | undefined;
+  let stdout = "";
+  let stderr = "";
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "claude", cwd: daemon.paseoHome });
+    const history = [
+      {
+        type: "notification" as const,
+        level: "error" as const,
+        message: "Policy rejected.\nRemove the blocked token.",
+      },
+      { type: "notification" as const, level: "warning" as const, message: "Retry required." },
+      { type: "notification" as const, level: "info" as const, message: "Ready to retry." },
+    ];
+    for (const item of history) await daemon.daemon.agentManager.appendTimelineItem(agent.id, item);
+    const cliArgs = [
+      "--conditions=source",
+      "--import",
+      "tsx",
+      fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
+      "--host",
+      `127.0.0.1:${daemon.port}`,
+      "logs",
+      agent.id,
+    ];
+    const env = { ...process.env, PASEO_HOME: daemon.paseoHome };
+    const text = await promisify(execFile)(
+      process.execPath,
+      [...cliArgs, "--tail", "100", "--no-color"],
+      { env },
+    );
+    expect(text.stdout).toBe(
+      "[Error] Policy rejected.\nRemove the blocked token.\n[Warning] Retry required.\n[Info] Ready to retry.\n",
+    );
+    const json = await promisify(execFile)(process.execPath, [...cliArgs, "--json"], { env });
+    expect(JSON.parse(json.stdout)).toEqual({ agentId: agent.id, items: history });
+    const tail = await promisify(execFile)(process.execPath, [...cliArgs, "--tail", "1"], { env });
+    expect(tail.stdout).toBe("[Info] Ready to retry.\n");
+
+    follow = spawn(process.execPath, [...cliArgs, "--follow", "--tail", "0", "--no-color"], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exited = once(follow, "exit");
+    follow.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    follow.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    await expect
+      .poll(
+        () => {
+          if (follow?.exitCode !== null)
+            throw new Error(`CLI exited before following logs: ${stderr}`);
+          return stdout;
+        },
+        { timeout: 20_000 },
+      )
+      .toContain("Following logs");
+    await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+      type: "notification",
+      level: "error",
+      message: "Live rejection.\nTry again.",
+    });
+    await expect
+      .poll(() => stdout, { timeout: 10_000 })
+      .toContain("[Error] Live rejection.\nTry again.\n");
+    follow.kill("SIGINT");
+    await exited;
+    expect(stdout.slice(stdout.indexOf("---\n") + 4).trim(), stderr).toBe(
+      "[Error] Live rejection.\nTry again.",
+    );
+  } finally {
+    follow?.kill("SIGTERM");
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
 
 // A real daemon and CLI with a deterministic provider emitting two text chunks.
 // The live Claude reproduction is recorded in the PR; this locks its CLI behavior.
