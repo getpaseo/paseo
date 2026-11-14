@@ -1203,7 +1203,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       key,
       undefined,
       async () => ({
-        ref: await resolveRepositoryDefaultBranchRef(input),
+        // Resolve in the cached repository scope, not a caller's worktree-local config.
+        ref: await resolveRepositoryDefaultBranchRef({ ...input, cwd: key }),
       }),
     );
     return result.ref;
@@ -2689,6 +2690,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const event of events) {
       const relativePath = target.paths.relative(event.path) ?? "";
       const effect = classifyGitMetadataPath("common", relativePath);
+      if (relativePath === "config.worktree") {
+        defaultRefsChanged = true;
+        defaultRefTopologyChanged = true;
+      }
       if (effect.kind === "ref" || effect.kind === "all") defaultRefsChanged = true;
       if (effect.kind !== "ref") continue;
       const isTopologyChange =
@@ -4041,6 +4046,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     result: WorkspaceGitFetchResult | null,
     eventsBeforeFetchSnapshot: FileChange[],
   ): void {
+    // The fetch snapshot can consume ref watch events before they invalidate this cache.
+    this.defaultBranchRefCache.delete(target.repoGitRoot);
     this.flushFetchMetadataEvents(target, eventsBeforeFetchSnapshot);
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();
