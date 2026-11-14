@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { fetchQueryOptions } from "@/data/query";
 import {
+  invalidateDraftAgentCommandsForCheckout,
   agentCommandsQueryKey,
   agentCommandsQueryRoot,
   draftAgentCommandsQueryKey,
   normalizeAgentCommandsCwd,
   sessionAgentCommandsQueryKey,
-  sessionCommandQueryPolicy,
+  agentCommandQueryPolicy,
 } from "./cache";
 
 it("reuses fresh commands and keeps stale commands during a shared refresh and failure", async () => {
@@ -20,8 +21,8 @@ it("reuses fresh commands and keeps stale commands during a shared refresh and f
     resolveRefresh = resolve;
   });
   const options = fetchQueryOptions({
-    ...sessionCommandQueryPolicy,
-    staleTimeMs: sessionCommandQueryPolicy.staleTime,
+    ...agentCommandQueryPolicy,
+    staleTimeMs: agentCommandQueryPolicy.staleTime,
     dataShape: "value",
     queryKey: key,
     retry: false,
@@ -123,4 +124,36 @@ describe("agent command query keys", () => {
   it("exposes a server-level root for refresh invalidation", () => {
     expect(agentCommandsQueryRoot("server-1")).toEqual(["agentCommands", "server-1"]);
   });
+});
+
+it("retains draft commands while checkout invalidation refreshes the catalog", async () => {
+  const client = new QueryClient();
+  const key = draftAgentCommandsQueryKey({
+    serverId: "s",
+    draftConfig: { provider: "codex", cwd: "/repo" },
+  });
+  client.setQueryData(key, ["old"]);
+  let finish: (commands: string[]) => void = () => {};
+  const refresh = new Promise<string[]>((resolve) => {
+    finish = resolve;
+  });
+  const observer = new QueryObserver(
+    client,
+    fetchQueryOptions({
+      queryKey: key,
+      dataShape: "value",
+      immutableWhen: () => true,
+      queryFn: () => refresh,
+    }),
+  );
+  const unsubscribe = observer.subscribe(() => {});
+  const updating = invalidateDraftAgentCommandsForCheckout(client, { serverId: "s", cwd: "/repo" });
+  expect(observer.getCurrentResult().data).toEqual(["old"]);
+  expect(observer.getCurrentResult().isPending).toBe(false);
+  expect(observer.getCurrentResult().isFetching).toBe(true);
+  finish(["new"]);
+  await updating;
+  expect(observer.getCurrentResult().data).toEqual(["new"]);
+  unsubscribe();
+  client.clear();
 });

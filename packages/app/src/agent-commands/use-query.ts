@@ -9,7 +9,7 @@ import { useShallow } from "zustand/shallow";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   agentCommandsQueryKey,
-  sessionCommandQueryPolicy,
+  agentCommandQueryPolicy,
   type AgentCommandsDraftConfig,
 } from "./cache";
 
@@ -92,9 +92,8 @@ export function useAgentCommandsQuery({
       agentCommandProvider: draftConfig?.provider ?? provider,
       agentCommandCwd: draftConfig?.cwd ?? cwd,
     },
-    ...(draftConfig
-      ? { immutableWhen: () => true as const }
-      : { ...sessionCommandQueryPolicy, staleTimeMs: sessionCommandQueryPolicy.staleTime }),
+    ...agentCommandQueryPolicy,
+    staleTimeMs: agentCommandQueryPolicy.staleTime,
     subscribed: queryEnabled,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
