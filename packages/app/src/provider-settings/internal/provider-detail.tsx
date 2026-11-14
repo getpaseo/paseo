@@ -43,16 +43,24 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
     void refresh([provider]);
     refreshInstallation();
   }, [provider, refresh, refreshInstallation]);
-  // Remembered so a provider removed from this page isn't then called missing while it closes.
-  const [foundProvider, setFoundProvider] = useState<string | null>(null);
-  const wasFound = foundProvider === provider;
-  const presence = readDetailPresence({ provider, connected, entries, error, wasFound });
-  if (presence.kind === "found" && !wasFound) setFoundProvider(provider);
+  const label = resolveProviderLabel(provider, entries);
+  const { canRemove, remove, removingProviderId } = useProviderConfigActions(serverId);
+  // Kept once Remove succeeds, until the frame closes the page.
+  const [removedProvider, setRemovedProvider] = useState<string | null>(null);
+  const handleRemove = useCallback(() => {
+    void remove(provider, label).then((removed) => {
+      if (!removed) return removed;
+      setRemovedProvider(provider);
+      onRemoved();
+      return removed;
+    });
+  }, [label, onRemoved, provider, remove]);
+  const removingHere = removingProviderId === provider || removedProvider === provider;
+  const presence = readDetailPresence({ provider, connected, entries, error, removingHere });
   if (presence.kind === "removed") return null;
   if (presence.kind !== "found") return <AbsentProvider presence={presence} />;
 
   const entry = presence.entry;
-  const label = resolveProviderLabel(provider, entries);
   const sections = readDetailSections(entry, installation.state);
 
   return (
@@ -73,7 +81,9 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
         refreshing={isRefreshing || installation.refreshing}
         onRefresh={handleRefresh}
       />
-      <DangerZone serverId={serverId} entry={entry} label={label} onRemoved={onRemoved} />
+      {canRemove(entry) ? (
+        <DangerZone removing={removingProviderId === provider} onRemove={handleRemove} />
+      ) : null}
     </View>
   );
 }
@@ -178,26 +188,8 @@ function Troubleshooting({
   );
 }
 
-function DangerZone({
-  serverId,
-  entry,
-  label,
-  onRemoved,
-}: {
-  serverId: string;
-  entry: ProviderEntry;
-  label: string;
-  onRemoved: () => void;
-}) {
+function DangerZone({ removing, onRemove }: { removing: boolean; onRemove: () => void }) {
   const { t } = useTranslation();
-  const { canRemove, remove, removingProviderId } = useProviderConfigActions(serverId);
-  const handleRemove = useCallback(() => {
-    void remove(entry.provider, label).then((removed) => {
-      if (removed) onRemoved();
-      return removed;
-    });
-  }, [entry.provider, label, onRemoved, remove]);
-  if (!canRemove(entry)) return null;
   return (
     <SettingsSection title={t("settings.providers.detail.dangerZone")}>
       <SettingsCard>
@@ -205,12 +197,7 @@ function DangerZone({
           label={t("settings.providers.actions.remove")}
           hint={t("settings.providers.detail.removeHint")}
         >
-          <Button
-            variant="outline"
-            onPress={handleRemove}
-            disabled={removingProviderId === entry.provider}
-            testID="provider-remove"
-          >
+          <Button variant="outline" onPress={onRemove} disabled={removing} testID="provider-remove">
             {t("settings.providers.remove.confirm")}
           </Button>
         </SettingsRow>
