@@ -87,6 +87,8 @@ import {
   type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
@@ -339,6 +341,9 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// Steering admission holds the manager's mutation queue and event barrier. Bound
+// the acknowledgement wait so a connected but unresponsive peer cannot block Stop.
+const ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS = 10_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
@@ -482,6 +487,17 @@ export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
 
+// Providers own capability detection and extension RPCs; the session owns turn admission
+// and permission release after a successful injection.
+export interface ACPActiveTurnSteeringAdapter {
+  isSupported(initialize: InitializeResponse): boolean;
+  steer(context: {
+    connection: Pick<ClientSideConnection, "extMethod">;
+    sessionId: string;
+    prompt: ContentBlock[];
+  }): Promise<void>;
+}
+
 interface ACPAgentClientOptions {
   provider: string;
   // Provider id usage sources match a session against; ACP sessions without one report no usage.
@@ -510,6 +526,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  activeTurnSteeringAdapter?: ACPActiveTurnSteeringAdapter;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -542,6 +559,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  activeTurnSteeringAdapter?: ACPActiveTurnSteeringAdapter;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
   configuredModelIds?: readonly string[];
@@ -986,6 +1004,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly activeTurnSteeringAdapter?: ACPActiveTurnSteeringAdapter;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
@@ -1017,6 +1036,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.activeTurnSteeringAdapter = options.activeTurnSteeringAdapter;
     this.now = options.now ?? Date.now;
   }
 
@@ -1056,6 +1076,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        activeTurnSteeringAdapter: this.activeTurnSteeringAdapter,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -1116,6 +1137,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      activeTurnSteeringAdapter: this.activeTurnSteeringAdapter,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1806,8 +1828,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly activeTurnSteeringAdapter?: ACPActiveTurnSteeringAdapter;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private activeTurnSteeringSupported = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1854,6 +1878,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.activeTurnSteeringAdapter = options.activeTurnSteeringAdapter;
   }
 
   get id(): string | null {
@@ -1876,6 +1901,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.activeTurnSteeringSupported =
+        this.activeTurnSteeringAdapter?.isSupported(spawned.initialize) ?? false;
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1913,6 +1940,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.activeTurnSteeringSupported =
+        this.activeTurnSteeringAdapter?.isSupported(spawned.initialize) ?? false;
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -2060,6 +2089,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       .finally(() => connection.signal.removeEventListener("abort", failOnDisconnect));
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    const adapter = this.activeTurnSteeringAdapter;
+    if (
+      this.closed ||
+      !connection ||
+      !sessionId ||
+      this.activeForegroundTurnId !== options.expectedTurnId ||
+      !adapter ||
+      !this.activeTurnSteeringSupported
+    ) {
+      return { status: "unavailable" };
+    }
+
+    await withTimeout(
+      this.runACPRequest(() =>
+        adapter.steer({ connection, sessionId, prompt: toACPContentBlocks(prompt) }),
+      ),
+      ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS,
+      `Active-turn steering timed out after ${ACP_ACTIVE_TURN_STEERING_TIMEOUT_MS}ms; delivery is unknown`,
+    );
+    // The message must be injected before denying tools that block its delivery.
+    if (options.clearPendingPermissions) {
+      const requestIds = Array.from(this.pendingPermissions.keys());
+      for (const requestId of requestIds) {
+        if (!this.pendingPermissions.has(requestId)) continue;
+        await this.respondToPermission(requestId, { behavior: "deny" });
+      }
+    }
+    return { status: "accepted" };
   }
 
   // The SDK aborts the connection without rejecting the pending prompt, and before the child's
