@@ -440,6 +440,63 @@ It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
 is never inline SVG or a URL.
 
+#### Provider installation
+
+**Requires Paseo 0.17.** Older versions ignore `installation`.
+`ProviderRegistration.installation` fills the **Installation** section of the provider's settings.
+Every member is optional. Paseo hides the section when you declare neither `inspect` nor
+`installUrl`. [Report installation and updates](/docs/plugins/providers#report-installation-and-updates)
+has a complete example. Import the types from `@getpaseo/plugin/server/provider`.
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| Member            | Called                                                       | Deadline | Answer kept                                      |
+| ----------------- | ------------------------------------------------------------ | -------- | ------------------------------------------------ |
+| `inspect`         | When provider settings open                                  | 20 s     | 30 s                                             |
+| `checkForUpdates` | After `inspect` answers `installed`                          | 25 s     | 1 hour for `current` or `available`, else 30 s   |
+| `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
+
+**Refresh** in the provider's settings skips the kept answers. Paseo never calls these members
+before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
+
+`installUrl` and `updateUrl` are `http` or `https` pages that Paseo opens in the browser. The
+plugin fails to start when either is another kind of URL.
+
+The context:
+
+| Field    | Type                                      | Meaning                                                                                              |
+| -------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `launch` | `ProviderInstallationLaunch \| undefined` | The launch a session would use, with `resolved`. Absent when the registration declares no `command`. |
+| `signal` | `AbortSignal`                             | Aborts when Paseo stops waiting or the daemon stops.                                                 |
+| `report` | `(event: ProviderUpdateReport) => void`   | `update` only. Shows `{ type: "stdout" \| "stderr" \| "message", text }` to the user in order.       |
+
+`ProviderInstallationLaunch` is `{ command, args, env, resolved }`. With `resolved: true`, `command`
+is the executable's path. With `resolved: false`, Paseo did not find the executable and `command`
+is the configured name.
+
+Answers:
+
+| Type                   | Values                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` or `{ status: "not_installed" }`                                                            |
+| `ProviderUpdateCheck`  | `{ status: "current" }`, `{ status: "available", versions?: string[], message?: string }`, or `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` or `{ status: "failed", message: string }`                                                  |
+
+Paseo shows `version`, `versions` and `message` as written and does not parse, sort or compare
+them. It reuses a `current` or `available` answer for up to an hour while `inspect` reports the
+same `version`, so include in `version` everything `checkForUpdates` compares. It keeps the last 65,536 characters of `report` output. An answer that does not match these
+shapes is an error. **Update** appears once `inspect` reports the CLI installed and you declare
+`update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
+offers `updateUrl` on the same terms.
+
 ### Usage sources
 
 **Requires Paseo 0.11.** Register a source from your server entry with

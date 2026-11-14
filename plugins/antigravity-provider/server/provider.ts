@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execCommand } from "@getpaseo/plugin/server";
 import {
   negotiateProviderCapabilities,
   requireProviderCapabilities,
@@ -6,6 +7,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderInstallationLaunch,
   type ProviderLaunch,
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
@@ -20,6 +22,21 @@ const capabilities = [
   "session.persistence",
 ] as const;
 
+/** The release `agy --version` reports, or its first line when it names no release. */
+async function readAgyVersion(
+  launch: ProviderInstallationLaunch,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const { stdout } = await execCommand(launch.command, [...launch.args, "--version"], {
+    env: launch.env,
+    timeout: 5000,
+    maxBuffer: 8192,
+    signal,
+  });
+  const firstLine = stdout.trim().split("\n")[0]?.trim();
+  return /\b\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? (firstLine || undefined);
+}
+
 export function createAntigravityProvider(): ProviderRegistration {
   return {
     id: "antigravity",
@@ -27,6 +44,15 @@ export function createAntigravityProvider(): ProviderRegistration {
     icon: "icon.svg",
     command: ["agy"],
     description: "Antigravity CLI on your host",
+    // agy documents no update command and no release source, so there is nothing to check or run.
+    installation: {
+      installUrl: "https://antigravity.google/docs/getting-started?tab=cli",
+      async inspect({ launch, signal }) {
+        if (!launch?.resolved) return { status: "not_installed" };
+        const version = await readAgyVersion(launch, signal);
+        return version ? { status: "installed", version } : { status: "installed" };
+      },
+    },
     async status({ launch }) {
       if (!launch)
         return {

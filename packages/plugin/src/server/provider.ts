@@ -39,8 +39,85 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** How users install the provider's CLI and which version they run. Every member is optional. */
+  installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
+
+export interface ProviderInstallation {
+  /** http(s) page that explains how to install the provider. Paseo opens it; it never installs. */
+  installUrl?: string;
+  /** http(s) page that explains how to update the provider. */
+  updateUrl?: string;
+  /** Report whether the provider is installed and which version. Runs only when a user asks. */
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  /**
+   * Report whether a newer version is available. The provider decides how to find out and what
+   * counts as newer; Paseo shows the result as written. Return `unknown` when it cannot tell.
+   * Runs only when a user asks, never before a session.
+   */
+  checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
+  /**
+   * Update the provider, usually by running its CLI's own updater. Paseo shows everything passed
+   * to `report` while it runs, then the returned message. A throw is a failure with its message.
+   * Runs only when a user asks. Paseo sets no deadline; `signal` aborts when the daemon stops.
+   */
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface ProviderUpdateContext extends ProviderInstallationContext {
+  /** Shows output to the user as it happens, unchanged and in order. */
+  report(event: ProviderUpdateReport): void;
+}
+
+export const ProviderUpdateReportSchema = z
+  .object({ type: z.enum(["stdout", "stderr", "message"]), text: z.string() })
+  .strip();
+
+export type ProviderUpdateReport = z.infer<typeof ProviderUpdateReportSchema>;
+
+export const ProviderUpdateResultSchema = z.discriminatedUnion("status", [
+  /** `message` is shown as written, such as which version is now installed. */
+  z.object({ status: z.literal("succeeded"), message: z.string().optional() }).strip(),
+  z.object({ status: z.literal("failed"), message: z.string() }).strip(),
+]);
+
+export type ProviderUpdateResult = z.infer<typeof ProviderUpdateResultSchema>;
+
+export interface ProviderInstallationContext {
+  /** The launch a session would use. Absent when the provider declares no `command`. */
+  launch?: ProviderInstallationLaunch;
+  /** Aborted when Paseo stops waiting for the result. */
+  signal: AbortSignal;
+}
+
+export interface ProviderInstallationLaunch extends ProviderLaunch {
+  /** False when the executable was not found; `command` is then the configured command as written. */
+  resolved: boolean;
+}
+
+export const ProviderInspectionSchema = z.discriminatedUnion("status", [
+  /** `version` is shown as written; Paseo does not parse or compare it. */
+  z.object({ status: z.literal("installed"), version: z.string().optional() }).strip(),
+  z.object({ status: z.literal("not_installed") }).strip(),
+]);
+
+export type ProviderInspection = z.infer<typeof ProviderInspectionSchema>;
+
+export const ProviderUpdateCheckSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("current") }).strip(),
+  /** `versions` and `message` are shown as written; Paseo does not parse, sort or compare them. */
+  z
+    .object({
+      status: z.literal("available"),
+      versions: z.array(z.string()).optional(),
+      message: z.string().optional(),
+    })
+    .strip(),
+  z.object({ status: z.literal("unknown"), message: z.string().optional() }).strip(),
+]);
+
+export type ProviderUpdateCheck = z.infer<typeof ProviderUpdateCheckSchema>;
 
 export type ProviderCatalogOptions =
   | { scope: "global"; force?: boolean; launch?: ProviderLaunch }

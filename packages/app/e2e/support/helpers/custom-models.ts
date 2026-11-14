@@ -25,7 +25,7 @@ export async function addCustomModel(page: Page, id: string): Promise<void> {
 }
 
 export async function removeCustomModel(page: Page, id: string): Promise<void> {
-  await page.getByRole("textbox", { name: "Search models" }).fill(id);
+  await searchModels(page, id);
   const remove = page.getByRole("button", { name: `Remove ${id}`, exact: true });
   await expect(remove).toBeInViewport({ ratio: 1 });
   await remove.click();
@@ -33,8 +33,20 @@ export async function removeCustomModel(page: Page, id: string): Promise<void> {
 }
 
 export async function expectCustomModelRetained(page: Page, id: string): Promise<void> {
-  await page.getByRole("textbox", { name: "Search models" }).fill(id);
+  await searchModels(page, id);
   await expect(page.getByRole("button", { name: `Remove ${id}`, exact: true })).toBeInViewport({
     ratio: 1,
   });
+}
+
+/**
+ * Filters the model list and scrolls the sheet down to the custom models, since other sections push
+ * them below the fold at phone width. Only the section heading is scrolled into view: scrolling the
+ * row itself would also slide its card sideways and hide a Remove button pushed past the right edge.
+ */
+async function searchModels(page: Page, id: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Search models" }).fill(id);
+  await page
+    .getByText("Custom models", { exact: true })
+    .evaluate((heading) => heading.scrollIntoView({ block: "start" }));
 }

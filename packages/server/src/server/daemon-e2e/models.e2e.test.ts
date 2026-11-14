@@ -9,6 +9,7 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { execFileSync } from "node:child_process";
 import { createDaemonTestContext } from "../test-utils/index.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 
 function isBinaryInstalled(binary: string): boolean {
   try {
@@ -331,5 +332,190 @@ test("bundled Hoplite requires a config entry and removal survives restart", asy
     await daemon.close();
     await rm(root, { recursive: true, force: true });
     await rm(daemon.staticDir, { recursive: true, force: true });
+  }
+}, 60000);
+
+test("provider installation reaches the client: version unchanged, Install link when missing", async () => {
+  const version = "  codex-cli 0.200.0-alpha+local (build 7)\n";
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      installUrl: "https://example.com/codex/install",
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    expect(client.getLastServerInfoMessage()?.features?.providerInstallation).toBe(true);
+    await expect(client.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      installation: {
+        installUrl: "https://example.com/codex/install",
+        inspection: { status: "installed", version },
+      },
+    });
+    await expect(client.inspectProviderInstallation("muse")).resolves.toMatchObject({
+      provider: "muse",
+      error: null,
+      installation: {
+        installUrl: "https://paseo.sh/docs/muse-code",
+        inspection: { status: "not_installed" },
+      },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("provider update checks reach the client: versions unchanged, failures inconclusive", async () => {
+  const versions = ["  0.300.0-beta+x\n", "nightly (unstable)"];
+  const message = "  Restart Codex to finish\n";
+  let codexChecks = 0;
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async checkForUpdates() {
+        codexChecks += 1;
+        return { status: "available" as const, versions, message };
+      },
+    },
+  });
+  const claude = Object.assign(createTestAgentClient("claude"), {
+    installation: {
+      async checkForUpdates(): Promise<never> {
+        throw new Error("release channel unreachable");
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex, claude },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await expect(client.checkProviderUpdates("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      updateCheck: { status: "available", versions, message },
+    });
+    await client.checkProviderUpdates("codex");
+    expect(codexChecks).toBe(1);
+    await client.checkProviderUpdates("codex", { refresh: true });
+    expect(codexChecks).toBe(2);
+
+    await expect(client.checkProviderUpdates("claude")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "error", message: "release channel unreachable" },
+    });
+    await expect(client.checkProviderUpdates("muse")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "unknown", message: "Muse Code is not installed" },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("a provider update outlives the client that started it and a new client reads it", async () => {
+  let version = "1.0.0";
+  let updates = 0;
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+      async update({ report }: { report: (event: { type: "stdout"; text: string }) => void }) {
+        updates += 1;
+        report({ type: "stdout", text: " step 1\r\n" });
+        await finished;
+        report({ type: "stdout", text: " step 2\n" });
+        version = "2.0.0";
+        return { status: "succeeded" as const, message: " Restart agents \n" };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, []),
+  });
+  const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await first.connect();
+    await expect(first.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { canUpdate: true, inspection: { version: "1.0.0" } },
+    });
+    const firstObservation = first.observeProviderUpdates("codex");
+    const firstOutput: string[] = [];
+    firstObservation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type === "provider.installation.update.progress")
+          firstOutput.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(firstObservation.ready).resolves.toMatchObject({ update: null });
+    const started = await first.updateProvider("codex");
+    expect(started).toMatchObject({ error: null, update: { operation: { status: "running" } } });
+    await expect.poll(() => firstOutput).toEqual([" step 1\r\n"]);
+    await first.close();
+
+    await second.connect();
+    const joined = await second.updateProvider("codex");
+    expect(joined.update?.operation.id).toBe(started.update?.operation.id);
+    expect(updates).toBe(1);
+
+    const observation = second.observeProviderUpdates("codex");
+    let latest: { status: string; message?: string } | null = null;
+    const output: string[] = [];
+    observation.subscribe({
+      snapshot: (snapshot) => {
+        latest = snapshot.update?.operation ?? null;
+        output.splice(0, output.length, ...(snapshot.update?.output ?? []).map((e) => e.text));
+      },
+      update: (message) => {
+        if (message.type !== "provider.installation.update.progress") return;
+        latest = message.payload.operation;
+        output.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(observation.ready).resolves.toMatchObject({
+      update: {
+        operation: { status: "running" },
+        output: [{ type: "stdout", text: " step 1\r\n" }],
+      },
+    });
+    finish();
+    await expect
+      .poll(() => latest)
+      .toMatchObject({ status: "succeeded", message: " Restart agents \n" });
+    expect(output).toEqual([" step 1\r\n", " step 2\n"]);
+    await expect(second.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { inspection: { version: "2.0.0" } },
+    });
+    await observation.release();
+  } finally {
+    finish();
+    await first.close().catch(() => undefined);
+    await second.close();
+    await daemon.close();
   }
 }, 60000);

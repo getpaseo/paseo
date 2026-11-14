@@ -29,6 +29,10 @@ import {
   type ProviderConnection,
   type ProviderRegistration,
   ProviderStatusSchema,
+  ProviderInspectionSchema,
+  ProviderUpdateCheckSchema,
+  ProviderUpdateReportSchema,
+  ProviderUpdateResultSchema,
 } from "@getpaseo/plugin/server/provider";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -40,6 +44,35 @@ import { readPluginProviderIcon } from "./provider-icon.js";
 import { initializeEnvironmentProxy } from "../network/index.js";
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function validateProviderInstallation(
+  id: string,
+  installation: ProviderRegistration["installation"],
+): void {
+  if (installation === undefined) return;
+  for (const url of [installation.installUrl, installation.updateUrl]) {
+    if (url !== undefined && (typeof url !== "string" || !isHttpUrl(url)))
+      throw new Error(`Plugin provider ${id} installation links must be http(s) URLs`);
+  }
+  if (installation.inspect !== undefined && typeof installation.inspect !== "function")
+    throw new Error(`Invalid installation inspect callback for plugin provider ${id}`);
+  if (
+    installation.checkForUpdates !== undefined &&
+    typeof installation.checkForUpdates !== "function"
+  )
+    throw new Error(`Invalid installation checkForUpdates callback for plugin provider ${id}`);
+  if (installation.update !== undefined && typeof installation.update !== "function")
+    throw new Error(`Invalid installation update callback for plugin provider ${id}`);
 }
 
 export interface PluginWorkerChannel {
@@ -87,6 +120,7 @@ export function createPluginWorker(options: {
     { connection: ProviderConnection; unsubscribe: () => void; closing?: Promise<void> }
   >();
   const pendingProviderConnections = new Map<string, { tombstoned: boolean }>();
+  const installationRequests = new Map<string, AbortController>();
   let cleanup: (() => void | Promise<void>) | null = null;
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
@@ -167,6 +201,7 @@ export function createPluginWorker(options: {
     }
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
+    validateProviderInstallation(id, provider.installation);
     if (
       provider.command !== undefined &&
       (provider.command.length === 0 ||
@@ -202,8 +237,75 @@ export function createPluginWorker(options: {
       requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
+      installation: provider.installation
+        ? {
+            installUrl: provider.installation.installUrl,
+            updateUrl: provider.installation.updateUrl,
+            hasInspect: provider.installation.inspect !== undefined,
+            hasCheckForUpdates: provider.installation.checkForUpdates !== undefined,
+            hasUpdate: provider.installation.update !== undefined,
+          }
+        : undefined,
       command: provider.command,
     };
+  }
+
+  /** Handles installation requests; returns false for any other message. */
+  function handleInstallationMessage(message: PluginProcessRequest): boolean {
+    if (message.type === "provider.installation.cancel") {
+      installationRequests
+        .get(message.requestId)
+        ?.abort(new Error("Installation request canceled"));
+      return true;
+    }
+    if (
+      message.type !== "provider.installation.inspect" &&
+      message.type !== "provider.installation.check_updates" &&
+      message.type !== "provider.installation.update"
+    )
+      return false;
+    const controller = new AbortController();
+    installationRequests.set(message.requestId, controller);
+    const context = { launch: message.request.launch, signal: controller.signal };
+    void (async () => {
+      const installation = providers.get(message.providerId)?.installation;
+      if (message.type === "provider.installation.update") {
+        if (!installation?.update)
+          throw new Error(`Provider has no update capability: ${message.providerId}`);
+        let settled = false;
+        const report = (event: unknown) => {
+          const parsed = ProviderUpdateReportSchema.safeParse(event);
+          if (settled || !parsed.success) return;
+          send({
+            type: "provider.installation.report",
+            requestId: message.requestId,
+            report: parsed.data,
+          });
+        };
+        try {
+          return ProviderUpdateResultSchema.parse(
+            await installation.update({ ...context, report }),
+          );
+        } finally {
+          settled = true;
+        }
+      }
+      if (message.type === "provider.installation.inspect") {
+        if (!installation?.inspect)
+          throw new Error(`Provider has no inspect capability: ${message.providerId}`);
+        return ProviderInspectionSchema.parse(await installation.inspect(context));
+      }
+      if (!installation?.checkForUpdates)
+        throw new Error(`Provider has no checkForUpdates capability: ${message.providerId}`);
+      return ProviderUpdateCheckSchema.parse(await installation.checkForUpdates(context));
+    })()
+      .then(
+        (output) => send({ type: "result", requestId: message.requestId, output }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      )
+      .finally(() => installationRequests.delete(message.requestId));
+    return true;
   }
 
   async function connectProvider(
@@ -367,6 +469,8 @@ export function createPluginWorker(options: {
     agentTools.close();
     subscriptions.releaseAll();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
+    for (const request of installationRequests.values())
+      request.abort(new Error("Plugin is stopping"));
     const currentCleanup = cleanup;
     cleanup = null;
     try {
@@ -402,6 +506,9 @@ export function createPluginWorker(options: {
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
       message.type === "provider.status" ||
+      message.type === "provider.installation.inspect" ||
+      message.type === "provider.installation.check_updates" ||
+      message.type === "provider.installation.update" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover" ||
@@ -470,6 +577,47 @@ export function createPluginWorker(options: {
     else send({ type: "error", requestId: message.requestId, error: "Plugin API unavailable" });
   }
 
+  /** Handles a provider's status, catalogue key and installation requests; false for others. */
+  function handleProviderQueryMessage(message: PluginProcessRequest): message is Extract<
+    PluginProcessRequest,
+    {
+      type:
+        | "provider.status"
+        | "provider.catalog_key"
+        | "provider.installation.inspect"
+        | "provider.installation.check_updates"
+        | "provider.installation.update"
+        | "provider.installation.cancel";
+    }
+  > {
+    if (message.type === "provider.status") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider || !provider.status)
+          throw new Error(`Provider has no status capability: ${message.providerId}`);
+        const output = ProviderStatusSchema.parse(await provider.status(message.request));
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "provider.catalog_key") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+        const output = await provider.getCatalogCacheKey?.(message.options);
+        if (output !== undefined && typeof output !== "string")
+          throw new Error("Invalid catalogue key");
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    return handleInstallationMessage(message);
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
@@ -512,31 +660,7 @@ export function createPluginWorker(options: {
       return;
     }
     if (handleToolMessage(message)) return;
-    if (message.type === "provider.status") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider || !provider.status)
-          throw new Error(`Provider has no status capability: ${message.providerId}`);
-        const output = ProviderStatusSchema.parse(await provider.status(message.request));
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
-    if (message.type === "provider.catalog_key") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
-        const output = await provider.getCatalogCacheKey?.(message.options);
-        if (output !== undefined && typeof output !== "string")
-          throw new Error("Invalid catalogue key");
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
+    if (handleProviderQueryMessage(message)) return;
     if (message.type === "usage.fetch" || message.type === "usage.discover") {
       handleUsageRequest(message);
       return;

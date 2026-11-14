@@ -19,6 +19,7 @@ import {
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
 import { execCommand } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
+import { createMuseProvider } from "../server/provider.js";
 
 const connections: ProviderConnection[] = [];
 const roots: string[] = [];
@@ -160,6 +161,75 @@ test("registration exposes Muse with a daemon-resolved command", () => {
     command: ["muse"],
     icon: "icon.svg",
   });
+});
+test("installation links to the Muse guide and reports the installed version", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.7.2" },
+  };
+  const signal = new AbortController().signal;
+  expect(provider.installation?.installUrl).toBe("https://paseo.sh/docs/muse-code");
+  await expect(
+    provider.installation?.inspect?.({ launch: { ...launch, resolved: true }, signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.7.2" });
+  await expect(
+    provider.installation?.inspect?.({
+      launch: { ...launch, command: "muse", resolved: false },
+      signal,
+    }),
+  ).resolves.toEqual({ status: "not_installed" });
+});
+test("installation reports the build its update check compares", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8600.1)" },
+    resolved: true,
+  };
+  await expect(
+    provider.installation?.inspect?.({ launch, signal: new AbortController().signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.4.18-R8600.1" });
+});
+test("update check compares the installed build with the launcher's channel", async () => {
+  const channels: string[] = [];
+  const provider = createMuseProvider(new MuseUsage(), {
+    async readChannelRelease({ channel }) {
+      channels.push(channel);
+      return channel === "muse-beta"
+        ? { version: "1.5.0-R9000.2", notificationText: "Faster startup" }
+        : { version: "1.4.18-R8587.1", notificationText: "" };
+    },
+  });
+  const signal = new AbortController().signal;
+  const check = (env: Record<string, string>) =>
+    provider.installation?.checkForUpdates?.({
+      launch: {
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+        env,
+        resolved: true,
+      },
+      signal,
+    });
+
+  await expect(check({ MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8587.1)" })).resolves.toEqual({
+    status: "current",
+  });
+  await expect(
+    check({ MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8587.1)", MUSE_CHANNEL: "muse-beta" }),
+  ).resolves.toEqual({
+    status: "available",
+    versions: ["1.5.0-R9000.2"],
+    message: "Faster startup",
+  });
+  await expect(check({ MUSE_TEST_VERSION: "1.4.1" })).resolves.toEqual({
+    status: "unknown",
+    message: "This Muse Code does not report its build",
+  });
+  expect(channels).toEqual(["muse-stable", "muse-beta"]);
 });
 test("catalog uses model effort variants, modes, and bounded cached discovery", async () => {
   const h = await harness("catalog-controls");

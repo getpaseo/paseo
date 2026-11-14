@@ -26,6 +26,8 @@ import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
+import { ProviderInstallationSection } from "./provider-installation-section";
+import { useProviderInstallation } from "./provider-installation";
 import {
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
@@ -411,7 +413,8 @@ interface ProviderModalBodyProps {
 interface ProviderSheetFooterInput {
   fetchedAt: string | null;
   isCompact: boolean;
-  modelsRefreshing: boolean;
+  /** Models or the installation are being read again. */
+  refreshing: boolean;
   t: TFunction;
   onOpenAddSheet: () => void;
   onOpenDiagSheet: () => void;
@@ -421,7 +424,7 @@ interface ProviderSheetFooterInput {
 function renderProviderSheetFooter({
   fetchedAt,
   isCompact,
-  modelsRefreshing,
+  refreshing,
   t,
   onOpenAddSheet,
   onOpenDiagSheet,
@@ -449,12 +452,12 @@ function renderProviderSheetFooter({
         </Button>
         <Button
           variant="default"
-          leftIcon={modelsRefreshing ? undefined : RotateCw}
+          leftIcon={refreshing ? undefined : RotateCw}
           onPress={onRefreshModels}
-          disabled={modelsRefreshing}
+          disabled={refreshing}
           style={buttonStyle}
         >
-          {modelsRefreshing
+          {refreshing
             ? t("settings.providers.diagnostic.refreshing")
             : t("settings.providers.diagnostic.refresh")}
         </Button>
@@ -632,9 +635,12 @@ export function ProviderDiagnosticSheet({
     [additionalModels, q],
   );
 
+  const installation = useProviderInstallation({ serverId, provider, visible });
+  const refreshInstallation = installation.refresh;
   const handleRefreshModels = useCallback(() => {
     void refresh([provider]);
-  }, [provider, refresh]);
+    refreshInstallation();
+  }, [provider, refresh, refreshInstallation]);
 
   const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
   const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
@@ -681,7 +687,7 @@ export function ProviderDiagnosticSheet({
         footer={renderProviderSheetFooter({
           fetchedAt: providerEntry?.fetchedAt ?? null,
           isCompact,
-          modelsRefreshing,
+          refreshing: modelsRefreshing || installation.refreshing,
           t,
           onOpenAddSheet: handleOpenAddSheet,
           onOpenDiagSheet: handleOpenDiagSheet,
@@ -689,6 +695,11 @@ export function ProviderDiagnosticSheet({
         })}
         snapPoints={MAIN_SNAP_POINTS}
       >
+        <ProviderInstallationSection
+          state={installation.state}
+          updates={installation.updates}
+          action={installation.action}
+        />
         <ProviderModalBody
           discoveredCount={discoveredModels.length}
           additionalCount={additionalModels.length}

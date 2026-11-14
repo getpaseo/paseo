@@ -51,6 +51,7 @@ import {
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { ProviderInstallations } from "./provider-installation/provider-installations.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -253,6 +254,8 @@ export class ProviderSnapshotManager {
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
+  /** Installation links and versions; separate from availability and discovery. */
+  readonly installations: ProviderInstallations;
   private pluginProvidersSettled = false;
 
   constructor(options: ProviderSnapshotManagerOptions) {
@@ -281,6 +284,14 @@ export class ProviderSnapshotManager {
       ...this.extraClients,
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+    this.installations = new ProviderInstallations({
+      logger: options.logger.child({ module: "provider-installations" }),
+      resolveClient: (provider) => {
+        const definition = this.generation.definitions[provider];
+        return definition ? this.ensureClient(provider, definition) : null;
+      },
+      refreshProvider: (provider) => this.refreshSettingsSnapshot({ providers: [provider] }),
+    });
   }
 
   getSnapshot(cwd?: string): ProviderSnapshot {
@@ -688,6 +699,7 @@ export class ProviderSnapshotManager {
 
   async shutdown(): Promise<void> {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
@@ -698,6 +710,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     this.catalogs.clear();
     this.targets.clear();

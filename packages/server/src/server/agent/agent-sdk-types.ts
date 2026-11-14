@@ -10,6 +10,12 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type {
+  ProviderInspection,
+  ProviderUpdateCheck,
+  ProviderUpdateReport,
+  ProviderUpdateResult,
+} from "@getpaseo/plugin/server/provider";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
@@ -804,6 +810,24 @@ export interface AgentDraftControls {
   options: ProviderOptions;
 }
 
+export interface AgentClientInstallationContext {
+  /** Aborted when Paseo stops waiting for the result. */
+  signal: AbortSignal;
+}
+
+export interface AgentClientInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: AgentClientInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: AgentClientInstallationContext): Promise<ProviderUpdateCheck>;
+  /** Runs the provider's updater. See `ProviderInstallation.update` in the plugin contract. */
+  update?(context: AgentClientUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface AgentClientUpdateContext extends AgentClientInstallationContext {
+  report(event: ProviderUpdateReport): void;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
@@ -867,6 +891,12 @@ export interface AgentClient {
    */
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /**
+   * Installation links and the installed version. The same contract as plugin providers'
+   * `ProviderRegistration.installation`; built-ins resolve their own launch inside `inspect`.
+   * Never consulted by availability, discovery, or session creation.
+   */
+  readonly installation?: AgentClientInstallation;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.

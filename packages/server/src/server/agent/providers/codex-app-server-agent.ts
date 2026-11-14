@@ -24,6 +24,7 @@ import {
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
+  type AgentClientInstallation,
   type AgentSession,
   type AgentSessionConfig,
   type SteerActiveTurnOptions,
@@ -68,6 +69,7 @@ import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
+  createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -115,8 +117,18 @@ import {
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
+  readCommandVersionOutput,
   resolveBinaryVersion,
 } from "./diagnostic-utils.js";
+import {
+  compareWithLatestRelease,
+  fetchHomebrewCaskVersion,
+  fetchReleaseField,
+  homebrewCaskOf,
+  resolveExecutablePath,
+  type LatestReleaseLookup,
+} from "./release-check.js";
+import { runUpdateCommand, updatedForNewAgents } from "./update-command.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
@@ -320,6 +332,8 @@ interface CodexAppServerProcessPort {
 interface CodexAppServerAgentDeps {
   appServerProcess?: CodexAppServerProcessPort;
   environment?: Record<string, string>;
+  /** Where update checks learn the newest release; defaults to Codex's own release sources. */
+  lookupLatestRelease?: LatestReleaseLookup;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   customProvider?: {
     id: string;
@@ -7750,9 +7764,69 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 }
 
+const CODEX_INSTALL_URL = "https://developers.openai.com/codex/cli";
+
+/** `codex --version` prints `codex-cli <version>`; report the version part. */
+function readCodexVersionLabel(output: string): string | undefined {
+  const line = output.split("\n")[0]?.trim() ?? "";
+  return line.replace(/^codex-cli\s+/i, "") || undefined;
+}
+
+type InstalledCodex =
+  | { status: "not_installed" }
+  | { status: "installed"; version: string | undefined; executablePath: string };
+
+/**
+ * The release Codex's own updater offers: the Homebrew cask for cask installs, which lags
+ * upstream, otherwise the latest GitHub release, tagged `rust-v<version>`.
+ */
+const lookupLatestCodexRelease: LatestReleaseLookup = async ({ executablePath, signal }) => {
+  const cask = homebrewCaskOf(executablePath);
+  if (cask) return fetchHomebrewCaskVersion(cask, signal);
+  const tag = await fetchReleaseField({
+    url: "https://api.github.com/repos/openai/codex/releases/latest",
+    field: "tag_name",
+    signal,
+  });
+  return tag.replace(/^rust-v/, "");
+};
+
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly installation: AgentClientInstallation = {
+    installUrl: CODEX_INSTALL_URL,
+    updateUrl: CODEX_INSTALL_URL,
+    inspect: async ({ signal }) => {
+      const installed = await this.readInstalledCodex(signal);
+      return installed.status === "installed"
+        ? { status: "installed", version: installed.version }
+        : installed;
+    },
+    checkForUpdates: async ({ signal }) => {
+      const installed = await this.readInstalledCodex(signal);
+      if (installed.status === "not_installed")
+        return { status: "unknown", message: "Codex is not installed" };
+      const lookup = this.deps.lookupLatestRelease ?? lookupLatestCodexRelease;
+      const latest = await lookup({ executablePath: installed.executablePath, signal });
+      return compareWithLatestRelease({ installed: installed.version, latest });
+    },
+    // `codex update` picks the updater for the install method: npm, bun, pnpm, Homebrew or the
+    // standalone installer, and exits non-zero with a reason when it cannot tell.
+    update: async (context) => {
+      const command = await this.resolveInstalledCommand();
+      if (!command) return { status: "failed", message: "Codex is not installed" };
+      return runUpdateCommand(
+        {
+          command: command.command,
+          args: [...command.args, "update"],
+          env: createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+          successMessage: updatedForNewAgents("Codex"),
+        },
+        context,
+      );
+    },
+  };
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
 
@@ -7761,6 +7835,40 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
+
+  private async readInstalledCodex(signal: AbortSignal): Promise<InstalledCodex> {
+    const installed = await this.resolveInstalledCommand();
+    if (!installed) return { status: "not_installed" };
+    const output = await readCommandVersionOutput({
+      command: installed.command,
+      args: [...installed.args, "--version"],
+      env: this.runtimeSettings?.env,
+      signal,
+    });
+    return {
+      status: "installed",
+      version: readCodexVersionLabel(output),
+      executablePath: await resolveExecutablePath(installed.executable),
+    };
+  }
+
+  /** The command a session would launch, or null when Codex is not installed. */
+  private async resolveInstalledCommand(): Promise<{
+    command: string;
+    args: string[];
+    executable: string;
+  } | null> {
+    const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const availability = await checkCodexLaunchAvailable(launch);
+    if (!availability.available) return null;
+    const command =
+      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command);
+    return {
+      command,
+      args: [...launch.args],
+      executable: availability.resolvedPath ?? command,
+    };
+  }
 
   private sessionDeps(launchEnv: Record<string, string> | undefined): CodexAppServerAgentDeps {
     return {

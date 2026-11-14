@@ -12,6 +12,10 @@ import {
   ProviderInputSchema,
   ProviderStatusSchema,
   type ProviderStatus,
+  type ProviderInspection,
+  type ProviderUpdateCheck,
+  type ProviderUpdateResult,
+  type ProviderInstallationLaunch,
   type ProviderLaunch,
   requireProviderCapabilities,
   type ProviderCapability,
@@ -31,6 +35,8 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentClientInstallation,
+  AgentClientUpdateContext,
   AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
@@ -156,7 +162,8 @@ class ProviderRuntime {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+  /** The effective launch, including when its executable does not resolve. */
+  private async resolveEffectiveLaunch(): Promise<ProviderInstallationLaunch | undefined> {
     const command = this.registration.command;
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
@@ -167,8 +174,45 @@ class ProviderRuntime {
     const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
     const availability = await checkProviderLaunchAvailable(launch);
-    if (!availability.resolvedPath) throw new Error(`${launch.command} not found on PATH`);
-    return { command: resolvePath(availability.resolvedPath), args: launch.args, env };
+    if (!availability.resolvedPath)
+      return { command: launch.command, args: launch.args, env, resolved: false };
+    return {
+      command: resolvePath(availability.resolvedPath),
+      args: launch.args,
+      env,
+      resolved: true,
+    };
+  }
+
+  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+    const launch = await this.resolveEffectiveLaunch();
+    if (!launch) return undefined;
+    if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
+    return { command: launch.command, args: launch.args, env: launch.env };
+  }
+
+  async inspectInstallation(signal: AbortSignal): Promise<ProviderInspection> {
+    const inspect = this.registration.installation?.inspect;
+    if (!inspect) throw new Error("Provider does not report its installation");
+    const launch = await this.resolveEffectiveLaunch();
+    signal.throwIfAborted();
+    return await inspect.call(this.registration.installation, { launch, signal });
+  }
+
+  async checkForUpdates(signal: AbortSignal): Promise<ProviderUpdateCheck> {
+    const checkForUpdates = this.registration.installation?.checkForUpdates;
+    if (!checkForUpdates) throw new Error("Provider does not check for updates");
+    const launch = await this.resolveEffectiveLaunch();
+    signal.throwIfAborted();
+    return await checkForUpdates.call(this.registration.installation, { launch, signal });
+  }
+
+  async update(context: AgentClientUpdateContext): Promise<ProviderUpdateResult> {
+    const update = this.registration.installation?.update;
+    if (!update) throw new Error("Provider does not update itself");
+    const launch = await this.resolveEffectiveLaunch();
+    context.signal.throwIfAborted();
+    return await update.call(this.registration.installation, { ...context, launch });
   }
 
   async status(): Promise<ProviderStatus> {
@@ -961,12 +1005,26 @@ class PluginAgentClient implements AgentClient {
   private readonly pendingChildren: PendingChild[] = [];
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
+  readonly installation?: AgentClientInstallation;
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
+    const installation = registration.installation;
+    if (installation)
+      this.installation = {
+        installUrl: installation.installUrl,
+        updateUrl: installation.updateUrl,
+        inspect: installation.inspect
+          ? ({ signal }) => this.runtime.inspectInstallation(signal)
+          : undefined,
+        checkForUpdates: installation.checkForUpdates
+          ? ({ signal }) => this.runtime.checkForUpdates(signal)
+          : undefined,
+        update: installation.update ? (context) => this.runtime.update(context) : undefined,
+      };
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }
 
