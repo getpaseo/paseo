@@ -125,4 +125,27 @@ describe("daemon web UI config", () => {
 
     expect(config.webUi.distDir).toBe(path.resolve(envDir));
   });
+
+  test("serves at the root by default", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(loadConfig(home, { env: {} }).basePath).toBe("");
+  });
+
+  test("reads the base path from persisted config and lets PASEO_BASE_PATH override it", async () => {
+    const home = await createPaseoHome({ version: 1, daemon: { basePath: "/persisted/" } });
+
+    expect(loadConfig(home, { env: {} }).basePath).toBe("/persisted");
+    expect(loadConfig(home, { env: { PASEO_BASE_PATH: "/user/alice/paseo/" } }).basePath).toBe(
+      "/user/alice/paseo",
+    );
+  });
+
+  test("rejects an invalid base path at startup", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(() => loadConfig(home, { env: { PASEO_BASE_PATH: "paseo" } })).toThrow(
+      /Invalid base path/,
+    );
+  });
 });

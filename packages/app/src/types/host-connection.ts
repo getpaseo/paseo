@@ -2,6 +2,7 @@ import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import {
   normalizeHostPort,
   normalizeLoopbackToLocalhost,
+  normalizeUrlBasePath,
   shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
 import {
@@ -144,7 +145,7 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   if (left.type === "routed" && right.type === "routed")
     return left.originServerId === right.originServerId;
   if (left.type === "directTcp" && right.type === "directTcp") {
-    return left.endpoint === right.endpoint && (left.useTls ?? false) === (right.useTls ?? false);
+    return directTcpConnectionEquals(left, right);
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
     return left.path === right.path;
@@ -164,6 +165,17 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   }
 
   return false;
+}
+
+function directTcpConnectionEquals(
+  left: DirectTcpHostConnection,
+  right: DirectTcpHostConnection,
+): boolean {
+  return (
+    left.endpoint === right.endpoint &&
+    (left.useTls ?? false) === (right.useTls ?? false) &&
+    (left.basePath ?? "") === (right.basePath ?? "")
+  );
 }
 
 function remoteSshConnectionEquals(
@@ -394,6 +406,15 @@ export function upsertHostConnectionInProfiles(input: {
   return next;
 }
 
+/**
+ * Direct TCP connection ids stay `direct:<endpoint>` at the root; a daemon
+ * served under a base path is a different connection to the same endpoint.
+ */
+export function directTcpConnectionId(endpoint: string, basePath?: string): string {
+  const normalized = normalizeUrlBasePath(basePath);
+  return normalized ? `direct:${endpoint}${normalized}` : `direct:${endpoint}`;
+}
+
 export function connectionFromListen(listen: string): HostConnection | null {
   const normalizedListen = listen.trim();
   if (!normalizedListen) {
@@ -488,6 +509,7 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     type: z.literal("directTcp"),
     endpoint: z.string(),
     useTls: z.boolean().optional(),
+    basePath: z.string().optional(),
     password: z.string().optional(),
   }),
   z.strictObject({
@@ -535,13 +557,20 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
   if (connection.type === "directTcp") {
     try {
       const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(connection.endpoint));
+      const basePath = normalizeUrlBasePath(connection.basePath);
       const parsed = DirectTcpHostConnectionSchema.parse({
-        id: `direct:${endpoint}`,
+        id: directTcpConnectionId(endpoint, basePath),
         type: "directTcp",
         endpoint,
         useTls: connection.useTls,
       });
-      return { id: parsed.id, type: parsed.type, endpoint: parsed.endpoint, useTls: parsed.useTls };
+      return {
+        id: parsed.id,
+        type: parsed.type,
+        endpoint: parsed.endpoint,
+        useTls: parsed.useTls,
+        ...(basePath ? { basePath } : {}),
+      };
     } catch {
       return null;
     }

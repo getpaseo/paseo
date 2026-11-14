@@ -160,6 +160,27 @@ paseo.example.com {
 
 这就是全部配置。Caddy 会自动申请证书，并默认保留 `Host` 和 `X-Forwarded-Proto`。
 
+## 在路径前缀下提供服务 {#serving-under-a-path-prefix}
+
+有些代理不是用整个域名，而是在某个路径下发布 daemon，例如在 JupyterHub 的 jupyter-server-proxy 后面使用 `https://hub.example.com/user/alice/paseo/`。有两处设置必须使用同一个前缀：
+
+1. **daemon** 在前缀下路由 API、MCP 和 WebSocket 请求，并把前缀告诉应用：
+
+   ```bash
+   PASEO_BASE_PATH=/user/alice/paseo PASEO_WEB_UI_ENABLED=true paseo daemon run
+   ```
+
+   也可以在 `config.json` 中持久化为 `daemon.basePath`。不带前缀的请求仍然会被处理，因此代理可以原样转发路径，也可以去掉前缀。
+
+2. **Web UI 构建** 中编译了前缀。Expo 会把资源 URL 和路由写进 bundle，所以内置的 UI 只能在根路径下使用。请从源码检出为你的前缀构建一份，并让 daemon 使用它：
+
+   ```bash
+   PASEO_WEB_BASE_URL=/user/alice/paseo npm run build:daemon-web-ui
+   PASEO_WEB_UI_DIST_DIR=/path/to/paseo/packages/server/dist/server/web-ui
+   ```
+
+WebSocket 会移到 `<prefix>/ws`。[反向代理](#reverse-proxy) 中的要求仍然适用，包括 `Host` 头和 [主机允许列表](/docs/security#dns-rebinding-protection)。
+
 ## HTTPS 与 TLS {#https-and-tls}
 
 在代理（或隧道）处终止 TLS，并通过 localhost 上的普通 HTTP 转发给 daemon，上面的配置就是这样做的。当页面通过 HTTPS 提供且代理传递 `X-Forwarded-Proto: https` 时，应用会自动通过 `wss://` 连接回来。你不需要在任何地方配置协议；它跟随边缘节点。

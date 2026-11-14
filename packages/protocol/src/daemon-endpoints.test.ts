@@ -96,6 +96,23 @@ describe("daemon websocket URLs", () => {
       "wss://example.com:6767/ws",
     );
   });
+
+  test("appends /ws to the base path of a daemon served under a URL prefix", () => {
+    expect(
+      buildDaemonWebSocketUrl("hub.example.com:443", {
+        useTls: true,
+        basePath: "/user/alice/paseo/",
+      }),
+    ).toBe("wss://hub.example.com/user/alice/paseo/ws");
+  });
+
+  test("ignores an empty or invalid base path", () => {
+    for (const basePath of [undefined, "", "/", "relative", "/a/../b"]) {
+      expect(buildDaemonWebSocketUrl("example.com:6767", { useTls: false, basePath })).toBe(
+        "ws://example.com:6767/ws",
+      );
+    }
+  });
 });
 
 describe("relay websocket URL versioning", () => {

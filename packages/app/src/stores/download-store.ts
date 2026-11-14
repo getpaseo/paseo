@@ -291,7 +291,7 @@ interface DownloadTarget {
  * the connection in use is anything else (relay, SSH, socket, pipe, or none yet), so the caller
  * reads the file over the session socket instead.
  */
-function resolveDaemonDownloadTarget(
+export function resolveDaemonDownloadTarget(
   daemon: HostProfile | undefined,
   activeConnectionId: string | null,
 ): DownloadTarget | null {
@@ -303,7 +303,10 @@ function resolveDaemonDownloadTarget(
   let parsed: URL;
   try {
     parsed = new URL(
-      buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
+      buildDaemonWebSocketUrl(connection.endpoint, {
+        useTls: connection.useTls ?? false,
+        basePath: connection.basePath,
+      }),
     );
   } catch {
     return { baseUrl: null, authHeader: null, authCredentials: null };
@@ -327,7 +330,8 @@ function resolveDaemonDownloadTarget(
 
   parsed.pathname = parsed.pathname.replace(/\/ws\/?$/, "/");
 
-  const baseUrl = parsed.origin;
+  // Keep the daemon's base path; `parsed.pathname` is "/" at the root.
+  const baseUrl = `${parsed.origin}${parsed.pathname}`;
   const authHeader = authCredentials
     ? `Basic ${btoa(`${authCredentials.username}:${authCredentials.password}`)}`
     : null;
@@ -335,12 +339,12 @@ function resolveDaemonDownloadTarget(
   return { baseUrl, authHeader, authCredentials };
 }
 
-function buildDownloadUrl(
+export function buildDownloadUrl(
   baseUrl: string,
   token: string,
   authCredentials: { username: string; password: string } | null,
 ): string {
-  const url = new URL("/api/files/download", baseUrl);
+  const url = new URL("api/files/download", baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
   url.searchParams.set("token", token);
   if (authCredentials) {
     url.username = authCredentials.username;

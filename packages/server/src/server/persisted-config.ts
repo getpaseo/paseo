@@ -244,6 +244,12 @@ export const PersistedConfigSchema = z
     daemon: z
       .object({
         listen: z.string().optional(),
+        basePath: z
+          .string()
+          .optional()
+          .describe(
+            'URL path prefix the daemon and its web UI are served under behind a reverse proxy, e.g. "/user/alice/paseo". Unset serves at the root.',
+          ),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
         trustedProxies: z

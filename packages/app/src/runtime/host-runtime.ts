@@ -17,6 +17,7 @@ import {
 import {
   connectionFromListen,
   createRemoteSshHostConnection,
+  directTcpConnectionId,
   normalizeStoredHostProfile,
   pinRelayProtectedSecurityInProfiles,
   upsertHostConnectionInProfiles,
@@ -32,6 +33,7 @@ import {
   buildRelayWebSocketUrl,
   decodeOfferFragmentPayload,
   normalizeHostPort,
+  normalizeUrlBasePath,
   parseRelayConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
 } from "@/utils/daemon-endpoints";
@@ -636,6 +638,7 @@ function createDefaultDeps(
           ...webSocketConfig,
           url: buildDaemonWebSocketUrl(connection.endpoint, {
             useTls: connection.useTls ?? false,
+            basePath: connection.basePath,
           }),
         });
       }
@@ -1589,11 +1592,14 @@ const INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY = "__PASEO_INITIAL_DAEMON_CONNEC
 export interface InitialDaemonConnectionHint {
   listen: string;
   useTls?: boolean;
+  /** Set when the daemon serving this web UI is reached under a URL path prefix. */
+  basePath?: string;
 }
 
 const InitialDaemonConnectionHintSchema: z.ZodType<InitialDaemonConnectionHint> = z.object({
   listen: z.string().trim().min(1),
   useTls: z.boolean().optional().default(false),
+  basePath: z.string().optional(),
 });
 
 export function readInitialDaemonConnectionHint(input?: {
@@ -1916,9 +1922,16 @@ export class HostRuntimeStore {
     if (!connection) {
       return false;
     }
+    const basePath = normalizeUrlBasePath(hint.basePath);
     const connectionWithHint: HostConnection =
       connection.type === "directTcp"
-        ? { ...connection, useTls: hint.useTls ?? connection.useTls ?? false }
+        ? {
+            ...connection,
+            useTls: hint.useTls ?? connection.useTls ?? false,
+            ...(basePath
+              ? { id: directTcpConnectionId(connection.endpoint, basePath), basePath }
+              : {}),
+          }
         : connection;
     if (registryHasConnection(this.hosts, connectionWithHint)) {
       return true;

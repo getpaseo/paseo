@@ -4763,6 +4763,19 @@ describe("readInitialDaemonConnectionHint", () => {
     });
   });
 
+  it("keeps the base path advertised by a daemon served under a URL prefix", () => {
+    (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = {
+      listen: "hub.example.com:443",
+      useTls: true,
+      basePath: "/user/alice/paseo",
+    };
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toEqual({
+      listen: "hub.example.com:443",
+      useTls: true,
+      basePath: "/user/alice/paseo",
+    });
+  });
+
   it("ignores invalid shapes", () => {
     (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = "localhost:6767";
     expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toBeNull();
@@ -5131,6 +5144,59 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
         expect.objectContaining({ endpoint: "daemon-origin:6767", useTls: true }),
       ]),
     );
+
+    store.syncHosts([]);
+  });
+
+  it("connects through the base path advertised by the initial connection hint", async () => {
+    const seenProbes: { id: string; endpoint: string; basePath?: string }[] = [];
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            seenProbes.push({
+              id: connection.id,
+              endpoint: connection.endpoint,
+              basePath: connection.basePath,
+            });
+          }
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: "srv_hint_base_path",
+            hostname: "hint host",
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => ({
+          listen: "hub.example.com:443",
+          useTls: true,
+          basePath: "/user/alice/paseo/",
+        }),
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    const hostAdded = onceHostListMatches(store, () => store.getHosts().length > 0);
+    store.boot();
+    await hostAdded;
+
+    expect(seenProbes).toEqual([
+      {
+        id: "direct:hub.example.com:443/user/alice/paseo",
+        endpoint: "hub.example.com:443",
+        basePath: "/user/alice/paseo",
+      },
+    ]);
+    expect(store.getHosts()[0]?.connections).toEqual([
+      {
+        id: "direct:hub.example.com:443/user/alice/paseo",
+        type: "directTcp",
+        endpoint: "hub.example.com:443",
+        useTls: true,
+        basePath: "/user/alice/paseo",
+      },
+    ]);
 
     store.syncHosts([]);
   });

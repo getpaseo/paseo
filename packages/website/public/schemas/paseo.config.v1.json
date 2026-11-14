@@ -15,6 +15,10 @@
         "listen": {
           "type": "string"
         },
+        "basePath": {
+          "description": "URL path prefix the daemon and its web UI are served under behind a reverse proxy, e.g. \"/user/alice/paseo\". Unset serves at the root.",
+          "type": "string"
+        },
         "hostnames": {
           "anyOf": [
             {
