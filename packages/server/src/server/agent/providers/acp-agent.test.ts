@@ -19,6 +19,7 @@ import {
   RequestPermissionRequest,
   SessionConfigOption,
   SessionUpdate,
+  type NewSessionResponse,
 } from "@agentclientprotocol/sdk";
 
 import {
@@ -2114,6 +2115,117 @@ describe("deriveModelDefinitionsFromACP", () => {
       },
     ]);
   });
+
+  test("gives a model that reports its own reasoning levels those levels and default", () => {
+    const models = deriveModelDefinitionsFromACP(
+      "acp",
+      {
+        currentModelId: "startup",
+        availableModels: [
+          { modelId: "startup", name: "Startup" },
+          {
+            modelId: "other",
+            name: "Other",
+            _meta: {
+              reasoningEffort: "xhigh",
+              reasoningEfforts: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra high" },
+              ],
+            },
+          },
+        ],
+      },
+      [selectConfigOption("thought_level", ["none", "low"], "low")],
+    );
+
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "none" }, { id: "low" }],
+      defaultThinkingOptionId: "low",
+    });
+    expect(models[1]).toMatchObject({
+      thinkingOptions: [
+        { id: "high", label: "High", isDefault: false },
+        { id: "xhigh", label: "Extra high", isDefault: true },
+      ],
+      defaultThinkingOptionId: "xhigh",
+    });
+  });
+
+  test("uses the wire value and a model's marked default when no reasoningEffort is provided", () => {
+    const models = deriveModelDefinitionsFromACP("acp", {
+      currentModelId: "current",
+      availableModels: [
+        {
+          modelId: "current",
+          name: "Current",
+          _meta: {
+            reasoningEfforts: [
+              {
+                id: "display-id",
+                value: "wire/id@large",
+                label: "Custom",
+                default: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "wire/id@large", label: "Custom", isDefault: true }],
+      defaultThinkingOptionId: "wire/id@large",
+    });
+  });
+
+  test.each([{ supportsReasoningEffort: false }, { reasoningEfforts: [] }])(
+    "shows no thinking options for a model that reports none: %j",
+    (metadata) => {
+      const models = deriveModelDefinitionsFromACP(
+        "acp",
+        {
+          currentModelId: "current",
+          availableModels: [{ modelId: "current", name: "Current", _meta: metadata }],
+        },
+        [selectConfigOption("thought_level", ["low", "high"], "high")],
+      );
+
+      expect(models[0].thinkingOptions).toBeUndefined();
+      expect(models[0].defaultThinkingOptionId).toBeUndefined();
+    },
+  );
+
+  test.each([
+    { supportsReasoningEffort: true },
+    { reasoningEfforts: [{ id: "high", label: "High", description: 42 }] },
+    {
+      reasoningEfforts: [
+        { id: "high", label: "High" },
+        { id: "high", label: "Duplicate" },
+      ],
+    },
+  ])(
+    "keeps session thinking options when a model's reasoning table is unusable: %j",
+    (metadata) => {
+      const models = deriveModelDefinitionsFromACP(
+        "acp",
+        {
+          currentModelId: "default",
+          availableModels: [
+            { modelId: "default", name: "Default" },
+            { modelId: "other", name: "Other", _meta: metadata },
+          ],
+        },
+        [selectConfigOption("thought_level", ["off", "on"], "on")],
+      );
+
+      expect(models[1]).toMatchObject({
+        thinkingOptions: [{ id: "off" }, { id: "on" }],
+        defaultThinkingOptionId: "on",
+      });
+    },
+  );
 });
 
 describe("ACPAgentClient modelTransformer", () => {
@@ -2171,6 +2283,164 @@ describe("ACPAgentClient modelTransformer", () => {
 });
 
 describe("ACPAgentClient catalog discovery without a model resolver", () => {
+  test.each(["magpie/workbuddy/deepseek-v4.1-flash", "grok-4.7"])(
+    "reads each exact model's reasoning metadata through the ACP response schema with default %s without switching models",
+    async (currentModelId) => {
+      const requests: string[] = [];
+      const response: NewSessionResponse = {
+        sessionId: "catalog-session",
+        models: {
+          currentModelId,
+          availableModels: [
+            {
+              modelId: "grok-4.7",
+              name: "Grok 4.7",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "high",
+                reasoningEfforts: [
+                  { id: "xhigh", value: "xhigh", label: "Extra High", default: false },
+                  { id: "high", value: "high", label: "High", default: true },
+                  { id: "medium", value: "medium", label: "Medium", default: false },
+                  { id: "low", value: "low", label: "Low", default: false },
+                ],
+              },
+            },
+            {
+              modelId: "magpie/codex/gpt-6.1-sol",
+              name: "Sol",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "low",
+                reasoningEfforts: [
+                  { id: "low", value: "low", label: "Low", description: null, default: false },
+                  { id: "medium", value: "medium", label: "Medium", default: false },
+                  { id: "high", value: "high", label: "High", default: false },
+                  { id: "xhigh", value: "xhigh", label: "X-High", default: false },
+                  { id: "max", value: "max", label: "Max", default: false },
+                ],
+              },
+            },
+            {
+              modelId: "magpie/workbuddy/deepseek-v4.1-flash",
+              name: "DeepSeek",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "high",
+                reasoningEfforts: [
+                  { id: "none", value: "none", label: "None", default: false },
+                  { id: "low", value: "low", label: "Low", default: false },
+                  { id: "high", value: "high", label: "High", default: false },
+                  { id: "max", value: "max", label: "Max", default: false },
+                ],
+              },
+            },
+          ],
+        },
+        configOptions: [
+          selectConfigOption(
+            "thought_level",
+            currentModelId === "grok-4.7"
+              ? ["xhigh", "high", "medium", "low"]
+              : ["none", "low", "high", "max"],
+            currentModelId === "grok-4.7" ? "medium" : "high",
+          ),
+          selectConfigOption("mode", ["https://example.com/modes#agent"]),
+        ],
+      };
+      const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+      const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+      const agent: Agent = {
+        async initialize() {
+          return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+        },
+        async newSession({ cwd }) {
+          requests.push(`session/new:${cwd}`);
+          return response;
+        },
+        async setSessionConfigOption() {
+          throw new Error("Catalog discovery must not change the selected model");
+        },
+        async prompt() {
+          throw new Error("Catalog discovery must not send a prompt");
+        },
+        async authenticate() {},
+        async cancel() {},
+      };
+      const agentConnection = new AgentSideConnection(
+        () => agent,
+        ndJsonStream(agentToClient.writable, clientToAgent.readable),
+      );
+      const connection = new ClientSideConnection(
+        () => ({
+          async requestPermission() {
+            return { outcome: { outcome: "cancelled" } };
+          },
+          async sessionUpdate() {},
+        }),
+        ndJsonStream(clientToAgent.writable, agentToClient.readable),
+      );
+      const initialize = await connection.initialize({ protocolVersion: PROTOCOL_VERSION });
+      class CatalogClient extends GenericACPAgentClient {
+        protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+          return { child: createProbeChildStub(), connection, initialize };
+        }
+        protected override async closeProbe(): Promise<void> {
+          requests.push("close");
+        }
+      }
+      const client = new CatalogClient({
+        logger: createTestLogger(),
+        command: ["test-acp"],
+        providerId: "grok",
+      });
+
+      const catalog = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/sc/.worktrees/model-options",
+      });
+
+      const modelOptions = [];
+      for (const model of catalog.models) {
+        modelOptions.push({
+          id: model.id,
+          isDefault: model.isDefault,
+          thinking: model.thinkingOptions?.map((option) => option.id),
+          defaultThinkingOptionId: model.defaultThinkingOptionId,
+        });
+      }
+      expect(modelOptions).toEqual([
+        {
+          id: "grok-4.7",
+          isDefault: currentModelId === "grok-4.7",
+          thinking: ["xhigh", "high", "medium", "low"],
+          defaultThinkingOptionId: currentModelId === "grok-4.7" ? "medium" : "high",
+        },
+        {
+          id: "magpie/codex/gpt-6.1-sol",
+          isDefault: false,
+          thinking: ["low", "medium", "high", "xhigh", "max"],
+          defaultThinkingOptionId: "low",
+        },
+        {
+          id: "magpie/workbuddy/deepseek-v4.1-flash",
+          isDefault: currentModelId === "magpie/workbuddy/deepseek-v4.1-flash",
+          thinking: ["none", "low", "high", "max"],
+          defaultThinkingOptionId: "high",
+        },
+      ]);
+      expect(catalog.models[1].thinkingOptions?.[0]).toMatchObject({
+        id: "low",
+        label: "Low",
+        isDefault: true,
+        description: undefined,
+      });
+      expect(catalog.modes.map(({ id }) => id)).toEqual(["https://example.com/modes#agent"]);
+      expect(requests).toEqual(["session/new:/tmp/sc/.worktrees/model-options", "close"]);
+      expect(agentConnection.signal.aborted).toBe(false);
+    },
+  );
+
   test("never switches models during catalog discovery even with multiple models and a thinking picker", async () => {
     // Model discovery extensions live on providers that opt in. The base
     // client ships no catalog model resolver, so a slow or nonconforming ACP can't
