@@ -115,7 +115,7 @@ import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-p
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
-import { ProviderDetailPage, useProviderLabel } from "@/provider-settings";
+import { ProviderDetailPage } from "@/provider-settings";
 import {
   SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
   SETTINGS_DESKTOP_SIDEBAR_WIDTH,
@@ -1276,7 +1276,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   // The header names the plugin; its tabs name the open settings screen.
   const pluginDisplayName = usePluginDisplayName(view.kind === "plugin" ? view : null);
-  const providerLabel = useProviderLabel(view.kind === "provider" ? view : null);
   const detailTitle = ((): string | undefined => {
     if (view.kind === "plugin") return pluginDisplayName;
     if (view.kind === "host") {
@@ -1290,7 +1289,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     if (view.kind === "project") {
       return t("settings.projects");
     }
-    if (view.kind === "provider") return providerLabel;
+    if (view.kind === "provider") return t("settings.hostSections.providers");
     return undefined;
   })();
 
@@ -1324,7 +1323,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           serverId={view.serverId}
           provider={view.providerId}
           onBack={handleBackFromDetail}
-          showHeader={!isCompactLayout}
+          showBack={!isCompactLayout}
         />
       );
     }
