@@ -13,6 +13,7 @@ import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { WorkspaceRegistry } from "./workspace-registry.js";
 
 const WORKSPACE_ID = "workspace-1";
 
@@ -83,7 +84,10 @@ class RecordingPushNotificationSender implements PushNotificationSender {
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  workspaceBackground = false,
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
@@ -105,6 +109,9 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
+  const workspaceRegistry = createStub<WorkspaceRegistry>({
+    get: vi.fn(async () => ({ background: workspaceBackground })),
+  });
 
   const server = new VoiceAssistantWebSocketServer(
     createStub<HTTPServer>({}),
@@ -126,7 +133,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     "1.2.3-test",
     undefined,
     undefined,
-    undefined,
+    workspaceRegistry,
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -151,7 +158,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     createProviderSnapshotManagerStub().manager,
   );
 
-  return { server, agentManager, pushNotifications };
+  return { server, agentManager, pushNotifications, workspaceRegistry };
 }
 
 function createOpenSocket() {
@@ -363,5 +370,83 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toEqual([]);
+  });
+
+  it("suppresses background completion pushes but still delivers in-app attention", async () => {
+    const { server, pushNotifications } = createServer(undefined, true);
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "background-agent",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(pushNotifications.sent).toEqual([]);
+    expect(readAttentionRequiredMessage(ws)).toMatchObject({
+      reason: "finished",
+      shouldNotify: false,
+    });
+  });
+
+  it("keeps permission pushes enabled for background workspaces", async () => {
+    const { server, pushNotifications } = createServer(undefined, true);
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "background-agent",
+      provider: "claude",
+      reason: "permission",
+    });
+
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(readAttentionRequiredMessage(ws).reason).toBe("permission");
+  });
+
+  it("keeps error behavior unchanged for background workspaces", async () => {
+    const { server, pushNotifications } = createServer(undefined, true);
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "background-agent",
+      provider: "claude",
+      reason: "error",
+    });
+
+    expect(pushNotifications.sent).toEqual([]);
+    expect(readAttentionRequiredMessage(ws).reason).toBe("error");
+  });
+
+  it("keeps completion pushes enabled for foreground workspaces", async () => {
+    const { server, pushNotifications } = createServer(undefined, false);
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "foreground-agent",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(readAttentionRequiredMessage(ws).reason).toBe("finished");
+  });
+
+  it("does not push a background completion when a focused visible client is present", async () => {
+    const { server, pushNotifications } = createServer(undefined, true);
+    const ws = connectClient(server, {
+      deviceType: "web",
+      appVisible: true,
+      focusedAgentId: "background-agent",
+      lastActivityAt: new Date(),
+    });
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "background-agent",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(pushNotifications.sent).toEqual([]);
+    expect(readAttentionRequiredMessage(ws).reason).toBe("finished");
   });
 });
