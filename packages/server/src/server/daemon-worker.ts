@@ -3,8 +3,10 @@ import path from "node:path";
 import { initializeEnvironmentProxy } from "./network/index.js";
 import { createPaseoDaemon, formatListenTarget } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
+import { resolveDaemonLogPath } from "./daemon-log-path.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
+import { PRIVATE_FILE_MODE } from "./private-files.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
 
@@ -46,12 +48,11 @@ function isPidAlive(pid: number): boolean {
 }
 
 function writeWorkerLifecycleLog(
-  paseoHome: string,
+  logPath: string,
   message: string,
   fields: Record<string, unknown> = {},
 ): void {
   try {
-    const logPath = path.join(paseoHome, "daemon.log");
     mkdirSync(path.dirname(logPath), { recursive: true });
     appendFileSync(
       logPath,
@@ -63,7 +64,7 @@ function writeWorkerLifecycleLog(
         msg: message,
         ...fields,
       })}\n`,
-      "utf8",
+      { encoding: "utf8", mode: PRIVATE_FILE_MODE },
     );
   } catch {
     // Exit-reason logging must never prevent the worker from exiting.
@@ -133,8 +134,9 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 
 async function main() {
   const { paseoHome, logger, config } = bootstrapFromEnvironment();
+  const workerLogPath = resolveDaemonLogPath(paseoHome, { log: config.log });
   for (const variable of initializeEnvironmentProxy()) {
-    writeWorkerLifecycleLog(paseoHome, "Ignoring invalid or unsupported HTTP proxy variable", {
+    writeWorkerLifecycleLog(workerLogPath, "Ignoring invalid or unsupported HTTP proxy variable", {
       variable,
     });
   }
@@ -264,7 +266,7 @@ async function main() {
   // Written straight to daemon.log: the pino stream goes through the supervisor's pipe, which
   // a paused or busy supervisor does not drain. Tests synchronize on this line.
   const recordLifecycleIntentDispatched = (type: string, fields: Record<string, unknown>) => {
-    writeWorkerLifecycleLog(paseoHome, "Lifecycle intent dispatched", { type, ...fields });
+    writeWorkerLifecycleLog(workerLogPath, "Lifecycle intent dispatched", { type, ...fields });
   };
 
   const installSupervisorLivenessGuard = () => {
@@ -281,7 +283,7 @@ async function main() {
       }
       supervisorExitRequested = true;
 
-      writeWorkerLifecycleLog(paseoHome, "Supervisor liveness lost; worker exiting", {
+      writeWorkerLifecycleLog(workerLogPath, "Supervisor liveness lost; worker exiting", {
         reason,
         ...getProcessDiagnostics(),
         supervisorPid,
