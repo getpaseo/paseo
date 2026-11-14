@@ -171,6 +171,30 @@ describe("panel-store wide navigation overlay", () => {
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   });
 
+  it("retains the sidebar through a suspended layout without publishing motion", () => {
+    const panels = usePanelStore.getState();
+    panels.applyPanelLayout({ isCompact: true, leftSidebar: "overlay" });
+    panels.showMobileAgentList();
+    const selection = usePanelStore.getState().mobilePanel;
+    panels.applyPanelLayout({ isCompact: true, leftSidebar: "suspended" });
+    expect(usePanelStore.getState().mobilePanel).toBe(selection);
+    panels.applyPanelLayout({ isCompact: true, leftSidebar: "overlay" });
+    expect(usePanelStore.getState().mobilePanel).toBe(selection);
+  });
+
+  it("publishes an immediate destination when navigation closes a suspended sidebar", () => {
+    const panels = usePanelStore.getState();
+    panels.showMobileAgentList();
+    panels.applyPanelLayout({ isCompact: true, leftSidebar: "suspended" });
+    const commands: boolean[] = [];
+    const unsubscribe = subscribeMobilePanelSelection((_selection, immediate) =>
+      commands.push(immediate),
+    );
+    panels.showMobileAgent();
+    unsubscribe();
+    expect(commands).toEqual([true, true]);
+  });
+
   it("drops the overlay target once the sidebar is no longer presented as an overlay", () => {
     usePanelStore.getState().showMobileAgentList();
     usePanelStore.getState().applyPanelLayout({ isCompact: false, leftSidebar: "overlay" });

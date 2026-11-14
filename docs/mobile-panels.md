@@ -27,9 +27,17 @@ interface MobilePanelSelection {
 Every semantic target change increments `revision`. Repeating the current target is idempotent.
 Compact panel selection is not persisted; a cold start begins at `agent`.
 
-Only an overlay sidebar holds `agent-list`, and only a compact layout holds `file-explorer`. App
-chrome publishes the layout (compact or wide, and the left sidebar presentation `overlay`, `dock`, or
-`hidden`) to `panel-store`, which drops any target the layout does not present. A stale
+An overlay sidebar holds `agent-list`, and only a compact layout holds `file-explorer`.
+A compact Settings visit entered from the sidebar suspends it: the host stays mounted and
+laid out on native. Its target and scroll position survive until return to the originating
+workspace. Route changes and `onLayout` both precede native screen appearance, so the sidebar
+stays visible until Settings emits the native navigator's `transitionEnd`. Web uses layout.
+Input and activity stop during the handoff. Widening or leaving for another destination discards
+the return. Commands issued while suspended settle immediately behind Settings, so explicit
+agent navigation does not reveal a closing sidebar animation.
+
+App chrome publishes the layout (compact or wide, and the left sidebar presentation `overlay`,
+`dock`, `hidden`, or `suspended`) to `panel-store`, which drops any target the layout does not present. A stale
 `agent-list` would reopen the overlay on the next collapse; a stale `file-explorer` after widening
 would block the navigation swipe, which begins only from `agent`.
 
@@ -120,7 +128,8 @@ definition, no longer eligible to begin.
   the overlay host fills the window.
 - The overlay's backdrop covers the whole window; safe-area padding applies to the sidebar and
   workspace content only. It closes by swiping back, tapping the backdrop, or picking a destination:
-  every sidebar destination closes the overlay before it navigates.
+  workspace destinations close the overlay before navigating. Settings suspends the compact
+  sidebar for the duration of its visit instead.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.

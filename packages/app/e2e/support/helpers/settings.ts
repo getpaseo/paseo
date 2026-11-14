@@ -737,3 +737,69 @@ export async function normalizeSettingsFontSizes(page: Page): Promise<void> {
     await expect(input).toHaveValue(minimum);
   }
 }
+
+/** Sample actual paints, including the first workspace frame after Settings. */
+export async function captureCompactSidebarReturn(page: Page, returnAction: () => Promise<void>) {
+  const frames = page.evaluate(async () => {
+    const samples: {
+      time: number;
+      pathname: string;
+      sidebarVisible: boolean;
+      settingsVisible: boolean;
+      closeX: number | null;
+    }[] = [];
+    const start = performance.now();
+    await new Promise<void>((resolve) => {
+      function sample() {
+        const close = document.querySelector('[data-testid="sidebar-close"]');
+        samples.push({
+          time: performance.now() - start,
+          pathname: location.pathname,
+          settingsVisible:
+            document
+              .querySelector('[data-testid="settings-sidebar"]')
+              ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false,
+          sidebarVisible:
+            (close?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false) &&
+            close!.getBoundingClientRect().x >= 0 &&
+            close!.getBoundingClientRect().right <= innerWidth,
+          closeX: close?.getBoundingClientRect().x ?? null,
+        });
+        if (performance.now() - start < 1500) requestAnimationFrame(sample);
+        else resolve();
+      }
+      requestAnimationFrame(sample);
+    });
+    return samples;
+  });
+  await returnAction();
+  return frames;
+}
+
+export async function captureCompactSidebarContext(page: Page) {
+  const sidebar = await page.getByTestId("sidebar-project-workspace-list-scroll").elementHandle();
+  if (!sidebar) throw new Error("Open sidebar has no workspace list");
+  const offset = await sidebar.evaluate((el) => el.scrollTop);
+  return async () => {
+    expect(await sidebar.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(offset);
+    await sidebar.dispose();
+  };
+}
+
+export async function expectCompactSidebarOpen(page: Page) {
+  await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeInViewport();
+}
+
+export async function closeCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Close sidebar", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open menu", exact: true }).first(),
+  ).toBeInViewport();
+}
+
+export async function openSettingsFromCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectAppRoute(page, buildSettingsRoute());
+  await expectCompactSettingsList(page);
+}
