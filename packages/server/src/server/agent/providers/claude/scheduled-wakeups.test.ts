@@ -33,6 +33,10 @@ function fire(wakeupSource: string | null) {
   };
 }
 
+function turnEnd() {
+  return { type: "result", subtype: "success", is_error: false };
+}
+
 const WAKEUP_RESULT =
   "Next wakeup scheduled for 01:58:00 (in 205s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.";
 const CRON_RESULT =
@@ -279,15 +283,55 @@ describe("ClaudeScheduledWakeups", () => {
     ).toBe("2027-03-14T07:30:00.000Z");
   });
 
-  test("stops counting a wake that never fires", () => {
+  test("drops a wake still unfired half an hour after its time", () => {
     const clock = createClock("2026-11-13T18:54:35.073Z");
     const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
     scheduleBoth(clock, wakeups);
-    // Claude runs a due wake as soon as it is idle, so these ones are gone half an hour later.
-    clock.set("2026-11-13T19:28:00.073Z");
+    expect(wakeups.observe(turnEnd())).toBeUndefined();
+    // Claude runs a due wake once idle, so the cron due at 18:57 is gone at 19:27.
+    expect(wakeups.nextLossAt()).toBe(Date.parse("2026-11-13T19:27:00.000Z"));
+    clock.set("2026-11-13T19:27:00.000Z");
+    expect(wakeups.dropLost()).toBe("2026-11-13T18:58:00.073Z");
+    expect(wakeups.nextLossAt()).toBe(Date.parse("2026-11-13T19:28:00.073Z"));
+    clock.set("2026-11-13T19:28:00.072Z");
     expect(wakeups.hasPending()).toBe(true);
-    clock.set("2026-11-13T19:28:00.074Z");
+    clock.set("2026-11-13T19:28:00.073Z");
     expect(wakeups.hasPending()).toBe(false);
-    expect(wakeups.observe(fire(null))).toBeNull();
+    expect(wakeups.dropLost()).toBeNull();
+    expect(wakeups.nextLossAt()).toBeNull();
+  });
+
+  test("starts that half hour when a busy turn ends", () => {
+    const clock = createClock("2026-11-13T18:54:35.073Z");
+    const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
+    scheduleBoth(clock, wakeups);
+    // Both wakes come due during a long turn and wait for it.
+    clock.set("2026-11-13T19:40:00.000Z");
+    expect(wakeups.hasPending()).toBe(true);
+    expect(wakeups.nextLossAt()).toBeNull();
+    expect(wakeups.observe(turnEnd())).toBeUndefined();
+    expect(wakeups.nextLossAt()).toBe(Date.parse("2026-11-13T20:10:00.000Z"));
+    clock.set("2026-11-13T20:09:59.999Z");
+    expect(wakeups.dropLost()).toBeUndefined();
+    clock.set("2026-11-13T20:10:00.000Z");
+    expect(wakeups.dropLost()).toBeNull();
+  });
+
+  test("does not hand a fire to a lost job", () => {
+    const clock = createClock("2026-11-14T04:57:00.000Z");
+    const wakeups = new ClaudeScheduledWakeups(clock.now, TIME_ZONE);
+    wakeups.observe(toolUse("toolu_gone", "CronCreate", { cron: "0 * * * *" }));
+    wakeups.observe(
+      toolResult("toolu_gone", "Scheduled recurring job aaaa1111. Next run: Nov 14 12:00pm."),
+    );
+    wakeups.observe(toolUse("toolu_late", "CronCreate", { cron: "45 * * * *" }));
+    wakeups.observe(
+      toolResult("toolu_late", "Scheduled recurring job bbbb2222. Next run: Nov 14 12:45pm."),
+    );
+    wakeups.observe(turnEnd());
+    // A subagent deleted the noon job, which is lost at 12:30. The 12:45 run, 20 s late, is the
+    // other job's, so its next run is 13:45:20.
+    clock.set("2026-11-14T05:45:20.000Z");
+    expect(wakeups.observe(fire("schedule_wakeup"))).toBe("2026-11-14T06:45:20.000Z");
   });
 });

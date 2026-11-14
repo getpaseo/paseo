@@ -606,6 +606,8 @@ interface ClaudeOptionsLogSummary {
 const MAX_RECENT_STDERR_CHARS = 4000;
 const STDERR_FLUSH_WAIT_MS = 150;
 const STDERR_FLUSH_POLL_INTERVAL_MS = 10;
+/** setTimeout runs a longer delay at once; a cron due next year is further out. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 function summarizeClaudeOptionsForLog(options: ClaudeOptions): ClaudeOptionsLogSummary {
   const systemPromptRaw = options.systemPrompt;
@@ -2304,6 +2306,7 @@ class ClaudeAgentSession implements AgentSession {
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
   private readonly scheduledWakeups = new ClaudeScheduledWakeups();
+  private wakeLossTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly backgroundStops = new Map<string, (outcome: string) => void>();
   private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
@@ -3098,6 +3101,7 @@ class ClaudeAgentSession implements AgentSession {
     this.sidechainTracker.clear();
     this.settledSubagentToolCalls.clear();
     this.taskProtocolSource.reset();
+    this.clearWakeLossTimer();
     this.input?.end();
     this.query?.close?.();
     // close() already terminates the SDK query. Its control plane is no longer
@@ -3609,7 +3613,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
-    this.scheduledWakeups.reset();
+    this.resetScheduledWakeups();
     this.dispatchEvents([
       { type: "background_work", provider: "claude", items: null },
       { type: "scheduled_wakeup", provider: "claude", nextWakeAt: null },
@@ -4211,7 +4215,7 @@ class ClaudeAgentSession implements AgentSession {
   private failRunningRuntimeTasks(): void {
     for (const finish of this.backgroundStops.values()) finish("connection lost");
     this.runtimeSafety.retire();
-    this.scheduledWakeups.reset();
+    this.resetScheduledWakeups();
     this.dispatchEvents([
       ...foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
@@ -4302,8 +4306,7 @@ class ClaudeAgentSession implements AgentSession {
           this.dispatchEvents([
             { type: "background_work", provider: "claude", items: backgroundWork },
           ]);
-        if (nextWakeAt !== undefined)
-          this.dispatchEvents([{ type: "scheduled_wakeup", provider: "claude", nextWakeAt }]);
+        this.publishScheduledWakeup(nextWakeAt);
         return false;
       } finally {
         this.processingSdkMessages--;
@@ -4353,6 +4356,30 @@ class ClaudeAgentSession implements AgentSession {
         this.input = null;
       }
     }
+  }
+
+  /** Publishes a change of the next wake, then waits for the earliest one to count as lost. */
+  private publishScheduledWakeup(nextWakeAt: string | null | undefined): void {
+    if (nextWakeAt !== undefined)
+      this.dispatchEvents([{ type: "scheduled_wakeup", provider: "claude", nextWakeAt }]);
+    this.clearWakeLossTimer();
+    // Claude never reports a lost wake, so nothing else would clear it while the session is idle.
+    const lossAt = this.scheduledWakeups.nextLossAt();
+    if (lossAt === null) return;
+    this.wakeLossTimer = setTimeout(
+      () => this.publishScheduledWakeup(this.scheduledWakeups.dropLost()),
+      Math.min(Math.max(lossAt - Date.now(), 0), MAX_TIMEOUT_MS),
+    );
+  }
+
+  private resetScheduledWakeups(): void {
+    this.scheduledWakeups.reset();
+    this.clearWakeLossTimer();
+  }
+
+  private clearWakeLossTimer(): void {
+    if (this.wakeLossTimer) clearTimeout(this.wakeLossTimer);
+    this.wakeLossTimer = null;
   }
 
   private shouldSuppressStaleResult(message: SDKMessage): boolean {

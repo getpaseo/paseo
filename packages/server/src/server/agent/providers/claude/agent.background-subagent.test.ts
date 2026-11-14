@@ -916,7 +916,98 @@ async function createPumpedClaudeSession() {
       return query;
     },
   }).createSession({ provider: "claude", cwd: process.cwd() });
-  return { session, push, connection, nextInput: () => nativeInput.next() };
+  let toolCalls = 0;
+
+  /** Sends a prompt, which Claude takes up as a turn of its own. */
+  async function startTurn(prompt: string): Promise<void> {
+    await session.startTurn(prompt);
+    await connection;
+    const input = await nativeInput.next();
+    await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
+    await push({
+      type: "system",
+      subtype: "init",
+      session_id: "pumped",
+      claude_code_version: "2.1.323",
+      permissionMode: "default",
+    });
+  }
+
+  function endTurn(): Promise<void> {
+    return push({
+      type: "result",
+      subtype: "success",
+      usage: { input_tokens: 1, output_tokens: 1 },
+      total_cost_usd: 0,
+    });
+  }
+
+  /** Claude calls ScheduleWakeup (`/loop`) and reports the wake `seconds` from now. */
+  async function scheduleWakeup(seconds: number): Promise<void> {
+    toolCalls += 1;
+    const id = `toolu_wake_${toolCalls}`;
+    await push({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: `msg_${id}`,
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "ScheduleWakeup",
+            input: { delaySeconds: seconds, prompt: "Reply only OK.", reason: "test" },
+          },
+        ],
+      },
+    });
+    await push({
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            content: `Next wakeup scheduled (in ${seconds}s).`,
+          },
+        ],
+      },
+    });
+  }
+
+  /** Claude starts the turn its `/loop` wakeup scheduled. */
+  function fireWakeup(): Promise<void> {
+    toolCalls += 1;
+    return push({
+      type: "command_lifecycle",
+      command_uuid: `wakeup-${toolCalls}`,
+      state: "started",
+      wakeup_source: "loop_wakeup",
+    });
+  }
+
+  return {
+    session,
+    push,
+    connection,
+    nextInput: () => nativeInput.next(),
+    startTurn,
+    endTurn,
+    scheduleWakeup,
+    fireWakeup,
+  };
+}
+
+/** The `scheduled_wakeup` times a session publishes, in order. */
+function recordScheduledWakes(session: AgentSession) {
+  const wakes: Array<string | null> = [];
+  const stop = session.subscribe((event) => {
+    if (event.type === "scheduled_wakeup") wakes.push(event.nextWakeAt);
+  });
+  return { wakes, stop };
 }
 
 test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
@@ -969,80 +1060,51 @@ test("Claude session runtime safety observes pumped background work and autonomo
 });
 
 test("Claude session keeps a runtime with a pending wakeup and reports when it wakes", async () => {
-  const { session, push, connection, nextInput } = await createPumpedClaudeSession();
-  const wakes: Array<string | null> = [];
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === "scheduled_wakeup") wakes.push(event.nextWakeAt);
-  });
-  const result = {
-    type: "result",
-    subtype: "success",
-    usage: { input_tokens: 1, output_tokens: 1 },
-    total_cost_usd: 0,
-  };
+  const claude = await createPumpedClaudeSession();
+  const { wakes, stop } = recordScheduledWakes(claude.session);
   try {
-    await session.startTurn("check back in a few minutes");
-    await connection;
+    await claude.startTurn("check back in a few minutes");
     // Launching a process clears whatever the previous one had scheduled.
     expect(wakes).toEqual([null]);
-    wakes.length = 0;
-    const input = await nextInput();
-    await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
-    await push({
-      type: "system",
-      subtype: "init",
-      session_id: "scheduled-wakeup",
-      claude_code_version: "2.1.323",
-      permissionMode: "default",
-    });
-    await push({
-      type: "assistant",
-      parent_tool_use_id: null,
-      message: {
-        id: "msg-wakeup",
-        role: "assistant",
-        content: [
-          {
-            type: "tool_use",
-            id: "toolu_wake",
-            name: "ScheduleWakeup",
-            input: { delaySeconds: 180, prompt: "Reply only OK.", reason: "test" },
-          },
-        ],
-      },
-    });
     const before = Date.now();
-    await push({
-      type: "user",
-      parent_tool_use_id: null,
-      message: {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: "toolu_wake",
-            content: "Next wakeup scheduled for 01:58:00 (in 205s).",
-          },
-        ],
-      },
-    });
-    await push(result);
-    expect(wakes).toHaveLength(1);
-    const wakeAt = Date.parse(wakes[0] ?? "");
+    await claude.scheduleWakeup(205);
+    await claude.endTurn();
+    expect(wakes).toHaveLength(2);
+    const wakeAt = Date.parse(wakes[1] ?? "");
     expect(wakeAt).toBeGreaterThanOrEqual(before + 205_000);
     expect(wakeAt).toBeLessThanOrEqual(Date.now() + 205_000);
     // An idle process that would wake on its own must not be reclaimed.
-    expect(await session.canStopRuntime!()).toBe(false);
+    expect(await claude.session.canStopRuntime!()).toBe(false);
 
-    await push({
-      type: "command_lifecycle",
-      command_uuid: "wakeup-fire",
-      state: "started",
-      wakeup_source: "loop_wakeup",
-    });
-    expect(wakes).toEqual([wakes[0], null]);
+    await claude.fireWakeup();
+    expect(wakes).toEqual([null, wakes[1], null]);
   } finally {
-    unsubscribe();
-    await session.close();
+    stop();
+    await claude.session.close();
+  }
+});
+
+test("Claude session drops a wakeup that never fires once it is half an hour late", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const claude = await createPumpedClaudeSession();
+  const { wakes, stop } = recordScheduledWakes(claude.session);
+  try {
+    await claude.startTurn("check back in a few minutes");
+    await claude.scheduleWakeup(205);
+    await claude.endTurn();
+    const wakeAt = wakes.at(-1);
+    expect(wakeAt).toEqual(expect.any(String));
+
+    // Claude never fires it, for instance because a subagent stopped the loop, and says nothing.
+    await vi.advanceTimersByTimeAsync(205_000 + 30 * 60_000 - 1);
+    expect(wakes.at(-1)).toBe(wakeAt);
+    expect(await claude.session.canStopRuntime!()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(wakes.at(-1)).toBeNull();
+    expect(await claude.session.canStopRuntime!()).toBe(true);
+  } finally {
+    stop();
+    vi.useRealTimers();
+    await claude.session.close();
   }
 });

@@ -17,9 +17,9 @@ const MAX_CRON_JITTER_MS = 30 * MINUTE_MS;
  */
 const CRON_LIFETIME_MS = 7 * 24 * 60 * MINUTE_MS;
 /**
- * Claude runs a due wake as soon as it is idle, so one still unfired this long after its time is
- * gone: for example a job that a subagent deleted, since subagent calls are not followed here.
- * It no longer keeps the process alive or shows.
+ * Claude runs a due wake once its turn is over, so one still unfired this long after both its time
+ * and the end of the last turn is gone: for example a job that a subagent deleted, since subagent
+ * calls are not followed here. It is then dropped, so it neither shows nor keeps the process alive.
  */
 const LOST_AFTER_MS = MAX_CRON_JITTER_MS;
 
@@ -51,9 +51,15 @@ export class ClaudeScheduledWakeups {
   private readonly crons = new Map<string, CronWake>();
   private loopDueAt: number | null = null;
   private published: string | null = null;
+  /**
+   * When Claude's main session last finished a turn, or null while one runs. Read from the brackets
+   * the session uses for mainTurnInFlight, plus the main session's own messages, since an idle state
+   * can trail the previous turn and land in the next one.
+   */
+  private idleSince: number | null = null;
 
   constructor(
-    private readonly now: () => number = Date.now,
+    private readonly now: () => number = () => Date.now(),
     private readonly timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
   ) {}
 
@@ -62,6 +68,7 @@ export class ClaudeScheduledWakeups {
     this.crons.clear();
     this.loopDueAt = null;
     this.published = null;
+    this.idleSince = null;
   }
 
   hasPending(): boolean {
@@ -72,19 +79,39 @@ export class ClaudeScheduledWakeups {
   observe(message: unknown): string | null | undefined {
     const record = asRecord(message);
     if (!record) return undefined;
-    if (record.type === "assistant" && record.parent_tool_use_id == null) {
+    // Dropped first, so that a fire cannot go to a job that is already gone.
+    this.forgetLost();
+    const mainSession = record.parent_tool_use_id == null;
+    if (record.type === "assistant" && mainSession) {
+      this.idleSince = null;
       this.observeToolUses(record);
-      return undefined;
-    }
-    if (record.type === "user" && record.parent_tool_use_id == null)
+    } else if (record.type === "user" && mainSession) {
       this.observeToolResults(record);
-    else if (record.type === "command_lifecycle" && record.state === "started")
+    } else if (record.type === "command_lifecycle" && record.state === "started") {
+      this.idleSince = null;
       this.observeFire(record.wakeup_source);
-    else return undefined;
-    const next = this.earliest();
-    if (next === this.published) return undefined;
-    this.published = next;
-    return next;
+    } else if (record.type === "system" && record.subtype === "init") {
+      this.idleSince = null;
+    } else if (endsTurn(record)) {
+      this.idleSince ??= this.now();
+    }
+    return this.publish();
+  }
+
+  /**
+   * When the earliest wake will count as lost, or null while none can be: Claude is in a turn or
+   * nothing is scheduled. Nothing reports a loss, so the caller drops it then with dropLost().
+   */
+  nextLossAt(): number | null {
+    const times = this.pendingTimes();
+    if (this.idleSince === null || times.length === 0) return null;
+    return Math.max(Math.min(...times), this.idleSince) + LOST_AFTER_MS;
+  }
+
+  /** Drops the lost wakes and returns the earliest wake time when it changes, as observe() does. */
+  dropLost(): string | null | undefined {
+    this.forgetLost();
+    return this.publish();
   }
 
   private observeToolUses(message: Record<string, unknown>): void {
@@ -225,18 +252,40 @@ export class ClaudeScheduledWakeups {
     return { type: "cron" as const, expression, timezone: this.timeZone };
   }
 
-  /** Due times of the wakes Claude still holds. See LOST_AFTER_MS. */
+  /** See LOST_AFTER_MS. */
+  private isLost(dueAt: number): boolean {
+    return this.idleSince !== null && this.now() >= Math.max(dueAt, this.idleSince) + LOST_AFTER_MS;
+  }
+
+  private forgetLost(): void {
+    for (const [id, cron] of this.crons) if (this.isLost(cron.dueAt)) this.crons.delete(id);
+    if (this.loopDueAt !== null && this.isLost(this.loopDueAt)) this.loopDueAt = null;
+  }
+
+  /** Due times of the wakes Claude still holds; a lost one may wait here for forgetLost(). */
   private pendingTimes(): number[] {
     const times = [...this.crons.values()].map((cron) => cron.dueAt);
     if (this.loopDueAt !== null) times.push(this.loopDueAt);
-    const lostBefore = this.now() - LOST_AFTER_MS;
-    return times.filter((time) => time >= lostBefore);
+    return times.filter((time) => !this.isLost(time));
   }
 
-  private earliest(): string | null {
+  private publish(): string | null | undefined {
     const times = this.pendingTimes();
-    return times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
+    const next = times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
+    if (next === this.published) return undefined;
+    this.published = next;
+    return next;
   }
+}
+
+/** The main session's turn is over: its result, or Claude's own idle state. */
+function endsTurn(record: Record<string, unknown>): boolean {
+  if (record.type === "result") return true;
+  return (
+    record.type === "system" &&
+    record.subtype === "session_state_changed" &&
+    record.state === "idle"
+  );
 }
 
 /** Claude rounds the due time, so its "(in Ns)" is more precise than the requested delay. */
