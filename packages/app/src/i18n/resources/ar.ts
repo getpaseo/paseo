@@ -769,6 +769,8 @@ export const ar: TranslationResources = {
         importSession: "جلسة الاستيراد",
         copyPath: "نسخ مسار مساحة العمل",
         copyBranchName: "انسخ اسم الفرع",
+        pin: "تثبيت مساحة العمل",
+        unpin: "إلغاء تثبيت مساحة العمل",
         showSetup: "إظهار الإعداد",
       },
       toasts: {

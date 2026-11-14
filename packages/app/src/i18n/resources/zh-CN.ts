@@ -765,6 +765,8 @@ export const zhCN: TranslationResources = {
         importSession: "导入会话",
         copyPath: "复制 workspace 路径",
         copyBranchName: "复制分支名称",
+        pin: "置顶工作区",
+        unpin: "取消置顶工作区",
         showSetup: "显示 setup",
       },
       toasts: {

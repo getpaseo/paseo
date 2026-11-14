@@ -137,6 +137,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useWorkspacePinToggle } from "@/hooks/use-workspace-pin-toggle";
 import { useWorkspaceArchiveUndoRunning } from "@/workspace/archive-undo";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
@@ -492,9 +493,11 @@ interface WorkspaceHeaderTitleBarProps {
   showWorkspaceSetup: boolean;
   importAgentDisabled: boolean;
   copyPathDisabled: boolean;
+  isPinned: boolean;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
+  onTogglePin?: () => void;
   onOpenSetupTab: () => void;
 }
 
@@ -508,9 +511,11 @@ function WorkspaceHeaderTitleBar({
   showWorkspaceSetup,
   importAgentDisabled,
   copyPathDisabled,
+  isPinned,
   onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
+  onTogglePin,
   onOpenSetupTab,
 }: WorkspaceHeaderTitleBarProps) {
   const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
@@ -537,9 +542,11 @@ function WorkspaceHeaderTitleBar({
             showWorkspaceSetup={showWorkspaceSetup}
             importAgentDisabled={importAgentDisabled}
             copyPathDisabled={copyPathDisabled}
+            isPinned={isPinned}
             onOpenImportSheet={onOpenImportSheet}
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
+            onTogglePin={onTogglePin}
             onOpenSetupTab={onOpenSetupTab}
           />
         </View>
@@ -2238,6 +2245,8 @@ function WorkspaceScreenContent({
     [client, isConnected, normalizedServerId, toast, t],
   );
 
+  const workspacePin = useWorkspacePinToggle(normalizedServerId, normalizedWorkspaceId);
+
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
       toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
@@ -3365,9 +3374,11 @@ function WorkspaceScreenContent({
                 showWorkspaceSetup={showWorkspaceSetup}
                 importAgentDisabled={!canOpenImportSheet}
                 copyPathDisabled={!workspaceDirectory}
+                isPinned={workspacePin?.isPinned ?? false}
                 onOpenImportSheet={openImportSheet}
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
+                onTogglePin={workspacePin?.toggle}
                 onOpenSetupTab={handleOpenSetupTab}
               />
             </>
@@ -3390,6 +3401,7 @@ function WorkspaceScreenContent({
       workspaceDirectory,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
+      workspacePin,
       isWorkspaceHeaderSubtitleDistinct,
     ],
   );
@@ -3486,11 +3498,13 @@ function WorkspaceScreenContent({
             createTerminalDisabled={createTerminalDisabled}
             importAgentDisabled={!canOpenImportSheet}
             copyPathDisabled={!workspaceDirectory}
+            isPinned={workspacePin?.isPinned ?? false}
             onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
             onCreateBrowser={handleCreateBrowserTab}
             onOpenImportSheet={openImportSheet}
             onCopyWorkspacePath={handleCopyWorkspacePath}
             onCopyBranchName={handleCopyBranchName}
+            onTogglePin={workspacePin?.toggle}
             onOpenSetupTab={handleOpenSetupTab}
           />
         </CompactWorkspaceHeader>
@@ -3525,6 +3539,7 @@ function WorkspaceScreenContent({
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
       workspacePanelActive,
+      workspacePin,
     ],
   );
   const workspaceCompactHeaderTabs = {
