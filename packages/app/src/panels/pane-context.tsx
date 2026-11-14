@@ -84,3 +84,7 @@ export function usePaneFocus(): PaneFocusContextValue {
   invariant(value, "PaneFocusContext is required");
   return value;
 }
+
+export function useOptionalPaneFocus(): PaneFocusContextValue | null {
+  return useContext(PaneFocusContext);
+}

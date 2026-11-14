@@ -15,6 +15,9 @@ import { InlineReviewAddButton, InlineReviewThread } from "@/review";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
+import { diffFindHeaderMatchesForFile } from "./find";
+import { DiffFindModel } from "./find-model.web";
+import { DiffFindOverlay } from "./find-overlay.web";
 import {
   diffInteractionWindowTop,
   diffMaterializationWindow,
@@ -61,6 +64,7 @@ interface StickyHeaderCanvasSlot {
   canvas: HTMLCanvasElement | null;
   file: DiffFileSection | null;
   active: boolean;
+  findKey: string;
   width: number;
   ratio: number;
   palette: DiffSurfaceProps["palette"] | null;
@@ -73,6 +77,7 @@ function emptyStickyHeaderCanvasSlot(): StickyHeaderCanvasSlot {
     canvas: null,
     file: null,
     active: false,
+    findKey: "",
     width: 0,
     ratio: 0,
     palette: null,
@@ -126,6 +131,33 @@ export function DiffSurface(props: DiffSurfaceProps) {
     top: number;
   } | null>(null);
   const hasHoveredAffordanceRef = useRef(false);
+  const schedulePaintRef = useRef<(force?: boolean) => void>(noop);
+  const handleVerticalScrollRef = useRef<(scrollElement: HTMLDivElement) => void>(noop);
+  const [findModel] = useState(
+    () =>
+      new DiffFindModel({
+        getModel: () => modelRef.current,
+        getSelection: () => selectionRef.current,
+        getRoot: () => rootRef.current,
+        getScroll: () => scrollRef.current,
+        setScrollTop: (nextScrollTop) => {
+          const scroll = scrollRef.current;
+          if (!scroll) return;
+          scroll.scrollTop = nextScrollTop;
+          handleVerticalScrollRef.current(scroll);
+        },
+        getHorizontalOffset: (path) => horizontalOffsetsRef.current.get(path) ?? 0,
+        setHorizontalOffset: (fileIndex, path, offset) => {
+          horizontalOffsetsRef.current.set(path, offset);
+          const element = scrollRef.current?.querySelector<HTMLDivElement>(
+            `[data-testid="diff-file-${fileIndex}-horizontal-scroll"]`,
+          );
+          if (element) element.scrollLeft = offset;
+          schedulePaintRef.current(true);
+        },
+        requestPaint: () => schedulePaintRef.current(true),
+      }),
+  );
   const family = props.displayPreferences.monoFontFamily.trim() || DEFAULT_MONO_STACK;
   useLayoutEffect(() => {
     const stats = (window as typeof window & { __PASEO_DIFF_REACT_STATS__?: { commits: number } })
@@ -230,6 +262,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
           )
         : [];
       const ratio = window.devicePixelRatio || 1;
+      const find = findModel.getHighlightState();
 
       for (const [slotIndex, slot] of stickyHeaderSlotsRef.current.entries()) {
         const file = pooledFiles.find((candidate) => candidate.fileIndex % 2 === slotIndex) ?? null;
@@ -238,6 +271,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         if (!file) {
           section.style.display = "none";
           slot.file = null;
+          slot.findKey = "";
           continue;
         }
 
@@ -246,9 +280,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
         section.style.height = `${file.bottom - file.top}px`;
         section.dataset.diffStickyHeaderPath = file.path;
         const active = activeHeaderPathRef.current === file.path;
+        const findKey = diffFindHeaderMatchesForFile(find, file.fileIndex)
+          .map((span) => `${span.start}:${span.end}:${span.active ? 1 : 0}`)
+          .join(",");
         const canReusePaint =
           slot.file === file &&
           slot.active === active &&
+          slot.findKey === findKey &&
           slot.width === viewport.width &&
           slot.ratio === ratio &&
           slot.palette === props.palette &&
@@ -273,16 +311,18 @@ export function DiffSurface(props: DiffSurfaceProps) {
           viewportWidth: viewport.width,
           y: 0,
           activePath: activeHeaderPathRef.current,
+          find,
         });
         slot.file = file;
         slot.active = active;
+        slot.findKey = findKey;
         slot.width = viewport.width;
         slot.ratio = ratio;
         slot.palette = props.palette;
         slot.typography = props.headerTypography;
       }
     },
-    [props.headerTypography, props.palette, viewport.height, viewport.width],
+    [findModel, props.headerTypography, props.palette, viewport.height, viewport.width],
   );
 
   const paint = useCallback(() => {
@@ -339,6 +379,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       ratio,
       canReuse: !forceFullPaint && !resized && currentWindow.height === canvasHeight,
     });
+    paintStickyHeaderPool(currentModel, viewportTop);
     paintWebViewport({
       context,
       model: currentModel,
@@ -351,12 +392,21 @@ export function DiffSurface(props: DiffSurfaceProps) {
       viewportHeight: canvasHeight,
       horizontalOffsets: horizontalOffsetsRef.current,
       selection: selectionRef.current,
+      find: findModel.getHighlightState(),
       activeHeaderPath: activeHeaderPathRef.current,
       devicePixelRatio: ratio,
       paintTop,
       paintHeight,
     });
-  }, [loadedTypography, measurement, props.headerTypography, props.palette, viewport.height]);
+  }, [
+    findModel,
+    loadedTypography,
+    measurement,
+    paintStickyHeaderPool,
+    props.headerTypography,
+    props.palette,
+    viewport.height,
+  ]);
   const schedulePaint = useCallback(
     (force = true) => {
       if (force) forcePaintRef.current = true;
@@ -364,6 +414,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [paint],
   );
+  schedulePaintRef.current = schedulePaint;
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -469,18 +520,20 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [model.files, viewport.height],
   );
   useLayoutEffect(() => {
+    findModel.onModelUpdated();
     schedulePaint();
     paintStickyHeaderPool(model, scrollTopRef.current);
     updateInteractionFiles(scrollTopRef.current);
-  }, [model, paintStickyHeaderPool, schedulePaint, updateInteractionFiles]);
+  }, [findModel, model, paintStickyHeaderPool, schedulePaint, updateInteractionFiles]);
   useEffect(
     () => () => {
+      findModel.dispose();
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       // Fast Refresh preserves refs while rerunning effects. Release ownership of the canceled
       // request so the refreshed renderer can schedule its first paint.
       frameRef.current = null;
     },
-    [],
+    [findModel],
   );
   const mode = props.mode;
   const collapsedFilePaths = props.collapsedFilePaths;
@@ -536,6 +589,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [paintStickyHeaderPool, schedulePaint, updateInteractionFiles, viewport.height],
   );
+  handleVerticalScrollRef.current = handleVerticalScroll;
   useEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return;
@@ -774,12 +828,17 @@ export function DiffSurface(props: DiffSurfaceProps) {
         selectAll();
         return;
       }
-      if (event.key === "Escape" && selectionRef.current) {
-        event.preventDefault();
-        setSelection(null);
+      if (event.key === "Escape") {
+        if (selectionRef.current) {
+          event.preventDefault();
+          setSelection(null);
+        } else if (findModel.isOpen()) {
+          event.preventDefault();
+          findModel.close();
+        }
       }
     },
-    [selectAll, setSelection],
+    [findModel, selectAll, setSelection],
   );
   const rootStyle = useMemo<React.CSSProperties>(
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
@@ -891,6 +950,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       {hoveredAffordance?.hit.target && reviewActions ? (
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
+      <DiffFindOverlay model={findModel} scrollRef={scrollRef} />
     </div>
   );
 

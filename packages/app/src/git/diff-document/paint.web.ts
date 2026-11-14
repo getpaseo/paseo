@@ -1,3 +1,10 @@
+import {
+  diffFindHeaderMatchesForFile,
+  diffFindRectanglesForRowRange,
+  type DiffFindHighlightState,
+  type DiffFindRectangle,
+  type DiffHeaderFindSpan,
+} from "./find";
 import { selectionRectangles } from "./hit-testing";
 import {
   DIFF_BODY_BORDER_HEIGHT,
@@ -46,6 +53,7 @@ export interface PaintWebViewportInput {
   viewportHeight: number;
   horizontalOffsets: ReadonlyMap<string, number>;
   selection: DiffSelection | null;
+  find?: DiffFindHighlightState | null;
   activeHeaderPath: string | null;
   devicePixelRatio: number;
   paintTop?: number;
@@ -69,6 +77,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
   context.textBaseline = "alphabetic";
 
   const range = visibleRowRange(input.model.rows, input.scrollTop + paintTop, paintHeight);
+  const findRectanglesByRow = groupFindRectanglesByRow(input, range.start, range.end);
   for (let index = range.start; index < range.end; index += 1) {
     const row = input.model.rows[index];
     if (!row) continue;
@@ -83,6 +92,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
       row,
       y,
       horizontalOffset: input.horizontalOffsets.get(row.path) ?? 0,
+      findRectangles: findRectanglesByRow?.get(index) ?? null,
     });
   }
 
@@ -115,6 +125,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
       viewportWidth: input.viewportWidth,
       y: file.top - input.scrollTop,
       activePath: input.activeHeaderPath,
+      find: input.find,
     });
   }
 
@@ -130,6 +141,7 @@ export function paintWebFileHeader(input: {
   viewportWidth: number;
   y: number;
   activePath: string | null;
+  find?: DiffFindHighlightState | null;
 }): void {
   const { context, file, palette, typography, viewportWidth, y } = input;
   context.fillStyle =
@@ -168,21 +180,98 @@ export function paintWebFileHeader(input: {
   // directory Text node. Canvas does not, so paint only the visible glyphs.
   const directory = directorySuffix(file.path).trimStart();
   const fitted = fitHeaderText(context, name, directory, available);
+  const directoryX =
+    DIFF_FILE_HEADER_LEFT + context.measureText(fitted.name).width + DIFF_FILE_HEADER_TEXT_GAP;
+  const headerMatches = diffFindHeaderMatchesForFile(input.find, file.fileIndex);
   context.save();
   context.beginPath();
   context.rect(DIFF_FILE_HEADER_LEFT, y, available, DIFF_FILE_HEADER_CONTENT_HEIGHT);
   context.clip();
+  if (headerMatches.length > 0) {
+    paintHeaderFindHighlights({
+      context,
+      palette,
+      typography,
+      path: file.path,
+      name,
+      fittedName: fitted.name,
+      directory,
+      fittedDirectory: fitted.directory,
+      directoryX,
+      y,
+      spans: headerMatches,
+    });
+  }
   context.fillStyle = palette.foreground;
   context.fillText(fitted.name, DIFF_FILE_HEADER_LEFT, textBaseline);
   if (fitted.directory) {
     context.fillStyle = palette.foregroundMuted;
-    context.fillText(
-      fitted.directory,
-      DIFF_FILE_HEADER_LEFT + context.measureText(fitted.name).width + DIFF_FILE_HEADER_TEXT_GAP,
-      textBaseline,
-    );
+    context.fillText(fitted.directory, directoryX, textBaseline);
   }
   context.restore();
+}
+
+function visibleFittedLength(fullText: string, fittedText: string): number {
+  if (!fittedText) return 0;
+  if (fittedText === fullText) return fullText.length;
+  return fittedText.endsWith("…") ? Math.max(0, fittedText.length - 1) : fittedText.length;
+}
+
+function paintHeaderFindHighlights(input: {
+  context: CanvasRenderingContext2D;
+  palette: DiffPalette;
+  typography: DiffHeaderTypography;
+  path: string;
+  name: string;
+  fittedName: string;
+  directory: string;
+  fittedDirectory: string;
+  directoryX: number;
+  y: number;
+  spans: readonly DiffHeaderFindSpan[];
+}): void {
+  const { context, palette, typography, path, spans, y } = input;
+  const slashIndex = path.lastIndexOf("/");
+  const namePathStart = slashIndex >= 0 ? slashIndex + 1 : 0;
+  const visibleNameLength = visibleFittedLength(input.name, input.fittedName);
+  const visibleDirLength = visibleFittedLength(input.directory, input.fittedDirectory);
+  const height = Math.min(
+    DIFF_FILE_HEADER_CONTENT_HEIGHT - 6,
+    Math.max(12, Math.round(typography.size * 1.35)),
+  );
+  const boxY = y + Math.round((DIFF_FILE_HEADER_CONTENT_HEIGHT - height) / 2);
+
+  const paintSubSpan = (
+    fullText: string,
+    visibleLength: number,
+    pathStart: number,
+    originX: number,
+    span: DiffHeaderFindSpan,
+  ) => {
+    const localStart = Math.max(0, span.start - pathStart);
+    const localEnd = Math.min(visibleLength, span.end - pathStart);
+    if (localEnd <= localStart) return;
+    const x = originX + context.measureText(fullText.slice(0, localStart)).width;
+    const width = Math.max(1, context.measureText(fullText.slice(localStart, localEnd)).width);
+    context.save();
+    context.fillStyle = palette.statusWarning;
+    context.globalAlpha = span.active ? 0.42 : 0.22;
+    context.fillRect(x, boxY, width, height);
+    if (span.active && typeof context.strokeRect === "function") {
+      context.globalAlpha = 0.95;
+      context.strokeStyle = palette.statusWarning;
+      context.lineWidth = 1;
+      context.strokeRect(x + 0.5, boxY + 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
+    }
+    context.restore();
+  };
+
+  for (const span of spans) {
+    paintSubSpan(input.name, visibleNameLength, namePathStart, DIFF_FILE_HEADER_LEFT, span);
+    if (input.fittedDirectory && slashIndex > 0) {
+      paintSubSpan(input.directory, visibleDirLength, 0, input.directoryX, span);
+    }
+  }
 }
 
 function centeredTextBaseline(context: CanvasRenderingContext2D, centerY: number): number {
@@ -260,11 +349,34 @@ function paintChangeIcon(
   context.restore();
 }
 
+function groupFindRectanglesByRow(
+  input: PaintWebViewportInput,
+  rowStart: number,
+  rowEnd: number,
+): Map<number, DiffFindRectangle[]> | null {
+  if (!input.find || input.find.matches.length === 0) return null;
+  const rectangles = diffFindRectanglesForRowRange({
+    model: input.model,
+    find: input.find,
+    rowStart,
+    rowEnd,
+  });
+  if (rectangles.length === 0) return null;
+  const grouped = new Map<number, DiffFindRectangle[]>();
+  for (const rectangle of rectangles) {
+    const bucket = grouped.get(rectangle.rowIndex);
+    if (bucket) bucket.push(rectangle);
+    else grouped.set(rectangle.rowIndex, [rectangle]);
+  }
+  return grouped;
+}
+
 function paintLine(
   input: PaintWebViewportInput & {
     row: DiffLineRow;
     y: number;
     horizontalOffset: number;
+    findRectangles: readonly DiffFindRectangle[] | null;
   },
 ): void {
   const columnWidth = input.viewportWidth / input.row.cells.length;
@@ -295,18 +407,62 @@ function paintLine(
         input.y + input.model.lineHeight * 0.78,
       );
     }
+    const cellClipX = x + file.gutterWidth + CODE_LEFT_PADDING;
+    const cellClipWidth = columnWidth - file.gutterWidth - CODE_LEFT_PADDING;
     input.context.save();
     input.context.beginPath();
     input.context.rect(
-      x + file.gutterWidth + CODE_LEFT_PADDING,
+      cellClipX,
       input.y,
-      columnWidth - file.gutterWidth - CODE_LEFT_PADDING,
+      cellClipWidth,
       input.row.height - input.row.reviewHeight,
     );
     input.context.clip();
-    paintCellText({ ...input, cell, x: x + file.gutterWidth + CODE_LEFT_PADDING });
+    if (input.findRectangles) {
+      paintCellFindRectangles({
+        context: input.context,
+        palette: input.palette,
+        rectangles: input.findRectangles,
+        cellClipX,
+        scrollTop: input.scrollTop,
+        horizontalOffset: input.model.wrapLines ? 0 : input.horizontalOffset,
+      });
+    }
+    paintCellText({ ...input, cell, x: cellClipX });
     input.context.restore();
   });
+}
+
+function paintCellFindRectangles(input: {
+  context: CanvasRenderingContext2D;
+  palette: DiffPalette;
+  rectangles: readonly DiffFindRectangle[];
+  cellClipX: number;
+  scrollTop: number;
+  horizontalOffset: number;
+}): void {
+  const { context, palette, rectangles, cellClipX, scrollTop, horizontalOffset } = input;
+  for (const rectangle of rectangles) {
+    if (Math.abs(rectangle.clipX - cellClipX) > 0.5) continue;
+    const x = rectangle.x - horizontalOffset;
+    const y = rectangle.y - scrollTop;
+    context.save();
+    context.fillStyle = palette.statusWarning;
+    context.globalAlpha = rectangle.active ? 0.42 : 0.22;
+    context.fillRect(x, y, rectangle.width, rectangle.height);
+    if (rectangle.active) {
+      context.globalAlpha = 0.95;
+      context.strokeStyle = palette.statusWarning;
+      context.lineWidth = 1;
+      context.strokeRect(
+        x + 0.5,
+        y + 0.5,
+        Math.max(0, rectangle.width - 1),
+        Math.max(0, rectangle.height - 1),
+      );
+    }
+    context.restore();
+  }
 }
 
 function paintCellText(
