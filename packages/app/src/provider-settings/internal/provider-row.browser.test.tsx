@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 import { Text } from "react-native";
 import { i18n as testI18n } from "@/i18n/i18next";
 import { ProviderRow } from "./provider-row";
@@ -50,7 +51,8 @@ function mount(summary: RowSummary, options: { enabled?: boolean; label?: string
     view,
     onOpen,
     onToggle,
-    row: () => view.getByRole("button", { name: `${label} provider details` }),
+    row: () => view.getByTestId("provider-row-claude"),
+    opener: () => view.getByRole("button", { name: `${label} provider details` }),
     toggle: () => view.queryByRole("switch", { name: `Enable ${label}` }),
   };
 }
@@ -85,8 +87,18 @@ describe("provider row", () => {
 
   it("asks its host to open the provider when the row is pressed", () => {
     const row = mount({ kind: "disabled" }, { enabled: false });
-    act(() => row.row().click());
+    act(() => row.opener().click());
     expect(row.onOpen).toHaveBeenCalledWith("claude");
+  });
+
+  it("keeps the switch out of the row's button, so Enter on the switch only toggles", async () => {
+    const row = mount({ kind: "ready", version: null, models: 3 });
+    const toggle = row.toggle() as HTMLElement;
+    expect(row.opener().contains(toggle)).toBe(false);
+    toggle.focus();
+    await act(() => userEvent.keyboard("{Enter}"));
+    expect(row.onToggle).toHaveBeenCalledWith("claude", false);
+    expect(row.onOpen).not.toHaveBeenCalled();
   });
 
   it("toggles the provider from the switch without opening it", () => {
@@ -118,7 +130,7 @@ describe("provider row", () => {
     const row = mount({ kind: "notInstalled" });
     expect(row.view.getByText("Not installed")).toBeTruthy();
     expect(row.toggle()).toBeNull();
-    act(() => row.row().click());
+    act(() => row.opener().click());
     expect(row.onOpen).toHaveBeenCalledWith("claude");
   });
 
