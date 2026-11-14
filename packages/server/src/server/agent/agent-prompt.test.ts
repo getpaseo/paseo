@@ -14,9 +14,10 @@ import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import { startAgentRun, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
 import type {
   AgentClient,
+  AgentPromptInput,
   AgentRunResult,
   AgentSession,
   AgentStreamEvent,
@@ -153,6 +154,302 @@ class SlowStartAgentClient implements AgentClient {
     return await this.createSession();
   }
 }
+
+/**
+ * Session that reproduces the production failure where a provider still holds its
+ * previous turn: every accepted prompt ends in turn_failed with the provider's
+ * "already has an active turn" rejection. `stuck: false` completes normally.
+ */
+class BusyTurnAgentSession implements AgentSession {
+  readonly provider = "codex" as const;
+  readonly capabilities = RUN_START_TEST_CAPABILITIES;
+  readonly id = randomUUID();
+  readonly prompts: string[] = [];
+  readonly events: Array<{ type: string }> = [];
+  private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+
+  constructor(private readonly stuck: boolean) {}
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    const turnId = randomUUID();
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      if (this.stuck) {
+        // The exact rejection captured from MiniMax Code in daemon.log.
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error:
+            "Internal error: MiniMax Code Runtime failed: Session already has an active Turn. " +
+            "Use queue send to deliver the message after it.",
+          code: "-32603",
+        });
+      } else {
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }
+    }, 0);
+    return { turnId };
+  }
+
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  pushEvent(event: AgentStreamEvent): void {
+    this.events.push({ type: event.type });
+    for (const callback of this.subscribers) {
+      callback(event);
+    }
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return { provider: this.provider, sessionId: this.id, model: null, modeId: null };
+  }
+
+  async getAvailableModes() {
+    return [];
+  }
+
+  async getCurrentMode() {
+    return null;
+  }
+
+  async setMode(): Promise<void> {}
+
+  getPendingPermissions() {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {}
+
+  describePersistence() {
+    return { provider: this.provider, sessionId: this.id };
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
+class BusyTurnAgentClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities = RUN_START_TEST_CAPABILITIES;
+  readonly sessions: BusyTurnAgentSession[] = [];
+  resumeCount = 0;
+
+  /**
+   * Per-session-number stuck plan: session 0 is the wedge; later entries say
+   * whether the regenerated sessions (reload, redelivery) accept prompts.
+   */
+  constructor(private readonly stuckPlan: boolean[]) {}
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(): Promise<AgentSession> {
+    const session = new BusyTurnAgentSession(this.stuckPlan[this.sessions.length] ?? false);
+    this.sessions.push(session);
+    return session;
+  }
+
+  async fetchCatalog() {
+    return { models: [], modes: [] };
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    this.resumeCount += 1;
+    return await this.createSession();
+  }
+}
+
+/** Resolves with the first terminal turn event the iterator emits. */
+async function firstTerminalTurnEvent(
+  iterator: AsyncGenerator<AgentStreamEvent>,
+): Promise<AgentStreamEvent> {
+  for await (const event of iterator) {
+    if (
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled"
+    ) {
+      return event;
+    }
+  }
+  throw new Error("run ended without a terminal turn event");
+}
+
+test("a busy turn retry stops after one reload when the regenerated session rejects again", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-busy-turn-recovery-"));
+  // Every session this provider hands out is wedged; recovery must not loop.
+  const stuckClient = new BusyTurnAgentClient([true, true]);
+  const logger = createTestLogger();
+  const agentManager = new AgentManager({ clients: { codex: stuckClient }, logger });
+  let snapshot!: Awaited<ReturnType<typeof agentManager.createAgent>>;
+
+  try {
+    snapshot = await agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await startAgentRun(agentManager, snapshot.id, "first", logger);
+
+    // The reload-and-redeliver runs to completion: two sessions, one reload.
+    await vi.waitFor(() => {
+      expect(stuckClient.resumeCount).toBe(1);
+      expect(stuckClient.sessions).toHaveLength(2);
+    });
+
+    // The regenerated session rejects with the busy-turn error again; the
+    // redelivery scores that failure and recovery does not schedule a second reload.
+    await vi.waitFor(() => {
+      expect(stuckClient.sessions[1]?.prompts).toEqual(["first"]);
+      expect(
+        stuckClient.sessions[1]?.events.filter((event) => event.type === "turn_failed"),
+      ).toHaveLength(1);
+    });
+    expect(stuckClient.resumeCount).toBe(1);
+  } finally {
+    await agentManager.closeAgent(snapshot.id).catch(() => undefined);
+    void agentManager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a prompt rejected for a stuck provider turn reloads the session and redelivers the prompt once", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-busy-turn-recovery-"));
+  // Session 0 is wedged; the reloaded session accepts prompts normally.
+  const stuckClient = new BusyTurnAgentClient([true, false]);
+  const logger = createTestLogger();
+  const agentManager = new AgentManager({
+    clients: { codex: stuckClient },
+    logger,
+  });
+  let snapshot!: Awaited<ReturnType<typeof agentManager.createAgent>>;
+
+  try {
+    snapshot = await agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const dispatched = await startAgentRun(agentManager, snapshot.id, "first", logger);
+    expect(dispatched).toEqual({ disposition: "turn_started" });
+
+    // Recovery runs in the background after the original run scores its busy-turn
+    // failure: the session reload from persistence happens on its own.
+    await vi.waitFor(() => {
+      expect(stuckClient.resumeCount).toBe(1);
+      expect(agentManager.getAgent(snapshot.id)?.lifecycle).not.toBe("running");
+    });
+
+    const secondRun = agentManager.streamAgent(snapshot.id, "continue");
+    await expect(firstTerminalTurnEvent(secondRun)).resolves.toMatchObject({
+      type: "turn_completed",
+    });
+
+    // The redelivery went to the reloaded session exactly once.
+    expect(stuckClient.sessions).toHaveLength(2);
+    expect(stuckClient.resumeCount).toBe(1);
+    expect(stuckClient.sessions[0]?.prompts).toContain("first");
+    expect(stuckClient.sessions[1]?.prompts).toEqual(["first", "continue"]);
+  } finally {
+    await agentManager.closeAgent(snapshot.id).catch(() => undefined);
+    void agentManager.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A controller that reports a newer run in flight, so the recovery of the
+ * failed run has to step aside.
+ *
+ * The failed run released its slot before the recovery starts, so a prompt
+ * sent in that window is the newest intent. Reloading the session under it
+ * would cancel that newer run, and redelivering the failed prompt would
+ * replace it.
+ */
+class SupersededRunController {
+  reloadCount = 0;
+  redelivered: string[] = [];
+  /** How often the recovery asked whether a newer run took over. */
+  inFlightChecks = 0;
+
+  getAgent() {
+    return null;
+  }
+  tryRunOutOfBand() {
+    return false;
+  }
+  hasInFlightRun() {
+    this.inFlightChecks += 1;
+    return true;
+  }
+  reloadStalePluginSession() {
+    return false;
+  }
+  replaceAgentRun() {
+    throw new Error("the recovery must not replace the newer run");
+  }
+  steerOrReplaceActiveTurn() {
+    return { status: "inactive" as const };
+  }
+  streamAgent() {
+    return this.failingIterator();
+  }
+  async reloadAgentSession() {
+    this.reloadCount += 1;
+    return null;
+  }
+  private failingIterator(): AsyncGenerator<AgentStreamEvent> {
+    const events: AgentStreamEvent[] = [
+      {
+        type: "turn_failed",
+        provider: "codex",
+        turnId: "turn-1",
+        error:
+          "Internal error: MiniMax Code Runtime failed: Session already has an active Turn. " +
+          "Use queue send to deliver the message after it.",
+        code: "-32603",
+      },
+    ];
+    return (async function* () {
+      for (const event of events) {
+        yield event;
+      }
+    })();
+  }
+}
+
+test("a busy turn recovery steps aside when a newer run took over the agent", async () => {
+  const controller = new SupersededRunController();
+
+  await startAgentRun(
+    controller as unknown as Parameters<typeof startAgentRun>[0],
+    "agent-1",
+    "first",
+    createTestLogger(),
+  );
+
+  // The recovery belongs to the run that failed. A newer run already owns the
+  // agent, so the session is not reloaded under it and the failed prompt is
+  // not redelivered over it.
+  await vi.waitFor(() => {
+    expect(controller.inFlightChecks).toBeGreaterThan(0);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(controller.reloadCount).toBe(0);
+});
 
 /**
  * Real AgentManager driving a real agent, so the run-start wait exercises the production

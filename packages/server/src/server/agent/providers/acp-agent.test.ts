@@ -107,6 +107,10 @@ interface ACPSessionInternals {
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+  /** The listeners the session holds, so a test can see one left behind. */
+  subscribers: Set<(event: AgentStreamEvent) => void>;
+  /** The gates that wait for a turn to end, so a test can see one left behind. */
+  turnEndListeners: Set<() => void>;
 }
 
 function openPromptConnection(
@@ -4018,6 +4022,104 @@ describe("ACPAgentSession close() tree-kill", () => {
     await expect(session.terminalOutput({ sessionId: "session-1", terminalId })).rejects.toThrow(
       `Unknown terminal '${terminalId}'`,
     );
+  });
+});
+
+describe("interrupt", () => {
+  /** Drives the real startTurn path so the pending prompt promise exists exactly
+   * as it does in production; interrupt's release gate watches the turn end. */
+  async function createInterruptHarness() {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    let resolvePrompt!: (response: PromptResponse) => void;
+    let rejectPrompt!: (error: unknown) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve, reject) => {
+          resolvePrompt = resolve;
+          rejectPrompt = reject;
+        }),
+    );
+    const cancel = vi.fn(async () => undefined);
+    internals.connection = { prompt, cancel, signal: new AbortController().signal };
+    const { turnId } = await session.startTurn("hello");
+    return { session, cancel, resolvePrompt, rejectPrompt, turnId };
+  }
+
+  test("interrupt waits for the provider's terminal answer to the cancelled prompt", async () => {
+    const { session, cancel, resolvePrompt, turnId } = await createInterruptHarness();
+
+    const interrupting = session.interrupt();
+    let settled = false;
+    void interrupting.then(() => {
+      settled = true;
+      return undefined;
+    });
+    await cancel;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The cancel notification went out, but the provider still owns the turn:
+    // interrupt must not claim the session is idle yet.
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(settled).toBe(false);
+
+    // The provider answers the original session/prompt with the cancelled stop
+    // reason; only then may interrupt() claim the turn is released.
+    resolvePrompt({ stopReason: "cancelled" });
+    await interrupting;
+    expect(settled).toBe(true);
+    expect(turnId).toBeDefined();
+  });
+
+  test("interrupt gives up on a provider that never answers the cancelled prompt", async () => {
+    vi.useFakeTimers();
+    try {
+      const { session } = await createInterruptHarness();
+      const interrupting = session.interrupt();
+
+      // Far past the bounded release wait: interrupt has returned even though
+      // the provider never answered, and nothing wedges.
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(interrupting).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an interrupt that gives up leaves no gate behind either", async () => {
+    vi.useFakeTimers();
+    try {
+      const { session } = await createInterruptHarness();
+
+      // The provider never answers the cancelled prompt, so the interrupt
+      // gives up on the bounded wait.
+      const interrupting = session.interrupt();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await interrupting;
+
+      // The gate has nothing left to watch: the interrupt already gave up.
+      const gates = asInternals<ACPSessionInternals>(session).turnEndListeners;
+      expect(gates.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an interrupted turn leaves no gate behind for later turns", async () => {
+    const { session, resolvePrompt } = await createInterruptHarness();
+
+    const interrupting = session.interrupt();
+    resolvePrompt({ stopReason: "cancelled" });
+    await interrupting;
+
+    // The gate the interrupt installed watched for the turn to end and has
+    // nothing left to watch once it fired. Left subscribed, it would fire for
+    // every later turn and keep the session alive for as long as the process
+    // runs.
+    const gates = asInternals<ACPSessionInternals>(session).turnEndListeners;
+    expect(gates.size).toBe(0);
   });
 });
 

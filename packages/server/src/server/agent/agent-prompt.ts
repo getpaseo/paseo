@@ -1,10 +1,11 @@
 import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
+import type { AgentPromptInput, AgentRunOptions, AgentStreamEvent } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { isRecoveredBusyTurnFailure } from "./provider-busy-error.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
@@ -80,12 +81,23 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
-async function drainAgentRunIterator(
-  iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>,
-): Promise<void> {
-  for await (const _ of iterator) {
+async function drainAgentRunIterator(iterator: AsyncGenerator<AgentStreamEvent>): Promise<{
+  type: string;
+  error: string;
+  code?: string;
+} | null> {
+  let failure: { type: string; error: string; code?: string } | null = null;
+  for await (const event of iterator) {
+    if (event.type === "turn_failed") {
+      failure = {
+        type: event.type,
+        error: event.error,
+        ...(event.code ? { code: event.code } : {}),
+      };
+    }
     // Events are broadcast via AgentManager subscribers.
   }
+  return failure;
 }
 
 export async function startAgentRun(
@@ -156,26 +168,15 @@ async function startAgentRunInner(
   options?.onDispatch?.("turn_started");
   void (async () => {
     try {
-      try {
-        await drainAgentRunIterator(iterator);
-      } catch (error) {
-        if (!isStaleProviderSessionError(error)) throw error;
-        logger.info(
-          { agentId, err: error },
-          "Provider session went stale; reopening from persistence",
-        );
-        await agentManager.reloadAgentSession(agentId);
-        const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
-        await drainAgentRunIterator(retry.iterator);
-      }
-      logger.trace(
-        {
-          agentId,
-          provider: snapshot?.provider,
-          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-        },
-        "agent.session.iterator.drained",
-      );
+      await drainAgentRunEvents({
+        agentManager,
+        agentId,
+        prompt,
+        options,
+        iterator,
+        logger,
+        snapshot,
+      });
     } catch (error) {
       logger.trace(
         {
@@ -190,6 +191,104 @@ async function startAgentRunInner(
     }
   })();
   return { disposition: "turn_started" };
+}
+
+/**
+ * Consume a turn's stream, handing stale sessions and a wedged provider runtime
+ * one recovery each. Recovery order, strongest first: the iterator itself can go
+ * stale (thrown), and a terminal turn_failed can name a provider that still owns
+ * its previous turn (detected from the terminal event). Each reload reopens the
+ * session from persistence and redelivers the prompt at most once, so a provider
+ * that never unblocks still surfaces its error to the user.
+ */
+async function drainAgentRunEvents(input: {
+  agentManager: AgentRunController;
+  agentId: string;
+  prompt: AgentPromptInput;
+  options: StartAgentRunOptions | undefined;
+  iterator: AsyncGenerator<AgentStreamEvent>;
+  logger: Logger;
+  snapshot: ManagedAgent | null;
+}): Promise<void> {
+  const { agentManager, agentId, prompt, options, iterator, logger, snapshot } = input;
+  let failure: { type: string; error: string; code?: string } | null;
+  try {
+    failure = await drainAgentRunIterator(iterator);
+  } catch (error) {
+    if (!isStaleProviderSessionError(error)) throw error;
+    logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
+    if (isSuperseded({ agentManager, agentId, logger })) {
+      logRunDrained({ agentId, snapshot, logger });
+      return;
+    }
+    await agentManager.reloadAgentSession(agentId);
+    const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
+    await drainAgentRunIterator(retry.iterator);
+    logRunDrained({ agentId, snapshot, logger });
+    return;
+  }
+  if (failure && isRecoveredBusyTurnFailure(failure)) {
+    logger.info(
+      {
+        agentId,
+        provider: snapshot?.provider,
+        providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+        err: failure.error,
+      },
+      "Provider still owns its previous turn; reopening the session from persistence and redelivering the prompt once",
+    );
+    // The failed run released its slot before the recovery starts, so the user
+    // may have sent another prompt in that window. Reloading the session would
+    // cancel that newer run, and redelivering this prompt would replace it.
+    // The recovery belongs to the run that failed, so it steps aside.
+    if (isSuperseded({ agentManager, agentId, logger })) {
+      logRunDrained({ agentId, snapshot, logger });
+      return;
+    }
+    await agentManager.reloadAgentSession(agentId);
+    const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
+    const retryFailure = await drainAgentRunIterator(retry.iterator);
+    if (retryFailure && isRecoveredBusyTurnFailure(retryFailure)) {
+      throw new Error(`Provider still holds an active turn after reload: ${retryFailure.error}`);
+    }
+  }
+  logRunDrained({ agentId, snapshot, logger });
+}
+
+/**
+ * Whether a newer run took over the agent while this run was failing.
+ *
+ * The recovery exists to redeliver the prompt that failed. A run that started
+ * after the failure already carries the user's newest intent, and reloading
+ * the session under it would cancel work the user asked for.
+ */
+function isSuperseded(input: {
+  agentManager: AgentRunController;
+  agentId: string;
+  logger: Logger;
+}): boolean {
+  const { agentManager, agentId, logger } = input;
+  if (!agentManager.hasInFlightRun(agentId)) {
+    return false;
+  }
+  logger.info({ agentId }, "A newer run took over the agent; leaving the recovery to it");
+  return true;
+}
+
+function logRunDrained(input: {
+  agentId: string;
+  snapshot: ManagedAgent | null;
+  logger: Logger;
+}): void {
+  const { agentId, snapshot, logger } = input;
+  logger.trace(
+    {
+      agentId,
+      provider: snapshot?.provider,
+      providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+    },
+    "agent.session.iterator.drained",
+  );
 }
 
 /**
