@@ -1,5 +1,12 @@
 import { STRUCTURED_OUTPUT_TOOL } from "./structured-output-plugin.mjs";
 
+// A refused fetch proves the previous bridge stopped listening. Runtimes report
+// it differently: Node puts the code on `cause`, Bun puts it on the error.
+export function isRefused(error) {
+  const code = error?.code ?? error?.cause?.code;
+  return code === "ECONNREFUSED" || code === "ConnectionRefused";
+}
+
 // OpenCode owns this plugin for the lifetime of a location. Paseo supplies only
 // live, per-session bindings over the authenticated OpenCode RPC channel.
 export async function registerSharedBridge(context) {
@@ -130,12 +137,7 @@ export async function registerSharedBridge(context) {
               } catch (error) {
                 // Refusal or rejected credentials mean this endpoint no longer
                 // serves the previous binding. Other failures are inconclusive.
-                if (
-                  error?.status !== 401 &&
-                  error?.cause?.code !== "ECONNREFUSED" &&
-                  error?.code !== "ConnectionRefused"
-                )
-                  throw error;
+                if (error?.status !== 401 && !isRefused(error)) throw error;
               }
               if (active)
                 return { error: "OpenCode session is already bound to another Paseo bridge" };
