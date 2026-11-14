@@ -2217,6 +2217,8 @@ export const ar: TranslationResources = {
     loginExpired: "انتهت صلاحية تسجيل الدخول {{relativeTime}}. {{remedy}}",
     title: "استخدام الخطة",
     refresh: "تحديث",
+    reorderCard: "إعادة ترتيب {{source}}",
+    showCard: "إظهار {{source}}",
     refreshAll: "تحديث الكل",
     refreshing: "جارٍ التحديث...",
     loading: "جارٍ تحميل بيانات الاستخدام...",

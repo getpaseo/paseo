@@ -2228,6 +2228,8 @@ export const ko: TranslationResources = {
     loginExpired: "로그인이 {{relativeTime}}에 만료되었습니다. {{remedy}}",
     title: "플랜 사용량",
     refresh: "새로 고침",
+    reorderCard: "{{source}} 순서 변경",
+    showCard: "{{source}} 표시",
     refreshAll: "모두 새로 고침",
     refreshing: "새로 고치는 중...",
     loading: "사용량 불러오는 중...",

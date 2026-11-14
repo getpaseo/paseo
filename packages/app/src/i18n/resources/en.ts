@@ -2243,6 +2243,8 @@ export const en = {
     loginExpired: "Login expired {{relativeTime}}. {{remedy}}",
     title: "Plan usage",
     refresh: "Refresh",
+    reorderCard: "Reorder {{source}}",
+    showCard: "Show {{source}}",
     refreshAll: "Refresh all",
     refreshing: "Refreshing...",
     loading: "Loading usage...",

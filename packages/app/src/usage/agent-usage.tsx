@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -8,7 +9,7 @@ import type { UsageReportEntry } from "./types";
 
 /**
  * The usage of the account an agent runs under, for its context window details: one card per
- * report as it streams in, without pins. Nothing on hosts that cannot report usage, or for an
+ * report in the user's card order, without pins. Nothing on hosts that cannot report usage, or for an
  * agent with no account to report.
  */
 export function AgentUsage({
@@ -55,7 +56,8 @@ function AgentUsageCards({
   refreshable: boolean;
 }) {
   const { display } = useUsageDisplay(reports);
-  return reports.map((entry) => (
+  const arranged = useMemo(() => display.arrange(reports), [display, reports]);
+  return arranged.map((entry) => (
     <UsageCard
       key={entry.id}
       serverId={serverId}

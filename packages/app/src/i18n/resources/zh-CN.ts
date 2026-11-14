@@ -2194,6 +2194,8 @@ export const zhCN: TranslationResources = {
     loginExpired: "登录已于{{relativeTime}}过期。{{remedy}}",
     title: "套餐用量",
     refresh: "刷新",
+    reorderCard: "重新排序 {{source}}",
+    showCard: "显示 {{source}}",
     refreshAll: "全部刷新",
     refreshing: "刷新中...",
     loading: "正在加载用量...",

@@ -1,4 +1,4 @@
-import type { ReactElement, MutableRefObject } from "react";
+import type { ReactElement, ReactNode, MutableRefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
 
@@ -10,6 +10,18 @@ export interface DraggableListDragHandleProps {
   attributes?: Record<string, unknown>;
   listeners?: Record<string, unknown>;
   setActivatorNodeRef?: (node: unknown) => void;
+}
+
+/**
+ * The grip a row is dragged by, rendered anywhere inside `renderItem`. Pointer drags start from
+ * it on web (with `useDragHandle`); touch drags start after a short hold on native.
+ */
+export interface DraggableListHandleProps {
+  /** Names the keyboard-reorderable handle on web. Native leaves the handle out of accessibility. */
+  accessibilityLabel: string;
+  testID?: string;
+  style?: StyleProp<ViewStyle>;
+  children: ReactNode;
 }
 
 export interface DraggableRenderItemInfo<T> {
@@ -24,7 +36,8 @@ export interface DraggableListProps<T> {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
-  onDragEnd: (data: T[]) => void;
+  /** The new order, and the key of the item the user moved to reach it. */
+  onDragEnd: (data: T[], movedKey: string) => void;
   style?: StyleProp<ViewStyle>;
   /** Outer container style (useful for nested, non-scrolling lists). */
   containerStyle?: StyleProp<ViewStyle>;

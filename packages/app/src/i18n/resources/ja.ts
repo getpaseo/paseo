@@ -2240,6 +2240,8 @@ export const ja: TranslationResources = {
     loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
     title: "プラン使用量",
     refresh: "更新",
+    reorderCard: "{{source}} を並べ替え",
+    showCard: "{{source}} を表示",
     refreshAll: "すべて更新",
     refreshing: "更新中...",
     loading: "使用状況を読み込み中...",

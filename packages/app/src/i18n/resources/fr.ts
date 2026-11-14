@@ -2267,6 +2267,8 @@ export const fr: TranslationResources = {
     loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
     title: "Utilisation du forfait",
     refresh: "Actualiser",
+    reorderCard: "Réorganiser {{source}}",
+    showCard: "Afficher {{source}}",
     refreshAll: "Tout actualiser",
     refreshing: "Actualisation...",
     loading: "Chargement de l’utilisation...",
