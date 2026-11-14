@@ -383,6 +383,39 @@ describe("MockLoadTestAgentClient", () => {
     ).toEqual(["turn_started", "timeline:user_message"]);
   });
 
+  test("emits the wrapped-text question scenario selected by prompt", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("Emit synthetic questions with wrapped text.");
+    await vi.advanceTimersByTimeAsync(0);
+
+    const permission = expectSinglePermissionRequest(events);
+    expect(permission.request).toMatchObject({
+      provider: "mock",
+      name: "MockQuestions",
+      kind: "question",
+    });
+    const questions = (permission.request.input as { questions: { question: string }[] }).questions;
+    // The text arrives hard-wrapped, one token per line. That is the shape the
+    // app has to fold back into sentences.
+    expect(questions[0]?.question).toContain("\n");
+
+    await session.respondToPermission(permission.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { wrapped: "ok" } },
+    });
+    await resultPromise;
+    unsubscribe();
+  });
+
   test("emits the free-write question scenario selected by prompt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
