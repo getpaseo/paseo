@@ -8,7 +8,6 @@ import {
 import {
   View,
   type GestureResponderEvent,
-  type PressableProps,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewProps,
@@ -27,6 +26,7 @@ import {
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { PressHighlight } from "@/components/ui/press-highlight";
+import type { PressHighlightProps } from "@/components/ui/press-highlight.types";
 
 /**
  * A menu opened by a long press or a right click, anchored to the point of the gesture rather
@@ -109,8 +109,7 @@ export function ContextMenuTrigger({
   triggerRef,
   ...props
 }: PropsWithChildren<
-  Omit<PressableProps, "style"> & {
-    highlightStyle?: StyleProp<ViewStyle>;
+  Omit<PressHighlightProps, "style"> & {
     style?: TriggerStyleProp;
     enabled?: boolean;
     enabledOnMobile?: boolean;

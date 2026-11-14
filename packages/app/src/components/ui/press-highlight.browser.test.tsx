@@ -4,6 +4,8 @@ import { ArrowUp } from "lucide-react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { afterEach, expect, it } from "vitest";
 import { PressHighlight } from "./press-highlight.native";
+import { PressHighlight as AndroidPressHighlight } from "./press-highlight.android";
+import { PressHighlight as WebPressHighlight } from "./press-highlight";
 import { FloatingActionButton } from "./floating-action-button";
 
 const rowStyle = { backgroundColor: "rgb(255, 255, 255)", borderRadius: 8 };
@@ -12,6 +14,11 @@ const highlightStyle = { backgroundColor: "rgb(20, 30, 40)" };
 afterEach(cleanup);
 
 function onPress() {}
+
+function recordHighlights() {
+  const calls: boolean[] = [];
+  return { calls, record: (highlighted: boolean) => calls.push(highlighted) };
+}
 
 it("keeps a floating action opaque while showing its held-press feedback", async () => {
   const { getByRole } = render(
@@ -57,4 +64,45 @@ it("uses the pressable's pressed state for the native row fill and its existing 
     </GestureHandlerRootView>,
   );
   expect(getComputedStyle(getByTestId("row")).backgroundColor).toBe("rgb(255, 255, 255)");
+});
+
+it("paints the pressed fill on web and reports it, so a caller does not paint its own", async () => {
+  const highlights = recordHighlights();
+  const { getByTestId } = render(
+    <WebPressHighlight
+      testID="row"
+      style={rowStyle}
+      highlightStyle={highlightStyle}
+      onHighlightChange={highlights.record}
+      onPress={onPress}
+    />,
+  );
+  const row = getByTestId("row");
+
+  fireEvent.mouseDown(row, { button: 0 });
+  await waitFor(() => expect(getComputedStyle(row).backgroundColor).toBe("rgb(20, 30, 40)"));
+  expect(highlights.calls).toEqual([true]);
+
+  fireEvent.mouseUp(row, { button: 0 });
+  await waitFor(() => expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)"));
+  expect(highlights.calls).toEqual([true, false]);
+});
+
+it("leaves the Android row surface alone while pressed and clips the ripple to its corners", () => {
+  const highlights = recordHighlights();
+  const { getByTestId } = render(
+    <AndroidPressHighlight
+      testID="row"
+      testOnly_pressed
+      style={rowStyle}
+      highlightStyle={highlightStyle}
+      onHighlightChange={highlights.record}
+    />,
+  );
+  const row = getComputedStyle(getByTestId("row"));
+
+  expect(row.backgroundColor).toBe("rgb(255, 255, 255)");
+  expect(row.borderRadius).toBe("8px");
+  expect(row.overflow).toBe("hidden");
+  expect(highlights.calls).toEqual([]);
 });

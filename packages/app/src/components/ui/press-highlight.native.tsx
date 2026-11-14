@@ -1,21 +1,25 @@
-import { forwardRef, useCallback } from "react";
-import { Pressable, type PressableStateCallbackType, type View } from "react-native";
+import { forwardRef } from "react";
+import { Pressable, type View } from "react-native";
+import { usePressFill } from "./press-highlight.fill";
 import type { PressHighlightProps } from "./press-highlight.types";
 
+// iOS. Android resolves `press-highlight.android.tsx`.
+
+// Feedback waits this long so a scroll that claims the touch first cancels it.
+const PRESS_DELAY_MS = 130;
+
 export const PressHighlight = forwardRef<View, PressHighlightProps>(function PressHighlight(
-  { highlightStyle, style, unstable_pressDelay = 130, ...props },
+  {
+    highlightStyle,
+    onHighlightChange,
+    style,
+    onPressIn,
+    onPressOut,
+    unstable_pressDelay = PRESS_DELAY_MS,
+    ...props
+  },
   ref,
 ) {
-  // Give the scroll view time to claim a pan before Pressable activates its feedback.
-  const pressStyle = useCallback(
-    (state: PressableStateCallbackType) => [
-      typeof style === "function" ? style(state) : style,
-      state.pressed && highlightStyle,
-    ],
-    [style, highlightStyle],
-  );
-
-  return (
-    <Pressable {...props} ref={ref} unstable_pressDelay={unstable_pressDelay} style={pressStyle} />
-  );
+  const fill = usePressFill({ style, highlightStyle, onPressIn, onPressOut, onHighlightChange });
+  return <Pressable {...props} {...fill} ref={ref} unstable_pressDelay={unstable_pressDelay} />;
 });
