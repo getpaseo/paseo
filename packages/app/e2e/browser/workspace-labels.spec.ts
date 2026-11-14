@@ -3,6 +3,8 @@ import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { openSidebarDisplayPage } from "../support/helpers/sidebar";
+import { submitNewWorkspaceEmpty } from "../support/helpers/new-workspace";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 interface SessionEnvelope {
@@ -67,6 +69,14 @@ async function installWorkspaceLabelMutationFailure(page: import("@playwright/te
       failNextUpdate = true;
     },
   };
+}
+
+/** The workspace in the seeded project that the test created, rather than the seeded one. */
+async function findOtherWorkspace(seeded: Awaited<ReturnType<typeof seedWorkspace>>) {
+  const { entries } = await seeded.client.fetchWorkspaces();
+  return entries.find(
+    (entry) => entry.projectId === seeded.projectId && entry.id !== seeded.workspaceId,
+  );
 }
 
 function labelRow(page: import("@playwright/test").Page, name: string) {
@@ -143,6 +153,69 @@ async function createLabel(
 
 test.describe("Workspace labels", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("groups the sidebar by label and starts a workspace inside a label section", async ({
+    page,
+  }) => {
+    const labelled = await seedWorkspace({ repoPrefix: "workspace-labels-grouping-" });
+    const unlabelled = await seedWorkspace({ repoPrefix: "workspace-labels-grouping-none-" });
+    const serverId = getServerId();
+    // The shell keeps a hidden copy of the other layout's sidebar mounted.
+    const visible = (testID: string) => page.locator(`[data-testid="${testID}"]:visible`);
+    const rowsOf = (groupKey: string) => visible(`sidebar-status-group-rows-${groupKey}`);
+    const row = (workspaceId: string) =>
+      page.locator(`[data-testid="sidebar-workspace-row-${serverId}:${workspaceId}"]`);
+    try {
+      // The label catalog outlives the seeded projects on the worker's daemon, so these names
+      // stay clear of the ones the other tests here create.
+      for (const label of [
+        { name: "Infra", color: "red" as const },
+        { name: "Hotfix", color: "red" as const },
+      ]) {
+        await labelled.client.setWorkspaceLabel({
+          workspaceId: labelled.workspaceId,
+          label,
+          assigned: true,
+        });
+      }
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      // Grouping → Labels lists a workspace under each of its labels.
+      await openSidebarDisplayPage(page, "sidebar-display-grouping");
+      await page.getByTestId("sidebar-grouping-label").click();
+      await page.keyboard.press("Escape");
+      await expect(rowsOf("label:infra").locator(row(labelled.workspaceId))).toBeVisible();
+      await expect(rowsOf("label:hotfix").locator(row(labelled.workspaceId))).toBeVisible();
+      await expect(rowsOf("label:").locator(row(unlabelled.workspaceId))).toBeVisible();
+      await expect(rowsOf("label:").locator(row(labelled.workspaceId))).toHaveCount(0);
+
+      // New workspace from a label section carries that label. The New workspace screen starts
+      // on the last active project, so make the labelled one active first, from either of its
+      // two rows.
+      await rowsOf("label:infra").locator(row(labelled.workspaceId)).click();
+      await visible("sidebar-status-group-label:infra").hover();
+      await visible("sidebar-label-group-new-workspace-label:infra").click();
+      await expect(page).toHaveURL(/\/new\?label=Infra$/u);
+      await submitNewWorkspaceEmpty(page);
+
+      let created: { id: string; labels?: string[] } | undefined;
+      await expect
+        .poll(
+          async () => {
+            created = await findOtherWorkspace(labelled);
+            return created?.labels ?? null;
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual(["Infra"]);
+      await expect(rowsOf("label:infra").locator(row(created!.id))).toBeVisible();
+      await expect(rowsOf("label:hotfix").locator(row(created!.id))).toHaveCount(0);
+    } finally {
+      await unlabelled.cleanup();
+      await labelled.cleanup();
+    }
+  });
 
   test("keeps label filters reachable when no workspaces match", async ({ page }) => {
     const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-no-matches-" });
