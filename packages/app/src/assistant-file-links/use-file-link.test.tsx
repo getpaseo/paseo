@@ -39,6 +39,21 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+/**
+ * Resolves a pending lookup and waits until React Query has delivered the result. It delivers on a
+ * timer, which would otherwise fire after the test, when jsdom is gone.
+ */
+async function resolveLookupAndDeliver(
+  lookup: ReturnType<typeof createDeferred<DirectorySuggestionResult>>,
+  result: DirectorySuggestionResult,
+): Promise<void> {
+  await act(async () => {
+    lookup.resolve(result);
+    await lookup.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 interface OpenedFile {
   target: InlinePathTarget;
   disposition: OpenFileDisposition;
@@ -322,13 +337,10 @@ describe("useFileLink", () => {
     act(() => {
       result.current.setWorkspaceRoot("/Users/test/other");
     });
-    // Let the stale result land: React Query delivers it on a timer, which would otherwise fire
-    // after the test, when jsdom is gone, and the assertion below would run before it arrived.
-    await act(async () => {
-      deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
-      await deferred.promise;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await resolveLookupAndDeliver(
+      deferred,
+      resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),
+    );
 
     expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
     expect(openedFiles).toEqual([]);
