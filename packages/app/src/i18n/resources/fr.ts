@@ -777,6 +777,8 @@ export const fr: TranslationResources = {
         importSession: "Importer une session",
         copyPath: "Copier le chemin de l’espace de travail",
         copyBranchName: "Copier le nom de la branche",
+        pin: "Épingler l’espace de travail",
+        unpin: "Désépingler l’espace de travail",
         showSetup: "Afficher la configuration",
       },
       toasts: {

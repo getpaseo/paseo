@@ -773,6 +773,8 @@ export const ja: TranslationResources = {
         importSession: "セッションをインポート",
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
+        pin: "ワークスペースを固定",
+        unpin: "ワークスペースの固定を解除",
         showSetup: "セットアップを表示",
       },
       toasts: {

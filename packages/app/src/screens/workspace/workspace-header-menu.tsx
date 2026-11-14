@@ -3,7 +3,15 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Copy, Ellipsis, Globe, Import as ImportIcon, Settings } from "lucide-react-native";
+import {
+  Copy,
+  Ellipsis,
+  Globe,
+  Import as ImportIcon,
+  Pin,
+  PinOff,
+  Settings,
+} from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -38,6 +46,8 @@ const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
+const ThemedPin = withUnistyles(Pin);
+const ThemedPinOff = withUnistyles(PinOff);
 const ThemedSettings = withUnistyles(Settings);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -45,6 +55,8 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+const MENU_PIN_ICON = <ThemedPin size={16} uniProps={mutedColorMapping} />;
+const MENU_UNPIN_ICON = <ThemedPinOff size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
 function WorkspaceHeaderMenuTriggerIcon() {
   return (
@@ -81,9 +93,12 @@ export interface WorkspaceHeaderWorkspaceActions {
   showWorkspaceSetup: boolean;
   importAgentDisabled: boolean;
   copyPathDisabled: boolean;
+  isPinned: boolean;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
+  /** Undefined when the host can't pin, which hides the item, as in the sidebar row menu. */
+  onTogglePin?: () => void;
   onOpenSetupTab: () => void;
 }
 
@@ -92,9 +107,11 @@ function WorkspaceHeaderWorkspaceActionItems({
   showWorkspaceSetup,
   importAgentDisabled,
   copyPathDisabled,
+  isPinned,
   onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
+  onTogglePin,
   onOpenSetupTab,
 }: WorkspaceHeaderWorkspaceActions) {
   const { t } = useTranslation();
@@ -115,6 +132,15 @@ function WorkspaceHeaderWorkspaceActionItems({
           onSelect={onCopyBranchName}
         >
           {t("workspace.header.actions.copyBranchName")}
+        </DropdownMenuItem>
+      ) : null}
+      {onTogglePin ? (
+        <DropdownMenuItem
+          testID="workspace-header-pin"
+          leading={isPinned ? MENU_UNPIN_ICON : MENU_PIN_ICON}
+          onSelect={onTogglePin}
+        >
+          {isPinned ? t("workspace.header.actions.unpin") : t("workspace.header.actions.pin")}
         </DropdownMenuItem>
       ) : null}
       <DropdownMenuItem
