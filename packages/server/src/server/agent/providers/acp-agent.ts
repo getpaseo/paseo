@@ -600,7 +600,10 @@ class ACPImportHistoryCollector {
     if (!state) return;
     const update = params.update;
     if (isACPConversationUpdate(update)) state.hasConversation = true;
-    if (update.sessionUpdate !== "user_message_chunk") {
+    if (
+      update.sessionUpdate !== "user_message_chunk" ||
+      update._meta?.hideFromScrollback === true
+    ) {
       this.flushCurrent(state);
       return;
     }
@@ -3305,6 +3308,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private handleUserMessageChunk(
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
   ): AgentStreamEvent[] {
+    if (update._meta?.hideFromScrollback === true) {
+      return this.flushPendingUserMessage();
+    }
     this.fallbackAssistantMessageId = null;
     if (
       this.activeForegroundTurnId &&
