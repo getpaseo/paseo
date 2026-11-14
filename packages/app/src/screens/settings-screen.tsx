@@ -89,6 +89,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { openChangelog } from "@/changelog";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
+import { Switch } from "@/components/ui/switch";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import {
@@ -389,9 +390,37 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
             </DropdownMenuContent>
           </DropdownMenu>
         </View>
+        <ConfirmAgentArchiveRow />
         {isNative ? null : <ShowSetupAgainRow />}
       </View>
     </SettingsSection>
+  );
+}
+
+function ConfirmAgentArchiveRow() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const handleChange = useCallback(
+    (alwaysConfirmAgentArchive: boolean) => void updateSettings({ alwaysConfirmAgentArchive }),
+    [updateSettings],
+  );
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.general.alwaysConfirmAgentArchive.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.general.alwaysConfirmAgentArchive.description")}
+        </Text>
+      </View>
+      <Switch
+        value={settings.alwaysConfirmAgentArchive}
+        onValueChange={handleChange}
+        accessibilityLabel={t("settings.general.alwaysConfirmAgentArchive.label")}
+        testID="always-confirm-agent-archive-toggle"
+      />
+    </View>
   );
 }
 

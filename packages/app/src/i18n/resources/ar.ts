@@ -738,6 +738,8 @@ export const ar: TranslationResources = {
         archive: "أرشيف",
         closeTerminalTitle: "إغلاق المحطة؟",
         closeTerminalMessage: "سيتم إيقاف أي عملية جارية في هذه المحطة على الفور.",
+        archiveAgentTitle: "أرشفة الوكيل؟",
+        archiveAgentMessage: "سيؤدي إغلاق علامة التبويب هذه إلى أرشفة الوكيل.",
         archiveRunningAgentTitle: "وكيل تشغيل الأرشيف؟",
         archiveRunningAgentMessage:
           "هذا الوكيل لا يزال قيد التشغيل. ستؤدي أرشفته إلى إيقاف الوكيل وإغلاق علامة التبويب.",
@@ -2461,6 +2463,11 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      alwaysConfirmAgentArchive: {
+        label: "التأكيد دائمًا قبل أرشفة الوكلاء",
+        description:
+          "اسأل قبل أن يؤدي إغلاق علامة تبويب إلى أرشفة وكيلها. يُطلب التأكيد دائمًا للوكلاء قيد التشغيل.",
+      },
       setup: {
         label: "الإعداد الأولي",
         description: "أعد المرور على المظهر والمزوّدين والمشاريع وإقران الهاتف",

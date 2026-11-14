@@ -734,6 +734,8 @@ export const en = {
         bulkUnsaved: "{{count}} tab(s) have unsaved changes. Closing will discard those drafts.",
         closeTerminalTitle: "Close terminal?",
         closeTerminalMessage: "Any running process in this terminal will be stopped immediately.",
+        archiveAgentTitle: "Archive agent?",
+        archiveAgentMessage: "Closing this tab will archive the agent.",
         archiveRunningAgentTitle: "Archive running agent?",
         archiveRunningAgentMessage:
           "This agent is still running. Archiving it will stop the agent and close the tab.",
@@ -2552,6 +2554,10 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      alwaysConfirmAgentArchive: {
+        label: "Always confirm before archiving agents",
+        description: "Ask before closing a tab archives its agent. Running agents always ask.",
+      },
       setup: {
         label: "First-run setup",
         description: "Walk through appearance, providers, projects and phone pairing again",
