@@ -355,6 +355,8 @@ export const ja: TranslationResources = {
     attachments: {
       dismissImage: "画像を閉じる",
       closeImage: "画像を閉じる",
+      downloadImage: "画像をダウンロード",
+      downloadFailed: "画像の保存に失敗しました",
       imageLoadFailed: "画像を読み込めませんでした",
       imageUnavailable: "画像が利用できません",
       imagePreviewUnavailable: "画像プレビューは利用できません。",

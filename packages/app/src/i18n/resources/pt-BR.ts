@@ -354,6 +354,8 @@ export const ptBR: TranslationResources = {
     attachments: {
       dismissImage: "Dispensar imagem",
       closeImage: "Fechar imagem",
+      downloadImage: "Baixar imagem",
+      downloadFailed: "Falha ao salvar imagem",
       imageLoadFailed: "Não foi possível carregar a imagem",
       imageUnavailable: "Imagem indisponível",
       imagePreviewUnavailable: "Prévia da imagem indisponível.",

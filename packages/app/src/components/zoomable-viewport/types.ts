@@ -13,6 +13,8 @@ export interface ZoomableViewportProps {
   contentSize: ViewportSize;
   children: ReactNode;
   actions?: ZoomableViewportAction[];
+  /** Actions rendered before the built-in zoom controls (e.g. download). */
+  leadingActions?: ZoomableViewportAction[];
   accessibilityLabel?: string;
   fit?: ViewportFitOptions;
   maxScale?: number;

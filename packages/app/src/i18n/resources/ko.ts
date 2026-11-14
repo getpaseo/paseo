@@ -351,6 +351,8 @@ export const ko: TranslationResources = {
     attachments: {
       dismissImage: "이미지 닫기",
       closeImage: "이미지 닫기",
+      downloadImage: "이미지 다운로드",
+      downloadFailed: "이미지 저장 실패",
       imageLoadFailed: "이미지를 불러올 수 없습니다",
       imageUnavailable: "이미지를 사용할 수 없습니다",
       imagePreviewUnavailable: "이미지 미리보기를 사용할 수 없습니다.",

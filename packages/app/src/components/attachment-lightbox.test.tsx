@@ -67,6 +67,7 @@ vi.mock("react-i18next", () => ({
       ({
         "message.attachments.closeImage": "Close image",
         "message.attachments.dismissImage": "Dismiss image",
+        "message.attachments.downloadImage": "Download image",
         "message.attachments.imageLoadFailed": "Couldn't load image",
       })[key] ?? key,
   }),
@@ -86,17 +87,26 @@ vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {
+    Download: createIcon("Download"),
     X: createIcon("X"),
   };
 });
 
 vi.mock("@/components/zoomable-viewport/image", () => ({
   ZoomableImage: (props: Record<string, unknown>) => {
-    const actions = props.actions as Array<{
-      label: string;
-      onPress: () => void;
-      testID?: string;
-    }>;
+    const leadingActions =
+      (props.leadingActions as Array<{
+        label: string;
+        onPress: () => void;
+        testID?: string;
+      }>) ?? [];
+    const actions =
+      (props.actions as Array<{
+        label: string;
+        onPress: () => void;
+        testID?: string;
+      }>) ?? [];
+    const allActions = [...leadingActions, ...actions];
     return React.createElement(
       "div",
       {
@@ -104,7 +114,7 @@ vi.mock("@/components/zoomable-viewport/image", () => ({
         "data-source": props.uri,
         role: "img",
       },
-      actions.map((action) =>
+      allActions.map((action) =>
         React.createElement(
           "button",
           {
@@ -131,6 +141,20 @@ vi.mock("react-native", async () => {
 vi.mock("@/attachments/use-attachment-preview-url", () => ({
   useAttachmentPreviewUrl: (metadata: AttachmentMetadata | null) =>
     useAttachmentPreviewUrlMock(metadata),
+}));
+
+const saveImageMock = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+vi.mock("@/hooks/use-save-image", () => ({
+  useSaveImage: () => saveImageMock,
+}));
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({
+    show: vi.fn(),
+    copied: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 let root: Root | null = null;
@@ -246,5 +270,21 @@ describe("AttachmentLightbox", () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a download button as a leading action and saves the image when clicked", async () => {
+    saveImageMock.mockClear();
+    render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} />);
+
+    const downloadButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Download image"][data-testid="attachment-lightbox-download"]',
+    );
+    expect(downloadButton).not.toBeNull();
+
+    await act(async () => {
+      downloadButton?.click();
+    });
+
+    expect(saveImageMock).toHaveBeenCalledWith("blob:preview");
   });
 });

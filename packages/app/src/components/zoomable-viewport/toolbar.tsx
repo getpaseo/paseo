@@ -12,6 +12,7 @@ import type { ZoomableViewportAction } from "./types";
 
 interface ViewportToolbarProps {
   actions: ZoomableViewportAction[];
+  leadingActions?: ZoomableViewportAction[];
   maxScale: number;
   minScale: number;
   onReset: () => void;
@@ -27,6 +28,7 @@ interface ResolvedViewportAction extends ZoomableViewportAction {
 
 export const ViewportToolbar = React.memo(function ViewportToolbar({
   actions,
+  leadingActions = [],
   maxScale,
   minScale,
   onReset,
@@ -37,6 +39,7 @@ export const ViewportToolbar = React.memo(function ViewportToolbar({
 }: ViewportToolbarProps) {
   const { t } = useTranslation();
   const viewportActions: ResolvedViewportAction[] = [
+    ...leadingActions.map((action) => ({ ...action, disabled: false })),
     {
       icon: ZoomIn,
       label: t("message.diagram.zoomIn"),
