@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { ProviderSubagentStore } from "../../provider-subagents/store.js";
 import {
   PiProviderOptionsSchema,
   PiRpcAgentClient,
@@ -29,7 +30,7 @@ import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
-import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
+import type { PiCustomEntry, PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
@@ -90,6 +91,29 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
+function workflowEntry(data: Record<string, unknown> = {}): PiCustomEntry {
+  return {
+    type: "custom",
+    id: "progress-1",
+    customType: "pi-dynamic-workflows:progress",
+    timestamp: "2026-09-28T10:00:00.000Z",
+    data: {
+      version: 1,
+      runId: "background",
+      name: "Review",
+      status: "running",
+      cwd: "/project",
+      agentCount: 1,
+      runningCount: 1,
+      doneCount: 0,
+      errorCount: 0,
+      agentIds: [0],
+      agents: [{ id: 0, label: "Reviewer", status: "running" }],
+      ...data,
+    },
+  };
+}
+
 class ManualUsagePollScheduler implements PiUsagePollScheduler {
   private readonly polls: Array<{ active: boolean; callback: () => void }> = [];
 
@@ -143,6 +167,19 @@ function piUserEntry(input: { id: string; parentId: string | null; text: string 
 
 function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
   return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
+}
+
+// Pi's context path: the entries from the root to the leaf.
+function piBranchTo<T extends { id: string; parentId: string | null }>(
+  entries: T[],
+  leafId: string,
+): T[] {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const branch: T[] = [];
+  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
+    branch.unshift(entry);
+  }
+  return branch;
 }
 
 function parseEntryCapture(notification: string): unknown {
@@ -1679,6 +1716,89 @@ describe("PiRpcAgentSession", () => {
     expect(pi.latestSession().closeCalls).toBe(1);
   });
 
+  test("releases a failed history capture so the interactive runtime can stop", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    const captureFailure = new Error("Capture prompt rejected");
+    const rejectedHistory = expect(session.streamHistory().next()).rejects.toBe(captureFailure);
+
+    await runtime.failHeldPrompt(captureFailure);
+    await rejectedHistory;
+
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+    expect(runtime.closeCalls).toBe(0);
+    await expect(session.streamHistory().next()).resolves.toMatchObject({ done: true });
+  });
+
+  test("closes a history-only runtime without orphaning a failed capture", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    const captureFailure = new Error("Capture prompt rejected");
+    const rejectedHistory = expect(session.streamHistory().next()).rejects.toBe(captureFailure);
+
+    await runtime.failHeldPrompt(captureFailure);
+    await rejectedHistory;
+
+    expect(runtime.closeCalls).toBe(1);
+  });
+
+  test("rejects history when closed before its capture prompt settles", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.holdNextPrompt();
+    let historyError: unknown;
+    const history = session
+      .streamHistory()
+      .next()
+      .catch((error: unknown) => {
+        historyError = error;
+      });
+
+    await session.close();
+    await waitForImmediate();
+    try {
+      expect(historyError).toEqual(new Error("Pi session closed"));
+    } finally {
+      await runtime.failHeldPrompt(new Error("Late prompt rejection"));
+      await history;
+    }
+    expect(historyError).toEqual(new Error("Pi session closed"));
+    expect(runtime.closeCalls).toBe(1);
+  });
+
+  test("releases a failed rewind command so the interactive runtime can stop", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.treeUserEntries = [{ id: "user-entry", parentId: null, text: "Question" }];
+    const rewindFailure = new Error("Tree navigation rejected");
+    runtime.treeNavigationError = rewindFailure;
+
+    await expect(session.revertConversation({ messageId: "user-entry" })).rejects.toBe(
+      rewindFailure,
+    );
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+    expect(runtime.closeCalls).toBe(0);
+    runtime.treeNavigationError = null;
+    await expect(session.revertConversation({ messageId: "user-entry" })).resolves.toBeUndefined();
+  });
+
   test("keeps an interactive Pi runtime open after replaying history", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).resumeSession({
@@ -1866,6 +1986,7 @@ describe("PiRpcAgentSession", () => {
     const context = {
       sessionManager: {
         getEntries: () => entries,
+        getBranch: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
@@ -1880,7 +2001,333 @@ describe("PiRpcAgentSession", () => {
           { id: "abandoned", parentId: "one-reply", text: "rewound away" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
+        customEntries: [],
       },
+    ]);
+  });
+
+  test("captures extension state before compaction and excludes abandoned branches", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const listeners = await loadPaseoExtensionListeners(pi.recordedLaunches[0]!.extensionPaths[0]!);
+    const beforeCompaction = {
+      type: "custom" as const,
+      id: "state-1",
+      parentId: "one",
+      customType: "test-extension",
+      timestamp: "2026-09-28T10:00:00.000Z",
+      data: { value: 1 },
+    };
+    const abandoned = {
+      ...beforeCompaction,
+      id: "abandoned",
+      parentId: "state-1",
+      data: { value: 2 },
+    };
+    const current = { ...beforeCompaction, id: "state-2", parentId: "two", data: { value: 3 } };
+    const compaction = {
+      type: "compaction",
+      id: "compaction",
+      parentId: "state-1",
+      summary: "Earlier conversation",
+      firstKeptEntryId: "one",
+      tokensBefore: 100,
+    };
+    const latestUser = piUserEntry({ id: "two", parentId: "compaction", text: "second" });
+    const entries = [
+      piUserEntry({ id: "one", parentId: null, text: "first" }),
+      beforeCompaction,
+      abandoned,
+      compaction,
+      latestUser,
+      current,
+    ];
+    const notifications: string[] = [];
+    await listeners.get("session_start")?.(
+      {},
+      {
+        sessionManager: {
+          getEntries: () => entries,
+          getBranch: () => piBranchTo(entries, "state-2"),
+        },
+        ui: { notify: (message: string) => notifications.push(message) },
+      },
+    );
+    expect(notifications.map(parseEntryCapture)).toEqual([
+      expect.objectContaining({
+        customEntries: [beforeCompaction, current],
+      }),
+    ]);
+  });
+
+  test("keeps complete history identities alongside captured workflow state", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.treeUserEntries = [
+      { id: "before-compaction", parentId: null, text: "same prompt" },
+      { id: "abandoned", parentId: "before-compaction", text: "same prompt" },
+      { id: "after-compaction", parentId: "compaction", text: "same prompt" },
+    ];
+    runtime.historyUserEntries = [
+      { id: "before-compaction", parentId: null, text: "same prompt" },
+      { id: "after-compaction", parentId: "compaction", text: "same prompt" },
+    ];
+    runtime.messages = [
+      { role: "user", content: "same prompt" },
+      { role: "assistant", content: [{ type: "text", text: "Earlier answer" }] },
+      { role: "user", content: "same prompt" },
+    ];
+    runtime.customEntries = [workflowEntry()];
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(
+      history.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "user_message" ? [event.item] : [],
+      ),
+    ).toEqual([
+      { type: "user_message", text: "same prompt", messageId: "before-compaction" },
+      { type: "user_message", text: "same prompt", messageId: "after-compaction" },
+    ]);
+    expect(history).toContainEqual({
+      type: "provider_subagent",
+      provider: "pi",
+      event: expect.objectContaining({ type: "upsert", id: "workflow:background:0" }),
+    });
+  });
+
+  test("closes a history-only runtime when stopped during workflow replay", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtime) => {
+      runtime.customEntries = [workflowEntry()];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect(await history.next()).toEqual({
+      done: false,
+      value: {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({ type: "upsert", id: "workflow:background" }),
+      },
+    });
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+    expect(await history.next()).toEqual({ done: true, value: undefined });
+  });
+
+  test("streams workflow entries while idle and restores child state before live deltas", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    const running = workflowEntry();
+    runtime.customEntries = [running];
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(history).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background",
+          status: "running",
+        }),
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background:0",
+          status: "running",
+        }),
+      },
+    ]);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    runtime.emit({ type: "entry_appended", entry: { type: "message" } });
+    runtime.emit({ type: "entry_appended", entry: { ...running, data: { invalid: true } } });
+    expect(events).toEqual([]);
+    runtime.emit({
+      type: "entry_appended",
+      entry: {
+        ...running,
+        id: "progress-2",
+        data: {
+          version: 1,
+          runId: "background",
+          name: "Review",
+          status: "paused",
+          cwd: "/project",
+          agentCount: 1,
+          runningCount: 0,
+          doneCount: 0,
+          errorCount: 0,
+          agentIds: [0],
+          agents: [],
+        },
+      },
+    });
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background",
+          status: "canceled",
+          subtitle: "Paused · 0/1 completed",
+        }),
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background:0",
+          status: "canceled",
+          subtitle: "Paused",
+        }),
+      },
+    ]);
+  });
+
+  test("forgets custom state absent from a rewound branch before its next announcement", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.emit({ type: "entry_appended", entry: workflowEntry() });
+    runtime.customEntries = [];
+    runtime.emitEntryCapture(undefined, "tree_navigation");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    runtime.emit({ type: "entry_appended", entry: { ...workflowEntry(), id: "progress-2" } });
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background",
+          status: "running",
+        }),
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "workflow:background:0",
+          status: "running",
+        }),
+      },
+    ]);
+  });
+
+  test("finishing one history replay keeps another replay current", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.customEntries = [workflowEntry()];
+    const firstHistory = Promise.withResolvers<Awaited<ReturnType<typeof runtime.getHistory>>>();
+    const secondHistory = Promise.withResolvers<Awaited<ReturnType<typeof runtime.getHistory>>>();
+    const firstStarted = Promise.withResolvers<void>();
+    const secondStarted = Promise.withResolvers<void>();
+    let historyCalls = 0;
+    runtime.getHistory = async () => {
+      historyCalls += 1;
+      if (historyCalls === 1) {
+        firstStarted.resolve();
+        return firstHistory.promise;
+      }
+      secondStarted.resolve();
+      return secondHistory.promise;
+    };
+    const first = session.streamHistory();
+    const firstEvent = first.next();
+    await firstStarted.promise;
+    const second = session.streamHistory();
+    const secondEvent = second.next();
+    await secondStarted.promise;
+
+    firstHistory.resolve({ messages: [], userEntries: [] });
+    expect((await firstEvent).done).toBe(false);
+    await first.return();
+    runtime.emit({
+      type: "entry_appended",
+      entry: {
+        ...workflowEntry({
+          status: "completed",
+          runningCount: 0,
+          doneCount: 1,
+          agents: [{ id: 0, label: "Reviewer", status: "done", resultPreview: "No issues" }],
+        }),
+        id: "progress-2",
+      },
+    });
+    secondHistory.resolve({ messages: [], userEntries: [] });
+    const store = new ProviderSubagentStore();
+    const events = [(await secondEvent).value];
+    for await (const event of second) events.push(event);
+    for (const event of events) {
+      if (event?.type === "provider_subagent") store.apply("parent", event.provider, event.event);
+    }
+    expect(store.list("parent").map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: "workflow:background", status: "completed" },
+      { id: "workflow:background:0", status: "completed" },
+    ]);
+    expect(runtime.closeCalls).toBe(0);
+  });
+
+  test("history does not overwrite a background completion arriving during getHistory", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const runtime = pi.latestSession();
+    runtime.customEntries = [workflowEntry()];
+    runtime.getHistory = async () => {
+      runtime.emit({
+        type: "entry_appended",
+        entry: {
+          ...workflowEntry({
+            status: "completed",
+            runningCount: 0,
+            doneCount: 1,
+            agents: [{ id: 0, label: "Reviewer", status: "done", resultPreview: "No issues" }],
+          }),
+          id: "progress-2",
+        },
+      });
+      return { messages: [], userEntries: [] };
+    };
+    const store = new ProviderSubagentStore();
+    session.subscribe((event) => {
+      if (event.type === "provider_subagent") store.apply("parent", event.provider, event.event);
+    });
+    for await (const event of session.streamHistory()) {
+      if (event.type === "provider_subagent") store.apply("parent", event.provider, event.event);
+    }
+    expect(store.list("parent").map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: "workflow:background", status: "completed" },
+      { id: "workflow:background:0", status: "completed" },
     ]);
   });
 
