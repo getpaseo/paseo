@@ -22,11 +22,17 @@ export default defineConfig({
     {
       name: "markdown-wasm-commonjs-export",
       transform(source, id) {
-        // The ESM package contains a CommonJS WASM factory. Metro handles the
-        // interop; Vite needs an ESM export instead of the CommonJS trailer.
-        // Vite can request the file with a version query (`md4c.js?v=<hash>`), so match the
-        // path without it.
-        if (!id.split("?")[0].endsWith("/lib/module/web/wasm/md4c.js")) return;
+        // The ESM package contains CommonJS calls (`require('katex')` and the WASM
+        // factory trailer). Metro handles the interop; Vite needs ESM imports/exports.
+        // Vite can request files with a version query (`?v=<hash>`), so match without it.
+        const cleanId = id.split("?")[0];
+        if (cleanId.endsWith("/lib/module/web/katex.js")) {
+          return {
+            code: `import katexModule from "katex";\n${source.replace("require('katex')", "katexModule")}`,
+            map: null,
+          };
+        }
+        if (!cleanId.endsWith("/lib/module/web/wasm/md4c.js")) return;
         const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
         if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
         return {
@@ -182,6 +188,7 @@ export default defineConfig({
       "@legendapp/list/react-native",
       "react-i18next",
       "i18next",
+      "katex",
       "@marijn/find-cluster-break",
       "tiny-invariant",
       "react/jsx-dev-runtime",
