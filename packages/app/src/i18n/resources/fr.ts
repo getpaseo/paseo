@@ -1301,6 +1301,11 @@ export const fr: TranslationResources = {
       closeSidebar: "Fermer la barre latérale",
       moreActions: "Plus d’actions",
     },
+    nav: {
+      more: "Plus",
+      moreItems: "Plus d’éléments du menu",
+      resize: "Redimensionner le menu",
+    },
     footer: {
       usage: "Utilisation",
     },
@@ -2662,6 +2667,12 @@ export const fr: TranslationResources = {
         },
         moveUp: "Monter",
         moveDown: "Descendre",
+        navLayout: {
+          title: "Disposition du menu",
+          description: "Comment le menu de la barre latérale tient sur les petits écrans",
+          scroll: "Défiler",
+          resizable: "Redimensionnable",
+        },
       },
       fonts: {
         title: "Polices",

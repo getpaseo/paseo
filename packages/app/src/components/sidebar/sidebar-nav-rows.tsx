@@ -1,10 +1,23 @@
 import { router, usePathname } from "expo-router";
-import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
+import { CalendarClock, Ellipsis, History, Plus, Search } from "lucide-react-native";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { SidebarPopoverRoot, SidebarPopoverSurface } from "@/components/sidebar/sidebar-popover";
+import { DensityIcon } from "@/components/ui/density-icon";
+import { Shortcut } from "@/components/ui/shortcut";
+import { SidebarHeaderRow, type SidebarRowIcon } from "@/components/sidebar/sidebar-header-row";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -26,6 +39,8 @@ import {
 
 interface SidebarNavRowProps {
   onBeforeNavigate?: () => void;
+  /** Inside the More surface this row is a menu item, so arrow keys can move between entries. */
+  menu?: boolean;
 }
 
 interface SidebarNavRowsProps extends SidebarNavRowProps {
@@ -33,6 +48,7 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   style?: StyleProp<ViewStyle>;
   /** Sits to the right of the first row, which shrinks to make room. */
   firstRowTrailing?: ReactNode;
+  maxRows?: number;
 }
 
 /**
@@ -40,14 +56,31 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  firstRowTrailing,
+  maxRows,
+}: SidebarNavRowsProps) {
+  const { t } = useTranslation();
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const rowLimit =
+    maxRows === undefined || visibleItems.length <= maxRows
+      ? visibleItems.length
+      : Math.max(0, maxRows - 1);
+  const overflowItems = visibleItems.slice(rowLimit);
+  const closeOverflowAndNavigate = useCallback(() => {
+    setOverflowOpen(false);
+    onBeforeNavigate?.();
+  }, [onBeforeNavigate]);
 
   if (visibleItems.length === 0 && !firstRowTrailing) return null;
 
-  const [firstRow, ...restRows] = visibleItems.map((item) => {
+  const renderRow = (item: (typeof visibleItems)[number], menu = false) => {
+    const beforeNavigate = menu ? closeOverflowAndNavigate : onBeforeNavigate;
     if (item.kind === "plugin") {
       return (
         <PluginSidebarItem
@@ -55,13 +88,38 @@ export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: Si
           group={item.group}
           section="header"
           fallbackAnchorRef={groupRef}
-          onBeforeNavigate={onBeforeNavigate}
+          menu={menu}
+          onBeforeNavigate={beforeNavigate}
         />
       );
     }
     const Row = BUILTIN_ROWS[item.id];
-    return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
-  });
+    return <Row key={item.key} menu={menu} onBeforeNavigate={beforeNavigate} />;
+  };
+  const rows = visibleItems.slice(0, rowLimit).map((item) => renderRow(item));
+  if (overflowItems.length) {
+    rows.push(
+      <SidebarPopoverRoot key="overflow" open={overflowOpen} onOpenChange={setOverflowOpen}>
+        <MenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel={t("sidebar.nav.moreItems")}
+          testID="sidebar-nav-overflow"
+          style={styles.overflowTrigger}
+        >
+          <DensityIcon icon={Ellipsis} size="sm" color="foregroundMuted" />
+          <Text style={styles.overflowLabel}>{t("sidebar.nav.more")}</Text>
+        </MenuTrigger>
+        <SidebarPopoverSurface
+          section="header"
+          title={t("sidebar.nav.more")}
+          testID="sidebar-nav-overflow-menu"
+        >
+          {overflowItems.map((item) => renderRow(item, true))}
+        </SidebarPopoverSurface>
+      </SidebarPopoverRoot>,
+    );
+  }
+  const [firstRow, ...restRows] = rows;
 
   return (
     <View ref={groupRef} collapsable={false} style={style}>
@@ -78,8 +136,87 @@ export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: Si
   );
 }
 
+function SidebarNavMenuItem({
+  icon,
+  label,
+  onPress,
+  isActive,
+  testID,
+  shortcutKeys,
+}: {
+  icon: SidebarRowIcon;
+  label: string;
+  onPress: () => void;
+  isActive: boolean;
+  testID: string;
+  shortcutKeys: ShortcutKey[][] | null;
+}) {
+  const leading = useMemo(
+    () => <DensityIcon icon={icon} size="sm" color="foregroundMuted" />,
+    [icon],
+  );
+  const trailing = useMemo(() => {
+    if (!shortcutKeys) return null;
+    return <Shortcut chord={shortcutKeys} />;
+  }, [shortcutKeys]);
+  return (
+    <MenuItem
+      leading={leading}
+      trailing={trailing}
+      onSelect={onPress}
+      active={isActive}
+      testID={testID}
+    >
+      {label}
+    </MenuItem>
+  );
+}
+
+function SidebarNavEntry({
+  menu = false,
+  icon,
+  label,
+  onPress,
+  isActive = false,
+  testID,
+  shortcutKeys = null,
+}: {
+  menu?: boolean;
+  icon: SidebarRowIcon;
+  label: string;
+  onPress: () => void;
+  isActive?: boolean;
+  testID: string;
+  shortcutKeys?: ShortcutKey[][] | null;
+}) {
+  if (menu) {
+    return (
+      <SidebarNavMenuItem
+        icon={icon}
+        label={label}
+        onPress={onPress}
+        isActive={isActive}
+        testID={testID}
+        shortcutKeys={shortcutKeys}
+      />
+    );
+  }
+  return (
+    <SidebarHeaderRow
+      icon={icon}
+      label={label}
+      onPress={onPress}
+      isActive={isActive}
+      testID={testID}
+      variant="compact"
+      shortcutKeys={shortcutKeys}
+    />
+  );
+}
+
 const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
   onBeforeNavigate,
+  menu = false,
 }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("new-workspace"));
@@ -114,18 +251,18 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
   }, [activeWorkspace, activeWorkspaceServerId, canUseActiveWorkspaceContext, onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={Plus}
       label={t(builtinSidebarNavLabelKey("new-workspace"))}
       onPress={handlePress}
       testID="sidebar-global-new-workspace"
-      variant="compact"
       shortcutKeys={shortcutKeys}
     />
   );
 });
 
-function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarHistoryRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
   const handlePress = useCallback(() => {
@@ -134,38 +271,39 @@ function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   }, [onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={History}
       label={t(builtinSidebarNavLabelKey("history"))}
       onPress={handlePress}
       isActive={pathname.includes("/sessions")}
       testID="sidebar-sessions"
-      variant="compact"
     />
   );
 }
 
-function SidebarSearchRow() {
+function SidebarSearchRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const handlePress = useCallback(() => {
+    onBeforeNavigate?.();
     setCommandCenterOpen(true);
-  }, [setCommandCenterOpen]);
+  }, [onBeforeNavigate, setCommandCenterOpen]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={Search}
       label={t(builtinSidebarNavLabelKey("search"))}
       onPress={handlePress}
       testID="sidebar-search"
-      variant="compact"
       shortcutKeys={shortcutKeys}
     />
   );
 }
 
-function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarSchedulesRow({ onBeforeNavigate, menu = false }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
   const handlePress = useCallback(() => {
@@ -174,13 +312,13 @@ function SidebarSchedulesRow({ onBeforeNavigate }: SidebarNavRowProps) {
   }, [onBeforeNavigate]);
 
   return (
-    <SidebarHeaderRow
+    <SidebarNavEntry
+      menu={menu}
       icon={CalendarClock}
       label={t(builtinSidebarNavLabelKey("schedules"))}
       onPress={handlePress}
       isActive={pathname.includes("/schedules")}
       testID="sidebar-schedules"
-      variant="compact"
     />
   );
 }
@@ -192,7 +330,15 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
   schedules: SidebarSchedulesRow,
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
+  overflowTrigger: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+  },
+  overflowLabel: { fontSize: theme.fontSize.base, color: theme.colors.foregroundMuted },
   firstRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -201,4 +347,4 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-});
+}));

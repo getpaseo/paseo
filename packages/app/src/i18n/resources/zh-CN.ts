@@ -1263,6 +1263,11 @@ export const zhCN: TranslationResources = {
       closeSidebar: "关闭侧边栏",
       moreActions: "更多操作",
     },
+    nav: {
+      more: "更多",
+      moreItems: "更多菜单项",
+      resize: "调整菜单大小",
+    },
     footer: {
       usage: "使用情况",
     },
@@ -2575,6 +2580,12 @@ export const zhCN: TranslationResources = {
         },
         moveUp: "上移",
         moveDown: "下移",
+        navLayout: {
+          title: "菜单布局",
+          description: "侧边栏菜单在矮屏幕上的显示方式",
+          scroll: "滚动",
+          resizable: "可调整大小",
+        },
       },
       fonts: {
         title: "字体",

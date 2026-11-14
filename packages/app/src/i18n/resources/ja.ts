@@ -1285,6 +1285,11 @@ export const ja: TranslationResources = {
       closeSidebar: "サイドバーを閉じる",
       moreActions: "その他のアクション",
     },
+    nav: {
+      more: "その他",
+      moreItems: "その他のメニュー項目",
+      resize: "メニューのサイズを変更",
+    },
     footer: {
       usage: "使用状況",
     },
@@ -2627,6 +2632,12 @@ export const ja: TranslationResources = {
         },
         moveUp: "上に移動",
         moveDown: "下に移動",
+        navLayout: {
+          title: "メニューのレイアウト",
+          description: "高さの低い画面でサイドバーのメニューを収める方法",
+          scroll: "スクロール",
+          resizable: "サイズ変更",
+        },
       },
       fonts: {
         title: "フォント",

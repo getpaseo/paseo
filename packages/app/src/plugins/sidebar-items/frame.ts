@@ -5,6 +5,8 @@ import type { PluginSidebarSection } from "../types";
 /** What the host tells the kit components about the sidebar item they render in. */
 export interface SidebarItemFrame {
   section: PluginSidebarSection;
+  /** Rows inside the header More menu are menu items so arrow keys can reach them. */
+  menu: boolean;
   title: string;
   testID: string;
   /** A row calls this before its `onPress`, so a popover that press opens anchors to it. */
