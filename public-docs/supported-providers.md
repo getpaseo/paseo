@@ -26,19 +26,18 @@ Work out of the box once the underlying CLI is installed and authenticated.
 Install the Antigravity CLI (`agy`) on your daemon host, then run `agy` once to sign in. Pick
 **Antigravity** in Paseo. The provider ships with Paseo; no separate plugin install is required.
 
-**Full access** is the only permission mode. Antigravity cannot ask for permission when another
-app drives it, so Paseo starts `agy` with `--dangerously-skip-permissions`. Every tool call,
-including shell commands, runs without asking. Each session starts with a warning explaining
-this, including when you reopen a chat. Antigravity's own policy can still deny
-an action.
-
-After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts
-fresh because `agy` does not replay its history.
+Paseo drives `agy acp --stdio` and exposes three permission modes: **Default** (asks before
+running shell commands or editing files), **Accept edits** (auto-approves file edits and reads
+while asking before shell commands), and **Full access** (auto-approves all tool calls).
+Interactive `ask_question` prompts are surfaced as question cards in Paseo.
 
 This integration uses your installed CLI and sign-in. It is not endorsed by Google.
 
-Paseo MCP tools and steering are unavailable. Your own `agy` MCP servers still work. Attached
-images are passed as file references for the agent to read.
+Mid-turn steering is unavailable. Configured MCP servers and system prompts are forwarded to the
+ACP session, and attached images are passed as file references for the agent to read. Paseo also
+surfaces Antigravity account quota windows and AI Credits in the usage panel, streams native
+subagents into the subagents track, and wakes sessions automatically when background commands,
+schedules, or subagents complete.
 
 If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env`
 for provider-specific environment variables:

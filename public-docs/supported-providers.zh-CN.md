@@ -23,13 +23,11 @@ nav: 支持的 Provider
 
 在 daemon 主机上安装 Antigravity CLI（`agy`），然后运行一次 `agy` 登录。在 Paseo 中选择 **Antigravity**。该 Provider 随 Paseo 一起提供，无需另外安装插件。
 
-**Full access** 是唯一的权限模式。当由其他应用驱动时，Antigravity 无法请求权限，因此 Paseo 会以 `--dangerously-skip-permissions` 启动 `agy`。每次工具调用（包括 shell 命令）都不会询问就直接运行。每个会话开始时都会显示一条说明此事的警告，重新打开聊天时也会显示。Antigravity 自己的策略仍然可以拒绝某个操作。
-
-daemon 重启后，Antigravity 会记得对话，但 Paseo 的对话记录会重新开始，因为 `agy` 不会重放它的历史。
+Paseo 通过 `agy acp --stdio` 驱动 Antigravity，并提供三种权限模式：**Default**（执行 shell 命令或编辑文件前询问）、**Accept edits**（自动批准文件读写与编辑，执行 shell 命令前询问）以及 **Full access**（自动批准所有工具调用）。交互式 `ask_question` 提问会以提问卡片的形式在 Paseo 中展示。
 
 此集成使用你已安装的 CLI 和登录状态，未经 Google 认可。
 
-Paseo MCP 工具和引导功能不可用。你自己为 `agy` 配置的 MCP 服务器仍然可用。附加的图片会以文件引用的形式传给 Agent 读取。
+轮次中途引导功能不可用。配置的 MCP 服务器和系统提示词会转发给 ACP 会话，附加的图片会以文件引用的形式传给 Agent 读取。此外，Paseo 还会在用量面板中展示 Antigravity 账号配额窗口与 AI Credits 余额，将原生子代理实时同步到子代理面板，并在后台命令、定时任务或子代理执行完成时自动唤醒会话。
 
 如果 `agy` 不在 daemon 的 PATH 中，请在 `~/.paseo/config.json` 中覆盖它的命令。使用 `env` 设置 Provider 专用的环境变量：
 

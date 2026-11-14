@@ -8,17 +8,45 @@ import type {
 import { probe } from "./process.js";
 import { AntigravityError } from "./wire.js";
 
-const modes: readonly ProviderMode[] = [
+export type AntigravityModeId = "default" | "accept-edits" | "full-access";
+
+export const DEFAULT_MODE: AntigravityModeId = "default";
+
+export const modes: readonly ProviderMode[] = [
+  {
+    id: "default",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+    label: "Default",
+    description: "Asks for permission before running shell commands or editing files.",
+  },
+  {
+    id: "accept-edits",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+    label: "Accept edits",
+    description: "Automatically approves file edits and asks before running shell commands.",
+  },
   {
     id: "full-access",
     icon: "ShieldOff",
     colorTier: "dangerous",
     label: "Full access",
-    description:
-      "Antigravity cannot ask for permission when another app drives it. Paseo starts it with --dangerously-skip-permissions.",
+    description: "Automatically approves all tool calls and shell commands without asking.",
     isUnattended: true,
   },
 ];
+
+export function inferModelContextWindowMaxTokens(
+  modelId: string | null | undefined,
+): number | undefined {
+  if (!modelId) return undefined;
+  const normalized = modelId.trim().toLowerCase();
+  if (normalized.startsWith("gemini-")) return 1_048_576;
+  if (normalized.startsWith("claude-")) return 200_000;
+  if (normalized.startsWith("gpt-oss-")) return 131_072;
+  return undefined;
+}
 
 export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<ProviderCatalog> {
   const output = await probe({ launch, args: ["models"], cwd });
@@ -29,9 +57,14 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
       throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
     if (models.some((model) => model.id === id))
       throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
-    models.push({ id, label });
+    const contextWindowMaxTokens = inferModelContextWindowMaxTokens(id);
+    models.push({
+      id,
+      label,
+      ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+    });
   }
-  return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
+  return { models, modes, thinkingOptions: [], defaultMode: DEFAULT_MODE };
 }
 
 export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {

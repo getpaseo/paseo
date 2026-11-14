@@ -1,85 +1,645 @@
+import type {
+  ProviderPermissionRequest,
+  ProviderPermissionResponse,
+} from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
-const usage = z.object({
-  input_tokens: z.number().nonnegative(),
-  output_tokens: z.number().nonnegative(),
-  cache_read_tokens: z.number().nonnegative().default(0),
-});
-const tool = z.object({
-  name: z.string(),
-  parameters: z.record(z.string(), z.json()).default({}),
-  output: z.string().default(""),
-  error: z.object({ type: z.string(), message: z.string() }).nullable().default(null),
-});
-const child = z.object({
-  type_name: z.string(),
-  role: z.string().default(""),
-  initial_prompt: z.string().default(""),
-  conversation_id: z.string().nullable().default(null),
-  log_uri: z.string().default(""),
-  workspace_uris: z.array(z.string()).default([]),
-});
-const frame = z.discriminatedUnion("event", [
-  z.object({
-    event: z.literal("init"),
-    conversation_id: z.string().min(1),
-    init: z.object({ model: z.string().nullable().default(null) }),
-  }),
-  z.object({
-    event: z.literal("step_update"),
-    step_update: z.object({
-      conversation_id: z.string(),
-      step_index: z.number().int().nonnegative(),
-      state: z.enum(["ACTIVE", "DONE", "ERROR"]),
-      step_type: z.string(),
-      text_delta: z.string().default(""),
-      tool_name: z.string().default(""),
-      tool_info: tool.nullable().default(null),
-      subagent_info: z
-        .object({ subagents: z.array(child) })
-        .nullable()
-        .default(null),
-      usage: usage.nullable().default(null),
-    }),
-  }),
-  z.object({
-    event: z.literal("result"),
-    result: z.object({
-      conversation_id: z.string(),
-      status: z.enum(["SUCCESS", "ERROR"]),
-      response: z.string().default(""),
-      error: z.string().default("Antigravity turn failed"),
-      denied_actions: z
-        .array(z.object({ action: z.string(), display_name: z.string() }))
-        .default([]),
-    }),
-  }),
-]);
-export type Frame = z.infer<typeof frame>;
-export type Step = Extract<Frame, { event: "step_update" }>["step_update"];
-export type Init = Extract<Frame, { event: "init" }>;
-
-export function decodeFrame(line: string): Frame {
-  return frame.parse(JSON.parse(line));
-}
-
-export function encodePrompt(text: string): string {
-  return `${JSON.stringify({ event: "user", message: { content: text } })}\n`;
-}
+export type JsonValue = NonNullable<ProviderPermissionRequest["input"]>[string];
 
 export class AntigravityError extends Error {
   constructor(
     message: string,
-    readonly code = "ANTIGRAVITY_ERROR",
+    readonly code: string,
+    readonly diagnostic?: string,
+    readonly rpcCode?: number,
   ) {
     super(message);
-    this.name = "AntigravityError";
   }
 }
 
-export function diagnostic(message: string): string {
-  if (/auth|sign.in|log.in/i.test(message)) {
-    return "Antigravity authentication failed. Run `agy` and sign in, then retry.";
+export function isMethodNotFoundError(error: unknown): boolean {
+  return error instanceof AntigravityError && error.rpcCode === -32601;
+}
+
+export const acpPermissionOptionSchema = z.object({
+  optionId: z.string().min(1),
+  name: z.string().min(1),
+  kind: z.string().default("allow_once"),
+});
+
+export const acpToolLocationSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().nullable().optional(),
+});
+
+export const acpToolContentItemSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("diff"),
+    path: z.string().min(1),
+    oldText: z.string().nullable().optional(),
+    newText: z.string(),
+  }),
+  z.object({
+    type: z.literal("content"),
+    content: z.object({
+      type: z.string(),
+      text: z.string().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal("terminal"),
+    terminalId: z.string(),
+  }),
+]);
+
+export const acpToolCallPayloadSchema = z.object({
+  toolCallId: z.string().min(1),
+  title: z.string().nullable().optional(),
+  kind: z.string().nullable().optional(),
+  status: z.enum(["pending", "in_progress", "completed", "failed"]).nullable().optional(),
+  rawInput: z.unknown().optional(),
+  rawOutput: z.unknown().optional(),
+  locations: z.array(acpToolLocationSchema).nullable().optional(),
+  content: z.array(acpToolContentItemSchema).nullable().optional(),
+});
+
+export type AcpToolCallPayload = z.infer<typeof acpToolCallPayloadSchema>;
+export type AcpPermissionOption = z.infer<typeof acpPermissionOptionSchema>;
+
+export const acpRequestPermissionParamsSchema = z.object({
+  sessionId: z.string().min(1),
+  toolCall: acpToolCallPayloadSchema,
+  options: z.array(acpPermissionOptionSchema).min(1),
+});
+
+export type AcpRequestPermissionParams = z.infer<typeof acpRequestPermissionParamsSchema>;
+
+export const acpElicitationPropertySchema = z.object({
+  type: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  enum: z.array(z.string()).optional(),
+  items: z
+    .object({
+      type: z.string().optional(),
+      enum: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+export const acpElicitationParamsSchema = z.object({
+  sessionId: z.string().optional(),
+  mode: z.string().optional(),
+  message: z.string().optional(),
+  url: z.string().optional(),
+  elicitationId: z.string().optional(),
+  requestedSchema: z
+    .object({
+      type: z.string().optional(),
+      properties: z.record(z.string(), acpElicitationPropertySchema).optional(),
+      required: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+export type AcpElicitationParams = z.infer<typeof acpElicitationParamsSchema>;
+
+const acpTextChunkUpdateSchema = z.object({
+  sessionUpdate: z.enum(["agent_message_chunk", "agent_thought_chunk", "user_message_chunk"]),
+  messageId: z.string().nullable().optional(),
+  content: z.object({
+    type: z.string(),
+    text: z.string().optional(),
+  }),
+});
+
+const acpToolCallUpdateSchema = acpToolCallPayloadSchema.extend({
+  sessionUpdate: z.enum(["tool_call", "tool_call_update"]),
+});
+
+const acpAvailableCommandsUpdateSchema = z.object({
+  sessionUpdate: z.literal("available_commands_update"),
+  availableCommands: z.array(
+    z.object({
+      name: z.string().min(1),
+      description: z.string().default(""),
+      input: z
+        .object({
+          hint: z.string().nullable().optional(),
+        })
+        .nullable()
+        .optional(),
+    }),
+  ),
+});
+
+const acpUsageUpdateSchema = z.object({
+  sessionUpdate: z.literal("usage_update"),
+  used: z.number().optional(),
+  size: z.number().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+  cachedReadTokens: z.number().optional(),
+  cost: z
+    .object({
+      amount: z.number(),
+      currency: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+const acpOtherUpdateSchema = z
+  .object({
+    sessionUpdate: z.string(),
+  })
+  .transform(() => ({ sessionUpdate: "other" as const }));
+
+export const acpSessionUpdateSchema = z.union([
+  acpTextChunkUpdateSchema,
+  acpToolCallUpdateSchema,
+  acpAvailableCommandsUpdateSchema,
+  acpUsageUpdateSchema,
+  acpOtherUpdateSchema,
+]);
+
+export type AcpSessionUpdate = z.infer<typeof acpSessionUpdateSchema>;
+
+export const acpSessionNotificationParamsSchema = z.object({
+  sessionId: z.string().min(1),
+  update: acpSessionUpdateSchema,
+});
+
+export const acpInitializeResultSchema = z.object({
+  protocolVersion: z.number(),
+  agentCapabilities: z.record(z.string(), z.unknown()).optional(),
+  agentInfo: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const acpSessionResultSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  models: z
+    .object({
+      availableModels: z
+        .array(
+          z.object({
+            modelId: z.string().min(1),
+            name: z.string().min(1),
+            description: z.string().optional(),
+          }),
+        )
+        .optional(),
+      currentModelId: z.string().min(1).optional(),
+    })
+    .nullable()
+    .optional(),
+  configOptions: z.array(z.record(z.string(), z.unknown())).nullable().optional(),
+  _meta: z
+    .object({
+      antigravity: z
+        .object({
+          tier: z
+            .object({
+              id: z.string().optional(),
+              name: z.string().optional(),
+              upgradeUri: z.string().optional(),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+export const acpPromptResultSchema = z.object({
+  stopReason: z.string().min(1),
+  usage: z
+    .object({
+      inputTokens: z.number().optional(),
+      outputTokens: z.number().optional(),
+      cachedInputTokens: z.number().optional(),
+      cachedReadTokens: z.number().optional(),
+      cachedWriteTokens: z.number().optional(),
+      thoughtTokens: z.number().optional(),
+      totalTokens: z.number().optional(),
+      totalCostUsd: z.number().optional(),
+    })
+    .optional(),
+});
+
+export const jsonRpcErrorObjectSchema = z.object({
+  code: z.number(),
+  message: z.string(),
+  data: z.unknown().optional(),
+});
+
+export const persistenceSchema = z
+  .object({
+    conversationId: z.string().min(1).optional(),
+    sessionId: z.string().min(1).optional(),
+  })
+  .refine((value) => Boolean(value.conversationId || value.sessionId), {
+    message: "Expected conversationId or sessionId in Antigravity persistence state",
+  });
+
+export interface ParsedElicitationQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  rawEnum: string[];
+  multiSelect: boolean;
+  allowOther: boolean;
+  allowEmpty: boolean;
+  otherFieldKey?: string;
+}
+
+const GENERIC_APPROVAL_OPTION_RE = /^(?:always\s+)?allow(?:\s+once)?$/i;
+const ASK_QUESTION_TOOL_NAME_RE = /^ask[_-]?(?:user[_-]?)?question$/i;
+
+export function parseToolPermissionQuestions(
+  toolCall: AcpToolCallPayload,
+  name: string,
+  options: AcpPermissionOption[],
+): ParsedElicitationQuestion[] | null {
+  const rawInput = asPlainRecord(toolCall.rawInput);
+  const rawQuestions = Array.isArray(rawInput?.questions) ? rawInput.questions : null;
+  if (rawQuestions && rawQuestions.length > 0) {
+    const parsed = parseRawQuestionEntries(rawQuestions);
+    if (parsed.length > 0) return parsed;
   }
-  return message;
+  if (!ASK_QUESTION_TOOL_NAME_RE.test(name)) {
+    return null;
+  }
+  return [buildFallbackToolQuestion(toolCall, options)];
+}
+
+function parseRawQuestionEntries(rawQuestions: unknown[]): ParsedElicitationQuestion[] {
+  const records = rawQuestions
+    .map((entry) => asPlainRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null);
+  return records.map((entry, index) => parseSingleQuestionRecord(entry, index, records.length));
+}
+
+function parseSingleQuestionRecord(
+  entry: Record<string, unknown>,
+  index: number,
+  total: number,
+): ParsedElicitationQuestion {
+  const id = nonEmptyString(entry.id) ?? `q${index}`;
+  const header =
+    nonEmptyString(entry.header) ??
+    nonEmptyString(entry.title) ??
+    (total === 1 ? "Question" : `Question ${index + 1}`);
+  const question =
+    nonEmptyString(entry.question) ??
+    nonEmptyString(entry.description) ??
+    nonEmptyString(entry.title) ??
+    `Question ${index + 1}`;
+  const multiSelect = Boolean(entry.multiSelect ?? entry.is_multi_select);
+  const { options, rawEnum } = parseRawQuestionOptions(entry.options);
+  const allowOther = typeof entry.allowOther === "boolean" ? entry.allowOther : true;
+  const allowEmpty = typeof entry.allowEmpty === "boolean" ? entry.allowEmpty : false;
+  return {
+    id,
+    header,
+    question,
+    options,
+    rawEnum,
+    multiSelect,
+    allowOther,
+    allowEmpty,
+  };
+}
+
+function parseRawQuestionOptions(rawOptions: unknown): {
+  options: Array<{ label: string; description?: string }>;
+  rawEnum: string[];
+} {
+  if (!Array.isArray(rawOptions)) {
+    return { options: [], rawEnum: [] };
+  }
+  const options: Array<{ label: string; description?: string }> = [];
+  const rawEnum: string[] = [];
+  for (const item of rawOptions) {
+    if (typeof item === "string" && item.trim()) {
+      const label = item.trim();
+      rawEnum.push(label);
+      if (label !== "Other") options.push({ label });
+      continue;
+    }
+    const obj = asPlainRecord(item);
+    const label = obj ? nonEmptyString(obj.label) : undefined;
+    if (!label) continue;
+    rawEnum.push(label);
+    if (label === "Other") continue;
+    const description = obj ? nonEmptyString(obj.description) : undefined;
+    options.push(description ? { label, description } : { label });
+  }
+  return { options, rawEnum };
+}
+
+function buildFallbackToolQuestion(
+  toolCall: AcpToolCallPayload,
+  permissionOptions: AcpPermissionOption[],
+): ParsedElicitationQuestion {
+  const contentQuestion = extractToolCallContentText(toolCall);
+  const titleText =
+    toolCall.title && !ASK_QUESTION_TOOL_NAME_RE.test(toolCall.title.trim())
+      ? toolCall.title.trim()
+      : undefined;
+  const allowOptions = permissionOptions.filter((option) => option.kind.startsWith("allow"));
+  const hasChooserOptions =
+    allowOptions.length > 1 ||
+    allowOptions.some((option) => !GENERIC_APPROVAL_OPTION_RE.test(option.name.trim()));
+  const options = hasChooserOptions ? allowOptions.map((option) => ({ label: option.name })) : [];
+  return {
+    id: "q0",
+    header: "Question",
+    question: contentQuestion ?? titleText ?? "The agent has a question.",
+    options,
+    rawEnum: options.map((option) => option.label),
+    multiSelect: false,
+    allowOther: options.length === 0,
+    allowEmpty: false,
+  };
+}
+
+function extractToolCallContentText(toolCall: AcpToolCallPayload): string | undefined {
+  for (const block of toolCall.content ?? []) {
+    if (block.type === "content" && block.content.text?.trim()) {
+      return block.content.text.trim();
+    }
+  }
+  return undefined;
+}
+
+export function selectPermissionOption(
+  options: AcpPermissionOption[],
+  response: ProviderPermissionResponse,
+): AcpPermissionOption | undefined {
+  if (response.selectedActionId) {
+    const exact = options.find((option) => option.optionId === response.selectedActionId);
+    if (exact) return exact;
+  }
+  if (response.behavior === "allow") {
+    return (
+      options.find((option) => option.kind === "allow_once") ??
+      options.find((option) => option.kind.startsWith("allow")) ??
+      options.find((option) => /allow/i.test(option.optionId))
+    );
+  }
+  return (
+    options.find((option) => option.kind === "reject_once") ??
+    options.find((option) => option.kind.startsWith("reject")) ??
+    options.find((option) => /deny|reject/i.test(option.optionId))
+  );
+}
+
+export function buildToolPermissionQuestionResponse(
+  questions: ParsedElicitationQuestion[],
+  rawInput: Readonly<Record<string, JsonValue>> | undefined,
+  options: AcpPermissionOption[],
+  response: ProviderPermissionResponse,
+): Record<string, unknown> {
+  if (response.behavior === "deny") {
+    const rejectOption = response.selectedActionId
+      ? selectPermissionOption(options, response)
+      : undefined;
+    return rejectOption
+      ? { outcome: { outcome: "selected", optionId: rejectOption.optionId } }
+      : { outcome: { outcome: "cancelled" } };
+  }
+
+  const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
+  const supplied = parsed.success ? (parsed.data?.answers ?? {}) : {};
+  const answersByQuestion: Record<string, string | string[]> = {};
+
+  for (const question of questions) {
+    const rawValue =
+      supplied[question.header] ?? supplied[question.id] ?? supplied[question.question] ?? "";
+    const values = normalizeAnswerValues(rawValue, question.multiSelect);
+    answersByQuestion[question.question] = question.multiSelect ? values : (values[0] ?? "");
+  }
+
+  const firstAnswer =
+    questions.length === 1 && !questions[0]!.multiSelect
+      ? String(answersByQuestion[questions[0]!.question] ?? "")
+      : "";
+  const selectedOption =
+    matchChooserPermissionOption(options, firstAnswer) ?? selectPermissionOption(options, response);
+  if (!selectedOption) {
+    return { outcome: { outcome: "cancelled" } };
+  }
+
+  const updatedInput: Record<string, unknown> = {
+    ...rawInput,
+    answers: answersByQuestion,
+  };
+  const elicitation = buildElicitationResponse(questions, response);
+  return {
+    outcome: {
+      outcome: "selected",
+      optionId: selectedOption.optionId,
+      updatedInput,
+    },
+    updatedInput,
+    ...(elicitation.content
+      ? { _meta: { antigravity: { answers: answersByQuestion, content: elicitation.content } } }
+      : {}),
+  };
+}
+
+function matchChooserPermissionOption(
+  options: AcpPermissionOption[],
+  answer: string,
+): AcpPermissionOption | undefined {
+  const trimmed = answer.trim();
+  if (!trimmed) return undefined;
+  return options.find(
+    (option) =>
+      option.kind.startsWith("allow") &&
+      (option.optionId === trimmed || option.name.trim() === trimmed),
+  );
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function parseElicitationQuestions(
+  params: AcpElicitationParams,
+): ParsedElicitationQuestion[] {
+  const properties = params.requestedSchema?.properties ?? {};
+  const required = new Set(params.requestedSchema?.required ?? []);
+  const entries = Object.entries(properties).filter(([key]) => !key.endsWith("_other"));
+
+  if (entries.length === 0) {
+    return [
+      {
+        id: "q0",
+        header: "Question",
+        question: params.message || "The agent has a question.",
+        options: [],
+        rawEnum: [],
+        multiSelect: false,
+        allowOther: true,
+        allowEmpty: false,
+      },
+    ];
+  }
+
+  return entries.map(([key, prop], index) => {
+    const multiSelect = prop.type === "array";
+    const rawEnum = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
+    const options = rawEnum.filter((item) => item !== "Other").map((label) => ({ label }));
+    const otherFieldKey = `${key}_other` in properties ? `${key}_other` : undefined;
+    const allowOther = Boolean(otherFieldKey) || rawEnum.includes("Other") || options.length === 0;
+    const header =
+      prop.title?.trim() || (entries.length === 1 ? "Question" : `Question ${index + 1}`);
+    const question =
+      prop.description?.trim() || prop.title?.trim() || params.message || `Question ${index + 1}`;
+    return {
+      id: key,
+      header,
+      question,
+      options,
+      rawEnum,
+      multiSelect,
+      allowOther,
+      allowEmpty: !required.has(key),
+      otherFieldKey,
+    };
+  });
+}
+
+const suppliedAnswersSchema = z
+  .object({
+    answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+  })
+  .optional();
+
+export function buildElicitationResponse(
+  questions: ParsedElicitationQuestion[],
+  response: ProviderPermissionResponse,
+): { action: "accept" | "cancel"; content?: Record<string, unknown> } {
+  if (response.behavior === "deny") {
+    return { action: "cancel" };
+  }
+  const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
+  const answers = parsed.success ? (parsed.data?.answers ?? {}) : {};
+  const content: Record<string, unknown> = {};
+
+  for (const question of questions) {
+    const rawValue =
+      answers[question.header] ?? answers[question.id] ?? answers[question.question] ?? "";
+    const values = normalizeAnswerValues(rawValue, question.multiSelect);
+    const knownLabels = new Set(question.options.map((option) => option.label));
+
+    if (question.multiSelect) {
+      applyMultiSelectAnswer(content, question, values, knownLabels);
+    } else {
+      applySingleSelectAnswer(content, question, values[0] ?? "", knownLabels);
+    }
+  }
+
+  return { action: "accept", content };
+}
+
+function normalizeAnswerValues(rawValue: string | string[], multiSelect: boolean): string[] {
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((item) => item.trim()).filter(Boolean);
+  }
+  if (multiSelect) {
+    return rawValue
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  const trimmed = rawValue.trim();
+  return trimmed ? [trimmed] : [];
+}
+
+function applyMultiSelectAnswer(
+  content: Record<string, unknown>,
+  question: ParsedElicitationQuestion,
+  values: string[],
+  knownLabels: Set<string>,
+): void {
+  const selected: string[] = [];
+  const custom: string[] = [];
+  for (const value of values) {
+    if (knownLabels.has(value)) {
+      selected.push(value);
+    } else {
+      custom.push(value);
+    }
+  }
+  if (custom.length > 0) {
+    if (question.rawEnum.includes("Other")) selected.push("Other");
+    if (question.otherFieldKey) {
+      content[question.otherFieldKey] = custom.join(", ");
+    } else {
+      selected.push(...custom);
+    }
+  }
+  content[question.id] = selected;
+}
+
+function applySingleSelectAnswer(
+  content: Record<string, unknown>,
+  question: ParsedElicitationQuestion,
+  single: string,
+  knownLabels: Set<string>,
+): void {
+  if (!single) {
+    content[question.id] = "";
+    return;
+  }
+  if (knownLabels.has(single) || question.options.length === 0) {
+    content[question.id] = single;
+    return;
+  }
+  if (question.otherFieldKey) {
+    content[question.id] = question.rawEnum.includes("Other") ? "Other" : single;
+    content[question.otherFieldKey] = single;
+    return;
+  }
+  content[question.id] = single;
+}
+
+export function classifyFailure(
+  stderr: string,
+  detail?: string,
+  rpcCode?: number,
+): AntigravityError {
+  const combined = [detail, stderr].filter(Boolean).join("\n").trim();
+  if (
+    /not logged in|sign in|log in|authentication required|UNAUTHENTICATED|auth_required/i.test(
+      combined,
+    )
+  ) {
+    return new AntigravityError(
+      "Antigravity authentication failed. Run `agy` and sign in, then retry.",
+      "AUTH_REQUIRED",
+      combined || undefined,
+      rpcCode,
+    );
+  }
+  return new AntigravityError(
+    detail || stderr.trim() || "Antigravity command failed",
+    "PROCESS_FAILED",
+    combined || undefined,
+    rpcCode,
+  );
 }
