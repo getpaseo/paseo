@@ -136,7 +136,7 @@ export function createDesktopDaemonTransportFactory(
         return;
       }
       if (payload.kind === "message") {
-        if (payload.text) {
+        if (typeof payload.text === "string") {
           emitMessage(payload.text, false);
           return;
         }
