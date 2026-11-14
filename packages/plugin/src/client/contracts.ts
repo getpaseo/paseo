@@ -2,7 +2,11 @@ import type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js
 import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
 import type { PluginPaseoApi } from "./reference-api.js";
-import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentTimelineItem,
+  ToolCallTimelineItem,
+  JsonValue,
+} from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
 import type {
@@ -249,6 +253,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
+  addTimelineFooter(contribution: PluginTimelineFooterContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;
@@ -319,6 +324,18 @@ export interface PluginSidebarContribution<Text extends PluginText = string> {
   title: Text;
   icon: PluginIcon;
   surface: string;
+}
+
+/** A per-agent surface at the end of the chat, after timeline rows. */
+export interface PluginTimelineFooterProps extends PluginHostProps {
+  agentId: string;
+  /** Currently running calls in the active turn, before timeline transformation. */
+  activeCalls: readonly ToolCallTimelineItem[];
+}
+
+export interface PluginTimelineFooterContribution {
+  id: string;
+  Component: ComponentType<PluginTimelineFooterProps>;
 }
 
 export type PluginTimelineTransformerContribution<

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
-import { projectPluginTimelineItems } from "./projection";
+import { activeTimelineCalls, projectPluginTimelineItems } from "./projection";
 
 function thought(text: string, status: "loading" | "ready" = "loading"): StreamItem {
   return {
@@ -191,5 +191,40 @@ describe("plugin timeline projection", () => {
       "split/thought-1/right",
     ]);
     expect(filtered).toEqual([]);
+  });
+});
+
+describe("timeline footer active calls", () => {
+  const call = (id: string, status: "running" | "completed", turnId = "new"): StreamItem => ({
+    kind: "tool_call",
+    id,
+    turnId,
+    timestamp: new Date(),
+    payload: {
+      source: "agent",
+      data: {
+        provider: "codex",
+        callId: id,
+        name: "Read",
+        status,
+        error: null,
+        detail: { type: "read", filePath: id },
+      },
+    },
+  });
+  it("supplies simultaneous current calls without relying on projected plugin rows", () => {
+    const calls = activeTimelineCalls(
+      [call("old", "running", "old")],
+      [call("one", "running"), call("two", "running")],
+      true,
+      "new",
+    );
+    expect(calls.map((entry) => entry.callId)).toEqual(["one", "two"]);
+    expect(Object.isFrozen(calls)).toBe(true);
+    expect(Object.isFrozen(calls[0]?.detail)).toBe(true);
+    expect(
+      activeTimelineCalls([], [call("one", "running"), call("one", "completed")], true, "new"),
+    ).toEqual([]);
+    expect(activeTimelineCalls([], [call("one", "running")], false, "new")).toEqual([]);
   });
 });

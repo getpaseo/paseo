@@ -10,7 +10,7 @@ const projectionCache = new WeakMap<
   WeakMap<StreamItem, Partial<Record<AssistantPhase, StreamItem[]>>>
 >();
 
-function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
+export function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
   const { callId, name, status, error, detail, metadata, agentMessage } = data;
   const base = {
     type: "tool_call" as const,
@@ -28,6 +28,32 @@ function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineIt
     case "failed":
       return { ...base, status, error };
   }
+}
+
+/** Running calls from the active turn, before plugin filtering. */
+export function activeTimelineCalls(
+  tail: readonly StreamItem[],
+  head: readonly StreamItem[],
+  active: boolean,
+  turnId: string | null | undefined,
+): readonly ToolCallTimelineItem[] {
+  if (!active) return Object.freeze([]);
+  const seen = new Set<string>();
+  const calls: ToolCallTimelineItem[] = [];
+  for (const segment of [head, tail]) {
+    for (let index = segment.length - 1; index >= 0; index--) {
+      const item = segment[index]!;
+      if (item.kind === "user_message" || (turnId && item.turnId && item.turnId !== turnId))
+        return Object.freeze(calls);
+      if (item.kind !== "tool_call" || item.payload.source !== "agent") continue;
+      const data = item.payload.data;
+      if (seen.has(data.callId)) continue;
+      seen.add(data.callId);
+      if (data.status === "running")
+        calls.unshift(cloneAndFreeze(sourceToolCallTimelineItem(data)));
+    }
+  }
+  return Object.freeze(calls);
 }
 
 function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
