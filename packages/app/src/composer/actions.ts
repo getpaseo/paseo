@@ -291,6 +291,26 @@ export function editQueuedComposerMessage(
   };
 }
 
+export interface MoveQueuedComposerMessageUpInput {
+  agentId: string;
+  messageId: string;
+  queue: QueueWriter;
+}
+
+/** Moves a queued message one place earlier, so it is sent one turn sooner. */
+export function moveQueuedComposerMessageUp(input: MoveQueuedComposerMessageUpInput): void {
+  input.queue.write((prev) => {
+    const items = prev.get(input.agentId) ?? [];
+    const index = items.findIndex((q) => q.id === input.messageId);
+    if (index <= 0) return prev;
+    const reordered = [...items];
+    [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+    const next = new Map(prev);
+    next.set(input.agentId, reordered);
+    return next;
+  });
+}
+
 export interface SendQueuedComposerMessageNowInput {
   agentId: string;
   messageId: string;

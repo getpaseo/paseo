@@ -47,6 +47,7 @@ import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
+  ChevronUp,
   Square,
   Pencil,
   AudioLines,
@@ -89,6 +90,7 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
+  moveQueuedComposerMessageUp,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
   openComposerAttachment,
@@ -393,24 +395,35 @@ interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
+  handleMoveQueuedUp: (id: string) => void;
   editLabel: string;
   sendNowLabel: string;
+  moveUpLabel: string;
 }
 
 function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
-  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow, editLabel, sendNowLabel } =
-    args;
+  const {
+    queuedMessages,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+    handleMoveQueuedUp,
+    editLabel,
+    sendNowLabel,
+    moveUpLabel,
+  } = args;
   if (queuedMessages.length === 0) return null;
   return (
     <View style={styles.queueTrack}>
-      {queuedMessages.map((item) => (
+      {queuedMessages.map((item, index) => (
         <QueuedMessageRow
           key={item.id}
           item={item}
           onEdit={handleEditQueuedMessage}
           onSendNow={handleSendQueuedNow}
+          onMoveUp={index > 0 ? handleMoveQueuedUp : undefined}
           editLabel={editLabel}
           sendNowLabel={sendNowLabel}
+          moveUpLabel={moveUpLabel}
         />
       ))}
     </View>
@@ -683,16 +696,21 @@ interface QueuedMessageRowProps {
   item: QueuedMessage;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  /** Absent for the first message, which is already next. */
+  onMoveUp?: (id: string) => void;
   editLabel: string;
   sendNowLabel: string;
+  moveUpLabel: string;
 }
 
 function QueuedMessageRow({
   item,
   onEdit,
   onSendNow,
+  onMoveUp,
   editLabel,
   sendNowLabel,
+  moveUpLabel,
 }: QueuedMessageRowProps) {
   const handleEdit = useCallback(() => {
     onEdit(item.id);
@@ -700,12 +718,25 @@ function QueuedMessageRow({
   const handleSendNow = useCallback(() => {
     onSendNow(item.id);
   }, [onSendNow, item.id]);
+  const handleMoveUp = useCallback(() => {
+    onMoveUp?.(item.id);
+  }, [onMoveUp, item.id]);
   return (
     <View style={styles.queueItem}>
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
         {item.text}
       </Text>
       <View style={styles.queueActions}>
+        {onMoveUp ? (
+          <Pressable
+            onPress={handleMoveUp}
+            style={styles.queueActionButton}
+            accessibilityLabel={moveUpLabel}
+            accessibilityRole="button"
+          >
+            <ThemedChevronUp size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={handleEdit}
           style={styles.queueActionButton}
@@ -2062,6 +2093,13 @@ function ComposerContentImpl({
     [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
   );
 
+  const handleMoveQueuedUp = useCallback(
+    (id: string) => {
+      moveQueuedComposerMessageUp({ agentId, messageId: id, queue: queueWriter });
+    },
+    [agentId, queueWriter],
+  );
+
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
@@ -2479,10 +2517,12 @@ function ComposerContentImpl({
         queuedMessages,
         handleEditQueuedMessage,
         handleSendQueuedNow,
+        handleMoveQueuedUp,
         editLabel: t("composer.attachments.editQueuedMessage"),
         sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+        moveUpLabel: t("composer.attachments.moveQueuedMessageUp"),
       }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    [handleEditQueuedMessage, handleMoveQueuedUp, handleSendQueuedNow, queuedMessages, t],
   );
 
   const autocompleteConfiguration = useMemo(
@@ -2826,6 +2866,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 const ThemedAttachmentSpinner = withUnistyles(LoadingSpinner);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedChevronUp = withUnistyles(ChevronUp);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
