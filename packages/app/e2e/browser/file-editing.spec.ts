@@ -816,6 +816,16 @@ test.describe("CodeMirror workspace file editing", () => {
         "",
         "![hero](../data/cache/hero.png?v=2#preview)",
         "",
+        "Screenshots",
+        "",
+        // Nested HTML indentation must not turn the image markup into a code block.
+        "<table>",
+        "  <tr>",
+        '    <td><img src="sibling.png" width="120" alt="table sibling"></td>',
+        '    <td><img src="../data/cache/hero.png" width="120" alt="table hero"></td>',
+        "  </tr>",
+        "</table>",
+        "",
       ].join("\n"),
       "utf8",
     );
@@ -829,6 +839,8 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(visibleFilePane.getByText("Guide", { exact: true })).toBeVisible();
     await expectMarkdownImageLoaded(page, "sibling");
     await expectMarkdownImageLoaded(page, "hero");
+    await expectMarkdownImageLoaded(page, "table sibling");
+    await expectMarkdownImageLoaded(page, "table hero");
     await visibleFilePane.screenshot({
       path: test.info().outputPath("markdown-relative-images.png"),
     });

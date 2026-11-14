@@ -779,6 +779,99 @@ describe("GitHub comment HTML normalization", () => {
   });
 });
 
+describe("indented HTML blocks", () => {
+  // A README screenshot row: GitHub ignores the indentation of the nested tags.
+  const gallery = [
+    "<table>",
+    "  <tr>",
+    '    <td><img src="shots/one.png" width="120" alt="One"></td>',
+    '    <td><img src="shots/two.png" width="120" alt="Two"></td>',
+    "  </tr>",
+    "</table>",
+  ];
+  const urls = new Map([
+    ["shots/one.png", "blob:one"],
+    ["shots/two.png", "blob:two"],
+  ]);
+  function blocks(node: ASTNode): unknown {
+    if (node.type === "Paragraph" || node.type === "CodeBlock") {
+      const image = node.children?.find((child) => child.type === "Image");
+      return image ? `Image ${image.attributes?.url}` : node.type;
+    }
+    return [node.type, ...(node.children ?? []).map(blocks)];
+  }
+
+  it.each([
+    ["a standalone table", gallery.join("\n"), ["Document", "Image blob:one", "Image blob:two"]],
+    [
+      "after a list",
+      ["- Feature", "", ...gallery].join("\n"),
+      [
+        "Document",
+        ["UnorderedList", ["ListItem", "Paragraph"]],
+        "Image blob:one",
+        "Image blob:two",
+      ],
+    ],
+    [
+      "the document",
+      ["Intro", "", ...gallery].join("\n"),
+      ["Document", "Paragraph", "Image blob:one", "Image blob:two"],
+    ],
+    [
+      "a list item",
+      ["- Shots", ...gallery.map((line) => `  ${line}`), "- Next"].join("\n"),
+      [
+        "Document",
+        [
+          "UnorderedList",
+          ["ListItem", "Paragraph", "Image blob:one", "Image blob:two"],
+          ["ListItem", "Paragraph"],
+        ],
+      ],
+    ],
+  ])("renders the images of an indented HTML table in %s", async (_name, source, expected) => {
+    const prepared = prepareMarkdownSource(source);
+    expect(prepared.images.map((image) => image.source)).toEqual([
+      "shots/one.png",
+      "shots/two.png",
+    ]);
+    const tree = await parseMarkdown(prepared.render(urls), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    expect(blocks(tree)).toEqual(expected);
+  });
+
+  it("keeps HTML table images inside their blockquote", async () => {
+    const prepared = prepareMarkdownSource(gallery.map((line) => `> ${line}`).join("\n"));
+    expect(prepared.images.map((image) => image.source)).toEqual([
+      "shots/one.png",
+      "shots/two.png",
+    ]);
+    const tree = await parseMarkdown(prepared.render(urls), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    expect(tree.children?.every((node) => node.type === "Blockquote")).toBe(true);
+    expect(tree.children?.flatMap((node) => node.children ?? []).map(blocks)).toEqual([
+      "Image blob:one",
+      "Image blob:two",
+    ]);
+  });
+
+  it.each([
+    [
+      "a fence",
+      "<details><summary>Code</summary>\n```js\n    indented();\n```\n</details>",
+      "**Code**\n\n\n```js\n    indented();\n```\n",
+    ],
+    ["a pre block", "<pre>\n\n    kept\n</pre>", "\n\n    kept\n"],
+  ])("keeps the indentation of %s inside HTML", (_name, source, expected) => {
+    expect(prepareMarkdownSource(source).render()).toBe(expected);
+  });
+});
+
 it("preserves backslashes and decodes entities inside HTML code", () => {
   const source = String.raw`<code>\*literal\* &lt;img&gt;</code>`;
   expect(prepareMarkdownSource(source).render()).toBe("`" + String.raw`\*literal\* <img>` + "`");
@@ -1096,3 +1189,44 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("HTML indentation preserves Markdown content", () => {
+  it("keeps nested Markdown list depth inside details", () => {
+    const source = "<details>\n<summary>Steps</summary>\n- Parent\n  - Child\n</details>";
+    const tree = fromMarkdown(normalizeMarkdownHtml(source));
+    const list = tree.children.find((node) => node.type === "list");
+    expect(list?.children).toHaveLength(1);
+    expect(list?.children[0].children[1]?.type).toBe("list");
+  });
+
+  it("keeps nested preformatted text indentation", () => {
+    const source = "<div><pre>\n    first\n        second\n</pre></div>";
+    const tree = fromMarkdown(normalizeMarkdownHtml(source));
+    expect(tree.children).toMatchObject([{ type: "code", value: "first\n    second" }]);
+  });
+});
+
+it("keeps code-tag lines preformatted inside nested HTML", () => {
+  const source = "<div><pre>\n    <code>first</code>\n        second\n</pre></div>";
+  const tree = fromMarkdown(normalizeMarkdownHtml(source));
+  expect(tree.children).toMatchObject([{ type: "code", value: "`first`\n    second" }]);
+});
+
+it.each([
+  ["an HTML image", '  <img src="a.png" alt="Shot">', "Image"],
+  ["quoted HTML text", "  > <b>quoted</b>", "Blockquote"],
+])("keeps %s in its Markdown list item inside details", async (_name, line, expectedType) => {
+  const prepared = prepareMarkdownSource(
+    ["<details>", "<summary>Steps</summary>", "- Parent", line, "</details>"].join("\n"),
+  );
+  const tree = await parseMarkdown(prepared.render(new Map([["a.png", "blob:shot"]])), {
+    hardSoftBreaks: true,
+    latexMath: false,
+  });
+  const list = tree.children?.find((node) => node.type === "UnorderedList");
+  expect(list?.children).toHaveLength(1);
+  function descendants(node: ASTNode): ASTNode[] {
+    return [node, ...(node.children ?? []).flatMap(descendants)];
+  }
+  expect(list?.children?.flatMap(descendants).map((node) => node.type)).toContain(expectedType);
+});

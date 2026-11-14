@@ -9,6 +9,12 @@ const HTML = new RegExp(
   String.raw`(?<!\\)(?:<!--[\s\S]*?-->|<code\b[^>]*>[\s\S]*?<\/code\s*>|<summary\b[^>]*>[\s\S]*?<\/summary\s*>|${TAG})`,
   "gi",
 );
+// HTML tag-leading lines carry layout indentation, unlike embedded Markdown text.
+const HTML_OR_LINE_INDENT = new RegExp(
+  String.raw`${HTML.source}|(?:^|(?<=[\r\n]))[ \t>]+(?=<)`,
+  "gi",
+);
+const FLOW_CONTAINERS = new Set(["root", "blockquote", "listItem"]);
 const BLOCK_TAGS = new Set([
   "div",
   "p",
@@ -30,33 +36,86 @@ const BLOCK_TAGS = new Set([
 ]);
 const EMPHASIS: Readonly<Record<string, string>> = { b: "**", strong: "**", i: "*", em: "*" };
 
+interface ContainerIndent {
+  start: number;
+  end: number;
+  indent: number;
+}
+
+function containerIndentAt(
+  offset: number,
+  outerIndent: number,
+  containers: ContainerIndent[],
+): number {
+  let indent = outerIndent;
+  for (const container of containers) {
+    if (offset >= container.start && offset < container.end)
+      indent = Math.max(indent, container.indent);
+  }
+  return indent;
+}
+
 /** Convert comment HTML to Markdown while preserving the original spelling of code. */
 export function normalizeMarkdownHtml(source: string): string {
   if (!source.includes("<")) return source;
-  const htmlRanges: { start: number; end: number }[] = [];
-  function findHtml(node: Nodes) {
+  // `indent` is the container prefix width of an HTML block's lines; inline HTML has none.
+  const htmlRanges: { start: number; end: number; indent?: number }[] = [];
+  function findHtml(node: Nodes, block: boolean) {
     if (node.type === "html" && node.position) {
-      htmlRanges.push({ start: node.position.start.offset!, end: node.position.end.offset! });
-    } else if ("children" in node) node.children.forEach(findHtml);
+      htmlRanges.push({
+        start: node.position.start.offset!,
+        end: node.position.end.offset!,
+        // Whitespace inside <pre> is content.
+        indent:
+          block && !/^\s*<pre\b/i.test(node.value) ? node.position.start.column - 1 : undefined,
+      });
+    } else if ("children" in node)
+      node.children.forEach((child) => findHtml(child, FLOW_CONTAINERS.has(node.type)));
   }
-  findHtml(fromMarkdown(source));
+  findHtml(fromMarkdown(source), false);
   const codeRanges: { start: number; end: number }[] = [];
+  const markdownContainers: ContainerIndent[] = [];
   // Disable HTML parsing so code inside <details> remains visible to the Markdown parser.
   const tree = fromMarkdown(source, {
     extensions: [{ disable: { null: ["htmlFlow", "htmlText"] } }],
   });
-  function protectCode(node: Nodes) {
+  function readMarkdownContext(node: Nodes) {
     if (node.type === "code" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
-    } else if ("children" in node) node.children.forEach(protectCode);
+    }
+    if ((node.type === "listItem" || node.type === "blockquote") && node.position) {
+      const position = node.position;
+      const content = node.children[0]?.position;
+      // Outer containers already belong to the HTML node. Only discover Markdown
+      // containers that actually begin inside that HTML block, not earlier lists
+      // that the HTML-disabled parse might treat as lazy continuations.
+      const html = htmlRanges.find(
+        (range) =>
+          range.indent !== undefined &&
+          position.start.offset! >= range.start &&
+          position.start.offset! < range.end,
+      );
+      if (html && content)
+        markdownContainers.push({
+          start: Math.max(html.start, position.start.offset! - position.start.column + 1),
+          end: Math.min(html.end, position.end.offset!),
+          indent: content.start.column - 1,
+        });
+    }
+    if ("children" in node) node.children.forEach(readMarkdownContext);
   }
-  protectCode(tree);
+  readMarkdownContext(tree);
   const links: (string | undefined)[] = [];
   let previousTag: { name: string; end: number } | null = null;
-  const convert = (raw: string, offset: number): string => {
+  let preDepth = 0;
+  const convert = (raw: string, offset: number, indent: number): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
+    // Removing tags must not leave layout spaces that start Markdown code.
+    // Preserve the quote/list prefix and all indentation on Markdown text lines.
+    if (!raw.startsWith("<"))
+      return preDepth > 0 ? raw : raw.slice(0, indent) + raw.slice(indent).replace(/^[ \t]+/, "");
     if (raw.startsWith("<!--")) return "";
     const summary = /^<summary\b[^>]*>([\s\S]*?)<\/summary\s*>$/i.exec(raw);
     if (summary) {
@@ -77,6 +136,7 @@ export function normalizeMarkdownHtml(source: string): string {
       );
     const closing = raw.startsWith("</");
     const name = /^<\/?([\w-]+)/.exec(raw)?.[1].toLowerCase() ?? "";
+    if (name === "pre") preDepth = Math.max(0, preDepth + (closing ? -1 : 1));
     // Each gap is inspected once, rather than searching the complete prefix
     // for a preceding tag on every table row or nested block.
     const startsAfterBoundary = previousTag
@@ -104,7 +164,13 @@ export function normalizeMarkdownHtml(source: string): string {
     const end = paired ? Math.max(range.end, range.start + paired[0].length) : range.end;
     result += source
       .slice(range.start, end)
-      .replace(HTML, (raw, offset) => convert(raw, range.start + offset));
+      .replace(range.indent === undefined ? HTML : HTML_OR_LINE_INDENT, (raw, offset) =>
+        convert(
+          raw,
+          range.start + offset,
+          containerIndentAt(range.start + offset, range.indent ?? 0, markdownContainers),
+        ),
+      );
     cursor = end;
   }
   return result + source.slice(cursor);
