@@ -1,10 +1,27 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  ScrollView,
+  useWindowDimensions,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { SidebarNavResizeHandle } from "@/components/sidebar/sidebar-nav-resize-handle";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -14,10 +31,18 @@ import {
   builtinSidebarNavShortcutAction,
   type BuiltinSidebarNavId,
 } from "@/sidebar-nav/model";
+import {
+  SIDEBAR_FOOTER_DEFAULT_HEIGHT,
+  resolveSidebarNavGroupHeight,
+} from "@/sidebar-nav/group-layout";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { usePanelStore } from "@/stores/panel-store";
+import { density } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildNewWorkspaceRoute,
   buildSchedulesRoute,
@@ -31,49 +56,121 @@ interface SidebarNavRowProps {
 interface SidebarNavRowsProps extends SidebarNavRowProps {
   /** Style for the group wrapper, which the sidebar owns. */
   style?: StyleProp<ViewStyle>;
-  /** Sits to the right of the first row, which shrinks to make room. */
-  firstRowTrailing?: ReactNode;
+  footerHeight: number | null;
+  /** Sits at the trailing edge of the group's header, which stays visible when the rows fold or scroll. */
+  headerTrailing?: ReactNode;
 }
 
 /**
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
- * wrapper — when every item is hidden and there is no `firstRowTrailing`.
+ * wrapper — when every item is hidden and there is no `headerTrailing`.
+ *
+ * The group folds down to its header on demand and its rows scroll inside a cap,
+ * so plugin contributions never push the workspace list off the sidebar.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  footerHeight,
+  headerTrailing,
+}: SidebarNavRowsProps) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const rowHeight = isCompact ? density.rowHeight.xs : density.rowHeight.md;
+  const navigationRowHeight = isCompact ? density.tightRowHeight.xs : density.tightRowHeight.md;
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
+  const collapsed = useSidebarViewStore((state) => state.navCollapsed);
+  const toggleCollapsed = useSidebarViewStore((state) => state.toggleNavCollapsed);
+  const storedHeight = usePanelStore((state) => state.sidebarNavHeight);
+  const setStoredHeight = usePanelStore((state) => state.setSidebarNavHeight);
+  const { height: viewportHeight } = useWindowDimensions();
   const groupRef = useRef<View | null>(null);
-
-  if (visibleItems.length === 0 && !firstRowTrailing) return null;
-
-  const [firstRow, ...restRows] = visibleItems.map((item) => {
-    if (item.kind === "plugin") {
-      return (
-        <PluginSidebarItem
-          key={item.key}
-          group={item.group}
-          section="header"
-          fallbackAnchorRef={groupRef}
-          onBeforeNavigate={onBeforeNavigate}
-        />
-      );
-    }
-    const Row = BUILTIN_ROWS[item.id];
-    return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
+  const [draggedHeight, setDraggedHeight] = useState<number | null>(null);
+  const requestedHeight = draggedHeight ?? storedHeight;
+  const resolvedFooterHeight = footerHeight ?? SIDEBAR_FOOTER_DEFAULT_HEIGHT;
+  const height = resolveSidebarNavGroupHeight({
+    requestedHeight,
+    viewportHeight,
+    footerHeight: resolvedFooterHeight,
+    rowHeight,
+    navigationRowHeight,
   });
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
+  const rowsStyle = useMemo(
+    () => [
+      styles.rows,
+      inlineUnistylesStyle(requestedHeight === null ? { maxHeight: height } : { height }),
+    ],
+    [height, requestedHeight],
+  );
+  const handleRowsLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) =>
+      setMeasuredHeight(event.nativeEvent.layout.height),
+    [],
+  );
+  const commitHeight = useCallback(
+    (nextHeight: number) => {
+      setStoredHeight(
+        resolveSidebarNavGroupHeight({
+          requestedHeight: nextHeight,
+          viewportHeight,
+          footerHeight: resolvedFooterHeight,
+          rowHeight,
+          navigationRowHeight,
+        }),
+      );
+      setDraggedHeight(null);
+    },
+    [navigationRowHeight, resolvedFooterHeight, rowHeight, setStoredHeight, viewportHeight],
+  );
+
+  if (visibleItems.length === 0 && !headerTrailing) return null;
+  const showRows = !collapsed && visibleItems.length > 0;
 
   return (
-    <View ref={groupRef} collapsable={false} style={style}>
-      {firstRowTrailing ? (
-        <View style={styles.firstRow}>
-          <View style={styles.firstRowItem}>{firstRow}</View>
-          {firstRowTrailing}
-        </View>
-      ) : (
-        firstRow
-      )}
-      {restRows}
+    <View ref={groupRef} collapsable={false} style={style} testID="sidebar-nav-group">
+      <SidebarSectionHeader
+        title={t("sidebar.nav.title")}
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        testID="sidebar-nav-group-header"
+      >
+        {headerTrailing}
+      </SidebarSectionHeader>
+      {showRows ? (
+        <SidebarNavResizeHandle
+          height={measuredHeight ?? height}
+          onPreviewHeight={setDraggedHeight}
+          onCommitHeight={commitHeight}
+        />
+      ) : null}
+      {showRows ? (
+        <ScrollView
+          style={rowsStyle}
+          onLayout={handleRowsLayout}
+          contentContainerStyle={styles.rowsContent}
+          showsVerticalScrollIndicator={false}
+          testID="sidebar-nav-group-rows"
+        >
+          {visibleItems.map((item) => {
+            if (item.kind === "plugin") {
+              return (
+                <PluginSidebarItem
+                  key={item.key}
+                  group={item.group}
+                  section="header"
+                  fallbackAnchorRef={groupRef}
+                  onBeforeNavigate={onBeforeNavigate}
+                />
+              );
+            }
+            const Row = BUILTIN_ROWS[item.id];
+            return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
+          })}
+        </ScrollView>
+      ) : null}
     </View>
   );
 }
@@ -192,13 +289,13 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
   schedules: SidebarSchedulesRow,
 };
 
-const styles = StyleSheet.create({
-  firstRow: {
-    flexDirection: "row",
-    alignItems: "center",
+const styles = StyleSheet.create(() => ({
+  rows: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
-  firstRowItem: {
-    flex: 1,
-    minWidth: 0,
+  // Same row rhythm the wrapper used before the rows moved inside the scroller.
+  rowsContent: {
+    gap: 2,
   },
-});
+}));

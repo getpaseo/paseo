@@ -12,14 +12,13 @@ import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
-  ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Gesture, ScrollView as GHScrollView } from "react-native-gesture-handler";
+import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -59,7 +58,6 @@ import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-heade
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { isNative as platformIsNative } from "@/constants/platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -407,14 +405,7 @@ function IconTooltipContent({
   );
 }
 
-function SidebarFooter({
-  handleOpenProject,
-  handleSettings,
-  labels,
-  handleAddHost,
-  handleOpenHostSettings,
-  onBeforeNavigate,
-}: {
+interface SidebarFooterProps {
   handleOpenProject: () => void;
   handleSettings: () => void;
   labels: {
@@ -427,9 +418,30 @@ function SidebarFooter({
   handleAddHost: () => void;
   handleOpenHostSettings: (serverId: string) => void;
   onBeforeNavigate?: () => void;
-}) {
+  onHeightChange?: (height: number) => void;
+}
+
+function SidebarFooter({
+  handleOpenProject,
+  handleSettings,
+  labels,
+  handleAddHost,
+  handleOpenHostSettings,
+  onBeforeNavigate,
+  onHeightChange,
+}: SidebarFooterProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
+  const lastHeightRef = useRef<number | null>(null);
+  const handleLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      const height = event.nativeEvent.layout.height;
+      if (!Number.isFinite(height) || height <= 0 || height === lastHeightRef.current) return;
+      lastHeightRef.current = height;
+      onHeightChange?.(height);
+    },
+    [onHeightChange],
+  );
   const isCompactLayout = useIsCompactFormFactor();
   const [rowWidth, setRowWidth] = useState(0);
   const handleRowLayout = useCallback((event: LayoutChangeEvent) => {
@@ -451,7 +463,7 @@ function SidebarFooter({
   // don't fit move behind a caret before Settings.
   return (
     <UsageSidebarRoot>
-      <View style={styles.footerContainer} testID="sidebar-footer">
+      <View style={styles.footerContainer} testID="sidebar-footer" onLayout={handleLayout}>
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View
           style={styles.sidebarFooter}
@@ -579,6 +591,7 @@ function MobileSidebar({
   const insets = useSafeAreaInsets();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
+  const [footerHeight, setFooterHeight] = useState<number | null>(null);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -606,14 +619,6 @@ function MobileSidebar({
     [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
   );
 
-  const navRows = (
-    <SidebarNavRows
-      style={styles.mobileNavRowsGroup}
-      onBeforeNavigate={closeSidebar}
-      firstRowTrailing={closeButton}
-    />
-  );
-
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -622,29 +627,12 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        {platformIsNative ? (
-          <GHScrollView
-            // Same contract as the workspace list: vertical drags scroll the nav
-            // block, a clear horizontal intent still activates the close pan.
-            simultaneousHandlers={closeGestureRef}
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </GHScrollView>
-        ) : (
-          <ScrollView
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </ScrollView>
-        )}
-        <SidebarSeparator />
+        <SidebarNavRows
+          style={styles.sidebarHeaderGroup}
+          onBeforeNavigate={closeSidebar}
+          footerHeight={footerHeight}
+          headerTrailing={closeButton}
+        />
 
         <SidebarViewSlot dismiss={handleWorkspacePress}>
           <SidebarToastRegion active={active}>
@@ -683,6 +671,7 @@ function MobileSidebar({
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
           onBeforeNavigate={closeSidebar}
+          onHeightChange={setFooterHeight}
         />
       </View>
     </MobilePanelOverlay>
@@ -718,6 +707,7 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  const [footerHeight, setFooterHeight] = useState<number | null>(null);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -845,7 +835,11 @@ function DesktopSidebar({
             ) : (
               <TitlebarDragRegion />
             )}
-            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+            <SidebarNavRows
+              style={sidebarHeaderGroupStyle}
+              onBeforeNavigate={closeSidebar}
+              footerHeight={footerHeight}
+            />
           </View>
 
           <SidebarViewSlot dismiss={closeSidebar}>
@@ -887,6 +881,7 @@ function DesktopSidebar({
             handleAddHost={handleAddHost}
             handleOpenHostSettings={handleOpenHostSettings}
             onBeforeNavigate={closeSidebar}
+            onHeightChange={setFooterHeight}
           />
 
           {!overlay && divisionLayout === null ? (
@@ -944,18 +939,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarHeaderGroupFlush: {
     paddingTop: 0,
-  },
-  // The nav block caps at half the sidebar; a long item list scrolls inside the
-  // cap instead of crowding the workspace list off a short screen.
-  mobileNavScroll: {
-    flexGrow: 0,
-    flexShrink: 1,
-    maxHeight: "50%",
-  },
-  mobileNavRowsGroup: {
-    paddingTop: theme.spacing[2],
-    gap: 2,
-    paddingBottom: theme.spacing[1.5],
   },
   sidebarContent: {
     flex: 1,
