@@ -6,6 +6,7 @@ import {
   buildProviderLabelMap,
   collectProviderErrorRows,
   computeEmptyState,
+  createDirectoryLabelResolver,
   formatDirectoryLabel,
   getPromptPreview,
   getSessionTitle,
@@ -290,6 +291,81 @@ describe("resolveDirectoryLabel", () => {
 
   it("falls back to the path when no project owns the directory", () => {
     expect(resolveDirectoryLabel("/tmp/scratch", projects)).toEqual({ name: "/tmp/scratch" });
+  });
+});
+
+describe("createDirectoryLabelResolver", () => {
+  it("reuses the project snapshot when many session rows share a directory", () => {
+    let rootReads = 0;
+    const resolve = createDirectoryLabelResolver([
+      {
+        get rootPath() {
+          rootReads++;
+          return "/repo";
+        },
+        name: "Project",
+      },
+    ]);
+    for (let index = 0; index < 100; index++) {
+      expect(resolve("/repo/worktree")).toEqual({ name: "Project", detail: "worktree" });
+    }
+    expect(rootReads).toBe(1);
+  });
+
+  it("keeps the longest root and the first project at an equivalent root", () => {
+    const resolve = createDirectoryLabelResolver([
+      { rootPath: "/repo/nested/", name: "Nested" },
+      { rootPath: "/repo", name: "Parent" },
+      { rootPath: "/repo/nested", name: "Duplicate" },
+    ]);
+    expect(resolve("/repo/nested/src/")).toEqual({ name: "Nested", detail: "src" });
+    expect(resolve("/repo/nested-fork")).toEqual({ name: "Parent", detail: "nested-fork" });
+    expect(resolve("/repo-fork")).toEqual({ name: "/repo-fork" });
+  });
+
+  it("preserves root and repeated separator matching", () => {
+    const resolve = createDirectoryLabelResolver([
+      { rootPath: "/", name: "Root" },
+      { rootPath: "///", name: "Empty after trimming" },
+      { rootPath: "/repo//nested/", name: "Repeated" },
+    ]);
+    expect(
+      ["/", "/child", "//child", "///child", "///", "/repo//nested//src"].map(resolve),
+    ).toEqual([
+      { name: "Root" },
+      { name: "/child" },
+      { name: "Root", detail: "child" },
+      { name: "Root", detail: "/child" },
+      { name: "" },
+      { name: "Repeated", detail: "/src" },
+    ]);
+  });
+
+  it("preserves case and literal backslash semantics", () => {
+    const resolve = createDirectoryLabelResolver([
+      { rootPath: "C:/repo", name: "Forward" },
+      { rootPath: "C:\\repo", name: "Backslash" },
+      { rootPath: "/empty-name", name: "" },
+    ]);
+    expect(
+      ["C:/repo/src", "c:/repo/src", "C:\\repo", "C:\\repo\\src", "/empty-name/src"].map(resolve),
+    ).toEqual([
+      { name: "Forward", detail: "src" },
+      { name: "c:/repo/src" },
+      { name: "Backslash" },
+      { name: "C:\\repo\\src" },
+      { name: "", detail: "src" },
+    ]);
+  });
+
+  it("uses renamed and moved projects from a new snapshot without retaining old labels", () => {
+    const before = createDirectoryLabelResolver([{ rootPath: "/repo", name: "Before" }]);
+    const renamed = createDirectoryLabelResolver([{ rootPath: "/repo", name: "After" }]);
+    const moved = createDirectoryLabelResolver([{ rootPath: "/moved", name: "After" }]);
+    expect(before("/repo/src")).toEqual({ name: "Before", detail: "src" });
+    expect(renamed("/repo/src")).toEqual({ name: "After", detail: "src" });
+    expect(moved("/repo/src")).toEqual({ name: "/repo/src" });
+    expect(moved("/moved/src")).toEqual({ name: "After", detail: "src" });
   });
 });
 
