@@ -541,6 +541,53 @@ it.each(["auth", "exit", "stderr"])(
   },
 );
 
+it("completes turns that finished a DONE agent_response despite a recovered or sticky trajectory ERROR without retiring the driver", async () => {
+  const h = await harness();
+  await h.open();
+  expect(await h.completed(await h.prompt("RECOVERED_ERROR"))).toMatchObject({
+    type: "session.turn",
+    state: "completed",
+  });
+  expect(await h.completed(await h.prompt("RECOVERED_ERROR"))).toMatchObject({
+    type: "session.turn",
+    state: "completed",
+  });
+  const messages = h.events.filter(
+    (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+  );
+  expect(
+    messages.map((event) =>
+      event.type === "timeline.item" && event.item.type === "assistant_message"
+        ? event.item.text
+        : "",
+    ),
+  ).toEqual([
+    "RECOVERED_ANSWER",
+    "RECOVERED_ANSWER\n",
+    "FOLLOWUP_AFTER_RECOVERY",
+    "FOLLOWUP_AFTER_RECOVERY\n",
+  ]);
+  const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
+  expect(launches).toHaveLength(1);
+});
+
+it.each([
+  ["PARTIAL_ERROR", "The stream was interrupted. Please continue the task you were working on."],
+  ["TOOL_AFTER_RESPONSE_ERROR", "Antigravity turn failed"],
+  ["POST_RESPONSE_EMPTY_ERROR", "Antigravity turn failed"],
+])(
+  "fails turn on %s when result is ERROR without a final completed response",
+  async (prompt, message) => {
+    const h = await harness();
+    await h.open();
+    expect(await h.completed(await h.prompt(prompt))).toMatchObject({
+      type: "session.turn",
+      state: "failed",
+      error: { message },
+    });
+  },
+);
+
 it("rejects mid-turn steering and reports a busy message without queueing a second native turn", async () => {
   const h = await harness();
   await h.open();
