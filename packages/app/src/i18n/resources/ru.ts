@@ -3073,6 +3073,7 @@ export const ru: TranslationResources = {
       },
       detail: {
         backToProviders: "Назад к провайдерам",
+        notOnHost: "Этого провайдера нет на этом хосте",
         enabled: "Включён",
         unavailableTitle: "{{name}} недоступен",
         troubleshooting: "Диагностика",

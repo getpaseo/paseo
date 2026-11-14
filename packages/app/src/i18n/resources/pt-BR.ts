@@ -3063,6 +3063,7 @@ export const ptBR: TranslationResources = {
       },
       detail: {
         backToProviders: "Voltar para provedores",
+        notOnHost: "Este provedor não está neste host",
         enabled: "Ativado",
         unavailableTitle: "{{name}} não está disponível",
         troubleshooting: "Solução de problemas",

@@ -2982,6 +2982,7 @@ export const zhCN: TranslationResources = {
       },
       detail: {
         backToProviders: "返回 Provider 列表",
+        notOnHost: "此 Host 上没有这个 Provider",
         enabled: "已启用",
         unavailableTitle: "{{name}} 不可用",
         troubleshooting: "故障排查",

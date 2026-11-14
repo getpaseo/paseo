@@ -3035,6 +3035,7 @@ export const ko: TranslationResources = {
       },
       detail: {
         backToProviders: "프로바이더로 돌아가기",
+        notOnHost: "이 호스트에 없는 프로바이더입니다",
         enabled: "사용",
         unavailableTitle: "{{name}}을(를) 사용할 수 없습니다",
         troubleshooting: "문제 해결",

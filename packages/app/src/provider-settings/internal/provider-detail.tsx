@@ -14,12 +14,14 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
-import { readDetailSections } from "./detail-sections";
+import { readDetailPresence, readDetailSections, type DetailPresence } from "./detail-sections";
 import { DiagnosticSheet } from "./diagnostic-sheet";
 import { useProviderConfigActions, type ProviderEntry } from "./provider-config";
 import { ProviderModels } from "./provider-models";
+import { ProviderNotice } from "./provider-notice";
 
 export interface ProviderDetailProps {
   serverId: string;
@@ -33,16 +35,18 @@ export interface ProviderDetailProps {
  * its models, then the rare actions. The page and the sheet frame the same body.
  */
 export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetailProps) {
-  const { entries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
-  const entry = entries?.find((candidate) => candidate.provider === provider);
+  const { entries, error, refresh, isRefreshing } = useProvidersSnapshot(serverId);
+  const connected = useHostRuntimeIsConnected(serverId);
   const installation = useProviderInstallation({ serverId, provider, visible: true });
   const refreshInstallation = installation.refresh;
   const handleRefresh = useCallback(() => {
     void refresh([provider]);
     refreshInstallation();
   }, [provider, refresh, refreshInstallation]);
-  if (!entry) return null;
+  const presence = readDetailPresence({ provider, connected, entries, error });
+  if (presence.kind !== "found") return <AbsentProvider presence={presence} />;
 
+  const entry = presence.entry;
   const label = resolveProviderLabel(provider, entries);
   const sections = readDetailSections(entry, installation.state);
 
@@ -67,6 +71,17 @@ export function ProviderDetail({ serverId, provider, onRemoved }: ProviderDetail
       <DangerZone serverId={serverId} entry={entry} label={label} onRemoved={onRemoved} />
     </View>
   );
+}
+
+function AbsentProvider({ presence }: { presence: Exclude<DetailPresence, { kind: "found" }> }) {
+  const { t } = useTranslation();
+  const messages = {
+    loading: t("settings.providers.loading"),
+    missing: t("settings.providers.detail.notOnHost"),
+    offline: t("settings.providers.unavailable"),
+  };
+  const message = presence.kind === "failed" ? presence.message : messages[presence.kind];
+  return <ProviderNotice message={message} testID={`provider-detail-${presence.kind}`} />;
 }
 
 function ProviderErrorAlert({ label, error }: { label: string; error: string }) {

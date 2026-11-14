@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react-native";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useProviderInstallation } from "@/components/provider-installation";
 import { SettingsAddRow, SettingsCard, SettingsSection } from "@/components/settings";
@@ -14,6 +14,7 @@ import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { AddProviderSheet } from "./add-provider-sheet";
 import { useProviderConfigActions, type ProviderEntry } from "./provider-config";
 import { ProviderGlyph } from "./provider-glyph";
+import { ProviderNotice } from "./provider-notice";
 import { ProviderRow } from "./provider-row";
 import { readRowSummary } from "./row-summary";
 import type { ProviderSheetFrame } from "./sheet-frame";
@@ -62,11 +63,7 @@ export function ProviderList({ serverId, onOpenProvider, sheetFrame }: ProviderL
 
   let body: React.ReactNode;
   if (!isConnected) {
-    body = (
-      <View style={[settingsStyles.card, styles.emptyCard]}>
-        <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
-      </View>
-    );
+    body = <ProviderNotice message={t("settings.providers.unavailable")} />;
   } else if (isLoading) {
     body = <ProviderRowsSkeleton />;
   } else {
@@ -182,14 +179,6 @@ function ProviderRowsSkeleton() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  emptyCard: {
-    padding: theme.spacing[4],
-    alignItems: "center",
-  },
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-  },
   skeletonContent: {
     flex: 1,
     flexDirection: "row",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { ProviderInstallationState } from "@/components/provider-installation-section";
-import { readDetailSections } from "./detail-sections";
+import { readDetailPresence, readDetailSections } from "./detail-sections";
 
 function entry(overrides: Partial<ProviderSnapshotEntry> = {}): ProviderSnapshotEntry {
   return {
@@ -57,5 +57,44 @@ describe("provider detail sections", () => {
 
   it("gives an error with no message an empty one, so the alert still shows", () => {
     expect(readDetailSections(entry({ status: "error" }), unsupported).error).toBe("");
+  });
+});
+
+describe("provider detail presence", () => {
+  const loaded = [entry(), entry({ provider: "codex", label: "Codex" })];
+
+  it("finds the provider among the host's providers", () => {
+    expect(
+      readDetailPresence({ provider: "codex", connected: true, entries: loaded, error: null }),
+    ).toEqual({ kind: "found", entry: loaded[1] });
+  });
+
+  it("is loading until the host's providers arrive", () => {
+    expect(
+      readDetailPresence({ provider: "codex", connected: true, entries: undefined, error: null }),
+    ).toEqual({ kind: "loading" });
+  });
+
+  it("says the provider is missing once the host's providers have arrived without it", () => {
+    expect(
+      readDetailPresence({ provider: "gone", connected: true, entries: loaded, error: null }),
+    ).toEqual({ kind: "missing" });
+  });
+
+  it("says the host is offline rather than loading forever", () => {
+    expect(
+      readDetailPresence({ provider: "codex", connected: false, entries: undefined, error: null }),
+    ).toEqual({ kind: "offline" });
+  });
+
+  it("shows why the host's providers could not be read", () => {
+    expect(
+      readDetailPresence({
+        provider: "codex",
+        connected: true,
+        entries: undefined,
+        error: "Request timed out",
+      }),
+    ).toEqual({ kind: "failed", message: "Request timed out" });
   });
 });

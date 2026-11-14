@@ -3053,6 +3053,7 @@ export const ar: TranslationResources = {
       },
       detail: {
         backToProviders: "العودة إلى المزودين",
+        notOnHost: "هذا المزود غير موجود على هذا المضيف",
         enabled: "مفعّل",
         unavailableTitle: "{{name}} غير متاح",
         troubleshooting: "استكشاف الأخطاء",

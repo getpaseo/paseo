@@ -23,3 +23,28 @@ export function readDetailSections(
     models: entry.enabled && (entry.status === "ready" || entry.status === "loading"),
   };
 }
+
+export type DetailPresence =
+  | { kind: "found"; entry: ProviderSnapshotEntry }
+  | { kind: "loading" }
+  | { kind: "missing" }
+  | { kind: "offline" }
+  | { kind: "failed"; message: string };
+
+/**
+ * Whether the page has a provider to show. A page opened from its URL renders before the host's
+ * providers arrive, and its id may name a provider the host no longer has.
+ */
+export function readDetailPresence(input: {
+  provider: string;
+  connected: boolean;
+  entries: ProviderSnapshotEntry[] | undefined;
+  error: string | null;
+}): DetailPresence {
+  const entry = input.entries?.find((candidate) => candidate.provider === input.provider);
+  if (entry) return { kind: "found", entry };
+  if (!input.connected) return { kind: "offline" };
+  if (input.entries) return { kind: "missing" };
+  if (input.error) return { kind: "failed", message: input.error };
+  return { kind: "loading" };
+}

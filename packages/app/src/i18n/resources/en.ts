@@ -3148,6 +3148,7 @@ export const en = {
       },
       detail: {
         backToProviders: "Back to providers",
+        notOnHost: "This provider isn't on this host",
         enabled: "Enabled",
         unavailableTitle: "{{name}} isn't available",
         troubleshooting: "Troubleshooting",

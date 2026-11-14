@@ -3089,6 +3089,7 @@ export const fr: TranslationResources = {
       },
       detail: {
         backToProviders: "Retour aux fournisseurs",
+        notOnHost: "Ce fournisseur n'est pas sur cet hôte",
         enabled: "Activé",
         unavailableTitle: "{{name}} n'est pas disponible",
         troubleshooting: "Dépannage",
