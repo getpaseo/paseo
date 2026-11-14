@@ -1,3 +1,4 @@
+import { createElement, type ElementType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
@@ -142,7 +143,18 @@ export const StyleSheet = {
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<string, unknown>;
+
+/** Applies `uniProps` with the test theme, the way Unistyles maps theme values onto props. */
+export const withUnistyles = <T>(Component: T): T => {
+  function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
+    return createElement(Component as ElementType, {
+      ...props,
+      ...(uniProps ? uniProps(testTheme, {}) : {}),
+    });
+  }
+  return ThemedComponent as T;
+};
 
 export const useUnistyles = () => ({
   theme: testTheme,
