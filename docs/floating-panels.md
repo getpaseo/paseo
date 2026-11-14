@@ -469,6 +469,14 @@ Before you write a new one, ask:
    `top` paints over its anchor until the next placement lands, about 150 ms
    on Android. Web hides this because React commits the resize and the
    re-placement in one task.
+7. **Does the panel hold a list that reads away from its anchor?** Make the
+   anchor edge the list's resting scroll position: an inverted list, as in
+   `components/ui/autocomplete.tsx`. On Android a scroll command issued after
+   the rows commit reaches the screen one or two frames after them, so a list
+   scrolled to its anchor edge paints its far end first. Give each result set
+   its own list with a `key`, so it starts at the anchor edge with the rows
+   that fill the panel. A list that mounts every result holds the panel's
+   first frame until the last row is ready.
 
 Then copy the closest canonical file and trim.
 

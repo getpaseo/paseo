@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ScrollView,
+  FlatList,
   Text,
   View,
   Pressable,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
+  type ListRenderItemInfo,
   type PressableStateCallbackType,
+  type ViewToken,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -29,7 +28,6 @@ import { Button } from "./button";
 import { HighlightedText } from "./highlighted-text";
 import { mutedIconColorMapping } from "./icon-color";
 import { LoadingSpinner } from "./loading-spinner";
-import { getScrollOffsetToRevealItem } from "./scroll-reveal";
 import { StatusBadge } from "./status-badge";
 
 export type AutocompleteOptionIcon =
@@ -80,6 +78,8 @@ const ErrorIcon = withUnistyles(CircleAlert, mutedIconColorMapping);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, mutedIconColorMapping);
 
 const ROW_ICON_SIZE = 14;
+const ROW_MIN_HEIGHT = 36;
+const DEFAULT_MAX_HEIGHT = 220;
 
 const BOLT_GLYPH_PATTERN = /⚡|️/gu;
 
@@ -92,21 +92,17 @@ function removeBoltGlyphs(value?: string): string | undefined {
 }
 
 interface AutocompleteRowProps {
-  index: number;
   option: AutocompleteOption;
   isSelected: boolean;
   showArgumentHint: boolean;
   onSelect: (option: AutocompleteOption) => void;
-  onRowLayout: (index: number, event: LayoutChangeEvent) => void;
 }
 
-function AutocompleteRow({
-  index,
+const AutocompleteRow = memo(function AutocompleteRow({
   option,
   isSelected,
   showArgumentHint,
   onSelect,
-  onRowLayout,
 }: AutocompleteRowProps) {
   const label = removeBoltGlyphs(option.label) ?? option.label;
   const description = removeBoltGlyphs(option.description);
@@ -114,10 +110,6 @@ function AutocompleteRow({
   const Icon = ROW_ICONS[option.icon];
   const labelMatches = label === option.label ? option.labelMatches : undefined;
 
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => onRowLayout(index, event),
-    [index, onRowLayout],
-  );
   const handlePress = useCallback(() => onSelect(option), [onSelect, option]);
   const pressableStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -129,7 +121,6 @@ function AutocompleteRow({
 
   return (
     <Pressable
-      onLayout={handleLayout}
       onPress={handlePress}
       style={pressableStyle}
       // Name and description only; the hint and tag repeat what the name implies.
@@ -155,7 +146,7 @@ function AutocompleteRow({
       {option.tag ? <StatusBadge label={option.tag} size="xs" /> : null}
     </Pressable>
   );
-}
+});
 
 function AutocompleteStatusRow({ status }: { status: AutocompleteStatus }) {
   const { t } = useTranslation();
@@ -202,94 +193,150 @@ function AutocompleteStatusRow({ status }: { status: AutocompleteStatus }) {
   );
 }
 
+/**
+ * Counts the result sets a list has shown. Each set gets its own scroller, which starts at the
+ * composer with only the rows nearest it. A scroller that outlived its results would keep its scroll
+ * position and its mounted window: on native a scroll command reaches the screen after the rows it
+ * was meant for, and the window is ten times the rows the popover shows.
+ */
+function useResultSetGeneration(options: readonly AutocompleteOption[]): number {
+  const [shown, setShown] = useState({ options, generation: 0 });
+  if (shown.options !== options) {
+    setShown({ options, generation: shown.generation + 1 });
+  }
+  return shown.generation;
+}
+
+const FULLY_VISIBLE = { itemVisiblePercentThreshold: 100 };
+
+function ListPadding() {
+  return <View style={styles.listPadding} />;
+}
+
+function keyOfOption(option: AutocompleteOption): string {
+  return option.id;
+}
+
+interface AutocompleteRowsProps {
+  /** Nearest the composer first. */
+  rows: readonly AutocompleteOption[];
+  selectedRow: number;
+  maxHeight: number;
+  onSelect: (option: AutocompleteOption) => void;
+}
+
+/**
+ * The rows, read upward from the composer. The list is inverted: its resting scroll position is the
+ * composer edge and the rows nearest it mount first, so a list of any length opens where it rests.
+ */
+function AutocompleteRows({ rows, selectedRow, maxHeight, onSelect }: AutocompleteRowsProps) {
+  const isCompact = useIsCompactFormFactor();
+  const listRef = useRef<FlatList<AutocompleteOption>>(null);
+  const fullyVisibleRows = useRef<{ first: number; last: number } | null>(null);
+  const rowCount = rows.length;
+
+  // The row the keyboard selected, until it has been brought into the viewport. A row that has
+  // not mounted has no position yet: the list is sent towards it and asked again as rows mount.
+  const pendingReveal = useRef<{ row: number; rowCount: number } | null>(null);
+  const isPendingRowMounted = useRef(true);
+  const revealPendingRow = useCallback(() => {
+    const list = listRef.current;
+    const pending = pendingReveal.current;
+    const visible = fullyVisibleRows.current;
+    if (!list || !pending || !visible) return;
+    const { row } = pending;
+    const span = visible.last - visible.first;
+    if (row >= visible.first && row <= visible.last) {
+      pendingReveal.current = null;
+    } else if (row === 0) {
+      list.scrollToOffset({ offset: 0, animated: false });
+      pendingReveal.current = null;
+      fullyVisibleRows.current = { first: 0, last: span };
+    } else if (row === pending.rowCount - 1) {
+      list.scrollToEnd({ animated: false });
+    } else {
+      // The row comes in at the edge it was beyond.
+      const isNearer = row < visible.first;
+      isPendingRowMounted.current = true;
+      list.scrollToIndex({ index: row, viewPosition: isNearer ? 0 : 1, animated: false });
+      if (!isPendingRowMounted.current) return;
+      pendingReveal.current = null;
+      // The list reports what it shows after it has scrolled; the next key press may come first.
+      fullyVisibleRows.current = isNearer
+        ? { first: row, last: row + span }
+        : { first: row - span, last: row };
+    }
+  }, []);
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      isPendingRowMounted.current = false;
+      listRef.current?.scrollToOffset({
+        offset: info.index * info.averageItemLength,
+        animated: false,
+      });
+    },
+    [],
+  );
+  useEffect(() => {
+    pendingReveal.current = selectedRow < 0 ? null : { row: selectedRow, rowCount };
+    revealPendingRow();
+  }, [revealPendingRow, rowCount, selectedRow]);
+
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken<AutocompleteOption>[] }) => {
+      const indexes = viewableItems.flatMap((token) => (token.index === null ? [] : [token.index]));
+      if (indexes.length === 0) return;
+      fullyVisibleRows.current = { first: Math.min(...indexes), last: Math.max(...indexes) };
+      revealPendingRow();
+    },
+    [revealPendingRow],
+  );
+
+  const renderRow = useCallback(
+    ({ item, index }: ListRenderItemInfo<AutocompleteOption>) => (
+      <AutocompleteRow
+        option={item}
+        isSelected={index === selectedRow}
+        showArgumentHint={!isCompact}
+        onSelect={onSelect}
+      />
+    ),
+    [isCompact, onSelect, selectedRow],
+  );
+
+  return (
+    <FlatList
+      ref={listRef}
+      inverted
+      data={rows}
+      renderItem={renderRow}
+      keyExtractor={keyOfOption}
+      // The first commit fills the tallest popover, so the popover never opens short and grows.
+      initialNumToRender={Math.ceil(maxHeight / ROW_MIN_HEIGHT) + 1}
+      removeClippedSubviews={false}
+      viewabilityConfig={FULLY_VISIBLE}
+      onViewableItemsChanged={handleViewableItemsChanged}
+      onContentSizeChange={revealPendingRow}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
+      // The list's padding. As a header and footer it counts in the list's own scroll positions.
+      ListHeaderComponent={ListPadding}
+      ListFooterComponent={ListPadding}
+      style={styles.scrollView}
+      keyboardShouldPersistTaps="always"
+    />
+  );
+}
+
 export function Autocomplete({
   options,
   selectedIndex,
   onSelect,
   status,
-  maxHeight = 220,
+  maxHeight = DEFAULT_MAX_HEIGHT,
 }: AutocompleteProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
-  const scrollRef = useRef<ScrollView>(null);
-  const rowLayoutsRef = useRef<Map<number, { top: number; height: number }>>(new Map());
-  const viewportHeightRef = useRef(0);
-  const scrollOffsetRef = useRef(0);
-
-  const ensureActiveItemVisible = useCallback(() => {
-    if (selectedIndex < 0) {
-      return;
-    }
-
-    const layout = rowLayoutsRef.current.get(selectedIndex);
-    if (!layout) {
-      return;
-    }
-
-    const nextOffset = getScrollOffsetToRevealItem({
-      currentOffset: scrollOffsetRef.current,
-      viewportHeight: viewportHeightRef.current,
-      itemTop: layout.top,
-      itemHeight: layout.height,
-    });
-
-    if (Math.abs(nextOffset - scrollOffsetRef.current) < 1) {
-      return;
-    }
-
-    scrollOffsetRef.current = nextOffset;
-    scrollRef.current?.scrollTo({ y: nextOffset, animated: false });
-  }, [selectedIndex]);
-
-  const pinToBottom = useCallback(() => {
-    scrollRef.current?.scrollToEnd({ animated: false });
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollToEnd({ animated: false });
-    });
-  }, []);
-
-  useEffect(() => {
-    rowLayoutsRef.current.clear();
-    scrollOffsetRef.current = 0;
-  }, [options]);
-
-  useEffect(() => {
-    if (options.length === 0) {
-      return;
-    }
-    pinToBottom();
-  }, [options, pinToBottom]);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(ensureActiveItemVisible);
-    return () => {
-      cancelAnimationFrame(raf);
-    };
-  }, [ensureActiveItemVisible, options.length]);
-
-  const handleScrollViewLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      viewportHeightRef.current = event.nativeEvent.layout.height;
-      ensureActiveItemVisible();
-    },
-    [ensureActiveItemVisible],
-  );
-
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-  }, []);
-
-  const handleRowLayout = useCallback(
-    (index: number, event: LayoutChangeEvent) => {
-      rowLayoutsRef.current.set(index, {
-        top: event.nativeEvent.layout.y,
-        height: event.nativeEvent.layout.height,
-      });
-      ensureActiveItemVisible();
-    },
-    [ensureActiveItemVisible],
-  );
-
+  const resultSetGeneration = useResultSetGeneration(options);
+  const rows = useMemo(() => options.toReversed(), [options]);
   const containerStyle = useMemo(() => [styles.container, { maxHeight }], [maxHeight]);
 
   const noResultsMessage = t("common.empty.noResults");
@@ -308,28 +355,13 @@ export function Autocomplete({
 
   return (
     <View style={containerStyle}>
-      <ScrollView
-        ref={scrollRef}
-        onLayout={handleScrollViewLayout}
-        onContentSizeChange={pinToBottom}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="always"
-      >
-        {options.map((option, index) => (
-          <AutocompleteRow
-            key={option.id}
-            index={index}
-            option={option}
-            isSelected={index === selectedIndex}
-            showArgumentHint={!isCompact}
-            onSelect={onSelect}
-            onRowLayout={handleRowLayout}
-          />
-        ))}
-      </ScrollView>
+      <AutocompleteRows
+        key={resultSetGeneration}
+        rows={rows}
+        selectedRow={selectedIndex < 0 ? -1 : options.length - 1 - selectedIndex}
+        maxHeight={maxHeight}
+        onSelect={onSelect}
+      />
     </View>
   );
 }
@@ -350,14 +382,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexGrow: 0,
     flexShrink: 1,
   },
-  scrollContent: {
-    paddingVertical: theme.spacing[1],
+  listPadding: {
+    height: theme.spacing[1],
   },
   item: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    minHeight: 36,
+    minHeight: ROW_MIN_HEIGHT,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
