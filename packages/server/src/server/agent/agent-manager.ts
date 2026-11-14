@@ -99,6 +99,13 @@ import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
+  captureTurnWorktree,
+  discardPendingTurnStart,
+  retainPendingTurnStart,
+  retainTurnChanges,
+  type TurnChanges,
+} from "./turn-changes.js";
+import {
   PASEO_MCP_SERVER_NAME,
   stripInternalPaseoMcpServer,
   withRuntimePaseoMcpServer,
@@ -494,6 +501,7 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
+  latestTurnChanges?: TurnChanges;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -837,6 +845,7 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
+  private readonly pendingTurnChanges = new Map<string, { turnId: string; before: string }>();
   private readonly timelineStore: InMemoryAgentTimelineStore;
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly backgroundWork = new AgentBackgroundWorkStore();
@@ -1725,6 +1734,7 @@ export class AgentManager {
       // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
       // it has saved a newer record, the one the open hooks saw.
       ...(record ? { metadata: record.metadata } : {}),
+      latestTurnChanges: record?.latestTurnChanges,
       workspaceId,
       launchEnv,
       persistence: handle,
@@ -1936,6 +1946,7 @@ export class AgentManager {
         launchedOptions,
         labels: existing.labels,
         metadata: existing.metadata,
+        latestTurnChanges: existing.latestTurnChanges,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
         background: existing.background,
@@ -2395,6 +2406,7 @@ export class AgentManager {
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
+        latestTurnChanges: record.latestTurnChanges,
         foregroundTurnWaiters: new Set(),
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
@@ -3174,6 +3186,56 @@ export class AgentManager {
     return this.requireSessionAgent(agentId);
   }
 
+  private async startTurnWithWorktreeCapture(params: {
+    agent: ActiveManagedAgent;
+    agentId: string;
+    pendingRun: PendingForegroundRun;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+  }): Promise<string> {
+    const { agent, agentId } = params;
+    let before: string | null = null;
+    try {
+      before = await captureTurnWorktree(agent.cwd);
+      if (before) await retainPendingTurnStart(agent.cwd, agentId, before);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Could not capture turn start worktree");
+      before = null;
+    }
+    try {
+      const turnId = await this.startPendingForegroundTurn(params);
+      // A stale comparison must not be presented as the turn that just started.
+      agent.latestTurnChanges = undefined;
+      if (before) this.pendingTurnChanges.set(agentId, { turnId, before });
+      return turnId;
+    } catch (error) {
+      if (before) void discardPendingTurnStart(agent.cwd, agentId);
+      throw error;
+    }
+  }
+
+  private async finishTurnWorktreeCapture(
+    agent: ActiveManagedAgent,
+    turnId: string,
+  ): Promise<void> {
+    const pending = this.pendingTurnChanges.get(agent.id);
+    if (pending?.turnId !== turnId) return;
+    this.pendingTurnChanges.delete(agent.id);
+    try {
+      const after = await captureTurnWorktree(agent.cwd);
+      if (after) {
+        const changes = { turnId, before: pending.before, after };
+        await retainTurnChanges(agent.cwd, agent.id, changes);
+        agent.latestTurnChanges = changes;
+      } else {
+        await discardPendingTurnStart(agent.cwd, agent.id);
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Could not capture turn end worktree");
+      void discardPendingTurnStart(agent.cwd, agent.id);
+    }
+  }
+
   /** Inside the agent's lane: a history session is upgraded before anything is applied to it. */
   private async ensureInteractiveSessionUnlocked(agentId: string): Promise<ActiveManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
@@ -3257,7 +3319,7 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
-      turnId = await this.startPendingForegroundTurn({
+      turnId = await this.startTurnWithWorktreeCapture({
         agent,
         agentId,
         pendingRun,
@@ -4272,6 +4334,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
+      latestTurnChanges?: TurnChanges;
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
       timelineNextSeq?: number;
@@ -4486,6 +4549,7 @@ export class AgentManager {
           lastUserMessageAt?: Date | null;
           labels?: Record<string, string>;
           metadata?: AgentMetadata;
+          latestTurnChanges?: TurnChanges;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
           lastError?: string;
@@ -4531,6 +4595,7 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      latestTurnChanges: options?.latestTurnChanges,
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
@@ -5105,6 +5170,7 @@ export class AgentManager {
       if (isTurnTerminalEvent(event)) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
+          if (eventTurnId) await this.finishTurnWorktreeCapture(agent, eventTurnId);
           this.finalizeForegroundTurn(agent, eventTurnId);
         }
       }

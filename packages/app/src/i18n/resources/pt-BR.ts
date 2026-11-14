@@ -259,6 +259,10 @@ export const ptBR: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "Alterações durante este turno",
+      backToConversation: "Voltar à conversa",
+    },
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",

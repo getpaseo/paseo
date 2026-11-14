@@ -254,6 +254,10 @@ export const en = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "Changes during this turn",
+      backToConversation: "Back to conversation",
+    },
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",

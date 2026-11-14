@@ -261,6 +261,10 @@ export const fr: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "Modifications pendant ce tour",
+      backToConversation: "Retour à la conversation",
+    },
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",

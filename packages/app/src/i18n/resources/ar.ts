@@ -258,6 +258,10 @@ export const ar: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      viewChanges: "التغييرات خلال هذا الدور",
+      backToConversation: "العودة إلى المحادثة",
+    },
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
