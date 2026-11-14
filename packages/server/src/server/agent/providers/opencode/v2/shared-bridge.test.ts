@@ -182,6 +182,7 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
   current.setManifestCatalog({ tools: new Map() });
   let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
   let dispose: (() => Promise<void>) | undefined;
+  let releaseCurrent: (() => void) | undefined;
   try {
     const plugin = {
       package: await current.materializeV2Plugin(),
@@ -213,6 +214,8 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
     });
     await expect(rpc.bind({ sessionID: "paseo", ...plugin.options })).resolves.toEqual({});
     await current.start();
+    // The restarted daemon owns the agent again, so its bridge serves this session.
+    releaseCurrent = current.bindSession({ sessionId: "paseo", env: {} });
     await new Promise<void>((resolve) => {
       previous.close(() => resolve());
       previous.closeAllConnections();
@@ -222,6 +225,7 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
     ).resolves.toEqual({});
   } finally {
     await dispose?.();
+    releaseCurrent?.();
     await current.close();
     await new Promise<void>((resolve) => previous.close(() => resolve()));
     await rm(home, { recursive: true, force: true });
