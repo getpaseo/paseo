@@ -2767,7 +2767,9 @@ export const DirectorySuggestionsRequestSchema = z.object({
   cwd: z.string().optional(),
   includeFiles: z.boolean().optional(),
   includeDirectories: z.boolean().optional(),
-  matchMode: z.enum(["fuzzy", "suffix"]).optional(),
+  // COMPAT(directorySuggestionsExactMatch): "exact" added after v0.16.0-beta.2. Send it only to
+  // daemons advertising the feature; older ones reject the request.
+  matchMode: z.enum(["fuzzy", "suffix", "exact"]).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   requestId: z.string(),
 });
@@ -4061,6 +4063,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceGithubRepositorySearch: z.boolean().optional(),
         // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
         projectCreateDirectory: z.boolean().optional(),
+        // COMPAT(directorySuggestionsExactMatch): added after v0.16.0-beta.2, remove gate after 2027-05-13.
+        directorySuggestionsExactMatch: z.boolean().optional(),
         // COMPAT(projectList): added in v0.2.4, drop the gate when floor >= v0.2.4.
         projectList: z.boolean().optional(),
         // COMPAT(projectSuggestions): added in v0.14.1, remove gate after 2027-05-01.

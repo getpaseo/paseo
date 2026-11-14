@@ -64,6 +64,7 @@ import {
   pathBaseName,
   type AddProjectMethodId,
 } from "@/add-project-flow/options";
+import { useTypedFilePath } from "@/add-project-flow/typed-file-path";
 import {
   buildProjectPickerOptions,
   type ProjectPickerOption,
@@ -84,7 +85,7 @@ import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
 } from "@/runtime/host-runtime";
-import { useHostFeatureMap } from "@/runtime/host-features";
+import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
@@ -165,6 +166,7 @@ function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
 
 function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string): string | null {
   if (option.kind === "path") return "Open this path";
+  if (option.kind === "file-directory") return `Directory containing ${option.fileName}`;
   if (shortPath === option.path) return null;
   return option.path;
 }
@@ -455,6 +457,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     retry: false,
     staleTimeMs: 15_000,
   });
+  // COMPAT(directorySuggestionsExactMatch): added after v0.16.0-beta.2, remove gate after 2027-05-13.
+  const canFindTypedFiles = useHostFeature(hostId, "directorySuggestionsExactMatch");
+  const typedFileLookup = useTypedFilePath({
+    client,
+    hostId,
+    query: debouncedQuery,
+    enabled: page.kind === "directory-search" && canFindTypedFiles,
+  });
+  const resolveTypedFile = typedFileLookup.resolve;
 
   const handleBack = useCallback(() => {
     const previous = backAddProjectPage(state);
@@ -479,14 +490,16 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const openAddedProject = useCallback(
-    async (path: string, sourceKind: "directory-search" | "method") => {
+    async (path: string, sourceKind: "directory-search" | "method", typedPath = false) => {
       if (!hostId || submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
         setPageStatus(current, sourceKind, { isSubmitting: true, error: null }),
       );
       try {
-        const result = await openProject(path);
+        // Enter right after pasting arrives before the lookup has answered for that path.
+        const typedFile = typedPath ? await resolveTypedFile(path) : null;
+        const result = await openProject(typedFile?.parent ?? path);
         if (result.ok) {
           openNewWorkspaceForProject(hostId, result.project);
           return;
@@ -508,7 +521,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submissionInFlightRef.current = false;
       }
     },
-    [hostId, openNewWorkspaceForProject, openProject],
+    [hostId, openNewWorkspaceForProject, openProject, resolveTypedFile],
   );
 
   const browse = useCallback(async () => {
@@ -552,8 +565,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         recommendedPaths,
         serverPaths: directoryPaths,
         query,
+        typedFile: debouncedQuery === query ? typedFileLookup.file : null,
       }),
-    [directoryPaths, query, recommendedPaths],
+    [debouncedQuery, directoryPaths, query, recommendedPaths, typedFileLookup.file],
   );
   const cloneRepository = useCallback(
     async (locationPage: GithubLocationPage, parentPath: string) => {
@@ -641,7 +655,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           subtitle: directoryOptionSubtitle(option, shortPath),
           icon: Folder,
           testID: pathTestId(option.path),
-          select: () => void openAddedProject(option.path, "directory-search"),
+          select: () =>
+            void openAddedProject(option.path, "directory-search", option.kind === "path"),
         };
       });
     }
@@ -838,7 +853,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? githubQuery.data.payload
       : null;
   const loading =
-    (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
+    (searchesDirectories &&
+      (query !== debouncedQuery || directoryQuery.isFetching || typedFileLookup.isFetching)) ||
     (page.kind === "github-search" &&
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));

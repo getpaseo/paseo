@@ -8,7 +8,7 @@ import { runGitCommand } from "./run-git-command.js";
 
 export type DirectorySuggestionKind = "file" | "directory";
 export type DirectorySuggestionPathFormat = "absolute" | "relative";
-export type DirectorySuggestionMatchMode = "fuzzy" | "suffix";
+export type DirectorySuggestionMatchMode = "fuzzy" | "suffix" | "exact";
 export type PathQueryPolicy = "rooted" | "slashes";
 export type BlankQueryBehavior = "none" | "children";
 
@@ -186,6 +186,7 @@ export async function searchDirectoryEntries(
 ): Promise<DirectorySuggestionEntry[]> {
   const root = await resolveDirectory(options.root);
   if (!root) return [];
+  if (options.matchMode === "exact") return findOnlyExactEntry(options, root);
 
   const gitIgnoredPaths = options.respectGitIgnore
     ? await loadGitIgnoredPaths(root)
@@ -206,6 +207,18 @@ export async function searchDirectoryEntries(
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
     : results;
+}
+
+// An exact lookup asks whether one named path exists and what it is. It reads that entry through
+// the shared filesystem limit and nothing else: no Git listing, and no walk when the path is
+// missing, so a caller can ask on every pause while typing.
+async function findOnlyExactEntry(
+  options: SearchDirectoryEntriesOptions,
+  root: string,
+): Promise<DirectorySuggestionEntry[]> {
+  const input = buildSearchInput(options, root, new Set(), new Set());
+  const exact = input ? await findExactEntry(input) : null;
+  return exact ? [exact] : [];
 }
 
 async function searchCandidates(input: SearchInput): Promise<RankedEntry[]> {
