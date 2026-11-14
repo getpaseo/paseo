@@ -5,6 +5,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.widget.TextView;
 import androidx.annotation.Nullable;
 import com.facebook.react.R;
 import com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelper;
@@ -12,7 +13,7 @@ import com.facebook.react.views.scroll.ReactScrollView;
 import com.facebook.react.views.scroll.ReactScrollViewHelper;
 
 /**
- * React Native's vertical scroll view with two corrections. Java, because the content-position
+ * React Native's vertical scroll view with three corrections. Java, because the content-position
  * config type is internal to React Native's Kotlin module.
  */
 final class PaseoScrollView extends ReactScrollView {
@@ -49,6 +50,27 @@ final class PaseoScrollView extends ReactScrollView {
   public void scrollToPreservingMomentum(int x, int y) {
     if (isUserDragging && isEndPinTheAnchor()) return;
     super.scrollToPreservingMomentum(x, y);
+  }
+
+  // Chat text is selectable (enriched-markdown's text views and <Text selectable>), and selectable
+  // text takes focus when touched: a tap on a link, a word, or a long-press to select. React Native
+  // scrolls a newly focused child fully into view, so touching a reply that is partly off screen
+  // scrolled the timeline by up to a screen under the user's finger. Text the user touched is
+  // already where they are looking, so its focus does not scroll. Inputs, and focus moved by a
+  // keyboard, still scroll into view.
+  @Override
+  public void requestChildFocus(View child, View focused) {
+    if (isTouchedReadOnlyText(focused)) {
+      requestChildFocusWithoutScroll(child, focused);
+      return;
+    }
+    super.requestChildFocus(child, focused);
+  }
+
+  private static boolean isTouchedReadOnlyText(@Nullable View view) {
+    if (!(view instanceof TextView) || !view.isInTouchMode()) return false;
+    TextView text = (TextView) view;
+    return text.isTextSelectable() && !text.onCheckIsTextEditor();
   }
 
   // The drag begins where React Native emits onScrollBeginDrag.

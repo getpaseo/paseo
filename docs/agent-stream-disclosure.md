@@ -186,7 +186,8 @@ Drop a hunk when the installed LegendList ships its fix.
 
 `modules/paseo-scroll` replaces React Native's scroll view on both platforms with a subclass:
 Android's `PaseoScrollView` and iOS's `PaseoScrollViewComponentView`.
-`VisibleContentPositionClampTest` covers Android; iOS has no native test harness.
+`VisibleContentPositionClampTest` and `SelectableTextTouchTest` cover Android; iOS has no native
+test harness.
 
 **Content clamp.** A mount that shrinks the content while `maintainVisibleContentPosition` is set
 applies the shrink twice on both platforms: the scroll view clamps its offset to the new end during
@@ -205,6 +206,14 @@ React Native 0.88 skips the adjustment for a removed anchor
 **End pin during a drag.** Both subclasses recognize the pin by its native ID, `paseo-end-pin`,
 and skip its correction while the user drags ([user scroll](#user-scroll)). This one has no React
 Native counterpart; it stays while the timeline uses the pin.
+
+**Touched text (Android).** Chat text is selectable, and Android focuses selectable text when it is
+touched. React Native scrolls a newly focused view fully into view, so tapping a link or a word, or
+long-pressing to select, in a message partly off screen moved the timeline by up to a screen.
+`PaseoScrollView` skips that scroll when the focused view is selectable, non-editable text in touch
+mode. Inputs, and focus moved by a keyboard, still scroll into view. The inverted timeline guarded
+this with a rule tied to the inversion, which went with it; keep this one while chat text is
+selectable.
 
 Remove the content clamp and removed-anchor overrides once the installed React Native includes
 their fixes.
