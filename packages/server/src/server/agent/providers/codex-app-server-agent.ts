@@ -58,6 +58,7 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  commandExitMessage,
   fileChangesToPreview,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
@@ -1736,6 +1737,8 @@ function mapCodexExecNotificationToToolCall(params: {
           ? { exitCode: params.exitCode }
           : {}),
       };
+  const failureMessage =
+    params.stderr?.trim() || commandExitMessage(params.exitCode) || "Command failed";
   const mapped = mapCodexToolCallEnvelope({
     callId: params.callId ?? null,
     name: "shell",
@@ -1744,7 +1747,7 @@ function mapCodexExecNotificationToToolCall(params: {
       ...(params.cwd ? { cwd: params.cwd } : {}),
     },
     output,
-    error: isFailure ? { message: params.stderr?.trim() || "Command failed" } : null,
+    error: isFailure ? { message: failureMessage } : null,
     cwd: params.cwd ?? null,
   });
   if (!mapped) {
