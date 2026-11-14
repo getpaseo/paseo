@@ -2,7 +2,6 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { userEvent } from "vitest/browser";
 import { Text } from "react-native";
 import { i18n as testI18n } from "@/i18n/i18next";
 import { ProviderRow } from "./provider-row";
@@ -57,6 +56,15 @@ function mount(summary: RowSummary, options: { enabled?: boolean; label?: string
   };
 }
 
+function pressEnter(target: HTMLElement) {
+  target.focus();
+  for (const type of ["keydown", "keyup"]) {
+    target.dispatchEvent(
+      new KeyboardEvent(type, { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  }
+}
+
 function textOrder(row: HTMLElement, texts: string[]): number[] {
   const content = row.textContent ?? "";
   return texts.map((text) => content.indexOf(text));
@@ -91,12 +99,12 @@ describe("provider row", () => {
     expect(row.onOpen).toHaveBeenCalledWith("claude");
   });
 
-  it("keeps the switch out of the row's button, so Enter on the switch only toggles", async () => {
+  it("keeps the switch out of the row's button, so Enter on the switch only toggles", () => {
     const row = mount({ kind: "ready", version: null, models: 3 });
     const toggle = row.toggle() as HTMLElement;
     expect(row.opener().contains(toggle)).toBe(false);
-    toggle.focus();
-    await act(() => userEvent.keyboard("{Enter}"));
+    // Dispatched in one act, so the test ends before the Switch's animation runs a frame.
+    act(() => pressEnter(toggle));
     expect(row.onToggle).toHaveBeenCalledWith("claude", false);
     expect(row.onOpen).not.toHaveBeenCalled();
   });
@@ -106,6 +114,12 @@ describe("provider row", () => {
     act(() => row.toggle()?.click());
     expect(row.onToggle).toHaveBeenCalledWith("claude", false);
     expect(row.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("leaves the state line readable to screen readers, and the name to the row's button", () => {
+    const row = mount({ kind: "failing", message: "opencode exited with code 1" });
+    expect(row.view.getByText("opencode exited with code 1").closest("[aria-hidden]")).toBeNull();
+    expect(row.view.getByText("Claude").closest("[aria-hidden]")).not.toBeNull();
   });
 
   it("says an update is available after the version", () => {

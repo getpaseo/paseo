@@ -57,7 +57,8 @@ export interface SettingsRowHeaderProps {
  * The press target is a button laid under the row's content rather than wrapped around it, so a
  * control in the row is the button's sibling: a switch inside a button is invalid markup, and keys
  * pressed on the switch would also press the row. Everything drawn over the button lets presses
- * through to it and stays out of the accessibility tree, where the button's label names the row.
+ * through to it. The label, icon and summary stay out of the accessibility tree, where the button's
+ * label already names the row; the hint stays readable, since it carries the row's state.
  * Hover is tracked on the row itself, so it holds while the pointer is over the control.
  *
  * The row is as tall as one holding a control whether or not it holds one, so a list where only
@@ -119,15 +120,11 @@ export function SettingsRowHeader({
           {leading}
         </View>
       ) : null}
-      <View style={[settingsStyles.rowContent, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
-        {labelAccessory ? (
-          <View style={styles.labelRow}>
-            <Text style={layout.title}>{label}</Text>
-            {labelAccessory}
-          </View>
-        ) : (
+      <View style={[settingsStyles.rowContent, styles.passThrough]}>
+        <View style={labelAccessory ? styles.labelRow : undefined} {...HIDDEN_FROM_ASSISTIVE_TECH}>
           <Text style={layout.title}>{label}</Text>
-        )}
+          {labelAccessory}
+        </View>
         {hintStatus ? (
           <RowHintLine hint={hint} status={hintStatus} hintStyle={layout.hint} />
         ) : null}
