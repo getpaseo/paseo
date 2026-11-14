@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveSafeAreaInsets,
   resolveTopBand,
+  resolveTopTrailingOcclusionClearance,
   type WindowLayout,
   type WindowLayoutRect,
 } from "./model";
@@ -151,5 +152,44 @@ describe("resolveTopBand", () => {
 
   it("is null before the native layout arrives", () => {
     expect(resolveTopBand(duo.systemTop, null)).toBeNull();
+  });
+});
+
+describe("resolveTopTrailingOcclusionClearance", () => {
+  it("clears a camera occluding the top-trailing corner", () => {
+    expect(
+      resolveTopTrailingOcclusionClearance(
+        layout({ occlusions: [{ x: 300, y: 10, width: 60, height: 52.4 }] }),
+      ),
+    ).toBe(63);
+  });
+
+  it("takes the lowest of several top occlusions", () => {
+    expect(
+      resolveTopTrailingOcclusionClearance(
+        layout({
+          occlusions: [
+            { x: 0, y: 0, width: 402, height: 54 },
+            { x: 260, y: 20, width: 120, height: 60 },
+          ],
+        }),
+      ),
+    ).toBe(80);
+  });
+
+  it("ignores occlusions on the leading half, low on the screen, or empty", () => {
+    expect(
+      resolveTopTrailingOcclusionClearance(
+        layout({
+          occlusions: [
+            { x: 20, y: 10, width: 60, height: 50 },
+            { x: 300, y: 600, width: 60, height: 50 },
+            { x: 300, y: 10, width: 0, height: 0 },
+          ],
+        }),
+      ),
+    ).toBe(0);
+    expect(resolveTopTrailingOcclusionClearance(layout())).toBe(0);
+    expect(resolveTopTrailingOcclusionClearance(null)).toBe(0);
   });
 });

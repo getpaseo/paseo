@@ -12,6 +12,7 @@ export { useTopBand } from "./context";
 export {
   resolveDesktopDivisionLayout,
   resolveWorkspaceActionPlacement,
+  resolveTopTrailingOcclusionClearance,
   resolveWorkspaceBarActions,
 } from "./model";
 export type { DesktopDivisionLayout, TopBand, WindowLayout, WindowLayoutRect } from "./model";
