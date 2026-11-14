@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Platform } from "react-native";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
 import {
@@ -37,6 +38,27 @@ const localTcpConnection: DirectTcpHostConnection = {
   type: "directTcp",
   endpoint: "localhost:6767",
 };
+
+// Documented Tailscale direct connection: daemon.listen on the CGNAT address, SSL off.
+const tailscaleTcpConnection: DirectTcpHostConnection = {
+  id: "direct:100.64.0.8:6767",
+  type: "directTcp",
+  endpoint: "100.64.0.8:6767",
+  useTls: false,
+};
+
+const tailscaleTlsConnection: DirectTcpHostConnection = {
+  id: "direct:100.64.0.8:443",
+  type: "directTcp",
+  endpoint: "100.64.0.8:443",
+  useTls: true,
+};
+
+const originalPlatform = Platform.OS;
+
+function setPlatform(os: string) {
+  Object.assign(Platform, { OS: os });
+}
 
 function profileWith(connections: HostProfile["connections"]): HostProfile {
   return {
@@ -118,6 +140,10 @@ describe("download store transport selection", () => {
     useDownloadStore.setState({ downloads: new Map(), activeDownloadId: null });
   });
 
+  afterEach(() => {
+    setPlatform(originalPlatform);
+  });
+
   it("downloads over the session when the active connection is the relay", async () => {
     const token = createTokenRequest();
     const reader = createFileReader(async () => ({
@@ -182,6 +208,113 @@ describe("download store transport selection", () => {
     expect(download).toMatchObject({ status: "complete" });
     expect(reader.requested).toEqual([FILE_PATH]);
     expect(saver.savedFiles).toHaveLength(1);
+  });
+
+  it("reads a cleartext Tailscale download over the session on iOS", async () => {
+    setPlatform("ios");
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([tailscaleTcpConnection]),
+      activeConnectionId: tailscaleTcpConnection.id,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(reader.requested).toEqual([FILE_PATH]);
+    expect(saver.savedFiles).toEqual([
+      { bytes: FILE_BYTES, fileName: FILE_NAME, mimeType: MIME_TYPE },
+    ]);
+  });
+
+  it("refuses an over-cap cleartext Tailscale file on iOS before reading it", async () => {
+    setPlatform("ios");
+    const token = createTokenRequest(MAX_SESSION_DOWNLOAD_BYTES + 1);
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([tailscaleTcpConnection]),
+      activeConnectionId: tailscaleTcpConnection.id,
+      token,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({
+      status: "error",
+      message: i18n.t("composer.errors.fileTooLarge", { fileName: FILE_NAME, size: "64 MB" }),
+    });
+    expect(reader.requested).toEqual([]);
+    expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("keeps the HTTP download for an HTTPS Tailscale connection on iOS", async () => {
+    setPlatform("ios");
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([tailscaleTlsConnection]),
+      activeConnectionId: tailscaleTlsConnection.id,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(reader.requested).toEqual([]);
+    expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("keeps the HTTP download for a loopback direct connection on iOS", async () => {
+    setPlatform("ios");
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(reader.requested).toEqual([]);
+    expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("keeps the HTTP download for a cleartext Tailscale connection off iOS", async () => {
+    setPlatform("android");
+    const reader = createFileReader(async () => ({
+      bytes: FILE_BYTES,
+      size: FILE_BYTES.byteLength,
+    }));
+    const saver = createFileSaver();
+
+    const download = await startDownload({
+      profile: profileWith([tailscaleTcpConnection]),
+      activeConnectionId: tailscaleTcpConnection.id,
+      reader,
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(reader.requested).toEqual([]);
+    expect(saver.savedFiles).toEqual([]);
   });
 
   it("keeps the HTTP token download when the active connection is directTcp", async () => {
