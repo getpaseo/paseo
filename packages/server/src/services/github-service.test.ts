@@ -4826,6 +4826,108 @@ describe("ForgeService", () => {
     });
   });
 
+  it("finds an Enterprise PR for a numeric branch without treating it as a PR number", async () => {
+    const runner = createRunner([
+      JSON.stringify([
+        JSON.parse(
+          currentPullRequestJson({
+            number: 42,
+            url: "https://github.acme.internal/acme/repo/pull/42",
+            headRefName: "123",
+            headRepositoryOwner: { login: "acme" },
+          }),
+        ),
+      ]),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "123",
+        headRepositoryOwner: "acme",
+      }),
+    ).resolves.toMatchObject({ number: 42, headRefName: "123", repoOwner: "acme" });
+    expect(runner.calls[0]).toMatchObject({
+      args: [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "123",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+        "--repo",
+        "github.acme.internal/acme/repo",
+      ],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
+  it("returns no Enterprise PR for a numeric branch with no matches", async () => {
+    const runner = createRunner(["[]"]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "123",
+        headRepositoryOwner: "acme",
+      }),
+    ).resolves.toBeNull();
+    expect(runner.calls.map((call) => call.args.slice(0, 2))).toEqual([["pr", "list"]]);
+  });
+
+  it("finds an Enterprise fork PR for a numeric branch in its parent repository", async () => {
+    const runner = createRunner([
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "repo",
+        parent: { owner: { login: "parentOwner" }, name: "repo" },
+      }),
+      JSON.stringify([{ number: 42 }]),
+      currentPullRequestJson({
+        number: 42,
+        url: "https://github.acme.internal/parentOwner/repo/pull/42",
+        headRefName: "123",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "forkOwner/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "123" }),
+    ).resolves.toMatchObject({ number: 42, headRefName: "123", repoOwner: "parentOwner" });
+    expect(runner.calls[1]?.args).toEqual([
+      "api",
+      "repos/parentOwner/repo/pulls?state=all&per_page=100&head=forkOwner%3A123",
+    ]);
+    expect(runner.calls[2]).toMatchObject({
+      args: ["pr", "view", "42", "--repo", "parentOwner/repo", "--json", CURRENT_PR_STATUS_FIELDS],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
   it("merges an Enterprise fork PR in its base repository", async () => {
     const runner = createRunner([""]);
     const service = createGitHubService({

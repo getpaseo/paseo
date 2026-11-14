@@ -3030,11 +3030,20 @@ function isGitHubRateLimitError(error: unknown): boolean {
   );
 }
 
-function enterprisePullRequestViewArgs(options: {
+async function tryCurrentPullRequestBranchView(options: {
+  cwd: string;
   explicitRepo?: boolean;
   headRef: string;
-}): string[] | undefined {
-  return options.explicitRepo ? ["pr", "view", options.headRef] : undefined;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}): Promise<ResolvedPullRequestCandidate | null> {
+  // gh interprets a numeric positional argument as a PR number, not a branch.
+  if (options.explicitRepo && /^\d+$/u.test(options.headRef)) {
+    return null;
+  }
+  return tryCurrentPullRequestView({
+    ...options,
+    args: options.explicitRepo ? ["pr", "view", options.headRef] : undefined,
+  });
 }
 
 async function resolveCurrentPullRequestView(options: {
@@ -3045,10 +3054,7 @@ async function resolveCurrentPullRequestView(options: {
   explicitRepo?: boolean;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
-  const viewCandidate = await tryCurrentPullRequestView({
-    ...options,
-    args: enterprisePullRequestViewArgs(options),
-  });
+  const viewCandidate = await tryCurrentPullRequestBranchView(options);
   const viewMatch = viewCandidate
     ? pickPullRequestCandidate({
         candidates: [viewCandidate],
