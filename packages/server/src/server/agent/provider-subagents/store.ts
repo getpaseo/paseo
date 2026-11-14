@@ -153,8 +153,17 @@ export class ProviderSubagentStore {
     return this.timelines.fetch(storeKey(parentAgentId, subagentId), options);
   }
 
-  deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
-    const events: ProviderSubagentStoreEvent[] = [];
+  /** Detach live source rows so recovery can insert the historical prefix before them. */
+  takeTimelineRows(parentAgentId: string, subagentId: string): AgentTimelineRow[] {
+    const key = storeKey(parentAgentId, subagentId);
+    if (!this.timelines.has(key)) return [];
+    const rows = this.timelines.getCanonicalRows(key);
+    this.timelines.delete(key);
+    return rows;
+  }
+
+  deleteParent(parentAgentId: string): Extract<ProviderSubagentStoreEvent, { type: "remove" }>[] {
+    const events: Extract<ProviderSubagentStoreEvent, { type: "remove" }>[] = [];
     for (const subagent of this.list(parentAgentId)) {
       const key = storeKey(parentAgentId, subagent.id);
       this.descriptors.delete(key);

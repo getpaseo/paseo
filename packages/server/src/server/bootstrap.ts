@@ -144,6 +144,8 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { resolveTimelineWindowLimits } from "./agent/agent-timeline-store.js";
+import { FileAgentTimelineStore } from "./agent/file-agent-timeline-store.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -1032,6 +1034,10 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     resolvePaseoToolPolicy: (provider) =>
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
+    durableTimelineStore: new FileAgentTimelineStore({
+      directory: path.join(config.paseoHome, "timeline-rows"),
+    }),
+    timelineWindow: resolveTimelineWindowLimits(process.env),
     logger,
   });
   const syncPluginProviders = () => {

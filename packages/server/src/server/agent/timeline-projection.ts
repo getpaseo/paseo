@@ -306,14 +306,14 @@ interface ProjectedTimelinePageOptions {
 
 /** Owns projected state; source events are consumed, never retained. */
 export class TimelineProjection {
-  private readonly rows: ProjectedTimelineRow[] = [];
-  private readonly identities = new Map<string, number>();
+  private rows: ProjectedTimelineRow[] = [];
+  private identities = new Map<string, number>();
   private lastAssistantRowIndex: number | null = null;
   // Disjoint source-coverage spans in display order. A tail starting inside a
   // span must include its first anchor to cover interleaved lifecycle updates.
-  private readonly spans: { start: number; endSeq: number }[] = [];
+  private spans: { start: number; endSeq: number }[] = [];
 
-  private readonly sourceRanges: { startSeq: number; endSeq: number; rowIndex: number }[] = [];
+  private sourceRanges: { startSeq: number; endSeq: number; rowIndex: number }[] = [];
 
   constructor(rows: readonly AgentTimelineRow[] = []) {
     for (const row of rows) this.appendProjected(row);
@@ -392,6 +392,44 @@ export class TimelineProjection {
 
   getRows(): ProjectedTimelineRow[] {
     return this.rows.map((row) => ({ ...row }));
+  }
+
+  /**
+   * Remove projected rows that end strictly before `seqExclusive`. Rows that
+   * span the cutoff (seqEnd >= seqExclusive) are kept whole, so a merged
+   * assistant message is never split by an eviction. Returns the seqStart of
+   * the first surviving row, or null when the projection becomes empty.
+   *
+   * The evictable set is not always a prefix: a straddling row (a tool call
+   * completed after a neighboring row) can sit before a fully evicted row, so
+   * this filters rather than splices. All indexes are rebuilt from the
+   * survivors — one row per identity is an append invariant, and spans join
+   * on seqStart/seqEnd of fully merged rows, so rebuilding in display order
+   * reproduces the incremental spans exactly.
+   */
+  evictBefore(seqExclusive: number): number | null {
+    const kept = this.rows.filter((row) => row.seqEnd >= seqExclusive);
+    if (kept.length === this.rows.length) return this.rows[0]?.seqStart ?? null;
+    const identities = new Map<string, number>();
+    const spans: { start: number; endSeq: number }[] = [];
+    const sourceRanges: { startSeq: number; endSeq: number; rowIndex: number }[] = [];
+    let lastAssistantRowIndex: number | null = null;
+    kept.forEach((row, index) => {
+      const identity = timelineItemIdentity(row.item);
+      if (identity !== null) identities.set(identity, index);
+      if (row.item.type === "assistant_message") lastAssistantRowIndex = index;
+      const last = spans.at(-1);
+      if (last && last.endSeq >= row.seqStart) last.endSeq = Math.max(last.endSeq, row.seqEnd);
+      else spans.push({ start: index, endSeq: row.seqEnd });
+      for (const range of row.sourceSeqRanges) sourceRanges.push({ ...range, rowIndex: index });
+    });
+    sourceRanges.sort((a, b) => a.startSeq - b.startSeq);
+    this.rows = kept;
+    this.identities = identities;
+    this.lastAssistantRowIndex = lastAssistantRowIndex;
+    this.spans = spans;
+    this.sourceRanges = sourceRanges;
+    return kept[0]?.seqStart ?? null;
   }
 
   selectPage(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
@@ -538,6 +576,68 @@ export class TimelineProjection {
     this.rows[index] = { ...this.rows[index], providerMessageId };
     return { ...this.rows[index] };
   }
+}
+
+/**
+ * Whether the projected entry of the oldest collected row can change once the
+ * rows above it become known: the row directly above the collected suffix
+ * (the probe) adjacency-merges into it under the assistant/reasoning chunk
+ * rules, or the probe carries an item identity the collected rows already
+ * hold. This probe does not rule out an identity further into an unread
+ * prefix: callers must resolve those anchors or fall back to full projection.
+ */
+export function tailBoundaryRowCrosses(input: {
+  /** Newest eligible row strictly above the collected suffix. */
+  probe: AgentTimelineRow;
+  /** Oldest row of the collected suffix. */
+  collectionOldest: AgentTimelineRow;
+  /** Non-null item identities held by the collected rows. */
+  collectedIdentities: ReadonlySet<string>;
+}): boolean {
+  const { probe, collectionOldest, collectedIdentities } = input;
+  const older = probe.item;
+  const newer = collectionOldest.item;
+  if (probe.seq + 1 === collectionOldest.seq && probe.turnId === collectionOldest.turnId) {
+    if (older.type === "reasoning" && newer.type === "reasoning") return true;
+    if (older.type === "assistant_message" && newer.type === "assistant_message") {
+      const olderMessageId = (older as { messageId?: string }).messageId;
+      const newerMessageId = (newer as { messageId?: string }).messageId;
+      if (!(newerMessageId !== undefined && olderMessageId !== newerMessageId)) return true;
+    }
+  }
+  const probeIdentity = timelineItemIdentity(probe.item);
+  return probeIdentity !== null && collectedIdentities.has(probeIdentity);
+}
+
+/**
+ * Whether the turn of the row below a candidate cut also holds in the row
+ * directly above it. Whole-turns tail scans extend while this is true, so
+ * the collected suffix includes the turn's first row instead of stopping at
+ * a stable cut mid-turn.
+ */
+export function boundaryTurnContinues(above: AgentTimelineRow, below: AgentTimelineRow): boolean {
+  return continuesTimelineTurn(above.turnId, below.turnId, isTimelineTurnTrigger(below.item));
+}
+
+/**
+ * Whether a whole-turns tail page selected from `merged` is final: the page's
+ * oldest item starts strictly inside the collected rows, so that item's turn
+ * boundary is certified by collected rows and loading older history cannot
+ * re-group the page. When the page reaches the collection's oldest row its
+ * turn may continue above the cut, so the scan must keep extending.
+ */
+export function wholeTurnPageIsFinal(
+  merged: readonly AgentTimelineRow[],
+  options: { minSeq: number; maxSeq: number; limit: number },
+): boolean {
+  const selection = new TimelineProjection(merged).selectPage({
+    bounds: { minSeq: options.minSeq, maxSeq: options.maxSeq },
+    direction: "tail",
+    limit: options.limit,
+    wholeTurns: true,
+  });
+  const oldest = selection.entries[0];
+  return oldest !== undefined && oldest.seqStart > options.minSeq;
 }
 
 export function projectTimelineRows(input: {
