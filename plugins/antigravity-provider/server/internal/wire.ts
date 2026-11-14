@@ -83,3 +83,11 @@ export function diagnostic(message: string): string {
   }
   return message;
 }
+
+const BENIGN_STREAM_ERRORS =
+  /\bEOF\b|stream idle timeout|context deadline exceeded|broken pipe|connection reset|transport is closing|closed the stream|use of closed network connection|GOAWAY/i;
+
+export function isBenignStreamError(error?: string | null): boolean {
+  if (!error) return false;
+  return BENIGN_STREAM_ERRORS.test(error);
+}

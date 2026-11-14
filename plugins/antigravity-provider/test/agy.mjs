@@ -74,6 +74,39 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (text.includes("BENIGN_EOF")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: "Partial content before timeout",
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        error: "stream idle timeout: context deadline exceeded",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
+  if (text.includes("EMPTY_EOF")) {
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        error: "EOF",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];
