@@ -3108,7 +3108,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
   expect(session.agentUpdates.hasSubscription()).toBe(false);
 });
 
-test("fetch_agent_history_request filters across history and paginates chronologically", async () => {
+test("fetch_agent_history_request filters delegated rows before paginating chronologically", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const historyCwd = path.resolve("/tmp/history-search");
@@ -3139,6 +3139,17 @@ test("fetch_agent_history_request filters across history and paginates chronolog
   ];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
+    {
+      ...makeAgent({
+        id: "delegated",
+        cwd: historyCwd,
+        workspaceId: "ws-search",
+        status: "idle",
+        updatedAt: "2026-03-04T12:00:00.000Z",
+        labels: { "paseo.parent-agent-id": "main" },
+      }),
+      title: "Add Stripe billing",
+    },
     // Search keeps chronological order, skipping unrelated rows between pages.
     {
       ...makeAgent({
@@ -3176,6 +3187,7 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     type: "fetch_agent_history_request",
     requestId: "req-search-truncated",
     search: "bill",
+    filter: { excludeDelegated: true },
     page: { limit: 1 },
   });
 
@@ -3188,6 +3200,7 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     type: "fetch_agent_history_request",
     requestId: "req-search-next",
     search: "bill",
+    filter: { excludeDelegated: true },
     page: { limit: 1, cursor: first.payload.pageInfo.nextCursor! },
   });
   expect(emitted).toHaveLength(2);

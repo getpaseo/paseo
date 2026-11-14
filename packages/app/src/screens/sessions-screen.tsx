@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { AgentList } from "@/components/agent-list";
 import { SearchField } from "@/components/ui/search-field";
+import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { type AgentHistoryHostError, useAgentHistory } from "@/hooks/use-agent-history";
@@ -21,6 +22,7 @@ import { buildOpenProjectRoute } from "@/utils/host-routes";
 
 /** Long enough that a typed word is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 200;
+type AgentScope = "all" | "main";
 
 const sessionsHostOptionTestID = (serverId: string) => `sessions-host-filter-item-${serverId}`;
 
@@ -53,11 +55,74 @@ function SessionHostErrorsBanner({
 function resolveEmptyText(input: {
   t: TFunction;
   isSearching: boolean;
+  isMainAgentsOnly: boolean;
   isAllHosts: boolean;
 }): string {
   if (input.isSearching) return input.t("sessions.noMatches");
+  if (input.isMainAgentsOnly) return input.t("sessions.noMainAgents");
   if (input.isAllHosts) return input.t("sessions.empty");
   return "No sessions for this host";
+}
+
+function SessionsFilterRow({
+  hosts,
+  selectedHost,
+  onSelectHost,
+  searchInput,
+  onSearchChange,
+  isSearchSupported,
+  isMainAgentFilterSupported,
+  agentScope,
+  onAgentScopeChange,
+  agentScopeOptions,
+}: {
+  hosts: ReturnType<typeof useHosts>;
+  selectedHost: string;
+  onSelectHost: (serverId: string) => void;
+  searchInput: string;
+  onSearchChange: (value: string) => void;
+  isSearchSupported: boolean;
+  isMainAgentFilterSupported: boolean;
+  agentScope: AgentScope;
+  onAgentScopeChange: (value: AgentScope) => void;
+  agentScopeOptions: SegmentedControlOption<AgentScope>[];
+}): ReactElement {
+  const { t } = useTranslation();
+  const showHostFilter = hosts.length > 1;
+
+  return (
+    <View style={styles.filterContainer}>
+      {isSearchSupported ? (
+        <View style={styles.searchFieldWrap}>
+          <SearchField
+            value={searchInput}
+            onChangeText={onSearchChange}
+            placeholder={t("sessions.searchPlaceholder")}
+            clearAccessibilityLabel={t("sessions.actions.clearSearch")}
+            testID="sessions-search-input"
+            clearTestID="sessions-search-clear"
+          />
+        </View>
+      ) : null}
+      {showHostFilter ? (
+        <HostFilter
+          hosts={hosts}
+          selectedHost={selectedHost}
+          onSelectHost={onSelectHost}
+          triggerTestID="sessions-host-filter-trigger"
+          hostOptionTestID={sessionsHostOptionTestID}
+        />
+      ) : null}
+      {isMainAgentFilterSupported ? (
+        <SegmentedControl
+          options={agentScopeOptions}
+          value={agentScope}
+          onValueChange={onAgentScopeChange}
+          testID="sessions-agent-scope-filter"
+        />
+      ) : null}
+    </View>
+  );
 }
 
 export function SessionsScreen() {
@@ -77,7 +142,9 @@ function SessionsScreenContent() {
   const hosts = useHosts();
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [searchInput, setSearchInput] = useState("");
+  const [agentScope, setAgentScope] = useState<AgentScope>("all");
   const search = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS).trim();
+  const isMainAgentsOnly = agentScope === "main";
   const historyServerId = selectedHost === ALL_HOSTS_OPTION_ID ? null : selectedHost;
   const {
     agents,
@@ -86,6 +153,7 @@ function SessionsScreenContent() {
     isLoadingMore,
     isError,
     isSearchSupported,
+    isMainAgentFilterSupported,
     isSearchTruncated,
     hostErrors,
     loadMore,
@@ -93,8 +161,25 @@ function SessionsScreenContent() {
   } = useAgentHistory({
     serverId: historyServerId,
     search,
+    mainAgentsOnly: isMainAgentsOnly,
   });
   const isSearching = isSearchSupported && search.length > 0;
+  const isMainAgentFilterActive = isMainAgentFilterSupported && isMainAgentsOnly;
+  const agentScopeOptions = useMemo<SegmentedControlOption<AgentScope>[]>(
+    () => [
+      {
+        value: "all",
+        label: t("sessions.agentScope.all"),
+        testID: "sessions-agent-scope-all",
+      },
+      {
+        value: "main",
+        label: t("sessions.agentScope.main"),
+        testID: "sessions-agent-scope-main",
+      },
+    ],
+    [t],
+  );
 
   useEffect(() => {
     if (
@@ -104,6 +189,12 @@ function SessionsScreenContent() {
       setSelectedHost(ALL_HOSTS_OPTION_ID);
     }
   }, [hosts, selectedHost]);
+
+  useEffect(() => {
+    if (!isMainAgentFilterSupported && agentScope !== "all") {
+      setAgentScope("all");
+    }
+  }, [agentScope, isMainAgentFilterSupported]);
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -116,10 +207,11 @@ function SessionsScreenContent() {
   const emptyText = resolveEmptyText({
     t,
     isSearching,
+    isMainAgentsOnly: isMainAgentFilterActive,
     isAllHosts: selectedHost === ALL_HOSTS_OPTION_ID,
   });
   const showHostFilter = hosts.length > 1;
-  const showFilterRow = showHostFilter || isSearchSupported;
+  const showFilterRow = showHostFilter || isSearchSupported || isMainAgentFilterSupported;
   const showLoadError = isError && agents.length === 0;
 
   const handleBack = useCallback(() => {
@@ -154,27 +246,18 @@ function SessionsScreenContent() {
     <View style={styles.container}>
       <MenuHeader title={t("sessions.title")} />
       {showFilterRow ? (
-        <View style={styles.filterContainer}>
-          {isSearchSupported ? (
-            <SearchField
-              value={searchInput}
-              onChangeText={setSearchInput}
-              placeholder={t("sessions.searchPlaceholder")}
-              clearAccessibilityLabel={t("sessions.actions.clearSearch")}
-              testID="sessions-search-input"
-              clearTestID="sessions-search-clear"
-            />
-          ) : null}
-          {showHostFilter ? (
-            <HostFilter
-              hosts={hosts}
-              selectedHost={selectedHost}
-              onSelectHost={setSelectedHost}
-              triggerTestID="sessions-host-filter-trigger"
-              hostOptionTestID={sessionsHostOptionTestID}
-            />
-          ) : null}
-        </View>
+        <SessionsFilterRow
+          hosts={hosts}
+          selectedHost={selectedHost}
+          onSelectHost={setSelectedHost}
+          searchInput={searchInput}
+          onSearchChange={setSearchInput}
+          isSearchSupported={isSearchSupported}
+          isMainAgentFilterSupported={isMainAgentFilterSupported}
+          agentScope={agentScope}
+          onAgentScopeChange={setAgentScope}
+          agentScopeOptions={agentScopeOptions}
+        />
       ) : null}
       {hostErrors.length > 0 ? <SessionHostErrorsBanner errors={hostErrors} t={t} /> : null}
       {isInitialLoad ? (
@@ -231,6 +314,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   filterContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: {
@@ -238,6 +322,13 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[6],
     },
     paddingTop: theme.spacing[4],
+  },
+  searchFieldWrap: {
+    flexBasis: 200,
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 160,
+    maxWidth: 420,
   },
   emptyContainer: {
     flex: 1,
