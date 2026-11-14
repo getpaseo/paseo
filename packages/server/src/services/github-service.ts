@@ -1392,14 +1392,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     const host = await resolveRepoHostCached(input.cwd);
     let effectiveArgs = args;
     if (host) {
+      // The PR URL carries the instance's web hostname, which can differ from the
+      // name the remote and gh use (an IP, a DNS alias, an SSH HostName), so only
+      // owner and name come from the URL.
       const url = input.status?.url;
       const repo = url ? parseGitHubPullRequestRepo(url) : null;
-      if (
-        !url ||
-        !repo ||
-        new URL(url).hostname !== host ||
-        !url.endsWith(`/pull/${input.prNumber}`)
-      ) {
+      if (!url || !repo || !url.endsWith(`/pull/${input.prNumber}`)) {
         throw new Error("Cannot identify the GitHub repository for this pull request");
       }
       effectiveArgs = [...args, "--repo", `${host}/${repo.owner}/${repo.name}`];

@@ -5611,6 +5611,34 @@ describe("ForgeService", () => {
     ]);
   });
 
+  it("merges an Enterprise PR whose URL names another hostname than the remote", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "10.0.0.5",
+      resolveRepoSlug: async () => "upstream/repo",
+    });
+
+    await service.mergePullRequest({
+      cwd: "/repo",
+      prNumber: 42,
+      mergeMethod: "squash",
+      status: createCurrentPullRequestStatus({
+        url: "https://github.acme.internal/upstream/repo/pull/42",
+        forgeSpecific: githubStatusFacts(),
+      }),
+    });
+    expect(runner.calls[0]?.args).toEqual([
+      "pr",
+      "merge",
+      "42",
+      "--squash",
+      "--repo",
+      "10.0.0.5/upstream/repo",
+    ]);
+  });
+
   it.skipIf(isPlatform("win32"))(
     "authenticates and creates a PR on the configured Enterprise host when Git rewrites origin",
     async () => {
