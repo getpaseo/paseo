@@ -164,6 +164,10 @@ export default {
       ...buildProfile.notificationPlugins,
       "expo-audio",
       [
+        "expo-font",
+        { fonts: [path.resolve(__dirname, "assets/fonts/SymbolsNerdFontMono-Regular.ttf")] },
+      ],
+      [
         "expo-gradle-jvmargs",
         {
           xmx: "4096m",
