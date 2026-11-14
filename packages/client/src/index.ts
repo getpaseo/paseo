@@ -199,6 +199,8 @@ export interface PaseoWorkspaceHandle {
   setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   setPinned(pinned: boolean): Promise<{ pinnedAt: string | null }>;
   setLabel(name: string, options: { assigned: boolean }): Promise<{ labels: string[] }>;
+  markRead(): Promise<void>;
+  markUnread(): Promise<void>;
   setBaseBranch(options: {
     baseRef: string;
     requestId?: string;
@@ -969,6 +971,14 @@ function createWorkspaceHandleFactory(
         if (current) current = { ...current, metadata };
       },
       setPinned: (pinned) => daemonClient.setWorkspacePinned(id, pinned),
+      markRead: () => daemonClient.clearWorkspaceAttention(id),
+      markUnread: async () => {
+        daemonClient.ensureConnected();
+        // COMPAT(workspaceMarkUnread): added in v0.5.0, remove gate after 2027-08-20.
+        if (daemonClient.getLastServerInfoMessage()?.features?.workspaceMarkUnread !== true)
+          throw new Error("Update the host to mark workspaces unread.");
+        return daemonClient.markWorkspaceUnread(id);
+      },
       setLabel: (name, options) =>
         assignWorkspaceLabel({
           client: daemonClient,
