@@ -61,11 +61,12 @@ export class Session {
     validateSelection(this.config, options.catalog());
   }
 
-  async open(
-    requestId: string,
-    capabilities: readonly string[],
-    history: "replay" | "skip",
-  ): Promise<void> {
+  async open(input: {
+    requestId: string;
+    capabilities: readonly string[];
+    history: "replay" | "skip";
+  }): Promise<void> {
+    const { requestId, capabilities, history } = input;
     const restoredId = this.conversationId;
     await this.ensureDriver();
     this.emit({
