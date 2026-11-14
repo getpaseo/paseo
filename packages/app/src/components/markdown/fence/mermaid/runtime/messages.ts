@@ -1,4 +1,5 @@
 import type { DiagramColorScheme, DiagramDimensions } from "../render-model";
+import { parseMermaidRuntimeStyle, type MermaidRuntimeStyle } from "../options";
 
 export interface MermaidRuntimeRenderMessage {
   type: "render";
@@ -6,6 +7,7 @@ export interface MermaidRuntimeRenderMessage {
   source: string;
   colorScheme: DiagramColorScheme;
   interactive: boolean;
+  style?: MermaidRuntimeStyle;
 }
 
 export type MermaidRuntimeMessage =
@@ -40,12 +42,15 @@ export function parseMermaidRuntimeRenderMessage(
   ) {
     return null;
   }
+  const style = parseMermaidRuntimeStyle(value.style);
+  if (style === null) return null;
   return {
     type: "render",
     revision: value.revision,
     source: value.source,
     colorScheme: value.colorScheme,
     interactive: value.interactive,
+    ...(style ? { style } : {}),
   };
 }
 
