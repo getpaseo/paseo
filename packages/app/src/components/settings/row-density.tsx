@@ -16,6 +16,8 @@ export function NestedSettingsRows({ children }: { children: ReactNode }) {
 
 export interface SettingsRowLayout {
   row: StyleProp<ViewStyle>;
+  /** A row as tall as one holding a control of `controlSize`, whether or not it holds one. */
+  controlRow: StyleProp<ViewStyle>;
   title: StyleProp<TextStyle>;
   hint: StyleProp<TextStyle>;
   /** The size of the controls in the row's trailing slot. */
@@ -30,12 +32,14 @@ export function useSettingsRowLayout(): SettingsRowLayout {
       nested
         ? {
             row: [settingsStyles.row, styles.nestedRow],
+            controlRow: [settingsStyles.row, styles.nestedRow],
             title: [settingsStyles.rowTitle, styles.nestedText],
             hint: [settingsStyles.rowHint, styles.nestedText],
             controlSize: "sm",
           }
         : {
-            row: [settingsStyles.row, styles.cardRow],
+            row: settingsStyles.row,
+            controlRow: [settingsStyles.row, styles.cardControlRow],
             title: settingsStyles.rowTitle,
             hint: settingsStyles.rowHint,
             controlSize: "md",
@@ -45,9 +49,7 @@ export function useSettingsRowLayout(): SettingsRowLayout {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // Every card row is as tall as one holding an `md` control, so a list whose rows have a switch
-  // or a button only on some of them keeps one row height.
-  cardRow: {
+  cardControlRow: {
     minHeight: mapLayout(CONTROL_HEIGHTS.md, (height) => height + theme.spacing[4] * 2),
   },
   // Every nested row is as tall as one holding an `sm` control, so rows with and without a

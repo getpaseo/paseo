@@ -59,6 +59,9 @@ export interface SettingsRowHeaderProps {
  * pressed on the switch would also press the row. Everything drawn over the button lets presses
  * through to it and stays out of the accessibility tree, where the button's label names the row.
  * Hover is tracked on the row itself, so it holds while the pointer is over the control.
+ *
+ * The row is as tall as one holding a control whether or not it holds one, so a list where only
+ * some rows carry a switch keeps one row height.
  */
 export function SettingsRowHeader({
   label,
@@ -82,7 +85,7 @@ export function SettingsRowHeader({
   const handlePointerEnter = useCallback(() => setPointerOver(true), []);
   const handlePointerLeave = useCallback(() => setPointerOver(false), []);
   const hovered = pointerOver && !disabled;
-  const rowStyle = useMemo(() => [layout.row, hovered && styles.hovered], [hovered, layout]);
+  const rowStyle = useMemo(() => [layout.controlRow, hovered && styles.hovered], [hovered, layout]);
   const pressTargetStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.pressTarget,
