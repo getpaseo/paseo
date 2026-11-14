@@ -1703,12 +1703,24 @@ export class ACPAgentClient implements AgentClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    // Look the command up with the environment the child process will get, so
+    // the path that is verified is the path that runs. A provider that carries
+    // its own PATH would otherwise be resolved against the daemon's and could
+    // pick up a different build of the same command. The lookup inherits the
+    // daemon's environment on top of the provider's own values, the same way
+    // the child process does.
+    const availability = await checkProviderLaunchAvailable({
+      ...prefix,
+      env: acpLookupEnv(this.runtimeSettings),
+    });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
     return {
-      command: prefix.command,
+      // Use the path the resolver actually verified. PATH lookup may find a
+      // Windows install outside the daemon's inherited PATH (for example a
+      // Winget package or a directory added after the daemon started).
+      command: availability.resolvedPath ?? prefix.command,
       args: [...prefix.args, ...this.defaultCommand.slice(1)],
     };
   }
@@ -1731,6 +1743,21 @@ export class ACPAgentClient implements AgentClient {
       configOptions: this.configOptionsTransformer(transformed.configOptions),
     };
   }
+}
+
+/**
+ * The environment the command lookup runs with.
+ *
+ * The child process inherits the daemon's environment and the provider's own
+ * values on top of it, so the lookup has to see the same environment. A
+ * provider that sets only an API key still resolves against the inherited
+ * PATH.
+ */
+export function acpLookupEnv(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): Record<string, string> | undefined {
+  if (!runtimeSettings?.env) return undefined;
+  return createProviderEnv({ runtimeSettings });
 }
 
 export class ACPAgentSession implements AgentSession, ACPClient {
@@ -3030,12 +3057,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
+    // Look the command up with the environment the child process will get, so
+    // the path that is verified is the path that runs. A provider that carries
+    // its own PATH would otherwise be resolved against the daemon's and could
+    // pick up a different build of the same command. The lookup inherits the
+    // daemon's environment on top of the provider's own values, the same way
+    // the child process does.
+    const availability = await checkProviderLaunchAvailable({
+      ...prefix,
+      env: acpLookupEnv(this.runtimeSettings),
+    });
     if (!availability.available) {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
 
-    const command = prefix.command;
+    // Use the path the resolver actually verified. A PATH lookup may find an
+    // install outside the daemon's inherited PATH (for example a Winget
+    // package, or a directory added after the daemon started).
+    const command = availability.resolvedPath ?? prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: await this.resolveProcessCwd(),

@@ -600,6 +600,75 @@ describe("provider overrides (new format)", () => {
   });
 });
 
+describe("MiniMax Code command migration", () => {
+  test("repairs the legacy npx command that named only the package", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          "minimax-code": {
+            extends: "acp",
+            label: "MiniMax Code",
+            command: ["npx", "-y", "@minimax-ai/code@0.6.13", "acp"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.["minimax-code"]?.command).toEqual([
+      "npx",
+      "-y",
+      "-p",
+      "@minimax-ai/code@0.6.13",
+      "mcode",
+      "acp",
+    ]);
+  });
+
+  test("keeps a command that already names the package and binary", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          "minimax-code": {
+            extends: "acp",
+            label: "MiniMax Code",
+            command: ["npx", "-y", "-p", "@minimax-ai/code@0.7.2", "mcode", "acp"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.["minimax-code"]?.command).toEqual([
+      "npx",
+      "-y",
+      "-p",
+      "@minimax-ai/code@0.7.2",
+      "mcode",
+      "acp",
+    ]);
+  });
+
+  test("leaves other providers' npx commands untouched", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          gemini: {
+            extends: "acp",
+            label: "Gemini",
+            command: ["npx", "-y", "@google/gemini-cli@0.65.0", "--acp"],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.gemini?.command).toEqual([
+      "npx",
+      "-y",
+      "@google/gemini-cli@0.65.0",
+      "--acp",
+    ]);
+  });
+});
+
 describe("PersistedConfigSchema logging config", () => {
   test("accepts destination-specific logging config", () => {
     const parsed = PersistedConfigSchema.parse({
