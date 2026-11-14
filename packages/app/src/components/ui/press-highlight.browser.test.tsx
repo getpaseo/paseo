@@ -49,32 +49,20 @@ it("keeps a floating action opaque while showing its held-press feedback", async
   await waitFor(() => expect(getComputedStyle(button).backgroundColor).toBe(restingFill));
 });
 
-it("uses the pressable's pressed state for the native row fill and its existing corners", () => {
-  const { getByTestId, rerender } = render(
+it("paints the native row fill while pressed and keeps its existing corners", async () => {
+  const { getByTestId } = render(
     <GestureHandlerRootView>
-      <PressHighlight
-        testID="row"
-        testOnly_pressed
-        style={rowStyle}
-        highlightStyle={highlightStyle}
-      />
+      <PressHighlight testID="row" style={rowStyle} highlightStyle={highlightStyle} />
     </GestureHandlerRootView>,
   );
+  const row = getByTestId("row");
 
-  expect(getComputedStyle(getByTestId("row")).backgroundColor).toBe("rgb(20, 30, 40)");
-  expect(getComputedStyle(getByTestId("row")).borderRadius).toBe("8px");
+  fireEvent.mouseDown(row, { button: 0 });
+  await waitFor(() => expect(getComputedStyle(row).backgroundColor).toBe("rgb(20, 30, 40)"));
+  expect(getComputedStyle(row).borderRadius).toBe("8px");
 
-  rerender(
-    <GestureHandlerRootView>
-      <PressHighlight
-        testID="row"
-        testOnly_pressed={false}
-        style={rowStyle}
-        highlightStyle={highlightStyle}
-      />
-    </GestureHandlerRootView>,
-  );
-  expect(getComputedStyle(getByTestId("row")).backgroundColor).toBe("rgb(255, 255, 255)");
+  fireEvent.mouseUp(row, { button: 0 });
+  await waitFor(() => expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)"));
 });
 
 it("paints the pressed fill on web and reports it, so a caller does not paint its own", async () => {
@@ -154,4 +142,54 @@ it("paints and reports nothing on web without a pressed fill, such as a row bein
   expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)");
   fireEvent.mouseUp(row, { button: 0 });
   expect(highlights.calls).toEqual([]);
+});
+
+const midPress = { ...recordPresses(), highlights: recordHighlights() };
+
+function PressedRow({ filled }: { filled: boolean }) {
+  return (
+    <WebPressHighlight
+      testID="row"
+      style={rowStyle}
+      highlightStyle={filled ? highlightStyle : undefined}
+      onHighlightChange={midPress.highlights.record}
+      onPressIn={midPress.onPressIn}
+      onPressOut={midPress.onPressOut}
+      onPress={onPress}
+    />
+  );
+}
+
+function resetMidPress() {
+  midPress.calls.length = 0;
+  midPress.highlights.calls.length = 0;
+}
+
+it("keeps a press's fill and report together when the fill appears mid-press", async () => {
+  resetMidPress();
+  const { getByTestId, rerender } = render(<PressedRow filled={false} />);
+  const row = getByTestId("row");
+
+  fireEvent.mouseDown(row, { button: 0 });
+  await waitFor(() => expect(midPress.calls).toEqual(["in"]));
+  rerender(<PressedRow filled />);
+  expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)");
+  fireEvent.mouseUp(row, { button: 0 });
+  await waitFor(() => expect(midPress.calls).toEqual(["in", "out"]));
+  expect(midPress.highlights.calls).toEqual([]);
+});
+
+it("keeps a press's fill and report together when the fill goes away mid-press", async () => {
+  resetMidPress();
+  const { getByTestId, rerender } = render(<PressedRow filled />);
+  const row = getByTestId("row");
+
+  fireEvent.mouseDown(row, { button: 0 });
+  await waitFor(() => expect(midPress.calls).toEqual(["in"]));
+  rerender(<PressedRow filled={false} />);
+  expect(getComputedStyle(row).backgroundColor).toBe("rgb(20, 30, 40)");
+  fireEvent.mouseUp(row, { button: 0 });
+  await waitFor(() => expect(midPress.calls).toEqual(["in", "out"]));
+  expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)");
+  expect(midPress.highlights.calls).toEqual([true, false]);
 });
